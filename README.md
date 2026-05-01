@@ -6,15 +6,17 @@ work instead of supervising coding agents.
 Hydra is a modified fork of OpenAI Symphony under the `openboa-ai/hydra` repository.
 Original project: <https://github.com/openai/symphony>
 
-Hydra extends the upstream scheduler with:
-- multi-agent execution runtime improvements
+Hydra extends the upstream scheduler with a global CLI, local profile management, Docker Sandboxes
+worker support, Nest-managed Codex artifacts, Linear polling, GitHub-ready project workflows, and
+operator-visible runtime status.
 
 Public CLI, local state, OTP application config, and docs use the Hydra name. Some internal
 Elixir module names still retain `SymphonyElixir` while the fork stabilizes.
 
-[![Hydra demo video preview](.github/media/hydra-demo-poster.jpg)](.github/media/hydra-demo.mp4)
-
-_In this [demo video](.github/media/hydra-demo.mp4), Hydra monitors a Linear board for work and spawns agents to handle the tasks. The agents complete the tasks and provide proof of work: CI status, PR review feedback, complexity analysis, and walkthrough videos. When accepted, the agents land the PR safely. Engineers do not need to supervise Codex; they can manage the work at a higher level._
+Hydra manages three local surfaces:
+- `~/.hydra/projects/<project>/WORKFLOW.md` for project runtime policy
+- `~/.hydra/workspaces/<project>/<issue>/` for isolated agent workspaces
+- `~/.hydra/runtime/<project>/` for Nest-synced Codex home artifacts
 
 > [!WARNING]
 > Hydra is a low-key engineering preview for testing in trusted environments.

@@ -7,10 +7,6 @@ This directory contains the current Elixir/OTP implementation of Hydra, based on
 > Hydra Elixir is prototype software intended for evaluation only and is presented as-is.
 > We recommend implementing your own hardened version based on `SPEC.md`.
 
-## Screenshot
-
-![Hydra Elixir screenshot](../.github/media/elixir-screenshot.png)
-
 ## How it works
 
 1. Polls Linear for candidate work
