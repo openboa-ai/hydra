@@ -2,8 +2,39 @@
   "name": "hydra",
   "version": "0.1.0",
   "description": "Hydra runtime skills, hooks, and MCP metadata for Codex worker sessions.",
+  "author": {
+    "name": "OpenBOA",
+    "url": "https://github.com/openboa-ai"
+  },
+  "homepage": "https://github.com/openboa-ai/hydra/tree/main/plugins/hydra",
+  "repository": "https://github.com/openboa-ai/hydra",
+  "license": "Apache-2.0",
+  "keywords": [
+    "hydra",
+    "codex",
+    "workflow",
+    "linear",
+    "github",
+    "repository-automation"
+  ],
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
-  "license": "Apache-2.0"
+  "interface": {
+    "displayName": "Hydra",
+    "shortDescription": "Codex worker workflows for Hydra-managed runs",
+    "longDescription": "Hydra packages reusable Codex skills for Linear workpads, GitHub pull requests, commits, debugging, and branch delivery inside Hydra-managed worker sessions.",
+    "developerName": "OpenBOA",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/openboa-ai/hydra",
+    "defaultPrompt": [
+      "Use Hydra to work the current Linear issue and keep the Codex Workpad updated.",
+      "Use Hydra to prepare, validate, and publish a repository change."
+    ],
+    "brandColor": "#16A34A"
+  }
 }
