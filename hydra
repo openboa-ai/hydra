@@ -12,6 +12,8 @@ Usage:
   hydra status [project]
   hydra stop [project]
   hydra home
+  hydra version
+  hydra update [--ref <ref>] [--no-build]
   hydra setup [--wizard|--non-interactive] [--remote <git-remote-url>]
   hydra setup sandbox [--yes] [--no-github]
   hydra configure [--section auth|sync|projects]
@@ -58,6 +60,8 @@ Examples:
   hydra status
   hydra status openboa
   hydra stop openboa
+  hydra version
+  hydra update
   hydra setup --wizard
   hydra setup sandbox
   hydra configure
@@ -120,6 +124,16 @@ project_dir="$repo_root/projects"
 source_dir="$repo_root/nest/sources"
 runtime_dir="$repo_root/runtime"
 run_dir="$repo_root/run"
+
+git_short_rev() {
+  git -C "$install_root" rev-parse --short HEAD 2>/dev/null || printf 'unknown'
+}
+
+version_command() {
+  printf 'hydra: %s\n' "$(git_short_rev)"
+  printf 'install_root: %s\n' "$install_root"
+  printf 'hydra_home: %s\n' "$repo_root"
+}
 
 list_projects() {
   [ -d "$project_dir" ] || return 0
@@ -253,6 +267,92 @@ ensure_local_home() {
 # Secrets are managed with `hydra auth ...`, not this file.
 EOF
   fi
+}
+
+build_installed_runtime() {
+  local runtime_dir="$install_root/elixir"
+
+  [ -f "$runtime_dir/mix.exs" ] || die "Hydra Elixir runtime not found: $runtime_dir"
+  command -v mise >/dev/null 2>&1 ||
+    die "mise is required to build Hydra runtime. Install mise, then rerun: hydra update"
+
+  (
+    cd "$runtime_dir"
+    mise trust
+    mise install
+    mise exec -- mix setup
+    mise exec -- mix build
+  )
+}
+
+update_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra update [--ref <ref>] [--no-build]
+
+Updates the installed Hydra git checkout and rebuilds the Elixir runtime.
+
+Options:
+  --ref <ref>    Git ref to update to. Default: current branch, or main.
+  --no-build     Update the checkout without running mise/mix build steps.
+USAGE
+}
+
+update_self() {
+  local ref=""
+  local build_runtime=1
+  local current_branch
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --ref)
+        [ "$#" -ge 2 ] || die "--ref requires a value"
+        ref="$2"
+        shift 2
+        ;;
+      --no-build)
+        build_runtime=0
+        shift
+        ;;
+      -h|--help)
+        update_usage
+        return 0
+        ;;
+      *)
+        die "unknown update argument '$1'. Use: hydra update [--ref <ref>] [--no-build]"
+        ;;
+    esac
+  done
+
+  [ -d "$install_root/.git" ] ||
+    die "Hydra update requires a git-installed Hydra checkout: $install_root"
+  command -v git >/dev/null 2>&1 || die "git is required"
+
+  if ! git -C "$install_root" diff --quiet --ignore-submodules -- ||
+    ! git -C "$install_root" diff --cached --quiet --ignore-submodules --; then
+    die "install checkout has local changes; commit, stash, or reset before running hydra update"
+  fi
+
+  if [ -z "$ref" ]; then
+    current_branch="$(git -C "$install_root" branch --show-current 2>/dev/null || true)"
+    ref="${current_branch:-main}"
+  fi
+
+  printf 'hydra: updating %s to %s\n' "$install_root" "$ref"
+  git -C "$install_root" fetch --tags origin
+  if git -C "$install_root" rev-parse --verify --quiet "origin/$ref" >/dev/null; then
+    git -C "$install_root" checkout -B "$ref" "origin/$ref"
+  else
+    git -C "$install_root" checkout "$ref"
+  fi
+
+  chmod +x "$install_root/hydra"
+
+  if [ "$build_runtime" = "1" ]; then
+    build_installed_runtime
+  fi
+
+  printf 'hydra: updated to %s\n' "$(git_short_rev)"
 }
 
 
@@ -3658,6 +3758,13 @@ case "$command" in
     ;;
   home)
     printf '%s\n' "$repo_root"
+    ;;
+  version|--version)
+    version_command
+    ;;
+  update)
+    shift
+    update_self "$@"
     ;;
   setup)
     shift
