@@ -226,6 +226,7 @@ defmodule SymphonyElixir.AgentRunner do
        do: "#{message} #{diagnostic}"
 
   defp format_failure_reason({:port_exit, status}), do: "agent process exited with status #{status}"
+
   defp format_failure_reason(reason), do: inspect(reason)
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do

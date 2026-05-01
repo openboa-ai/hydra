@@ -125,8 +125,10 @@ defmodule SymphonyElixirWeb.Presenter do
       issue_identifier: entry.identifier,
       state: entry.state,
       worker_host: Map.get(entry, :worker_host),
+      worker_backend: Map.get(entry, :worker_backend),
       workspace_path: Map.get(entry, :workspace_path),
       sandbox: sandbox_payload(Map.get(entry, :sandbox)),
+      codex_runtime: codex_runtime_payload(Map.get(entry, :codex_runtime)),
       session_id: entry.session_id,
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
@@ -150,8 +152,10 @@ defmodule SymphonyElixirWeb.Presenter do
       due_at: due_at_iso8601(entry.due_in_ms),
       error: entry.error,
       worker_host: Map.get(entry, :worker_host),
+      worker_backend: Map.get(entry, :worker_backend),
       workspace_path: Map.get(entry, :workspace_path),
       sandbox: sandbox_payload(Map.get(entry, :sandbox)),
+      codex_runtime: codex_runtime_payload(Map.get(entry, :codex_runtime)),
       recent_events: trace_payload(Map.get(entry, :recent_events, []))
     }
   end
@@ -159,8 +163,10 @@ defmodule SymphonyElixirWeb.Presenter do
   defp running_issue_payload(running) do
     %{
       worker_host: Map.get(running, :worker_host),
+      worker_backend: Map.get(running, :worker_backend),
       workspace_path: Map.get(running, :workspace_path),
       sandbox: sandbox_payload(Map.get(running, :sandbox)),
+      codex_runtime: codex_runtime_payload(Map.get(running, :codex_runtime)),
       session_id: running.session_id,
       turn_count: Map.get(running, :turn_count, 0),
       state: running.state,
@@ -183,8 +189,10 @@ defmodule SymphonyElixirWeb.Presenter do
       due_at: due_at_iso8601(retry.due_in_ms),
       error: retry.error,
       worker_host: Map.get(retry, :worker_host),
+      worker_backend: Map.get(retry, :worker_backend),
       workspace_path: Map.get(retry, :workspace_path),
       sandbox: sandbox_payload(Map.get(retry, :sandbox)),
+      codex_runtime: codex_runtime_payload(Map.get(retry, :codex_runtime)),
       recent_events: trace_payload(Map.get(retry, :recent_events, []))
     }
   end
@@ -214,6 +222,17 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp sandbox_payload(_sandbox), do: nil
 
+  defp codex_runtime_payload(nil), do: nil
+
+  defp codex_runtime_payload(%{} = runtime) do
+    runtime
+    |> Enum.map(fn {key, value} -> {normalize_payload_key(key), value} end)
+    |> Enum.reject(fn {_key, value} -> value in [nil, "", []] end)
+    |> Map.new()
+  end
+
+  defp codex_runtime_payload(_runtime), do: nil
+
   defp normalize_payload_key(key), do: key
 
   defp recent_events_payload(running, retry) do
@@ -239,6 +258,7 @@ defmodule SymphonyElixirWeb.Presenter do
           message: trace_text(event[:message] || event["message"]),
           session_id: display_value(event[:session_id] || event["session_id"]),
           worker_host: display_value(event[:worker_host] || event["worker_host"]),
+          worker_backend: display_value(event[:worker_backend] || event["worker_backend"]),
           workspace_path: display_value(event[:workspace_path] || event["workspace_path"]),
           attempt: event[:attempt] || event["attempt"]
         }

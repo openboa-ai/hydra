@@ -7,6 +7,7 @@
 │ Tokens: in 0 | out 0 | total 0
 │ Rate Limits: unavailable
 │ SBX: disabled
+
 │ Project: https://linear.app/project/project/issues
 │ Dashboard: http://127.0.0.1:4000/
 │ Next refresh: n/a

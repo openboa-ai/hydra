@@ -15,7 +15,7 @@ Usage:
   hydra setup [--wizard|--non-interactive] [--remote <git-remote-url>]
   hydra setup sandbox [--yes] [--no-github]
   hydra configure [--section auth|sync|projects]
-  hydra doctor [--fix]
+  hydra doctor [project] [--fix]
   hydra init
   hydra auth status
   hydra auth login [--provider linear|github] [--method browser|token]
@@ -27,7 +27,8 @@ Usage:
   hydra nest add <git-url> [--name <name>]
   hydra nest sync [project]
   hydra nest status
-  hydra nest publish [--source <name>]
+  hydra nest publish [--source <name>] [--dry-run]
+  hydra codex inspect <project> [issue]
   hydra sandbox status
   hydra sandbox doctor [project]
   hydra sandbox inspect <project> <issue>
@@ -61,6 +62,9 @@ Examples:
   hydra setup sandbox
   hydra configure
   hydra doctor
+  hydra doctor openboa
+  hydra codex inspect openboa
+  hydra codex inspect openboa BOA-1
   hydra auth login
   hydra auth login --provider github --method browser
   hydra auth login --provider linear --method token
@@ -1205,6 +1209,7 @@ USAGE
 doctor_command() {
   local fix=0
   local failed=0
+  local project=""
   local count
 
   while [ "$#" -gt 0 ]; do
@@ -1217,14 +1222,20 @@ doctor_command() {
         cat <<'USAGE'
 Usage:
   hydra doctor
-  hydra doctor --fix
+  hydra doctor <project>
+  hydra doctor <project> --fix
 
-Checks local Hydra CLI state, profile state, auth state, and runtime prerequisites.
+Checks local Hydra CLI state, profile state, auth state, runtime prerequisites, and optional project Codex runtime state.
 USAGE
         return 0
         ;;
       *)
-        die "unknown doctor argument '$1'"
+        if [ -z "$project" ]; then
+          project="$1"
+          shift
+        else
+          die "unknown doctor argument '$1'"
+        fi
         ;;
     esac
   done
@@ -1310,6 +1321,23 @@ USAGE
   else
     printf 'runtime: missing (%s)\n' "$(runtime_elixir_dir)"
     failed=1
+  fi
+
+  if [ -n "$project" ]; then
+    local workflow_path
+    workflow_path="$(require_project "$project")"
+
+    printf '\nproject_preflight:\n'
+    project_nest_sync_status "$project" || failed=1
+
+    case "$(workflow_worker_backend "$workflow_path")" in
+      sbx)
+        sandbox_status || failed=1
+        ;;
+    esac
+
+    printf '\n'
+    codex_inspect "$project" || failed=1
   fi
 
   return "$failed"
@@ -1499,6 +1527,32 @@ nest_project_extends() {
   ' "$manifest_path"
 }
 
+nest_require_safe_component() {
+  local value="$1"
+  local label="$2"
+
+  if ! printf '%s\n' "$value" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+    die "Nest $label must stay inside the Nest source root: $value"
+  fi
+
+  case "$value" in
+    .|..)
+      die "Nest $label must stay inside the Nest source root: $value"
+      ;;
+  esac
+}
+
+nest_require_relative_path() {
+  local value="$1"
+  local label="$2"
+
+  case "$value" in
+    /*|..|../*|*/../*)
+      die "Nest $label path must stay inside the Nest source root: $value"
+      ;;
+  esac
+}
+
 nest_copy_tree() {
   local source_path="$1"
   local target_path="$2"
@@ -1506,6 +1560,15 @@ nest_copy_tree() {
   [ -d "$source_path" ] || return 0
   mkdir -p "$target_path"
   cp -R "$source_path"/. "$target_path"/
+}
+
+nest_copy_file() {
+  local source_path="$1"
+  local target_path="$2"
+
+  [ -f "$source_path" ] || return 0
+  mkdir -p "$(dirname "$target_path")"
+  cp "$source_path" "$target_path"
 }
 
 nest_append_markdown() {
@@ -1552,20 +1615,61 @@ nest_materialize_artifacts_from_dir() {
 
   nest_append_markdown "$artifact_dir/AGENTS.md" "$codex_home/AGENTS.md" "$label/AGENTS.md"
   nest_append_text "$artifact_dir/.codex/config.toml" "$codex_home/config.toml" "$label/.codex/config.toml"
+  nest_copy_file "$artifact_dir/.codex/hooks.json" "$codex_home/hooks.json"
 
+  # CODEX_HOME is the isolated replacement for ~/.codex. Keep Codex
+  # config-scope artifacts here, and keep $HOME/.codex unused so Hydra does
+  # not accidentally merge two global Codex profiles.
   nest_copy_tree "$artifact_dir/.codex/agents" "$codex_home/agents"
   nest_copy_tree "$artifact_dir/.codex/hooks" "$codex_home/hooks"
   nest_copy_tree "$artifact_dir/.codex/mcp" "$codex_home/mcp"
   nest_copy_tree "$artifact_dir/.codex/plugins" "$codex_home/plugins"
-  nest_copy_tree "$artifact_dir/.codex/skills" "$codex_home/skills"
 
-  nest_copy_tree "$artifact_dir/.agents/agents" "$codex_home/agents"
-  nest_copy_tree "$artifact_dir/.agents/hooks" "$codex_home/hooks"
-  nest_copy_tree "$artifact_dir/.agents/plugins" "$codex_home/plugins"
-  nest_copy_tree "$artifact_dir/.agents/skills" "$codex_home/skills"
-
+  # Codex skills are discovered from .agents/skills, not CODEX_HOME/skills.
+  # Nest may keep skills under .codex/skills for authoring convenience, but
+  # runtime materialization writes them to the official user-scope skill path.
+  nest_copy_tree "$artifact_dir/.codex/skills" "$codex_user_home/.agents/skills"
   nest_copy_tree "$artifact_dir/.agents" "$codex_user_home/.agents"
-  nest_copy_tree "$artifact_dir/.codex" "$codex_user_home/.codex"
+}
+
+nest_plugin_json_value() {
+  local plugin_json="$1"
+  local key="$2"
+
+  sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p" "$plugin_json" | head -n 1
+}
+
+nest_materialize_plugin_cache() {
+  local codex_home="$1"
+  local marketplace="hydra-local"
+  local manifest
+  local plugin_dir
+  local plugin_name
+  local plugin_version
+  local cache_dir
+
+  [ -d "$codex_home/plugins" ] || return 0
+
+  while IFS= read -r manifest; do
+    plugin_dir="$(dirname "$(dirname "$manifest")")"
+    plugin_name="$(nest_plugin_json_value "$manifest" name)"
+    plugin_name="${plugin_name:-$(basename "$plugin_dir")}"
+    plugin_version="$(nest_plugin_json_value "$manifest" version)"
+    plugin_version="${plugin_version:-local}"
+
+    nest_require_safe_component "$plugin_name" "plugin"
+    nest_require_safe_component "$plugin_version" "plugin version"
+
+    cache_dir="$codex_home/plugins/cache/$marketplace/$plugin_name/$plugin_version"
+    rm -rf "$cache_dir"
+    mkdir -p "$(dirname "$cache_dir")"
+    cp -R "$plugin_dir" "$cache_dir"
+
+    {
+      printf '\n[plugins."%s@%s"]\n' "$plugin_name" "$marketplace"
+      printf 'enabled = true\n'
+    } >> "$codex_home/config.toml"
+  done < <(find "$codex_home/plugins" -mindepth 3 -maxdepth 3 -path '*/.codex-plugin/plugin.json' -type f 2>/dev/null | sort)
 }
 
 nest_default_branch() {
@@ -1615,6 +1719,7 @@ nest_project_workflow_source() {
 
   workflow_rel="$(nest_project_value "$manifest_path" "workflow")"
   workflow_rel="${workflow_rel:-WORKFLOW.md}"
+  nest_require_relative_path "$workflow_rel" "workflow"
 
   if [ -f "$project_path/$workflow_rel" ]; then
     printf '%s/%s\n' "$project_path" "$workflow_rel"
@@ -1732,6 +1837,7 @@ run_project_nest_preflight() {
 nest_sync_source_project() {
   local source_path="$1"
   local project="$2"
+  nest_require_safe_component "$project" "project"
   local project_path="$source_path/projects/$project"
   local manifest_path="$project_path/project.yml"
   local workflow_source
@@ -1749,8 +1855,11 @@ nest_sync_source_project() {
   rm -rf "$staging_dir"
   mkdir -p "$codex_home" "$codex_user_home" "$profile_path"
 
+  nest_materialize_artifacts_from_dir "$source_path" "root" "$codex_home" "$codex_user_home"
+
   while IFS= read -r bundle; do
     [ -n "$bundle" ] || continue
+    nest_require_safe_component "$bundle" "bundle"
     if [ -d "$source_path/bundles/$bundle" ]; then
       nest_materialize_artifacts_from_dir "$source_path/bundles/$bundle" "bundles/$bundle" "$codex_home" "$codex_user_home"
     elif [ -d "$source_path/packs/$bundle" ]; then
@@ -1761,6 +1870,7 @@ nest_sync_source_project() {
   done < <(nest_project_extends "$manifest_path")
 
   nest_materialize_artifacts_from_dir "$project_path" "projects/$project" "$codex_home" "$codex_user_home"
+  nest_materialize_plugin_cache "$codex_home"
 
   cp "$workflow_source" "$profile_path/WORKFLOW.md"
   cp "$manifest_path" "$profile_path/project.yml"
@@ -1772,6 +1882,7 @@ nest_sync_source_project() {
     printf 'source_path: %s\n' "$source_path"
     printf 'source_ref: %s\n' "${ref:-unknown}"
     printf 'workflow_source: %s\n' "$workflow_source"
+    printf 'root_artifacts: true\n'
     printf 'codex_home: %s/codex-home\n' "$runtime_project_dir"
     printf 'codex_user_home: %s/home\n' "$runtime_project_dir"
     printf 'bundles:\n'
@@ -1906,6 +2017,7 @@ nest_publish() {
   local source_name=""
   local source_path=""
   local branch
+  local dry_run=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1914,8 +2026,12 @@ nest_publish() {
         [ -n "$source_name" ] || die "--source requires a value"
         shift 2
         ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
       *)
-        die "unknown nest publish option '$1'"
+        die "unknown nest publish option '$1'. Use: hydra nest publish [--source <name>] [--dry-run]"
         ;;
     esac
   done
@@ -1942,9 +2058,33 @@ nest_publish() {
       exit 0
     fi
 
+    printf 'nest_publish: source %s\n' "$source_path"
+    printf 'nest_publish: changes\n'
+    git status --short | sed 's/^/  /'
+
+    if [ "$dry_run" = "1" ]; then
+      git diff --check
+      if [ -x scripts/check-gitleaks.sh ]; then
+        scripts/check-gitleaks.sh --worktree
+      elif command -v gitleaks >/dev/null 2>&1; then
+        gitleaks detect --source . --redact --no-banner --log-level warn
+      else
+        die "gitleaks is required before publishing Nest artifacts"
+      fi
+      printf 'nest_publish: dry-run ok (run `hydra nest publish --source %s` to create the PR)\n' "$(basename "$source_path")"
+      exit 0
+    fi
+
     branch="hydra/nest-artifacts-$(date +%Y%m%d-%H%M%S)"
     git checkout -b "$branch"
     git add -A
+    if [ -x scripts/check-gitleaks.sh ]; then
+      scripts/check-gitleaks.sh --staged
+    elif command -v gitleaks >/dev/null 2>&1; then
+      gitleaks git --staged --redact --no-banner --log-level warn
+    else
+      die "gitleaks is required before publishing Nest artifacts"
+    fi
     git commit -m "Update Hydra runtime artifacts"
     git push -u origin "$branch"
     gh pr create --fill
@@ -2010,7 +2150,16 @@ sbx_secret_set() {
   local output
 
   command -v sbx >/dev/null 2>&1 || return 2
-  output="$(sbx secret ls 2>/dev/null)" || return 3
+  if ! output="$(sbx secret ls 2>&1)"; then
+    case "$output" in
+      *"operation not permitted"*|*"Operation not permitted"*|*"permission denied"*|*"Permission denied"*)
+        return 4
+        ;;
+      *)
+        return 3
+        ;;
+    esac
+  fi
   printf '%s\n' "$output" | awk -v service="$service" '
     BEGIN { found = 0 }
     tolower($0) ~ "(^|[[:space:]])" service "([[:space:]]|$)" { found = 1 }
@@ -2340,7 +2489,6 @@ sandbox_logs() {
 
 sandbox_status() {
   local failed=0
-  local status=0
 
   if command -v sbx >/dev/null 2>&1; then
     printf 'sbx: ok (%s)\n' "$(command -v sbx)"
@@ -2349,28 +2497,11 @@ sandbox_status() {
     return 1
   fi
 
-  if sbx_openai_secret_ready; then
-    printf 'sbx_openai: set\n'
-  else
-    status=$?
-    case "$status" in
-      2)
-        print_sbx_install_hint
-        ;;
-      3)
-        print_sbx_login_hint
-        ;;
-      *)
-        print_sbx_openai_hint
-        ;;
-    esac
+  if ! print_sbx_secret_status sbx_openai sbx_openai_secret_ready; then
     failed=1
   fi
 
-  if sbx_github_secret_ready; then
-    printf 'sbx_github: set\n'
-  else
-    printf 'sbx_github: missing (run `hydra sandbox github`, or `hydra setup sandbox`)\n'
+  if ! print_sbx_secret_status sbx_github sbx_github_secret_ready; then
     failed=1
   fi
 
@@ -2390,10 +2521,90 @@ print_sbx_openai_hint() {
   printf 'sbx_openai: missing (run `hydra sandbox openai`, or `hydra setup sandbox`)\n'
 }
 
+print_sbx_github_hint() {
+  printf 'sbx_github: missing (run `hydra sandbox github`, or `hydra setup sandbox`)\n'
+}
+
+print_sbx_secret_store_hint() {
+  printf 'sbx_secret_store: unavailable (run `hydra sandbox login`, or retry from a normal terminal with host credential access)\n'
+}
+
+print_sbx_secret_permission_hint() {
+  printf 'sbx_secret_store: inaccessible from this process (retry from a normal terminal; host sandbox denied sbx credential-store access)\n'
+}
+
+print_sbx_secret_status() {
+  local label="$1"
+  local check_fn="$2"
+  local status
+
+  "$check_fn"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    printf '%s: set\n' "$label"
+    return 0
+  fi
+
+  case "$status" in
+    2)
+      print_sbx_install_hint
+      ;;
+    3)
+      print_sbx_secret_store_hint
+      ;;
+    4)
+      print_sbx_secret_permission_hint
+      ;;
+    *)
+      case "$label" in
+        sbx_openai) print_sbx_openai_hint ;;
+        sbx_github) print_sbx_github_hint ;;
+        *) printf '%s: missing\n' "$label" ;;
+      esac
+      ;;
+  esac
+  return "$status"
+}
+
+print_sbx_worker_ready_hint() {
+  local status="$1"
+
+  case "$status" in
+    2) print_sbx_install_hint >&2 ;;
+    3) print_sbx_secret_store_hint >&2 ;;
+    4) print_sbx_openai_hint >&2 ;;
+    5) print_sbx_github_hint >&2 ;;
+    6) print_sbx_secret_permission_hint >&2 ;;
+    *) print_sbx_secret_store_hint >&2 ;;
+  esac
+}
+
 check_sbx_worker_ready() {
+  local status
+
   command -v sbx >/dev/null 2>&1 || return 2
-  sbx_openai_secret_ready || return $?
+
+  sbx_openai_secret_ready
+  status=$?
+  case "$status" in
+    0) ;;
+    1) return 4 ;;
+    2) return 2 ;;
+    3) return 3 ;;
+    4) return 6 ;;
+    *) return 3 ;;
+  esac
+
   sbx_github_secret_ready
+  status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) return 5 ;;
+    2) return 2 ;;
+    3) return 3 ;;
+    4) return 6 ;;
+    *) return 3 ;;
+  esac
 }
 
 
@@ -2459,6 +2670,101 @@ codex_runtime_ready() {
   [ -d "$(codex_home_for_project "$project")" ] && [ -d "$(codex_user_home_for_project "$project")" ]
 }
 
+codex_runtime_status() {
+  local project="$1"
+
+  if codex_runtime_ready "$project"; then
+    printf 'codex_runtime: ready (Nest + working repo; local ~/.codex is not used)\n'
+    return 0
+  fi
+
+  printf 'codex_runtime: missing (run `hydra nest sync %s`)\n' "$project"
+  return 1
+}
+
+codex_print_worker_auth() {
+  local worker_backend="$1"
+
+  printf 'worker_auth:\n'
+  case "$worker_backend" in
+    sbx)
+      print_sbx_secret_status sbx_openai sbx_openai_secret_ready || true
+      print_sbx_secret_status sbx_github sbx_github_secret_ready || true
+      printf '  linear: host-controlled via Hydra dynamic tools\n'
+      ;;
+    *)
+      printf '  openai: codex host auth\n'
+      printf '  github: host environment\n'
+      printf '  linear: host environment\n'
+      ;;
+  esac
+}
+
+codex_print_source_summary() {
+  local project="$1"
+  local resolved_path="$project_dir/$project/resolved.yml"
+  local source_path
+  local source_ref
+  local in_bundles=0
+  local printed_bundle=0
+
+  printf 'source:\n'
+  if [ ! -f "$resolved_path" ]; then
+    printf '  nest: unmanaged\n'
+    return 0
+  fi
+
+  source_path="$(nest_resolved_value "$resolved_path" "source_path")"
+  source_ref="$(nest_resolved_value "$resolved_path" "source_ref")"
+  printf '  nest: %s\n' "${source_path##*/}"
+  [ -n "$source_ref" ] && printf '  ref: %s\n' "$source_ref"
+  printf '  root: included\n'
+  printf '  project: projects/%s\n' "$project"
+  printf '  bundles:\n'
+  while IFS= read -r line; do
+    case "$line" in
+      "bundles:"*) in_bundles=1 ;;
+      "  - "*)
+        if [ "$in_bundles" -eq 1 ]; then
+          printf '    - %s\n' "${line#  - }"
+          printed_bundle=1
+        fi
+        ;;
+      *)
+        if [ "$in_bundles" -eq 1 ] && [ -n "$line" ]; then
+          in_bundles=0
+        fi
+        ;;
+    esac
+  done < "$resolved_path"
+  [ "$printed_bundle" -eq 1 ] || printf '    none\n'
+}
+
+codex_print_target_summary() {
+  local project="$1"
+  local workflow_path="$2"
+  local issue="${3:-}"
+  local workspace="${4:-}"
+  local repo_url
+
+  repo_url="$(workflow_repo_url "$workflow_path")"
+  printf 'target:\n'
+  printf '  repo: %s\n' "${repo_url:-missing}"
+  printf '  workflow: %s\n' "$(relative_path "$workflow_path")"
+  printf '  workspace_root: %s\n' "$(relative_path "$(workspace_root_for "$project" "$workflow_path")")"
+  if [ -n "$issue" ]; then
+    printf '  issue: %s\n' "$issue"
+    printf '  issue_workspace: %s\n' "$(relative_path "$workspace")"
+    if [ -d "$workspace/.git" ]; then
+      printf '  working_repo: checked_out\n'
+    elif [ -d "$workspace" ]; then
+      printf '  working_repo: directory_without_git\n'
+    else
+      printf '  working_repo: missing (created by hooks.after_create on dispatch)\n'
+    fi
+  fi
+}
+
 require_codex_runtime() {
   local project="$1"
 
@@ -2476,6 +2782,323 @@ export_codex_runtime() {
   HYDRA_CODEX_USER_HOME="$(codex_user_home_for_project "$project")"
 }
 
+
+codex_path_status() {
+  local label="$1"
+  local path="$2"
+
+  if [ -d "$path" ]; then
+    printf '%s: dir %s\n' "$label" "$(relative_path "$path")"
+  elif [ -f "$path" ]; then
+    printf '%s: file %s\n' "$label" "$(relative_path "$path")"
+  else
+    printf '%s: missing %s\n' "$label" "$(relative_path "$path")"
+    return 1
+  fi
+}
+
+codex_print_existing_files() {
+  local label="$1"
+  local count=0
+  local path
+  shift
+
+  printf '%s:\n' "$label"
+  for path in "$@"; do
+    if [ -f "$path" ]; then
+      printf '  - %s\n' "$(relative_path "$path")"
+      count=$((count + 1))
+    fi
+  done
+  [ "$count" -gt 0 ] || printf '  none\n'
+}
+
+codex_print_skill_roots() {
+  local label="$1"
+  local count=0
+  local root
+  local skill
+  shift
+
+  printf '%s:\n' "$label"
+  for root in "$@"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r skill; do
+      printf '  - %s\n' "$(relative_path "$skill")"
+      count=$((count + 1))
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | sort)
+  done
+  [ "$count" -gt 0 ] || printf '  none\n'
+}
+
+codex_print_agent_roots() {
+  local label="$1"
+  local count=0
+  local root
+  local agent
+  shift
+
+  printf '%s:\n' "$label"
+  for root in "$@"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r agent; do
+      printf '  - %s\n' "$(relative_path "$agent")"
+      count=$((count + 1))
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -name '*.toml' -type f 2>/dev/null | sort)
+  done
+  [ "$count" -gt 0 ] || printf '  none\n'
+}
+
+codex_print_plugin_roots() {
+  local label="$1"
+  local count=0
+  local root
+  local plugin
+  shift
+
+  printf '%s:\n' "$label"
+  for root in "$@"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r plugin; do
+      printf '  - %s\n' "$(relative_path "$plugin")"
+      count=$((count + 1))
+    done < <(find "$root" -mindepth 3 -maxdepth 3 -path '*/.codex-plugin/plugin.json' -type f 2>/dev/null | sort)
+  done
+  [ "$count" -gt 0 ] || printf '  none\n'
+}
+
+
+codex_print_plugin_skills() {
+  local label="$1"
+  local count=0
+  local root
+  local skill
+  local plugin_part
+  local plugin_name
+  local skill_name
+  local tmp
+  shift
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/hydra-plugin-skills.XXXXXX")"
+  printf "%s:\n" "$label"
+  for root in "$@"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r skill; do
+      plugin_part="${skill#*/plugins/}"
+      if [ "$plugin_part" != "$skill" ] && [ "${plugin_part#cache/}" != "$plugin_part" ]; then
+        plugin_name="$(printf "%s\n" "$plugin_part" | cut -d/ -f3)"
+      elif [ "$plugin_part" != "$skill" ]; then
+        plugin_name="$(printf "%s\n" "$plugin_part" | cut -d/ -f1)"
+      else
+        plugin_name="$(basename "$root")"
+      fi
+      skill_name="$(basename "$(dirname "$skill")")"
+      printf "  - %s:%s\n" "$plugin_name" "$skill_name" >> "$tmp"
+      count=$((count + 1))
+    done < <(find "$root" -path "*/skills/*/SKILL.md" -type f 2>/dev/null | sort)
+  done
+
+  if [ "$count" -gt 0 ]; then
+    sort -u "$tmp"
+  else
+    printf "  none\n"
+  fi
+  rm -f "$tmp"
+}
+
+codex_config_mcp_servers() {
+  local config_path="$1"
+
+  [ -f "$config_path" ] || return 0
+  awk '
+    /^\[mcp_servers\.[^]]+\]/ {
+      name=$0
+      sub(/^\[mcp_servers\./, "", name)
+      sub(/\]$/, "", name)
+      print name
+    }
+  ' "$config_path" | sort -u
+}
+
+codex_print_mcp() {
+  local codex_home="$1"
+  local count=0
+  local server
+  local file
+
+  printf 'mcp:\n'
+  while IFS= read -r server; do
+    [ -n "$server" ] || continue
+    printf '  - config.toml:%s\n' "$server"
+    count=$((count + 1))
+  done < <(codex_config_mcp_servers "$codex_home/config.toml")
+
+  if [ -d "$codex_home/mcp" ]; then
+    while IFS= read -r file; do
+      printf '  - template:%s\n' "$(relative_path "$file")"
+      count=$((count + 1))
+    done < <(find "$codex_home/mcp" -type f 2>/dev/null | sort)
+  fi
+
+  [ "$count" -gt 0 ] || printf '  none\n'
+}
+
+codex_print_trust() {
+  local codex_home="$1"
+  local workspace="${2:-}"
+  local config_path="$codex_home/config.toml"
+
+  printf 'trust_config:\n'
+  if [ ! -f "$config_path" ]; then
+    printf '  config: missing %s\n' "$(relative_path "$config_path")"
+    return 1
+  fi
+
+  printf '  config: %s\n' "$(relative_path "$config_path")"
+  if [ -n "$workspace" ] && grep -Fq "$workspace" "$config_path"; then
+    printf '  workspace: scoped entry present for %s\n' "$(relative_path "$workspace")"
+  elif [ -n "$workspace" ]; then
+    printf '  workspace: missing scoped entry for %s\n' "$(relative_path "$workspace")"
+  fi
+
+  grep -n '^\[projects\.' "$config_path" 2>/dev/null | sed 's/^/  - /' || true
+}
+
+codex_schema_status() {
+  local codex_home="$1"
+  local codex_user_home="$2"
+  local tmp
+  local count
+  local output
+
+  printf 'app_server_schema: '
+  if ! command -v codex >/dev/null 2>&1; then
+    printf 'missing codex executable\n'
+    return 1
+  fi
+
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/hydra-codex-schema.XXXXXX")"
+  if output="$(CODEX_HOME="$codex_home" HOME="$codex_user_home" codex app-server generate-json-schema --out "$tmp" 2>&1)"; then
+    count="$(find "$tmp" -type f | wc -l | tr -d ' ')"
+    rm -rf "$tmp"
+    printf 'ok (%s files)\n' "$count"
+    return 0
+  fi
+
+  rm -rf "$tmp"
+  printf 'failed (%s)\n' "$(printf '%s' "$output" | head -1)"
+  return 1
+}
+
+codex_inspect() {
+  local project="${1:-}"
+  local issue="${2:-}"
+  local workflow_path
+  local codex_home
+  local codex_user_home
+  local worker_backend
+  local workspace=""
+  local failed=0
+
+  [ -n "$project" ] || die "project is required. Use: hydra codex inspect <project> [issue]"
+  workflow_path="$(require_project "$project")"
+  codex_home="$(codex_home_for_project "$project")"
+  codex_user_home="$(codex_user_home_for_project "$project")"
+  worker_backend="$(workflow_worker_backend "$workflow_path")"
+
+  if [ -n "$issue" ]; then
+    workspace="$(sandbox_issue_workspace "$project" "$workflow_path" "$issue")"
+  fi
+
+  printf 'project: %s\n' "$project"
+  codex_print_source_summary "$project"
+  codex_print_target_summary "$project" "$workflow_path" "$issue" "$workspace"
+  printf 'worker_backend: %s\n' "$worker_backend"
+  codex_print_worker_auth "$worker_backend"
+  codex_runtime_status "$project" || failed=1
+  if command -v codex >/dev/null 2>&1; then
+    codex --version 2>/dev/null | sed 's/^/codex_cli: /' || true
+  else
+    printf 'codex_cli: missing\n'
+  fi
+  codex_schema_status "$codex_home" "$codex_user_home" || failed=1
+
+  codex_print_existing_files "agents_md" \
+    "$codex_home/AGENTS.override.md" \
+    "$codex_home/AGENTS.md" \
+    "$workspace/AGENTS.override.md" \
+    "$workspace/AGENTS.md"
+
+  codex_print_skill_roots "skills" \
+    "$codex_user_home/.agents/skills" \
+    "$workspace/.agents/skills"
+
+  codex_print_agent_roots "agents" \
+    "$codex_home/agents" \
+    "$workspace/.codex/agents"
+
+  codex_print_existing_files "hooks" \
+    "$codex_home/hooks.json" \
+    "$codex_home/hooks/hooks.json" \
+    "$workspace/.codex/hooks.json"
+
+  codex_print_plugin_roots "plugins" \
+    "$codex_home/plugins" \
+    "$workspace/.codex/plugins"
+
+  codex_print_plugin_skills "plugin_skills" \
+    "$codex_home/plugins" \
+    "$workspace/.codex/plugins"
+
+  codex_print_mcp "$codex_home"
+  codex_print_trust "$codex_home" "$workspace" || failed=1
+
+  if [ "$worker_backend" = "sbx" ]; then
+    printf 'sbx:\n'
+    printf '  network_policy: %s\n' "$(workflow_value "$workflow_path" "worker.sbx.network_policy")"
+    printf '  network_policy_scope: global Docker Sandboxes policy\n'
+    printf '  workspace_root: %s\n' "$(relative_path "$(workspace_root_for "$project" "$workflow_path")")"
+    if [ -n "$issue" ]; then
+      printf '  sandbox_name: %s\n' "$(sandbox_name_for "$project" "$workflow_path" "$issue")"
+      printf '  issue_workspace: %s\n' "$(relative_path "$workspace")"
+    fi
+    if command -v sbx >/dev/null 2>&1; then
+      printf '  sbx_cli: available\n'
+      sbx policy ls 2>/dev/null | awk 'NR == 1 || /^[^[:space:]]/ { print }' | sed 's/^/  policy: /' || true
+    else
+      printf '  sbx_cli: missing\n'
+      failed=1
+    fi
+  fi
+
+  return "$failed"
+}
+
+codex_command() {
+  local subcommand="${1:-}"
+
+  case "$subcommand" in
+    inspect)
+      shift
+      codex_inspect "$@"
+      ;;
+    ""|-h|--help)
+      cat <<'USAGE'
+Usage:
+  hydra codex inspect <project> [issue]
+
+Shows the Nest source, target repository, isolated Codex runtime readiness,
+AGENTS.md, skills, custom agents, hooks, plugins, MCP config, app-server schema,
+trust entries, and sbx mount/policy metadata.
+USAGE
+      ;;
+    *)
+      die "unknown codex command '$subcommand'. Use: hydra codex inspect <project> [issue]"
+      ;;
+  esac
+}
+
+
 show_project() {
   local project="$1"
   local workflow_path
@@ -2492,8 +3115,7 @@ show_project() {
   printf 'color: %s\n' "$(workflow_value "$workflow_path" "ui.color")"
   printf 'workspace_root: %s\n' "$(relative_path "$(workspace_root_for "$project" "$workflow_path")")"
   printf 'logs_root: %s\n' "$(relative_path "$(logs_root_for "$project" "$workflow_path")")"
-  printf 'codex_home: %s\n' "$(relative_path "$(codex_home_for_project "$project")")"
-  printf 'codex_user_home: %s\n' "$(relative_path "$(codex_user_home_for_project "$project")")"
+  printf 'codex_scope: nest+working-repo\n'
   if codex_runtime_ready "$project"; then
     printf 'codex_runtime: ready\n'
   else
@@ -2872,20 +3494,11 @@ check_project() {
         failed=1
       fi
 
-      if check_sbx_worker_ready; then
-        printf 'sbx_openai: set\n'
-      else
-        case "$?" in
-          2)
-            print_sbx_install_hint
-            ;;
-          3)
-            print_sbx_login_hint
-            ;;
-          *)
-            print_sbx_openai_hint
-            ;;
-        esac
+      if ! print_sbx_secret_status sbx_openai sbx_openai_secret_ready; then
+        failed=1
+      fi
+
+      if ! print_sbx_secret_status sbx_github sbx_github_secret_ready; then
         failed=1
       fi
       ;;
@@ -2966,17 +3579,7 @@ run_project() {
       if check_sbx_worker_ready; then
         :
       else
-        case "$?" in
-          2)
-            print_sbx_install_hint >&2
-            ;;
-          3)
-            print_sbx_login_hint >&2
-            ;;
-          *)
-            print_sbx_openai_hint >&2
-            ;;
-        esac
+        print_sbx_worker_ready_hint "$?"
         exit 1
       fi
       ;;
@@ -3086,6 +3689,10 @@ case "$command" in
   sandbox)
     shift
     sandbox_command "$@"
+    ;;
+  codex)
+    shift
+    codex_command "$@"
     ;;
   show)
     shift

@@ -1,0 +1,9 @@
+{
+  "name": "hydra",
+  "version": "0.1.0",
+  "description": "Hydra runtime skills, hooks, and MCP metadata for Codex worker sessions.",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "license": "Apache-2.0"
+}

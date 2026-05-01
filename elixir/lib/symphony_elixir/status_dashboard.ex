@@ -381,6 +381,7 @@ defmodule SymphonyElixir.StatusDashboard do
              colorize("total #{format_count(codex_total_tokens)}", @ansi_yellow),
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
            format_sandbox_runtime_line(running, retrying),
+           format_codex_runtime_line(running, retrying),
            project_link_lines,
            project_refresh_line,
            colorize("├─ Running", @ansi_bold),
@@ -432,14 +433,47 @@ defmodule SymphonyElixir.StatusDashboard do
     name = sandbox[:name] || sandbox["name"] || "unknown"
     status = sandbox[:status] || sandbox["status"] || "unknown"
     policy = sandbox[:network_policy] || sandbox["network_policy"] || "default"
-    "#{name} status=#{status} policy=#{policy}"
+    policy_scope = sandbox[:network_policy_scope] || sandbox["network_policy_scope"] || "configured"
+    "#{name} status=#{status} policy=#{policy}(#{policy_scope})"
   end
 
   defp format_sandbox_runtime_config_summary(config) do
     lifecycle = Map.get(config, "lifecycle", "fresh")
     policy = Map.get(config, "network_policy", "default")
-    "enabled lifecycle=#{lifecycle} policy=#{policy}"
+    "enabled lifecycle=#{lifecycle} policy=#{policy}(global)"
   end
+
+  defp format_codex_runtime_line(running, retrying) do
+    case first_codex_runtime(running) || first_codex_runtime(retrying) do
+      %{} = runtime ->
+        colorize("│ Codex: ", @ansi_bold) <> colorize(format_codex_runtime_summary(runtime), @ansi_cyan)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp format_codex_runtime_summary(runtime) do
+    "AGENTS=#{count_runtime_list(runtime, :agents_md)} skills=#{count_runtime_list(runtime, :skills)} agents=#{count_runtime_list(runtime, :agents)} hooks=#{count_runtime_list(runtime, :hooks)} plugins=#{count_runtime_list(runtime, :plugins)} MCP=#{count_runtime_list(runtime, :mcp)}"
+  end
+
+  defp count_runtime_list(runtime, key) when is_map(runtime) do
+    case Map.get(runtime, key) || Map.get(runtime, Atom.to_string(key)) do
+      values when is_list(values) -> length(values)
+      _ -> 0
+    end
+  end
+
+  defp first_codex_runtime(entries) when is_list(entries) do
+    Enum.find_value(entries, fn entry ->
+      case Map.get(entry, :codex_runtime) do
+        %{} = runtime -> runtime
+        _ -> nil
+      end
+    end)
+  end
+
+  defp first_codex_runtime(_entries), do: nil
 
   defp sbx_worker_enabled?(config) when is_map(config) do
     case Map.get(config, "enabled") do

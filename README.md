@@ -199,6 +199,18 @@ does not have a first-class Docker Sandboxes secret proxy today, so Hydra keeps 
 host and exposes only the explicit Linear dynamic tool.
 
 
+
+### Hydra Codex Plugin
+
+Hydra ships its default Codex worker capabilities as a repo-owned plugin at `plugins/hydra`.
+That plugin is the source of truth for Hydra-specific skills such as `hydra:commit`,
+`hydra:debug`, `hydra:hydra-workpad`, `hydra:linear`, `hydra:pull`, `hydra:push`, and
+`hydra:land`.
+
+Nest repositories may include this plugin in their runtime bundles. Target repositories should
+keep only repo-specific instructions and skills; they should not copy Hydra runtime skills into
+application code PRs.
+
 ### Optional GitHub Sync
 
 Local profiles can optionally be backed by a GitHub repository. Secrets and runtime state are ignored;
