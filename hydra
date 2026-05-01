@@ -1659,6 +1659,7 @@ project_nest_sync_status() {
   local source_ref
   local default_branch
   local current_branch
+  local current_ref
   local remote_ref
   local dirty
 
@@ -1682,19 +1683,30 @@ project_nest_sync_status() {
   fi
 
   default_branch="$(nest_default_branch "$source_path")"
-
-  if ! (cd "$source_path" && git fetch --quiet origin "$default_branch"); then
-    printf 'nest_sync: cannot fetch origin/%s for %s\n' "$default_branch" "$(basename "$source_path")"
-    return 1
-  fi
-
   current_branch="$(cd "$source_path" && git branch --show-current)"
-  remote_ref="$(cd "$source_path" && git rev-parse --short "origin/$default_branch" 2>/dev/null || true)"
+  current_ref="$(nest_source_ref "$source_path")"
 
   if [ "$current_branch" != "$default_branch" ]; then
-    printf 'nest_sync: source on %s, expected %s (run `hydra nest sync %s`)\n' "$current_branch" "$default_branch" "$project"
+    printf 'nest_sync: source on %s, expected %s (run `hydra nest sync %s`)\n' "${current_branch:-detached}" "$default_branch" "$project"
     return 1
   fi
+
+  if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" != "$current_ref" ]; then
+    printf 'nest_sync: source moved for %s (generated from %s, local %s is %s; run `hydra nest sync %s`)\n' "$project" "$source_ref" "$default_branch" "$current_ref" "$project"
+    return 1
+  fi
+
+  if ! (cd "$source_path" && git fetch --quiet origin "$default_branch"); then
+    if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" = "$current_ref" ]; then
+      printf 'nest_sync: current locally (%s@%s; cannot fetch origin/%s for %s)\n' "$default_branch" "$current_ref" "$default_branch" "$(basename "$source_path")"
+      return 0
+    fi
+
+    printf 'nest_sync: cannot verify origin/%s for %s\n' "$default_branch" "$(basename "$source_path")"
+    return 1
+  fi
+
+  remote_ref="$(cd "$source_path" && git rev-parse --short "origin/$default_branch" 2>/dev/null || true)"
 
   if [ -n "$source_ref" ] && [ -n "$remote_ref" ] && [ "$source_ref" != "$remote_ref" ]; then
     printf 'nest_sync: stale for %s (generated from %s, origin/%s is %s; run `hydra nest sync %s`)\n' "$project" "$source_ref" "$default_branch" "$remote_ref" "$project"

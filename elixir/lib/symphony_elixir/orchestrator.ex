@@ -15,6 +15,7 @@ defmodule SymphonyElixir.Orchestrator do
   @failure_retry_base_ms 10_000
   @trace_limit 24
   @recovery_file_name ".hydra-recovery.json"
+  @recovery_checkpoint_debounce_ms 100
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -36,6 +37,8 @@ defmodule SymphonyElixir.Orchestrator do
       :poll_check_in_progress,
       :tick_timer_ref,
       :tick_token,
+      :recovery_persist_timer_ref,
+      :recovery_persist_timer_token,
       running: %{},
       completed: MapSet.new(),
       claimed: MapSet.new(),
@@ -63,6 +66,8 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
+      recovery_persist_timer_ref: nil,
+      recovery_persist_timer_token: nil,
       codex_totals: @empty_codex_totals,
       codex_rate_limits: nil
     }
@@ -223,11 +228,22 @@ defmodule SymphonyElixir.Orchestrator do
         {:noreply,
          state
          |> Map.put(:running, Map.put(running, issue_id, updated_running_entry))
-         |> persist_recovery_state()}
+         |> persist_or_schedule_recovery(update)}
     end
   end
 
   def handle_info({:codex_worker_update, _issue_id, _update}, state), do: {:noreply, state}
+
+  def handle_info(
+        {:persist_recovery_state, token},
+        %{recovery_persist_timer_token: token} = state
+      )
+      when is_reference(token) do
+    state = %{state | recovery_persist_timer_ref: nil, recovery_persist_timer_token: nil}
+    {:noreply, persist_recovery_state(state)}
+  end
+
+  def handle_info({:persist_recovery_state, _token}, state), do: {:noreply, state}
 
   def handle_info({:retry_issue, issue_id, retry_token}, state) do
     result =
@@ -1086,6 +1102,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp persist_noreply_state({:noreply, %State{} = state}), do: {:noreply, persist_recovery_state(state)}
 
   defp persist_recovery_state(%State{} = state) do
+    state = cancel_recovery_persist_timer(state)
     path = recovery_file_path()
 
     with :ok <- File.mkdir_p(Path.dirname(path)),
@@ -1097,6 +1114,50 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.warning("Failed to write Hydra recovery checkpoint path=#{path} reason=#{inspect(reason)}")
         state
     end
+  end
+
+  defp persist_or_schedule_recovery(%State{} = state, update) do
+    if recovery_checkpoint_transition?(update) do
+      persist_recovery_state(state)
+    else
+      schedule_recovery_persist(state)
+    end
+  end
+
+  defp recovery_checkpoint_transition?(%{event: event})
+       when event in [
+              :session_started,
+              :startup_failed,
+              :turn_completed,
+              :turn_failed,
+              :turn_cancelled,
+              :turn_ended_with_error,
+              :turn_input_required,
+              :turn_timeout
+            ],
+       do: true
+
+  defp recovery_checkpoint_transition?(_update), do: false
+
+  defp schedule_recovery_persist(%State{recovery_persist_timer_ref: ref} = state)
+       when is_reference(ref),
+       do: state
+
+  defp schedule_recovery_persist(%State{} = state) do
+    token = make_ref()
+    timer_ref = Process.send_after(self(), {:persist_recovery_state, token}, @recovery_checkpoint_debounce_ms)
+
+    %{state | recovery_persist_timer_ref: timer_ref, recovery_persist_timer_token: token}
+  end
+
+  defp cancel_recovery_persist_timer(%State{recovery_persist_timer_ref: ref} = state)
+       when is_reference(ref) do
+    _ = Process.cancel_timer(ref)
+    %{state | recovery_persist_timer_ref: nil, recovery_persist_timer_token: nil}
+  end
+
+  defp cancel_recovery_persist_timer(%State{} = state) do
+    %{state | recovery_persist_timer_ref: nil, recovery_persist_timer_token: nil}
   end
 
   defp recovery_payload(%State{} = state) do
