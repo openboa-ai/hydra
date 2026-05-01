@@ -209,7 +209,8 @@ That plugin is the source of truth for Hydra-specific skills such as `hydra:comm
 
 Nest repositories may include this plugin in their runtime bundles. Target repositories should
 keep only repo-specific instructions and skills; they should not copy Hydra runtime skills into
-application code PRs.
+application code PRs. The plugin is also exposed through the repo marketplace at
+`.agents/plugins/marketplace.json` for local Codex testing.
 
 ### Optional GitHub Sync
 
