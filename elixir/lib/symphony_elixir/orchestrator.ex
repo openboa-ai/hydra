@@ -151,8 +151,10 @@ defmodule SymphonyElixir.Orchestrator do
                 identifier: running_entry.identifier,
                 delay_type: :continuation,
                 worker_host: Map.get(running_entry, :worker_host),
+                worker_backend: Map.get(running_entry, :worker_backend),
                 workspace_path: Map.get(running_entry, :workspace_path),
                 sandbox: Map.get(running_entry, :sandbox),
+                codex_runtime: Map.get(running_entry, :codex_runtime),
                 trace: Map.get(running_entry, :trace, [])
               })
 
@@ -165,8 +167,10 @@ defmodule SymphonyElixir.Orchestrator do
                 identifier: running_entry.identifier,
                 error: "agent exited: #{inspect(reason)}",
                 worker_host: Map.get(running_entry, :worker_host),
+                worker_backend: Map.get(running_entry, :worker_backend),
                 workspace_path: Map.get(running_entry, :workspace_path),
                 sandbox: Map.get(running_entry, :sandbox),
+                codex_runtime: Map.get(running_entry, :codex_runtime),
                 trace: Map.get(running_entry, :trace, [])
               })
           end
@@ -189,14 +193,18 @@ defmodule SymphonyElixir.Orchestrator do
       running_entry ->
         updated_running_entry =
           running_entry
-          |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
+          |> maybe_put_runtime_value(:worker_host, normalize_worker_host(runtime_info[:worker_host]))
+          |> maybe_put_runtime_value(:worker_backend, runtime_info[:worker_backend])
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
           |> maybe_put_runtime_value(:sandbox, runtime_info[:sandbox])
+          |> maybe_put_runtime_value(:codex_runtime, runtime_info[:codex_runtime])
           |> append_trace(:workspace_ready, DateTime.utc_now(), %{
             message: "workspace ready",
-            worker_host: runtime_info[:worker_host],
+            worker_host: normalize_worker_host(runtime_info[:worker_host]),
+            worker_backend: runtime_info[:worker_backend],
             workspace_path: runtime_info[:workspace_path]
           })
+          |> maybe_append_codex_runtime_trace(runtime_info[:codex_runtime])
 
         notify_dashboard()
 
@@ -862,14 +870,17 @@ defmodule SymphonyElixir.Orchestrator do
     identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
+    worker_backend = pick_retry_worker_backend(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
     sandbox = pick_retry_sandbox(previous_retry, metadata)
+    codex_runtime = pick_retry_codex_runtime(previous_retry, metadata)
 
     trace =
       (metadata[:trace] || Map.get(previous_retry, :trace, []))
       |> append_trace(:retry_scheduled, DateTime.utc_now(), %{
         message: error || "retry scheduled",
         worker_host: worker_host,
+        worker_backend: worker_backend,
         workspace_path: workspace_path,
         attempt: next_attempt
       })
@@ -895,8 +906,10 @@ defmodule SymphonyElixir.Orchestrator do
             identifier: identifier,
             error: error,
             worker_host: worker_host,
+            worker_backend: worker_backend,
             workspace_path: workspace_path,
             sandbox: sandbox,
+            codex_runtime: codex_runtime,
             trace: trace
           })
     }
@@ -908,8 +921,11 @@ defmodule SymphonyElixir.Orchestrator do
         metadata = %{
           identifier: Map.get(retry_entry, :identifier),
           error: Map.get(retry_entry, :error),
-          worker_host: Map.get(retry_entry, :worker_host),
+          worker_host: normalize_worker_host(Map.get(retry_entry, :worker_host)),
+          worker_backend: Map.get(retry_entry, :worker_backend),
           workspace_path: Map.get(retry_entry, :workspace_path),
+          sandbox: Map.get(retry_entry, :sandbox),
+          codex_runtime: Map.get(retry_entry, :codex_runtime),
           trace: Map.get(retry_entry, :trace, [])
         }
 
@@ -1044,8 +1060,11 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: entry["identifier"] || issue_id,
           delay_type: :recovery,
           error: "orchestrator restarted while issue was running",
-          worker_host: entry["worker_host"],
+          worker_host: normalize_worker_host(entry["worker_host"]),
+          worker_backend: entry["worker_backend"],
           workspace_path: entry["workspace_path"],
+          sandbox: restore_runtime_map(entry["sandbox"]),
+          codex_runtime: restore_runtime_map(entry["codex_runtime"]),
           trace: restore_trace(entry["recent_events"] || entry["trace"])
         }
 
@@ -1087,8 +1106,11 @@ defmodule SymphonyElixir.Orchestrator do
       due_at_ms: due_at_ms,
       identifier: entry["identifier"] || issue_id,
       error: entry["error"],
-      worker_host: entry["worker_host"],
+      worker_host: normalize_worker_host(entry["worker_host"]),
+      worker_backend: entry["worker_backend"],
       workspace_path: entry["workspace_path"],
+      sandbox: restore_runtime_map(entry["sandbox"]),
+      codex_runtime: restore_runtime_map(entry["codex_runtime"]),
       trace: restore_trace(entry["recent_events"] || entry["trace"])
     }
 
@@ -1176,8 +1198,10 @@ defmodule SymphonyElixir.Orchestrator do
             state: running_issue_state(running_entry),
             retry_attempt: Map.get(running_entry, :retry_attempt, 0),
             worker_host: Map.get(running_entry, :worker_host),
+            worker_backend: Map.get(running_entry, :worker_backend),
             workspace_path: Map.get(running_entry, :workspace_path),
             sandbox: Map.get(running_entry, :sandbox),
+            codex_runtime: Map.get(running_entry, :codex_runtime),
             session_id: Map.get(running_entry, :session_id),
             started_at: iso8601(Map.get(running_entry, :started_at)),
             last_event: event_name(Map.get(running_entry, :last_codex_event)),
@@ -1194,8 +1218,10 @@ defmodule SymphonyElixir.Orchestrator do
             due_at_unix_ms: now_unix_ms + max(0, Map.get(retry, :due_at_ms, now_monotonic_ms) - now_monotonic_ms),
             error: Map.get(retry, :error),
             worker_host: Map.get(retry, :worker_host),
+            worker_backend: Map.get(retry, :worker_backend),
             workspace_path: Map.get(retry, :workspace_path),
             sandbox: Map.get(retry, :sandbox),
+            codex_runtime: Map.get(retry, :codex_runtime),
             recent_events: serialize_trace(Map.get(retry, :trace, []))
           }
         end),
@@ -1260,6 +1286,7 @@ defmodule SymphonyElixir.Orchestrator do
       message: message,
       session_id: entry["session_id"] || entry[:session_id],
       worker_host: entry["worker_host"] || entry[:worker_host],
+      worker_backend: entry["worker_backend"] || entry[:worker_backend],
       workspace_path: entry["workspace_path"] || entry[:workspace_path],
       attempt: entry["attempt"] || entry[:attempt]
     }
@@ -1388,7 +1415,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp pick_retry_worker_host(previous_retry, metadata) do
-    metadata[:worker_host] || Map.get(previous_retry, :worker_host)
+    normalize_worker_host(metadata[:worker_host] || Map.get(previous_retry, :worker_host))
+  end
+
+  defp pick_retry_worker_backend(previous_retry, metadata) do
+    metadata[:worker_backend] || Map.get(previous_retry, :worker_backend)
   end
 
   defp pick_retry_workspace_path(previous_retry, metadata) do
@@ -1398,6 +1429,17 @@ defmodule SymphonyElixir.Orchestrator do
   defp pick_retry_sandbox(previous_retry, metadata) do
     metadata[:sandbox] || Map.get(previous_retry, :sandbox)
   end
+
+  defp pick_retry_codex_runtime(previous_retry, metadata) do
+    metadata[:codex_runtime] || Map.get(previous_retry, :codex_runtime)
+  end
+
+  defp normalize_worker_host("sbx"), do: nil
+  defp normalize_worker_host(worker_host) when is_binary(worker_host) and worker_host != "", do: worker_host
+  defp normalize_worker_host(_worker_host), do: nil
+
+  defp restore_runtime_map(%{} = map), do: map
+  defp restore_runtime_map(_map), do: nil
 
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry
 
@@ -1546,8 +1588,10 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: metadata.identifier,
           state: metadata.issue.state,
           worker_host: Map.get(metadata, :worker_host),
+          worker_backend: Map.get(metadata, :worker_backend),
           workspace_path: Map.get(metadata, :workspace_path),
           sandbox: Map.get(metadata, :sandbox),
+          codex_runtime: Map.get(metadata, :codex_runtime),
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
@@ -1573,8 +1617,10 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: Map.get(retry, :identifier),
           error: Map.get(retry, :error),
           worker_host: Map.get(retry, :worker_host),
+          worker_backend: Map.get(retry, :worker_backend),
           workspace_path: Map.get(retry, :workspace_path),
           sandbox: Map.get(retry, :sandbox),
+          codex_runtime: Map.get(retry, :codex_runtime),
           recent_events: Map.get(retry, :trace, [])
         }
       end)
@@ -1630,7 +1676,9 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_event: if(displayable_update?, do: event, else: Map.get(running_entry, :last_codex_event)),
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         sandbox: Map.get(update, :sandbox) || Map.get(running_entry, :sandbox),
-        worker_host: Map.get(update, :worker_host) || Map.get(running_entry, :worker_host),
+        worker_host: normalize_worker_host(Map.get(update, :worker_host) || Map.get(running_entry, :worker_host)),
+        worker_backend: Map.get(update, :worker_backend) || Map.get(running_entry, :worker_backend),
+        codex_runtime: Map.get(update, :codex_runtime) || Map.get(running_entry, :codex_runtime),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
         codex_total_tokens: codex_total_tokens + token_delta.total_tokens,
@@ -1696,6 +1744,7 @@ defmodule SymphonyElixir.Orchestrator do
         message: StatusDashboard.humanize_codex_message(summary),
         session_id: Map.get(running_entry, :session_id),
         worker_host: Map.get(running_entry, :worker_host),
+        worker_backend: Map.get(running_entry, :worker_backend),
         workspace_path: Map.get(running_entry, :workspace_path)
       })
     else
@@ -1787,6 +1836,21 @@ defmodule SymphonyElixir.Orchestrator do
   defp item_type(item) when is_map(item), do: Map.get(item, "type") || Map.get(item, :type)
   defp item_type(_item), do: nil
 
+  defp maybe_append_codex_runtime_trace(entry, %{} = runtime) do
+    append_trace(entry, :codex_runtime_ready, DateTime.utc_now(), %{
+      message: codex_runtime_trace_message(runtime),
+      workspace_path: Map.get(entry, :workspace_path),
+      worker_host: Map.get(entry, :worker_host),
+      worker_backend: Map.get(entry, :worker_backend)
+    })
+  end
+
+  defp maybe_append_codex_runtime_trace(entry, _runtime), do: entry
+
+  defp codex_runtime_trace_message(runtime) when is_map(runtime) do
+    "codex runtime: AGENTS=#{length(Map.get(runtime, :agents_md, []))} skills=#{length(Map.get(runtime, :skills, []))} agents=#{length(Map.get(runtime, :agents, []))} hooks=#{length(Map.get(runtime, :hooks, []))} plugins=#{length(Map.get(runtime, :plugins, []))} MCP=#{length(Map.get(runtime, :mcp, []))}"
+  end
+
   defp append_trace(%{} = entry, event, timestamp, attrs) do
     trace =
       entry
@@ -1811,6 +1875,7 @@ defmodule SymphonyElixir.Orchestrator do
       message: trace_message(attrs),
       session_id: string_or_nil(attrs[:session_id]),
       worker_host: string_or_nil(attrs[:worker_host]),
+      worker_backend: string_or_nil(attrs[:worker_backend]),
       workspace_path: string_or_nil(attrs[:workspace_path]),
       attempt: attrs[:attempt]
     }
@@ -1829,6 +1894,7 @@ defmodule SymphonyElixir.Orchestrator do
           message: entry[:message] || entry["message"],
           session_id: entry[:session_id] || entry["session_id"],
           worker_host: entry[:worker_host] || entry["worker_host"],
+          worker_backend: entry[:worker_backend] || entry["worker_backend"],
           workspace_path: entry[:workspace_path] || entry["workspace_path"],
           attempt: entry[:attempt] || entry["attempt"]
         }

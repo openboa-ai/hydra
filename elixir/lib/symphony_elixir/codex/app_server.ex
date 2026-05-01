@@ -226,20 +226,22 @@ defmodule SymphonyElixir.Codex.AppServer do
     if is_nil(executable) do
       {:error, :bash_not_found}
     else
-      port =
-        Port.open(
-          {:spawn_executable, String.to_charlist(executable)},
-          [
-            :binary,
-            :exit_status,
-            :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
-            cd: String.to_charlist(workspace),
-            line: @port_line_bytes
-          ]
-        )
+      with :ok <- ensure_codex_project_trust(workspace) do
+        port =
+          Port.open(
+            {:spawn_executable, String.to_charlist(executable)},
+            [
+              :binary,
+              :exit_status,
+              :stderr_to_stdout,
+              args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+              cd: String.to_charlist(workspace),
+              line: @port_line_bytes
+            ]
+          )
 
-      {:ok, port}
+        {:ok, port}
+      end
     end
   end
 
@@ -258,7 +260,8 @@ defmodule SymphonyElixir.Codex.AppServer do
         with :ok <- ensure_sbx_ready(),
              {:ok, create_action} <- prepare_sbx_sandbox(workspace),
              :ok <- maybe_create_sbx_sandbox(create_action, workspace, branch),
-             {:ok, codex_workspace} <- sbx_codex_workspace(workspace, branch) do
+             {:ok, codex_workspace} <- sbx_codex_workspace(workspace, branch),
+             :ok <- ensure_codex_project_trust(codex_workspace) do
           port =
             Port.open(
               {:spawn_executable, String.to_charlist(executable)},
@@ -300,6 +303,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         |> worker_runtime_metadata(worker_host)
         |> Map.put(:workspace_path, workspace)
         |> maybe_put_codex_workspace(workspace, codex_workspace)
+        |> maybe_put_codex_runtime(codex_workspace || workspace)
       else
         %{}
       end
@@ -313,6 +317,185 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp maybe_put_codex_workspace(metadata, _workspace, _codex_workspace), do: metadata
+
+  defp maybe_put_codex_runtime(metadata, workspace) when is_binary(workspace) do
+    Map.put(metadata, :codex_runtime, codex_runtime_snapshot(workspace))
+  end
+
+  defp maybe_put_codex_runtime(metadata, _workspace), do: metadata
+
+  defp codex_runtime_snapshot(workspace) do
+    runtime = codex_runtime_paths(workspace)
+
+    %{
+      scope: "nest+working-repo",
+      workspace: workspace,
+      agents_md: existing_files(runtime.agents_md_paths),
+      skills: skill_names(runtime.skill_roots),
+      agents: toml_names(runtime.agent_roots),
+      hooks: existing_files(runtime.hook_paths),
+      plugins: plugin_names(runtime.plugin_roots),
+      mcp: mcp_server_names(runtime.config_path),
+      trust: trust_config_summary(runtime.config_path, workspace)
+    }
+  end
+
+  defp codex_runtime_paths(workspace) do
+    codex_home = normalize_runtime_env_path(System.get_env("HYDRA_CODEX_HOME"))
+    codex_user_home = normalize_runtime_env_path(System.get_env("HYDRA_CODEX_USER_HOME"))
+    config_path = Path.join(codex_home || "", "config.toml")
+
+    %{
+      config_path: config_path,
+      agents_md_paths: [
+        Path.join(codex_home || "", "AGENTS.override.md"),
+        Path.join(codex_home || "", "AGENTS.md"),
+        Path.join(workspace, "AGENTS.override.md"),
+        Path.join(workspace, "AGENTS.md")
+      ],
+      skill_roots: [Path.join(codex_user_home || "", ".agents/skills"), Path.join(workspace, ".agents/skills")],
+      agent_roots: [Path.join(codex_home || "", "agents"), Path.join(workspace, ".codex/agents")],
+      hook_paths: [
+        Path.join(codex_home || "", "hooks.json"),
+        Path.join(codex_home || "", "hooks/hooks.json"),
+        Path.join(workspace, ".codex/hooks.json")
+      ],
+      plugin_roots: [Path.join(codex_home || "", "plugins"), Path.join(workspace, ".codex/plugins")]
+    }
+  end
+
+  defp existing_files(paths) when is_list(paths) do
+    paths
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.map(&Path.expand/1)
+    |> Enum.filter(&File.regular?/1)
+    |> Enum.uniq()
+    |> Enum.take(40)
+  end
+
+  defp skill_names(roots) when is_list(roots) do
+    roots
+    |> Enum.flat_map(fn root ->
+      if is_binary(root) and File.dir?(root) do
+        root
+        |> File.ls!()
+        |> Enum.filter(&File.regular?(Path.join([root, &1, "SKILL.md"])))
+      else
+        []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.take(80)
+  end
+
+  defp toml_names(roots) when is_list(roots) do
+    roots
+    |> Enum.flat_map(fn root ->
+      if is_binary(root) and File.dir?(root) do
+        root
+        |> File.ls!()
+        |> Enum.filter(&String.ends_with?(&1, ".toml"))
+        |> Enum.map(&Path.rootname/1)
+      else
+        []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.take(80)
+  end
+
+  defp plugin_names(roots) when is_list(roots) do
+    roots
+    |> Enum.flat_map(fn root ->
+      if is_binary(root) and File.dir?(root) do
+        root
+        |> File.ls!()
+        |> Enum.filter(&File.regular?(Path.join([root, &1, ".codex-plugin", "plugin.json"])))
+      else
+        []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.take(80)
+  end
+
+  defp mcp_server_names(config_path) when is_binary(config_path) do
+    with true <- File.regular?(config_path),
+         {:ok, body} <- File.read(config_path) do
+      Regex.scan(~r/^\[mcp_servers\.([^\]]+)\]/m, body)
+      |> Enum.map(fn [_match, name] -> name end)
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.take(80)
+    else
+      _ -> []
+    end
+  end
+
+  defp trust_config_summary(config_path, workspace) when is_binary(config_path) and is_binary(workspace) do
+    project_scope =
+      with true <- File.regular?(config_path),
+           {:ok, body} <- File.read(config_path),
+           true <- String.contains?(body, workspace) do
+        cond do
+          String.contains?(body, "trust_level = \"untrusted\"") -> "untrusted"
+          String.contains?(body, "trust_level = \"trusted\"") -> "trusted"
+          true -> "configured"
+        end
+      else
+        _ -> "missing"
+      end
+
+    %{
+      config: config_path,
+      workspace: workspace,
+      project_scope: project_scope
+    }
+  end
+
+  defp ensure_codex_project_trust(workspace) when is_binary(workspace) do
+    case normalize_runtime_env_path(System.get_env("HYDRA_CODEX_HOME")) do
+      nil ->
+        :ok
+
+      codex_home ->
+        config_path = Path.join(codex_home, "config.toml")
+        trusted_path = Path.expand(workspace)
+        header = ~s([projects."#{toml_escape(trusted_path)}"])
+        block = "\n\n# hydra-generated: target worktree is the Codex project scope\n#{header}\ntrust_level = \"trusted\"\n"
+
+        with :ok <- File.mkdir_p(Path.dirname(config_path)),
+             {:ok, existing} <- read_or_empty(config_path),
+             false <- String.contains?(existing, header),
+             :ok <- File.write(config_path, block, [:append]) do
+          :ok
+        else
+          true ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Failed to update Codex trust config path=#{config_path} reason=#{inspect(reason)}")
+            :ok
+        end
+    end
+  end
+
+  defp read_or_empty(path) do
+    case File.read(path) do
+      {:ok, body} -> {:ok, body}
+      {:error, :enoent} -> {:ok, ""}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp toml_escape(value) when is_binary(value) do
+    value
+    |> String.replace("\\", "\\\\")
+    |> String.replace("\"", "\\\"")
+  end
 
   defp put_port_metadata(port, metadata) when is_port(port) and is_map(metadata) do
     Process.put({__MODULE__, :port_metadata, port}, metadata)
@@ -1528,7 +1711,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   @spec worker_runtime_metadata(Path.t(), String.t() | nil) :: map()
   def worker_runtime_metadata(_workspace, worker_host) when is_binary(worker_host) do
-    %{worker_host: worker_host}
+    %{worker_host: worker_host, worker_backend: "ssh"}
   end
 
   def worker_runtime_metadata(workspace, nil) when is_binary(workspace) do
@@ -1537,7 +1720,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       name = sbx_sandbox_name(workspace)
 
       %{
-        worker_host: "sbx",
+        worker_backend: "sbx",
         sandbox: %{
           name: name,
           agent: worker_config_string(config, "agent", "codex"),
@@ -1549,6 +1732,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           memory: worker_config_string(config, "memory", nil),
           branch: worker_config_string(config, "branch", nil),
           network_policy: worker_config_string(config, "network_policy", nil),
+          network_policy_scope: "global",
           workspace_mounts: sbx_workspace_mounts(workspace)
         }
       }

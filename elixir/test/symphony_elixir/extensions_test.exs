@@ -369,8 +369,10 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "worker_host" => nil,
+                 "worker_backend" => nil,
                  "workspace_path" => nil,
                  "sandbox" => nil,
+                 "codex_runtime" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
                  "last_event" => "notification",
@@ -396,8 +398,10 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
                  "worker_host" => nil,
+                 "worker_backend" => nil,
                  "workspace_path" => nil,
                  "sandbox" => nil,
+                 "codex_runtime" => nil,
                  "recent_events" => [
                    %{
                      "at" => "2026-04-30T00:00:01Z",
@@ -431,8 +435,10 @@ defmodule SymphonyElixir.ExtensionsTest do
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
                "worker_host" => nil,
+               "worker_backend" => nil,
                "workspace_path" => nil,
                "sandbox" => nil,
+               "codex_runtime" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
                "state" => "In Progress",
