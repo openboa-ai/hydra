@@ -47,7 +47,29 @@ development repository. Each `WORKFLOW.md` in `~/.hydra/projects/` is the single
 for metadata, Linear selection, dashboard settings, workspace roots, hooks, and Codex runtime
 policy.
 
-Set up the local home:
+Install Hydra as a local CLI:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh | bash
+```
+
+The installer clones Hydra into `~/.local/share/hydra/hydra`, links `hydra` into
+`~/.local/bin`, and builds the Elixir runtime when `mise` is available. Override locations when
+needed:
+
+```bash
+HYDRA_INSTALL_DIR="$HOME/.hydra-cli" HYDRA_BIN_DIR="$HOME/bin" \
+  bash <(curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh)
+```
+
+Update an installed CLI:
+
+```bash
+hydra update
+hydra version
+```
+
+Set up the local Hydra home:
 
 ```bash
 hydra setup --wizard
@@ -92,9 +114,9 @@ Run Hydra like `codex` or `claude`:
 hydra list
 ```
 
-The `hydra` command is the CLI. During local CLI development, keep the command on `PATH` as a
-symlink to this repository's `hydra` launcher; repo edits are picked up immediately through the
-symlink, so there is no separate install subcommand to rerun.
+The `hydra` command is the CLI. During local CLI development, you may still link a checkout
+directly with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`, but normal users should install
+with `install.sh` and update with `hydra update`.
 
 Run a profile:
 
