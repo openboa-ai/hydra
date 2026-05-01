@@ -1,14 +1,14 @@
 defmodule SymphonyElixirWeb.Endpoint do
   @moduledoc """
-  Phoenix endpoint for Symphony's optional observability UI and API.
+  Phoenix endpoint for Hydra's optional observability UI and API.
   """
 
-  use Phoenix.Endpoint, otp_app: :symphony_elixir
+  use Phoenix.Endpoint, otp_app: :hydra_elixir
 
   @session_options [
     store: :cookie,
-    key: "_symphony_elixir_key",
-    signing_salt: "symphony-session"
+    key: "_hydra_key",
+    signing_salt: "hydra-session"
   ]
 
   socket("/live", Phoenix.LiveView.Socket,

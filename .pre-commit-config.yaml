@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: hydra-apache-compliance
+        name: Hydra Apache 2.0 fork compliance
+        entry: scripts/check-apache-compliance.sh --worktree
+        language: script
+        pass_filenames: false
+      - id: hydra-gitleaks
+        name: Hydra secret scan with gitleaks
+        entry: scripts/check-gitleaks.sh --staged
+        language: script
+        pass_filenames: false

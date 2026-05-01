@@ -5,8 +5,8 @@ defmodule SymphonyElixir.LogFile do
 
   require Logger
 
-  @handler_id :symphony_disk_log
-  @default_log_relative_path "log/symphony.log"
+  @handler_id :hydra_disk_log
+  @default_log_relative_path "log/hydra.log"
   @default_max_bytes 10 * 1024 * 1024
   @default_max_files 5
 
@@ -22,9 +22,9 @@ defmodule SymphonyElixir.LogFile do
 
   @spec configure() :: :ok
   def configure do
-    log_file = Application.get_env(:symphony_elixir, :log_file, default_log_file())
-    max_bytes = Application.get_env(:symphony_elixir, :log_file_max_bytes, @default_max_bytes)
-    max_files = Application.get_env(:symphony_elixir, :log_file_max_files, @default_max_files)
+    log_file = Application.get_env(:hydra_elixir, :log_file, default_log_file())
+    max_bytes = Application.get_env(:hydra_elixir, :log_file_max_bytes, @default_max_bytes)
+    max_files = Application.get_env(:hydra_elixir, :log_file_max_files, @default_max_files)
 
     setup_disk_handler(log_file, max_bytes, max_files)
   end

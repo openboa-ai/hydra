@@ -1,6 +1,6 @@
 defmodule SymphonyElixirWeb.DashboardLive do
   @moduledoc """
-  Live observability dashboard for Symphony.
+  Live observability dashboard for Hydra.
   """
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
@@ -41,17 +41,20 @@ defmodule SymphonyElixirWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
-      <header class="hero-card">
+      <header class="hero-card" style={accent_style(@payload.ui.color)}>
         <div class="hero-grid">
           <div>
             <p class="eyebrow">
-              Symphony Observability
+              <%= @payload.ui.project_name || "Hydra Observability" %>
             </p>
             <h1 class="hero-title">
-              Operations Dashboard
+              <%= @payload.ui.title || "Operations Dashboard" %>
             </h1>
             <p class="hero-copy">
-              Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
+              <%= @payload.ui.description || "Current state, retry pressure, token usage, and orchestration health for the active Hydra runtime." %>
+            </p>
+            <p class="hero-copy mono" :if={@payload.ui.project_slug}>
+              <%= @payload.ui.project_slug %>
             </p>
           </div>
 
@@ -209,6 +212,42 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Execution trace</h2>
+              <p class="section-copy">Recent scheduler, workspace, retry, and Codex events across active work.</p>
+            </div>
+          </div>
+
+          <%= if trace_events(@payload) == [] do %>
+            <p class="empty-state">No execution events recorded yet.</p>
+          <% else %>
+            <div class="trace-list">
+              <article class="trace-row" :for={event <- trace_events(@payload)}>
+                <div class="trace-time mono numeric"><%= event[:at] || "n/a" %></div>
+                <div class="trace-body">
+                  <div class="trace-main">
+                    <span class="issue-id"><%= event[:issue_identifier] %></span>
+                    <span class="state-badge"><%= event[:event] || "event" %></span>
+                  </div>
+                  <div class="trace-message" title={event[:message] || ""}>
+                    <%= event[:message] || "n/a" %>
+                  </div>
+                  <div class="muted event-meta">
+                    <%= if event[:session_id] do %>
+                      session <span class="mono numeric"><%= event[:session_id] %></span>
+                    <% end %>
+                    <%= if event[:workspace_path] do %>
+                      <%= if event[:session_id], do: " · " %>workspace <span class="mono"><%= event[:workspace_path] %></span>
+                    <% end %>
+                  </div>
+                </div>
+              </article>
+            </div>
+          <% end %>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Retry queue</h2>
               <p class="section-copy">Issues waiting for the next retry window.</p>
             </div>
@@ -252,6 +291,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
   end
+
+  defp accent_style(color) when is_binary(color) do
+    trimmed = String.trim(color)
+
+    if Regex.match?(~r/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/, trimmed) do
+      "--instance-accent: #{trimmed};"
+    else
+      nil
+    end
+  end
+
+  defp accent_style(_color), do: nil
 
   defp orchestrator do
     Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
@@ -319,6 +370,28 @@ defmodule SymphonyElixirWeb.DashboardLive do
       String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
       true -> base
     end
+  end
+
+  defp trace_events(payload) do
+    running_events =
+      payload.running
+      |> Enum.flat_map(fn entry ->
+        entry
+        |> Map.get(:recent_events, [])
+        |> Enum.map(&Map.put(&1, :issue_identifier, entry.issue_identifier))
+      end)
+
+    retry_events =
+      payload.retrying
+      |> Enum.flat_map(fn entry ->
+        entry
+        |> Map.get(:recent_events, [])
+        |> Enum.map(&Map.put(&1, :issue_identifier, entry.issue_identifier))
+      end)
+
+    (running_events ++ retry_events)
+    |> Enum.sort_by(&(&1[:at] || ""), :desc)
+    |> Enum.take(40)
   end
 
   defp schedule_runtime_tick do

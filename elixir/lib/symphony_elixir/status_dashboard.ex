@@ -51,6 +51,7 @@ defmodule SymphonyElixir.StatusDashboard do
     :last_tps_value,
     :last_rendered_content,
     :last_rendered_at_ms,
+    :last_rendered_line_count,
     :pending_content,
     :flush_timer_ref,
     :last_snapshot_fingerprint
@@ -63,12 +64,13 @@ defmodule SymphonyElixir.StatusDashboard do
           refresh_ms_override: pos_integer() | nil,
           enabled_override: boolean() | nil,
           render_interval_ms_override: pos_integer() | nil,
-          render_fun: (String.t() -> term()),
+          render_fun: (String.t(), non_neg_integer() | nil -> non_neg_integer()),
           token_samples: [{integer(), integer()}],
           last_tps_second: integer() | nil,
           last_tps_value: float() | nil,
           last_rendered_content: String.t() | nil,
           last_rendered_at_ms: integer() | nil,
+          last_rendered_line_count: non_neg_integer() | nil,
           pending_content: String.t() | nil,
           flush_timer_ref: reference() | nil,
           last_snapshot_fingerprint: term() | nil
@@ -102,8 +104,8 @@ defmodule SymphonyElixir.StatusDashboard do
     observability = Config.settings!().observability
     refresh_ms = refresh_ms_override || observability.refresh_ms
     render_interval_ms = render_interval_ms_override || observability.render_interval_ms
-    render_fun = Keyword.get(opts, :render_fun, &render_to_terminal/1)
-    enabled = resolve_override(enabled_override, observability.dashboard_enabled and dashboard_enabled?())
+    render_fun = normalize_render_fun(Keyword.get(opts, :render_fun))
+    enabled = resolve_override(enabled_override, observability.dashboard_enabled and terminal_dashboard_enabled?())
     schedule_tick(refresh_ms, enabled)
 
     {:ok,
@@ -120,6 +122,7 @@ defmodule SymphonyElixir.StatusDashboard do
        last_tps_value: nil,
        last_rendered_content: nil,
        last_rendered_at_ms: nil,
+       last_rendered_line_count: nil,
        pending_content: nil,
        flush_timer_ref: nil,
        last_snapshot_fingerprint: nil
@@ -128,15 +131,23 @@ defmodule SymphonyElixir.StatusDashboard do
 
   @spec render_offline_status() :: :ok
   def render_offline_status do
+    if terminal_dashboard_disabled?() do
+      :ok
+    else
+      do_render_offline_status()
+    end
+  end
+
+  defp do_render_offline_status do
     content =
       [
-        colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+        colorize("╭─ HYDRA STATUS", @ansi_bold),
         colorize("│ app_status=offline", @ansi_red),
         closing_border()
       ]
       |> Enum.join("\n")
 
-    render_to_terminal(content)
+    render_to_terminal(content, nil)
     :ok
   rescue
     error in [ArgumentError, RuntimeError] ->
@@ -179,9 +190,12 @@ defmodule SymphonyElixir.StatusDashboard do
   defp refresh_runtime_config(%__MODULE__{} = state) do
     observability = Config.settings!().observability
 
+    enabled =
+      resolve_override(state.enabled_override, observability.dashboard_enabled and terminal_dashboard_enabled?())
+
     %{
       state
-      | enabled: resolve_override(state.enabled_override, observability.dashboard_enabled and dashboard_enabled?()),
+      | enabled: enabled,
         refresh_ms: state.refresh_ms_override || observability.refresh_ms,
         render_interval_ms: state.render_interval_ms_override || observability.render_interval_ms
     }
@@ -290,12 +304,13 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp render_content(state, content, now_ms) do
-    state.render_fun.(content)
+    line_count = state.render_fun.(content, state.last_rendered_line_count)
 
     %{
       state
       | last_rendered_content: content,
         last_rendered_at_ms: now_ms,
+        last_rendered_line_count: line_count,
         pending_content: nil,
         flush_timer_ref: nil
     }
@@ -346,9 +361,11 @@ defmodule SymphonyElixir.StatusDashboard do
         running_rows = format_running_rows(running, running_event_width)
         running_to_backoff_spacer = if(running == [], do: [], else: ["│"])
         backoff_rows = format_retry_rows(retrying)
+        ui_lines = format_ui_lines()
 
         ([
-           colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+           colorize("╭─ HYDRA STATUS", @ansi_bold),
+           ui_lines,
            colorize("│ Agents: ", @ansi_bold) <>
              colorize("#{agent_count}", @ansi_green) <>
              colorize("/", @ansi_gray) <>
@@ -363,6 +380,7 @@ defmodule SymphonyElixir.StatusDashboard do
              colorize(" | ", @ansi_gray) <>
              colorize("total #{format_count(codex_total_tokens)}", @ansi_yellow),
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
+           format_sandbox_runtime_line(running, retrying),
            project_link_lines,
            project_refresh_line,
            colorize("├─ Running", @ansi_bold),
@@ -380,7 +398,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
       :error ->
         [
-          colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+          colorize("╭─ HYDRA STATUS", @ansi_bold),
+          format_ui_lines(),
           colorize("│ Orchestrator snapshot unavailable", @ansi_red),
           colorize("│ Throughput: ", @ansi_bold) <> colorize("#{format_tps(tps)} tps", @ansi_cyan),
           format_project_link_lines(),
@@ -391,6 +410,55 @@ defmodule SymphonyElixir.StatusDashboard do
         |> Enum.join("\n")
     end
   end
+
+  defp format_sandbox_runtime_line(running, retrying) do
+    config = Config.settings!().worker.sbx
+
+    if sbx_worker_enabled?(config) do
+      colorize("│ SBX: ", @ansi_bold) <> colorize(format_sandbox_runtime_summary(config, running, retrying), @ansi_cyan)
+    else
+      colorize("│ SBX: ", @ansi_bold) <> colorize("disabled", @ansi_gray)
+    end
+  end
+
+  defp format_sandbox_runtime_summary(config, running, retrying) do
+    case first_sandbox(running) || first_sandbox(retrying) do
+      %{} = sandbox -> format_sandbox_runtime_summary(sandbox)
+      _ -> format_sandbox_runtime_config_summary(config)
+    end
+  end
+
+  defp format_sandbox_runtime_summary(sandbox) do
+    name = sandbox[:name] || sandbox["name"] || "unknown"
+    status = sandbox[:status] || sandbox["status"] || "unknown"
+    policy = sandbox[:network_policy] || sandbox["network_policy"] || "default"
+    "#{name} status=#{status} policy=#{policy}"
+  end
+
+  defp format_sandbox_runtime_config_summary(config) do
+    lifecycle = Map.get(config, "lifecycle", "fresh")
+    policy = Map.get(config, "network_policy", "default")
+    "enabled lifecycle=#{lifecycle} policy=#{policy}"
+  end
+
+  defp sbx_worker_enabled?(config) when is_map(config) do
+    case Map.get(config, "enabled") do
+      true -> true
+      value when is_binary(value) -> String.downcase(String.trim(value)) in ["1", "true", "yes", "on"]
+      _ -> false
+    end
+  end
+
+  defp first_sandbox(entries) when is_list(entries) do
+    Enum.find_value(entries, fn entry ->
+      case Map.get(entry, :sandbox) do
+        %{} = sandbox -> sandbox
+        _ -> nil
+      end
+    end)
+  end
+
+  defp first_sandbox(_entries), do: nil
 
   defp format_project_link_lines do
     project_part =
@@ -412,6 +480,29 @@ defmodule SymphonyElixir.StatusDashboard do
         [project_line]
     end
   end
+
+  defp format_ui_lines do
+    ui = Config.settings!().ui
+    title = display_value(ui.title) || "Hydra"
+    description = display_value(ui.description)
+    color = display_value(ui.color)
+
+    [
+      colorize("│ Instance: ", @ansi_bold) <> colorize(title, @ansi_cyan),
+      if(description, do: colorize("│ Profile: ", @ansi_bold) <> colorize(description, @ansi_dim), else: nil),
+      if(color, do: colorize("│ Color: ", @ansi_bold) <> colorize(color, @ansi_dim), else: nil)
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp display_value(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp display_value(_value), do: nil
 
   defp format_project_refresh_line(%{checking?: true}) do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("checking now…", @ansi_cyan)
@@ -465,14 +556,38 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp render_to_terminal(content) do
-    IO.write([
-      IO.ANSI.home(),
-      IO.ANSI.clear(),
-      normalize_status_lines(content),
-      "\n"
-    ])
+  defp normalize_render_fun(nil), do: &render_to_terminal/2
+
+  defp normalize_render_fun(render_fun) when is_function(render_fun, 1) do
+    fn content, _previous_line_count ->
+      render_fun.(content)
+      terminal_line_count(content)
+    end
   end
+
+  defp normalize_render_fun(render_fun) when is_function(render_fun, 2), do: render_fun
+
+  defp render_to_terminal(content, previous_line_count) do
+    normalized_content = normalize_status_lines(content)
+    line_count = terminal_line_count(normalized_content)
+
+    if is_integer(previous_line_count) and previous_line_count > 0 do
+      IO.write([cursor_up(previous_line_count), "\r\e[J", normalized_content, "\n"])
+    else
+      IO.write([normalized_content, "\n"])
+    end
+
+    line_count
+  end
+
+  defp terminal_line_count(content) when is_binary(content) do
+    content
+    |> normalize_status_lines()
+    |> String.split("\n", trim: false)
+    |> length()
+  end
+
+  defp cursor_up(count) when is_integer(count) and count > 0, do: "\e[#{count}A"
 
   defp update_token_samples(samples, now_ms, total_tokens) do
     prune_graph_samples([{now_ms, total_tokens} | samples], now_ms)
@@ -1438,10 +1553,27 @@ defmodule SymphonyElixir.StatusDashboard do
         map_path(payload, [:params, :item]) ||
         %{}
 
-    item_type = item |> map_value(["type", :type]) |> humanize_item_type()
+    raw_item_type = map_value(item, ["type", :type])
+    item_type = humanize_item_type(raw_item_type)
     item_status = map_value(item, ["status", :status])
     item_id = map_value(item, ["id", :id])
 
+    cond do
+      state == "completed" and raw_item_type in ["agentMessage", :agentMessage] ->
+        case extract_item_text(item) do
+          text when is_binary(text) -> "agent message: #{inline_text(text)}"
+          _ -> item_lifecycle_message(state, item_type, item_id, item_status)
+        end
+
+      raw_item_type in ["commandExecution", :commandExecution] ->
+        humanize_command_lifecycle(state, payload, item_id, item_status)
+
+      true ->
+        item_lifecycle_message(state, item_type, item_id, item_status)
+    end
+  end
+
+  defp item_lifecycle_message(state, item_type, item_id, item_status) do
     details =
       []
       |> append_if_present(short_id(item_id))
@@ -1449,6 +1581,26 @@ defmodule SymphonyElixir.StatusDashboard do
 
     detail_suffix = if details == [], do: "", else: " (#{Enum.join(details, ", ")})"
     "item #{state}: #{item_type}#{detail_suffix}"
+  end
+
+  defp humanize_command_lifecycle(state, payload, item_id, item_status) do
+    command = extract_command(payload)
+    exit_code = extract_command_exit_code(payload)
+
+    base =
+      case {state, command} do
+        {"started", command} when is_binary(command) -> "command started: #{command}"
+        {"completed", command} when is_binary(command) -> "command completed: #{command}"
+        {"started", _command} -> "command started"
+        {"completed", _command} -> "command completed"
+        _ -> item_lifecycle_message(state, "command execution", item_id, item_status)
+      end
+
+    if is_integer(exit_code) do
+      "#{base} (exit #{exit_code})"
+    else
+      base
+    end
   end
 
   defp humanize_codex_wrapper_event("mcp_startup_update", payload) do
@@ -1652,6 +1804,19 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_rate_limit_bucket_summary(_bucket), do: nil
 
+  defp format_error_value(:sbx_not_found), do: "Docker Sandboxes CLI is not installed. Install Docker Sandboxes and run `hydra setup sandbox`."
+  defp format_error_value({:sbx_not_authenticated, message, _diagnostic}), do: message
+  defp format_error_value({:sbx_openai_secret_missing, message, _diagnostic}), do: message
+
+  defp format_error_value({:sbx_remove_failed, message, diagnostic})
+       when is_binary(diagnostic) and diagnostic != "",
+       do: "#{message} #{diagnostic}"
+
+  defp format_error_value({:sbx_readiness_check_failed, message, diagnostic})
+       when is_binary(diagnostic) and diagnostic != "",
+       do: "#{message} #{diagnostic}"
+
+  defp format_error_value({:port_exit, status}), do: "agent process exited with status #{status}"
   defp format_error_value(%{"message" => message}) when is_binary(message), do: message
   defp format_error_value(%{message: message}) when is_binary(message), do: message
   defp format_error_value(error), do: inspect(error, limit: 10)
@@ -1708,21 +1873,67 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
+  defp extract_item_text(%{} = item) do
+    [
+      map_value(item, ["text", :text]),
+      map_value(item, ["message", :message]),
+      map_value(item, ["content", :content])
+    ]
+    |> Enum.find_value(&text_value/1)
+  end
+
+  defp extract_item_text(_item), do: nil
+
+  defp text_value(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp text_value(values) when is_list(values) do
+    parts =
+      values
+      |> Enum.map(&text_value/1)
+      |> Enum.reject(&is_nil/1)
+
+    case parts do
+      [] -> nil
+      parts -> Enum.join(parts, " ")
+    end
+  end
+
+  defp text_value(%{} = value) do
+    text_value(map_value(value, ["text", :text, "content", :content, "message", :message]))
+  end
+
+  defp text_value(_value), do: nil
+
   defp extract_command(payload) do
-    payload
-    |> map_path(["params", "parsedCmd"])
-    |> fallback_command(payload)
-    |> normalize_command()
+    [
+      map_path(payload, ["params", "parsedCmd"]),
+      map_path(payload, ["params", "parsed_cmd"]),
+      map_path(payload, ["params", "command"]),
+      map_path(payload, ["params", "cmd"]),
+      map_path(payload, ["params", "argv"]),
+      map_path(payload, ["params", "args"]),
+      map_path(payload, ["params", "item", "parsedCmd"]),
+      map_path(payload, ["params", "item", "parsed_cmd"]),
+      map_path(payload, ["params", "item", "command"]),
+      map_path(payload, ["params", "item", "cmd"]),
+      map_path(payload, ["params", "item", "argv"]),
+      map_path(payload, ["params", "item", "args"])
+    ]
+    |> Enum.find_value(&normalize_command/1)
   end
 
-  defp fallback_command(nil, payload) do
-    map_path(payload, ["params", "command"]) ||
-      map_path(payload, ["params", "cmd"]) ||
-      map_path(payload, ["params", "argv"]) ||
-      map_path(payload, ["params", "args"])
+  defp extract_command_exit_code(payload) do
+    [
+      map_path(payload, ["params", "exitCode"]),
+      map_path(payload, ["params", "exit_code"]),
+      map_path(payload, ["params", "item", "exitCode"]),
+      map_path(payload, ["params", "item", "exit_code"])
+    ]
+    |> Enum.find_value(&parse_integer/1)
   end
-
-  defp fallback_command(command, _payload), do: command
 
   defp normalize_command(%{} = command) do
     binary_command = map_value(command, ["parsedCmd", :parsedCmd, "command", :command, "cmd", :cmd])
@@ -1930,6 +2141,19 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp truncate(value, _max), do: value
+
+  defp terminal_dashboard_disabled? do
+    Application.get_env(:hydra_elixir, :terminal_dashboard_enabled, :auto) == false
+  end
+
+  defp terminal_dashboard_enabled? do
+    case Application.get_env(:hydra_elixir, :terminal_dashboard_enabled, :auto) do
+      false -> false
+      true -> dashboard_enabled?()
+      :auto -> dashboard_enabled?()
+      _ -> dashboard_enabled?()
+    end
+  end
 
   defp dashboard_enabled? do
     if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do

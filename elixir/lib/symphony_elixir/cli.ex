@@ -1,12 +1,18 @@
 defmodule SymphonyElixir.CLI do
   @moduledoc """
-  Escript entrypoint for running Symphony with an explicit WORKFLOW.md path.
+  Escript entrypoint for running Hydra with an explicit WORKFLOW.md path.
   """
 
   alias SymphonyElixir.LogFile
 
   @acknowledgement_switch :i_understand_that_this_will_be_running_without_the_usual_guardrails
-  @switches [{@acknowledgement_switch, :boolean}, logs_root: :string, port: :integer]
+  @switches [
+    {@acknowledgement_switch, :boolean},
+    logs_root: :string,
+    port: :integer,
+    terminal_dashboard: :boolean,
+    web_dashboard: :boolean
+  ]
 
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
@@ -14,6 +20,8 @@ defmodule SymphonyElixir.CLI do
           set_workflow_file_path: (String.t() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
+          set_terminal_dashboard: (boolean() -> :ok | {:error, term()}),
+          set_web_dashboard: (boolean() -> :ok | {:error, term()}),
           ensure_all_started: (-> ensure_started_result())
         }
 
@@ -35,14 +43,18 @@ defmodule SymphonyElixir.CLI do
       {opts, [], []} ->
         with :ok <- require_guardrails_acknowledgement(opts),
              :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
+             :ok <- maybe_set_server_port(opts, deps),
+             :ok <- maybe_set_terminal_dashboard(opts, deps),
+             :ok <- maybe_set_web_dashboard(opts, deps) do
           run(Path.expand("WORKFLOW.md"), deps)
         end
 
       {opts, [workflow_path], []} ->
         with :ok <- require_guardrails_acknowledgement(opts),
              :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
+             :ok <- maybe_set_server_port(opts, deps),
+             :ok <- maybe_set_terminal_dashboard(opts, deps),
+             :ok <- maybe_set_web_dashboard(opts, deps) do
           run(workflow_path, deps)
         end
 
@@ -63,7 +75,7 @@ defmodule SymphonyElixir.CLI do
           :ok
 
         {:error, reason} ->
-          {:error, "Failed to start Symphony with workflow #{expanded_path}: #{inspect(reason)}"}
+          {:error, "Failed to start Hydra with workflow #{expanded_path}: #{inspect(reason)}"}
       end
     else
       {:error, "Workflow file not found: #{expanded_path}"}
@@ -72,7 +84,7 @@ defmodule SymphonyElixir.CLI do
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    "Usage: hydra [--logs-root <path>] [--port <port>] [--terminal-dashboard|--no-terminal-dashboard] [--web-dashboard|--no-web-dashboard] [path-to-WORKFLOW.md]"
   end
 
   @spec runtime_deps() :: deps()
@@ -82,8 +94,32 @@ defmodule SymphonyElixir.CLI do
       set_workflow_file_path: &SymphonyElixir.Workflow.set_workflow_file_path/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
-      ensure_all_started: fn -> Application.ensure_all_started(:symphony_elixir) end
+      set_terminal_dashboard: &set_terminal_dashboard/1,
+      set_web_dashboard: &set_web_dashboard/1,
+      ensure_all_started: fn -> Application.ensure_all_started(:hydra_elixir) end
     }
+  end
+
+  defp maybe_set_terminal_dashboard(opts, deps) do
+    case Keyword.get_values(opts, :terminal_dashboard) do
+      [] ->
+        :ok
+
+      values ->
+        setter = Map.get(deps, :set_terminal_dashboard, &set_terminal_dashboard/1)
+        :ok = setter.(List.last(values))
+    end
+  end
+
+  defp maybe_set_web_dashboard(opts, deps) do
+    case Keyword.get_values(opts, :web_dashboard) do
+      [] ->
+        :ok
+
+      values ->
+        setter = Map.get(deps, :set_web_dashboard, &set_web_dashboard/1)
+        :ok = setter.(List.last(values))
+    end
   end
 
   defp maybe_set_logs_root(opts, deps) do
@@ -113,9 +149,9 @@ defmodule SymphonyElixir.CLI do
   @spec acknowledgement_banner() :: String.t()
   defp acknowledgement_banner do
     lines = [
-      "This Symphony implementation is a low key engineering preview.",
+      "Hydra orchestrates autonomous repository workflow runs.",
       "Codex will run without any guardrails.",
-      "SymphonyElixir is not a supported product and is presented as-is.",
+      "Hydra is not a supported product and is presented as-is.",
       "To proceed, start with `--i-understand-that-this-will-be-running-without-the-usual-guardrails` CLI argument"
     ]
 
@@ -144,7 +180,7 @@ defmodule SymphonyElixir.CLI do
   end
 
   defp set_logs_root(logs_root) do
-    Application.put_env(:symphony_elixir, :log_file, LogFile.default_log_file(logs_root))
+    Application.put_env(:hydra_elixir, :log_file, LogFile.default_log_file(logs_root))
     :ok
   end
 
@@ -164,8 +200,18 @@ defmodule SymphonyElixir.CLI do
     end
   end
 
+  defp set_terminal_dashboard(enabled) when is_boolean(enabled) do
+    Application.put_env(:hydra_elixir, :terminal_dashboard_enabled, enabled)
+    :ok
+  end
+
+  defp set_web_dashboard(enabled) when is_boolean(enabled) do
+    Application.put_env(:hydra_elixir, :web_dashboard_enabled, enabled)
+    :ok
+  end
+
   defp set_server_port_override(port) when is_integer(port) and port >= 0 do
-    Application.put_env(:symphony_elixir, :server_port_override, port)
+    Application.put_env(:hydra_elixir, :server_port_override, port)
     :ok
   end
 
@@ -173,7 +219,7 @@ defmodule SymphonyElixir.CLI do
   defp wait_for_shutdown do
     case Process.whereis(SymphonyElixir.Supervisor) do
       nil ->
-        IO.puts(:stderr, "Symphony supervisor is not running")
+        IO.puts(:stderr, "Hydra supervisor is not running")
         System.halt(1)
 
       pid ->

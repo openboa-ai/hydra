@@ -85,9 +85,13 @@ defmodule SymphonyElixir.Config do
 
   @spec server_port() :: non_neg_integer() | nil
   def server_port do
-    case Application.get_env(:symphony_elixir, :server_port_override) do
-      port when is_integer(port) and port >= 0 -> port
-      _ -> settings!().server.port
+    if Application.get_env(:hydra_elixir, :web_dashboard_enabled, true) == false do
+      nil
+    else
+      case Application.get_env(:hydra_elixir, :server_port_override) do
+        port when is_integer(port) and port >= 0 -> port
+        _ -> settings!().server.port
+      end
     end
   end
 
@@ -143,6 +147,9 @@ defmodule SymphonyElixir.Config do
 
       {:workflow_parse_error, raw_reason} ->
         "Failed to parse WORKFLOW.md: #{inspect(raw_reason)}"
+
+      {:project_settings_parse_error, settings_path, raw_reason} ->
+        "Failed to parse project settings at #{settings_path}: #{inspect(raw_reason)}"
 
       :workflow_front_matter_not_a_map ->
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"

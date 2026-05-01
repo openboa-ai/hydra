@@ -1,0 +1,39 @@
+name: gitleaks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          checksums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          base_url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+
+          curl -fsSLO "${base_url}/${archive}"
+          curl -fsSLO "${base_url}/${checksums}"
+          grep " ${archive}$" "${checksums}" | sha256sum --check --strict
+
+          mkdir -p "${RUNNER_TEMP}/gitleaks-bin"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}/gitleaks-bin" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks-bin" >> "${GITHUB_PATH}"
+
+      - name: Run gitleaks
+        run: gitleaks git --no-banner --redact .

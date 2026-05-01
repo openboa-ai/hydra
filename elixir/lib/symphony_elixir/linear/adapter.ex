@@ -8,7 +8,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   alias SymphonyElixir.Linear.Client
 
   @create_comment_mutation """
-  mutation SymphonyCreateComment($issueId: String!, $body: String!) {
+  mutation HydraCreateComment($issueId: String!, $body: String!) {
     commentCreate(input: {issueId: $issueId, body: $body}) {
       success
     }
@@ -16,7 +16,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   """
 
   @update_state_mutation """
-  mutation SymphonyUpdateIssueState($issueId: String!, $stateId: String!) {
+  mutation HydraUpdateIssueState($issueId: String!, $stateId: String!) {
     issueUpdate(id: $issueId, input: {stateId: $stateId}) {
       success
     }
@@ -24,7 +24,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   """
 
   @state_lookup_query """
-  query SymphonyResolveStateId($issueId: String!, $stateName: String!) {
+  query HydraResolveStateId($issueId: String!, $stateName: String!) {
     issue(id: $issueId) {
       team {
         states(filter: {name: {eq: $stateName}}, first: 1) {
@@ -74,7 +74,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   end
 
   defp client_module do
-    Application.get_env(:symphony_elixir, :linear_client_module, Client)
+    Application.get_env(:hydra_elixir, :linear_client_module, Client)
   end
 
   defp resolve_state_id(issue_id, state_name) do

@@ -1,8 +1,13 @@
-# Symphony Service Specification
+# Hydra Service Specification
 
-Status: Draft v1 (language-agnostic)
+Status: Draft v1 (language-agnostic, based on OpenAI Symphony)
 
-Purpose: Define a service that orchestrates coding agents to get project work done.
+Purpose: Define Hydra, a modified fork of OpenAI Symphony, as a service that orchestrates coding agents to get project work done.
+
+Provenance: Hydra preserves the core Symphony scheduler/runner model while documenting the
+Hydra-specific operational contract: global CLI profiles, Hydra-managed credentials, Docker
+Sandboxes execution, host-controlled tracker tools, in-sandbox GitHub operations, and checkpoint-assisted recovery. See
+`NOTICE` for upstream attribution.
 
 ## Normative Language
 
@@ -15,17 +20,19 @@ behavior.
 
 ## 1. Problem Statement
 
-Symphony is a long-running automation service that continuously reads work from an issue tracker
+Hydra is a long-running automation service that continuously reads work from an issue tracker
 (Linear in this specification version), creates an isolated workspace for each issue, and runs a
-coding agent session for that issue inside the workspace.
+coding agent session for that issue inside the workspace. Hydra is managed as a global local CLI
+(`hydra`) with project profiles under `~/.hydra/projects/<project>/WORKFLOW.md` by default.
 
 The service solves four operational problems:
 
 - It turns issue execution into a repeatable daemon workflow instead of manual scripts.
 - It isolates agent execution in per-issue workspaces so agent commands run only inside per-issue
   workspace directories.
-- It keeps the workflow policy in-repo (`WORKFLOW.md`) so teams version the agent prompt and runtime
-  settings with their code.
+- It keeps workflow policy in a project profile (`WORKFLOW.md`) so teams version the agent prompt
+  and runtime settings independently from target repository checkouts. Profiles live under
+  `~/.hydra/projects/<project>/` by default and MAY be synchronized through Git.
 - It provides enough observability to operate and debug multiple concurrent agent runs.
 
 Implementations are expected to document their trust and safety posture explicitly. This
@@ -35,9 +42,10 @@ stricter approvals or sandboxing.
 
 Important boundary:
 
-- Symphony is a scheduler/runner and tracker reader.
+- Hydra is a scheduler/runner and tracker reader.
 - Ticket writes (state transitions, comments, PR links) are typically performed by the coding agent
-  using tools available in the workflow/runtime environment.
+  using tools available in the workflow/runtime environment, such as the host-controlled
+  `linear_graphql` dynamic tool and in-sandbox GitHub tooling.
 - A successful run can end at a workflow-defined handoff state (for example `Human Review`), not
   necessarily `Done`.
 
@@ -50,10 +58,10 @@ Important boundary:
 - Create deterministic per-issue workspaces and preserve them across runs.
 - Stop active runs when issue state changes make them ineligible.
 - Recover from transient failures with exponential backoff.
-- Load runtime behavior from a repository-owned `WORKFLOW.md` contract.
+- Load runtime behavior from a Hydra project-profile `WORKFLOW.md` contract.
 - Expose operator-visible observability (at minimum structured logs).
-- Support tracker/filesystem-driven restart recovery without requiring a persistent database; exact
-  in-memory scheduler state is not restored.
+- Support checkpoint-assisted restart recovery without requiring a persistent database; live
+  coding-agent sessions are not restored, but retry/running checkpoints can be requeued.
 
 ### 2.2 Non-Goals
 
@@ -62,9 +70,9 @@ Important boundary:
 - General-purpose workflow engine or distributed job scheduler.
 - Built-in business logic for how to edit tickets, PRs, or comments. (That logic lives in the
   workflow prompt and agent tooling.)
-- Mandating strong sandbox controls beyond what the coding agent and host OS provide.
-- Mandating a single default approval, sandbox, or operator-confirmation posture for all
-  implementations.
+- Requiring target repositories to contain Hydra profile files.
+- Mandating a single approval, sandbox, or operator-confirmation posture for forks beyond the Hydra
+  defaults documented here.
 
 ## 3. System Overview
 
@@ -113,7 +121,7 @@ Important boundary:
 
 ### 3.2 Abstraction Levels
 
-Symphony is easiest to port when kept in these layers:
+Hydra is easiest to port when kept in these layers:
 
 1. `Policy Layer` (repo-defined)
    - `WORKFLOW.md` prompt body.
@@ -286,19 +294,23 @@ Fields:
 - `Session ID`
   - Compose from coding-agent `thread_id` and `turn_id` as `<thread_id>-<turn_id>`.
 
-## 5. Workflow Specification (Repository Contract)
+## 5. Workflow Specification (Hydra Project Profile Contract)
 
 ### 5.1 File Discovery and Path Resolution
 
 Workflow file path precedence:
 
 1. Explicit application/runtime setting (set by CLI startup path).
-2. Default: `WORKFLOW.md` in the current process working directory.
+2. Hydra global profile selected by the launcher: `~/.hydra/projects/<project>/WORKFLOW.md`.
+3. Default for lower-level/direct runtime usage: `WORKFLOW.md` in the current process working
+   directory.
 
 Loader behavior:
 
 - If the file cannot be read, return `missing_workflow_file` error.
-- The workflow file is expected to be repository-owned and version-controlled.
+- The workflow file is expected to be profile-owned. It SHOULD be version-controlled, either in a
+  dedicated profile repository synchronized by Hydra or in a repository-local deployment when that
+  policy is explicitly chosen.
 
 ### 5.2 File Format
 
@@ -307,8 +319,8 @@ Loader behavior:
 Design note:
 
 - `WORKFLOW.md` SHOULD be self-contained enough to describe and run different workflows (prompt,
-  runtime settings, hooks, and tracker selection/config) without requiring out-of-band
-  service-specific configuration.
+  runtime settings, hooks, tracker selection/config, worker mode, and observability settings)
+  without requiring project behavior to be stored in target repository checkouts.
 
 Parsing rules:
 
@@ -323,9 +335,19 @@ Returned workflow object:
 - `config`: front matter root object (not nested under a `config` key).
 - `prompt_template`: trimmed Markdown body.
 
+Hydra profile settings overlay:
+
+- A `settings.yml` file next to `WORKFLOW.md` MAY be used as a small profile overlay for identity,
+  dashboard, Linear project, workspace, and agent limits.
+- Overlay values are merged into the same typed config surface as front matter.
+- `WORKFLOW.md` remains the prompt and runtime contract; `settings.yml` is a convenience layer for
+  profile metadata, not a second scheduler.
+
 ### 5.3 Front Matter Schema
 
 Top-level keys:
+
+Core keys:
 
 - `tracker`
 - `polling`
@@ -333,6 +355,13 @@ Top-level keys:
 - `hooks`
 - `agent`
 - `codex`
+
+Hydra extension keys:
+
+- `worker`
+- `server`
+- `ui`
+- `observability`
 
 Unknown keys SHOULD be ignored for forward compatibility.
 
@@ -376,7 +405,7 @@ Fields:
 Fields:
 
 - `root` (path string or `$VAR`)
-  - Default: `<system-temp>/symphony_workspaces`
+  - Default: `<system-temp>/hydra_workspaces`
   - `~` is expanded.
   - Relative paths are resolved relative to the directory containing `WORKFLOW.md`.
   - The effective workspace root is normalized to an absolute path before use.
@@ -454,6 +483,49 @@ fields locally if they want stricter startup checks.
   - Default: `300000` (5 minutes)
   - If `<= 0`, stall detection is disabled.
 
+#### 5.3.7 `worker` (object, Hydra extension)
+
+Fields:
+
+- `sbx` (object)
+  - Docker Sandboxes worker configuration.
+  - `enabled` (boolean/string boolean)
+    - Default: `false` for lower-level runtime use.
+    - Hydra managed project profiles SHOULD set this to `true` for autonomous runs.
+  - `agent` (string)
+    - Default: `codex`.
+  - `name` (string, OPTIONAL)
+    - Sandbox instance name. When omitted, Hydra derives one from project and workspace.
+  - `branch` (string, OPTIONAL)
+    - Optional Docker Sandboxes branch selector.
+  - `lifecycle` (string, OPTIONAL)
+    - Default: `fresh`. Supported values: `fresh`, `reuse`, `repair`.
+  - `template` (string, OPTIONAL)
+    - Docker Sandboxes template image passed to `sbx create --template`.
+  - `kits` / `kit` (list/string, OPTIONAL)
+    - Docker Sandboxes kit references passed as repeated `--kit` options.
+  - `cpus` (integer/string, OPTIONAL)
+    - CPU allocation passed to `sbx create --cpus`.
+  - `memory` (string, OPTIONAL)
+    - Memory allocation passed to `sbx create --memory`.
+  - `network_policy` (string, OPTIONAL)
+    - Operator-visible Docker Sandboxes policy label. Hydra does not enable Codex shell network access from this value.
+  - `extra_workspaces` (list, OPTIONAL)
+    - Additional host workspaces for `sbx create`. Entries are read-only by default; set `writable: true` to mount read-write.
+  - `startup_timeout_ms` (integer, OPTIONAL)
+    - Default: `120000`. Used as a lower bound for Codex app-server startup responses when Docker Sandboxes cold-starts or pulls images.
+
+Worker policy:
+
+- When `worker.sbx.enabled=true`, Hydra launches the coding agent through Docker Sandboxes.
+- Hydra user-facing setup MUST go through `hydra setup sandbox` or `hydra sandbox ...`.
+- Docker Sandboxes authentication and OpenAI sandbox secret are REQUIRED before dispatch.
+- Hydra CLI MUST expose normal operations through `hydra sandbox doctor|inspect|exec|logs` so operators do not need raw `sbx` commands for routine debugging.
+- Docker Sandboxes network policy is operator-visible metadata; Codex `turn_sandbox_policy.networkAccess` remains disabled by default.
+- GitHub credentials inside Docker Sandboxes are REQUIRED for managed profiles because Hydra's default PR publication path runs `git` and `gh` inside the sandbox branch worktree.
+- Linear credentials remain host-controlled and are exposed to the agent only through the
+  `linear_graphql` dynamic tool.
+
 ### 5.4 Prompt Template Contract
 
 The Markdown body of `WORKFLOW.md` is the per-issue prompt template.
@@ -507,7 +579,9 @@ Configuration is resolved in this order:
 5. Coerce and validate typed values.
 
 Environment variables do not globally override YAML values. They are used only when a config value
-explicitly references them.
+explicitly references them. Hydra's launcher may resolve `hydra auth` credentials into process
+environment variables such as `LINEAR_API_KEY` and `GH_TOKEN`; project profiles should still opt in
+by referencing the corresponding `$VAR` in config where the value is needed.
 
 Value coercion semantics:
 
@@ -577,7 +651,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
-- `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
+- `workspace.root`: path resolved to absolute, default `<system-temp>/hydra_workspaces`; managed
+  profiles SHOULD use `$HYDRA_WORKSPACE_ROOT` supplied by the global launcher
 - `hooks.after_create`: shell script or null
 - `hooks.before_run`: shell script or null
 - `hooks.after_run`: shell script or null
@@ -905,7 +980,7 @@ Invariant 3: Workspace key is sanitized.
 
 ## 10. Agent Runner Protocol (Coding Agent Integration)
 
-This section defines Symphony's language-neutral responsibilities when integrating a Codex
+This section defines Hydra's language-neutral responsibilities when integrating a Codex
 app-server. The Codex app-server protocol for the targeted Codex version is the source of truth for
 protocol schemas, message payloads, transport framing, and method names.
 
@@ -916,7 +991,7 @@ Protocol source of truth:
   instead of treating this specification as a protocol schema.
 - If this specification appears to conflict with the targeted Codex app-server protocol, the Codex
   protocol controls protocol shape and transport behavior.
-- Symphony-specific requirements in this section still control orchestration behavior, workspace
+- Hydra-specific requirements in this section still control orchestration behavior, workspace
   selection, prompt construction, continuation handling, and observability extraction.
 
 ### 10.1 Launch Contract
@@ -942,7 +1017,7 @@ RECOMMENDED additional process settings:
 
 Reference: https://developers.openai.com/codex/app-server/
 
-Startup MUST follow the targeted Codex app-server contract. Symphony additionally requires the
+Startup MUST follow the targeted Codex app-server contract. Hydra additionally requires the
 client to:
 
 - Start the app-server subprocess in the per-issue workspace.
@@ -1055,7 +1130,7 @@ Optional client-side tool extension:
 
 `linear_graphql` extension contract:
 
-- Purpose: execute a raw GraphQL query or mutation against Linear using Symphony's configured
+- Purpose: execute a raw GraphQL query or mutation against Linear using Hydra's configured
   tracker auth for the current session.
 - Availability: only meaningful when `tracker.kind == "linear"` and valid Linear auth is configured.
 - Preferred input shape:
@@ -1076,7 +1151,7 @@ Optional client-side tool extension:
 - Execute one GraphQL operation per tool call.
 - If the provided document contains multiple operations, reject the tool call as invalid input.
 - `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured Linear endpoint and auth from the active Symphony workflow/runtime config; do
+- Reuse the configured Linear endpoint and auth from the active Hydra workflow/runtime config; do
   not require the coding agent to read raw tokens from disk.
 - Tool result semantics:
   - transport success + no top-level GraphQL `errors` -> `success=true`
@@ -1085,6 +1160,7 @@ Optional client-side tool extension:
   - invalid input, missing auth, or transport failure -> `success=false` with an error payload
 - Return the GraphQL response or error payload as structured tool output that the model can inspect
   in-session.
+
 
 User-input-required policy:
 
@@ -1199,7 +1275,7 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+Hydra does not require first-class tracker write APIs in the orchestrator.
 
 - Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
   agent using tools defined by the workflow prompt.
@@ -1363,6 +1439,8 @@ Enablement (extension):
 
 - Start the HTTP server when a CLI `--port` argument is provided.
 - Start the HTTP server when `server.port` is present in `WORKFLOW.md` front matter.
+- The Hydra global launcher enables the browser dashboard by default for managed profiles and may
+  pass an explicit disable flag when the operator requests a terminal-only run.
 - The `server` top-level key is owned by this extension.
 - Positive `server.port` values bind that port.
 - Implementations SHOULD bind loopback by default (`127.0.0.1` or host equivalent) unless explicitly
@@ -1444,7 +1522,7 @@ Minimum endpoints:
       "issue_id": "abc123",
       "status": "running",
       "workspace": {
-        "path": "/tmp/symphony_workspaces/MT-649"
+        "path": "~/.hydra/workspaces/MT-649"
       },
       "attempts": {
         "restart_count": 1,
@@ -1469,7 +1547,7 @@ Minimum endpoints:
         "codex_session_logs": [
           {
             "label": "latest",
-            "path": "/var/log/symphony/codex/MT-649/latest.log",
+            "path": "~/.hydra/logs/MT-649/latest.log",
             "url": null
           }
         ]
@@ -1570,21 +1648,29 @@ API design notes:
 - Dashboard/log failures:
   - Do not crash the orchestrator.
 
-### 14.3 Partial State Recovery (Restart)
+### 14.3 Checkpoint-Assisted State Recovery (Restart)
 
-Current design is intentionally in-memory for scheduler state.
-Restart recovery means the service can resume useful operation by polling tracker state and reusing
-preserved workspaces. It does not mean retry timers, running sessions, or live worker state survive
-process restart.
+Hydra remains an in-memory scheduler at runtime, but it writes a lightweight checkpoint file under
+the configured workspace root as `.hydra-recovery.json`. This file is an operational recovery aid,
+not a durable database.
+
+Restart recovery means the service can resume useful operation by polling tracker state, reusing
+preserved workspaces, and requeuing known interrupted work. It does not mean live coding-agent
+processes or active app-server threads survive process restart.
 
 After restart:
 
-- No retry timers are restored from prior process memory.
-- No running sessions are assumed recoverable.
-- Service recovers by:
+- Live worker processes are assumed dead.
+- Running checkpoints are restored as immediate retry entries with recovery metadata.
+- Retry queue checkpoints are restored with remaining backoff when possible.
+- Token totals and latest rate-limit snapshots MAY be restored for operator continuity.
+- Service recovery still depends on:
   - startup terminal workspace cleanup
   - fresh polling of active issues
-  - re-dispatching eligible work
+  - re-dispatching eligible work into preserved per-issue workspaces
+
+The checkpoint file MUST NOT contain raw credentials. If checkpoint parsing fails, Hydra SHOULD log a
+warning and continue with normal tracker/filesystem-driven recovery.
 
 ### 14.4 Operator Intervention Points
 
@@ -1604,6 +1690,18 @@ Operators can control behavior by:
 ### 15.1 Trust Boundary Assumption
 
 Each implementation defines its own trust boundary.
+
+Hydra's default trust boundary is a local operator-controlled environment with explicit host-side
+credentials and external sandboxing for autonomous agent execution:
+
+- Linear and GitHub runtime credentials are mandatory for managed profiles and are stored through
+  Hydra's auth backend.
+- Hydra MUST NOT silently reuse ChatGPT/Codex app connector tokens or the user's default local GitHub
+  CLI login.
+- Autonomous coding-agent execution SHOULD use Docker Sandboxes (`worker.sbx`).
+- Linear stays host-controlled through `linear_graphql`; GitHub publication runs inside Docker Sandboxes through `git` and `gh` using the sandbox `github` secret.
+- Codex shell network access should remain disabled unless the profile and launcher policy
+  explicitly enable it.
 
 Operational safety requirements:
 
@@ -2091,8 +2189,14 @@ Use the same validation profiles as Section 17:
 - HTTP server extension honors CLI `--port` over `server.port`, uses a safe default bind host, and
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
 - `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
-  app-server session using configured Symphony auth.
-- TODO: Persist retry queue and session metadata across process restarts.
+  app-server session using configured Hydra auth.
+- Docker Sandboxes worker extension (`worker.sbx`) is available for autonomous agent execution,
+  uses branch-mode worktrees for managed issue runs, and is checked by `hydra setup sandbox` /
+  `hydra sandbox status`.
+- Checkpoint-assisted recovery persists retry/running summaries to `.hydra-recovery.json` and
+  requeues interrupted work after restart.
+- TODO: Add durable session metadata beyond the lightweight checkpoint file if production
+  deployments need stronger audit/history guarantees.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.
 - TODO: Add first-class tracker write APIs (comments/state transitions) in the orchestrator instead
@@ -2108,7 +2212,7 @@ Use the same validation profiles as Section 17:
 
 ## Appendix A. SSH Worker Extension (OPTIONAL)
 
-This appendix describes a common extension profile in which Symphony keeps one central
+This appendix describes a common extension profile in which Hydra keeps one central
 orchestrator but executes worker runs on one or more remote hosts over SSH.
 
 Extension config:

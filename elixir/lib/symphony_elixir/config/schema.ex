@@ -90,7 +90,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     @primary_key false
     embedded_schema do
-      field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      field(:root, :string, default: Path.join(System.tmp_dir!(), "hydra_workspaces"))
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -109,12 +109,13 @@ defmodule SymphonyElixir.Config.Schema do
     embedded_schema do
       field(:ssh_hosts, {:array, :string}, default: [])
       field(:max_concurrent_agents_per_host, :integer)
+      field(:sbx, :map, default: %{})
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:ssh_hosts, :max_concurrent_agents_per_host], empty_values: [])
+      |> cast(attrs, [:ssh_hosts, :max_concurrent_agents_per_host, :sbx], empty_values: [])
       |> validate_number(:max_concurrent_agents_per_host, greater_than: 0)
     end
   end
@@ -261,6 +262,26 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule UI do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:project_name, :string)
+      field(:title, :string, default: "Hydra")
+      field(:description, :string)
+      field(:color, :string)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:project_name, :title, :description, :color], empty_values: [])
+    end
+  end
+
   embedded_schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
@@ -271,6 +292,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:ui, UI, on_replace: :update, defaults_to_struct: true)
   end
 
   @spec parse(map()) :: {:ok, %__MODULE__{}} | {:error, {:invalid_workflow_config, String.t()}}
@@ -363,6 +385,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
+    |> cast_embed(:ui, with: &UI.changeset/2)
   end
 
   defp finalize_settings(settings) do
@@ -374,7 +397,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "hydra_workspaces"))
     }
 
     codex = %{
@@ -383,8 +406,69 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    worker = %{
+      settings.worker
+      | sbx: normalize_sbx_config(settings.worker.sbx || %{})
+    }
+
+    %{settings | tracker: tracker, workspace: workspace, worker: worker, codex: codex}
   end
+
+  defp normalize_sbx_config(config) when is_map(config) do
+    normalized = normalize_keys(config)
+
+    defaults = %{
+      "enabled" => false,
+      "agent" => "codex",
+      "lifecycle" => "fresh",
+      "startup_timeout_ms" => 120_000
+    }
+
+    defaults
+    |> Map.merge(normalized)
+    |> normalize_sbx_extra_workspaces()
+  end
+
+  defp normalize_sbx_extra_workspaces(%{} = config) do
+    workspaces =
+      config
+      |> Map.get("extra_workspaces", [])
+      |> List.wrap()
+      |> Enum.map(&normalize_sbx_extra_workspace/1)
+      |> Enum.reject(&is_nil/1)
+
+    Map.put(config, "extra_workspaces", workspaces)
+  end
+
+  defp normalize_sbx_extra_workspace(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      path -> %{"path" => path, "readonly" => true}
+    end
+  end
+
+  defp normalize_sbx_extra_workspace(value) when is_map(value) do
+    value = normalize_keys(value)
+
+    case Map.get(value, "path") do
+      path when is_binary(path) and path != "" ->
+        readonly =
+          cond do
+            Map.get(value, "writable") == true -> false
+            Map.has_key?(value, "readonly") -> Map.get(value, "readonly") != false
+            true -> true
+          end
+
+        value
+        |> Map.put("path", path)
+        |> Map.put("readonly", readonly)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp normalize_sbx_extra_workspace(_value), do: nil
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->
@@ -396,7 +480,28 @@ defmodule SymphonyElixir.Config.Schema do
   defp normalize_keys(value), do: value
 
   defp normalize_optional_map(nil), do: nil
-  defp normalize_optional_map(value) when is_map(value), do: normalize_keys(value)
+
+  defp normalize_optional_map(value) when is_map(value) do
+    value
+    |> normalize_keys()
+    |> normalize_turn_sandbox_policy()
+  end
+
+  defp normalize_turn_sandbox_policy(%{"writableRoots" => roots} = policy) when is_list(roots) do
+    %{policy | "writableRoots" => Enum.map(roots, &resolve_sandbox_path_token/1)}
+  end
+
+  defp normalize_turn_sandbox_policy(policy), do: policy
+
+  defp resolve_sandbox_path_token(value) when is_binary(value) do
+    case normalize_path_token(value) do
+      :missing -> value
+      "" -> value
+      path -> path
+    end
+  end
+
+  defp resolve_sandbox_path_token(value), do: value
 
   defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_key(value), do: to_string(value)
@@ -518,7 +623,7 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp expand_local_workspace_root(_workspace_root) do
-    Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))
+    Path.expand(Path.join(System.tmp_dir!(), "hydra_workspaces"))
   end
 
   defp format_errors(changeset) do

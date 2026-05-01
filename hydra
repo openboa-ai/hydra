@@ -1,0 +1,3113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  hydra run <project> [--allow-network] [--terminal-dashboard|--no-terminal-dashboard] [--web-dashboard|--no-web-dashboard] [-- <hydra-args>]
+  hydra <project> [--allow-network] [--terminal-dashboard|--no-terminal-dashboard] [--web-dashboard|--no-web-dashboard] [-- <hydra-args>]
+  hydra list
+  hydra show <project>
+  hydra check <project>
+  hydra status [project]
+  hydra stop [project]
+  hydra home
+  hydra setup [--wizard|--non-interactive] [--remote <git-remote-url>]
+  hydra setup sandbox [--yes] [--no-github]
+  hydra configure [--section auth|sync|projects]
+  hydra doctor [--fix]
+  hydra init
+  hydra auth status
+  hydra auth login [--provider linear|github] [--method browser|token]
+  hydra auth remove <linear|github>
+  hydra auth import-env
+  hydra sync status
+  hydra sync pull [git-remote-url]
+  hydra sync push [git-remote-url]
+  hydra nest add <git-url> [--name <name>]
+  hydra nest sync [project]
+  hydra nest status
+  hydra nest publish [--source <name>]
+  hydra sandbox status
+  hydra sandbox doctor [project]
+  hydra sandbox inspect <project> <issue>
+  hydra sandbox exec <project> <issue> -- <cmd> [args...]
+  hydra sandbox logs <project> [issue]
+  hydra sandbox install [--yes]
+  hydra sandbox login
+  hydra sandbox openai [--oauth|--token <token>]
+  hydra sandbox github
+
+Projects are loaded from ~/.hydra/projects by default.
+Set HYDRA_HOME to use a different local config root.
+
+Options:
+  --allow-network        Required for workflows that set codex.turn_sandbox_policy.networkAccess=true.
+  --terminal-dashboard   Render the live terminal dashboard. Default: on.
+  --no-terminal-dashboard
+                         Disable the terminal dashboard.
+  --web-dashboard        Start the browser dashboard. Default: on.
+  --no-web-dashboard     Disable the browser dashboard.
+  -h, --help        Show this help.
+
+Examples:
+  hydra list
+  hydra show openboa
+  hydra check openboa
+  hydra status
+  hydra status openboa
+  hydra stop openboa
+  hydra setup --wizard
+  hydra setup sandbox
+  hydra configure
+  hydra doctor
+  hydra auth login
+  hydra auth login --provider github --method browser
+  hydra auth login --provider linear --method token
+  hydra auth status
+  hydra setup git@github.com:openboa-ai/hydra-workflows.git
+  hydra sync push git@github.com:openboa-ai/hydra-workflows.git
+  hydra nest add git@github.com:openboa-ai/nest.git
+  hydra nest sync openboa
+  hydra openboa
+  hydra autokairos
+USAGE
+}
+
+die() {
+  printf 'hydra: %s\n' "$*" >&2
+  exit 1
+}
+
+resolve_script_path() {
+  local source_path="$1"
+  local source_dir
+  local linked_path
+
+  while [ -L "$source_path" ]; do
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    linked_path="$(readlink "$source_path")"
+
+    case "$linked_path" in
+      /*) source_path="$linked_path" ;;
+      *) source_path="$source_dir/$linked_path" ;;
+    esac
+  done
+
+  cd -P "$(dirname "$source_path")" && pwd
+}
+
+default_hydra_home() {
+  if [ -n "${HYDRA_HOME:-}" ]; then
+    case "$HYDRA_HOME" in
+      /*) printf '%s\n' "$HYDRA_HOME" ;;
+      *) printf '%s/%s\n' "$PWD" "$HYDRA_HOME" ;;
+    esac
+    return
+  fi
+
+  [ -n "${HOME:-}" ] || die "HOME is not set; set HYDRA_HOME to your local Hydra config root."
+  printf '%s/.hydra\n' "$HOME"
+}
+
+install_root="$(resolve_script_path "${BASH_SOURCE[0]}")"
+repo_root="$(default_hydra_home)"
+project_dir="$repo_root/projects"
+source_dir="$repo_root/nest/sources"
+runtime_dir="$repo_root/runtime"
+run_dir="$repo_root/run"
+
+list_projects() {
+  [ -d "$project_dir" ] || return 0
+
+  find "$project_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+    | while IFS= read -r candidate; do
+        if [ -f "$candidate/WORKFLOW.md" ]; then
+          basename "$candidate"
+        fi
+      done \
+    | sort
+}
+
+available_projects() {
+  list_projects | paste -sd ', ' -
+}
+
+workflow_path_for() {
+  printf '%s/%s/WORKFLOW.md\n' "$project_dir" "$1"
+}
+
+require_project() {
+  local project="$1"
+  local workflow_path
+  workflow_path="$(workflow_path_for "$project")"
+
+  [ -n "$project" ] || die "project is required. Available projects: $(available_projects)"
+  [ -f "$workflow_path" ] || die "unknown project '$project'. Available projects: $(available_projects)"
+
+  printf '%s\n' "$workflow_path"
+}
+
+workflow_value() {
+  local workflow_path="$1"
+  local key_path="$2"
+
+  awk -v key_path="$key_path" '
+    BEGIN {
+      wanted_count = split(key_path, wanted, ".")
+    }
+
+    NR == 1 && $0 == "---" {
+      in_front_matter = 1
+      next
+    }
+
+    in_front_matter && $0 == "---" {
+      exit
+    }
+
+    !in_front_matter {
+      next
+    }
+
+    /^[[:space:]]*($|#)/ {
+      next
+    }
+
+    {
+      line = $0
+      match(line, /^[ ]*/)
+      indent = RLENGTH
+      content = line
+      sub(/^[ ]*/, "", content)
+
+      if (content ~ /^-/ || content !~ /^[A-Za-z0-9_]+:[[:space:]]*/) {
+        next
+      }
+
+      key = content
+      sub(/:.*/, "", key)
+      value = content
+      sub(/^[^:]+:[[:space:]]*/, "", value)
+
+      depth = int(indent / 2) + 1
+      stack[depth] = key
+      for (i = depth + 1; i <= 10; i++) {
+        delete stack[i]
+      }
+
+      if (depth != wanted_count || value == "") {
+        next
+      }
+
+      for (i = 1; i <= wanted_count; i++) {
+        if (stack[i] != wanted[i]) {
+          next
+        }
+      }
+
+      print clean_value(value)
+      exit
+    }
+
+    function clean_value(value) {
+      sub(/[[:space:]]+#.*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"/, "", value)
+      gsub(/"$/, "", value)
+      gsub(/^'\''/, "", value)
+      gsub(/'\''$/, "", value)
+      return value
+    }
+  ' "$workflow_path"
+}
+
+append_gitignore_pattern() {
+  local pattern="$1"
+  local gitignore_path="$repo_root/.gitignore"
+
+  grep -qxF "$pattern" "$gitignore_path" 2>/dev/null || printf '%s\n' "$pattern" >> "$gitignore_path"
+}
+
+ensure_local_home() {
+  mkdir -p "$project_dir" "$source_dir" "$runtime_dir" "$repo_root/workspaces" "$repo_root/logs" "$repo_root/auth"
+  chmod 700 "$repo_root/auth" 2>/dev/null || true
+  touch "$repo_root/.gitignore"
+
+  append_gitignore_pattern ".env"
+  append_gitignore_pattern "auth/"
+  append_gitignore_pattern "logs/"
+  append_gitignore_pattern "nest/"
+  append_gitignore_pattern "runtime/"
+  append_gitignore_pattern "workspaces/"
+  append_gitignore_pattern ".DS_Store"
+
+  if [ ! -f "$repo_root/config.toml" ]; then
+    cat > "$repo_root/config.toml" <<'EOF'
+# Hydra global local configuration.
+# Project profiles live under projects/<project>/WORKFLOW.md.
+# Secrets are managed with `hydra auth ...`, not this file.
+EOF
+  fi
+}
+
+
+init_local() {
+  ensure_local_home
+  printf 'home: %s\n' "$repo_root"
+  printf 'projects: %s\n' "$project_dir"
+  printf 'config: %s\n' "$repo_root/config.toml"
+  printf 'auth: %s\n' "$repo_root/auth"
+  printf 'workspaces: %s\n' "$repo_root/workspaces"
+  printf 'logs: %s\n' "$repo_root/logs"
+}
+
+auth_key_name() {
+  case "$1" in
+    linear|linear_api_key|LINEAR_API_KEY)
+      printf 'linear_api_key\n'
+      ;;
+    github|github_token|GH_TOKEN|GITHUB_TOKEN)
+      printf 'github_token\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+auth_label() {
+  case "$1" in
+    linear_api_key) printf 'linear\n' ;;
+    github_token) printf 'github\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+auth_file_path() {
+  printf '%s/auth/%s\n' "$repo_root" "$1"
+}
+
+github_cli_config_dir() {
+  printf '%s/auth/github-cli\n' "$repo_root"
+}
+
+keychain_available() {
+  [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && command -v security >/dev/null 2>&1
+}
+
+auth_backend() {
+  case "${HYDRA_AUTH_BACKEND:-auto}" in
+    keychain|file|auto) printf '%s\n' "${HYDRA_AUTH_BACKEND:-auto}" ;;
+    *) die "unsupported HYDRA_AUTH_BACKEND=${HYDRA_AUTH_BACKEND}" ;;
+  esac
+}
+
+read_secret_prompt() {
+  local prompt="$1"
+  local value
+
+  if [ -t 0 ]; then
+    printf '%s' "$prompt" >&2
+    IFS= read -rs value
+    printf '\n' >&2
+  else
+    IFS= read -r value
+  fi
+
+  printf '%s\n' "$value"
+}
+
+select_menu() {
+  local prompt="$1"
+  local selected=0
+  local count
+  local key
+  local rest
+  local i
+  local choice_index
+  shift
+
+  [ -t 0 ] || return 1
+  count="$#"
+  [ "$count" -gt 0 ] || return 1
+  local options=("$@")
+
+  while true; do
+    printf '%s\n' "$prompt" >&2
+    for ((i = 0; i < count; i++)); do
+      if [ "$i" -eq "$selected" ]; then
+        printf '> %s\n' "${options[$i]}" >&2
+      else
+        printf '  %s\n' "${options[$i]}" >&2
+      fi
+    done
+
+    IFS= read -rsn1 key
+
+    case "$key" in
+      ""|" ")
+        printf '%s\n' "${options[$selected]}"
+        return 0
+        ;;
+      $'\033')
+        IFS= read -rsn2 -t 1 rest || rest=""
+        case "$rest" in
+          "[A") selected=$(((selected + count - 1) % count)) ;;
+          "[B") selected=$(((selected + 1) % count)) ;;
+        esac
+        ;;
+      [1-9])
+        choice_index=$((key - 1))
+        if [ "$choice_index" -ge 0 ] && [ "$choice_index" -lt "$count" ]; then
+          printf '%s\n' "${options[$choice_index]}"
+          return 0
+        fi
+        ;;
+      q|Q)
+        printf '\n' >&2
+        return 130
+        ;;
+    esac
+
+    printf '\033[%sA' "$((count + 1))" >&2
+  done
+}
+
+read_text_prompt() {
+  local prompt="$1"
+  local value
+
+  [ -t 0 ] || return 1
+  printf '%s' "$prompt" >&2
+  IFS= read -r value
+  printf '%s\n' "$value"
+}
+
+confirm_menu() {
+  local prompt="$1"
+  local default="${2:-yes}"
+  local answer
+
+  case "$default" in
+    yes)
+      answer="$(select_menu "$prompt" yes no)" || return 1
+      ;;
+    no)
+      answer="$(select_menu "$prompt" no yes)" || return 1
+      ;;
+    *)
+      die "invalid confirm default '$default'"
+      ;;
+  esac
+
+  [ "$answer" = "yes" ]
+}
+
+choose_auth_provider() {
+  select_menu \
+    "Select auth provider (up/down, enter or space):" \
+    github \
+    linear ||
+    die "auth provider is required in non-interactive mode. Use: hydra auth login --provider github --method browser"
+}
+
+choose_github_auth_method() {
+  select_menu \
+    "Select GitHub auth method (up/down, enter or space):" \
+    browser \
+    token ||
+    die "GitHub auth method is required in non-interactive mode. Use: hydra auth login --provider github --method browser"
+}
+
+set_secret_file() {
+  local key="$1"
+  local value="$2"
+  local path
+  path="$(auth_file_path "$key")"
+
+  ensure_local_home
+  umask 077
+  printf '%s' "$value" > "$path"
+  chmod 600 "$path" 2>/dev/null || true
+}
+
+set_secret_keychain() {
+  local key="$1"
+  local value="$2"
+
+  keychain_available || return 1
+  security add-generic-password -a "$key" -s "hydra" -w "$value" -U >/dev/null 2>&1
+}
+
+set_secret() {
+  local key="$1"
+  local value="$2"
+  local backend
+  backend="$(auth_backend)"
+
+  [ -n "$value" ] || die "empty secret is not allowed"
+
+  case "$backend" in
+    keychain)
+      set_secret_keychain "$key" "$value" || die "failed to store $(auth_label "$key") in macOS Keychain"
+      ;;
+    file)
+      set_secret_file "$key" "$value"
+      ;;
+    auto)
+      if ! set_secret_keychain "$key" "$value"; then
+        set_secret_file "$key" "$value"
+      fi
+      ;;
+  esac
+}
+
+get_secret_keychain() {
+  local key="$1"
+
+  keychain_available || return 1
+  security find-generic-password -a "$key" -s "hydra" -w 2>/dev/null
+}
+
+get_secret_file() {
+  local key="$1"
+  local path
+  path="$(auth_file_path "$key")"
+
+  [ -f "$path" ] || return 1
+  cat "$path"
+}
+
+get_secret() {
+  local key="$1"
+  local backend
+  backend="$(auth_backend)"
+
+  case "$backend" in
+    keychain)
+      get_secret_keychain "$key"
+      ;;
+    file)
+      get_secret_file "$key"
+      ;;
+    auto)
+      get_secret_keychain "$key" || get_secret_file "$key"
+      ;;
+  esac
+}
+
+remove_secret() {
+  local key="$1"
+  local path
+  path="$(auth_file_path "$key")"
+
+  if keychain_available; then
+    security delete-generic-password -a "$key" -s "hydra" >/dev/null 2>&1 || true
+  fi
+
+  rm -f "$path"
+
+  if [ "$key" = "github_token" ]; then
+    rm -rf "$(github_cli_config_dir)"
+  fi
+}
+
+secret_is_set() {
+  local key="$1"
+  [ -n "$(get_secret "$key" 2>/dev/null || true)" ]
+}
+
+linear_auth_source() {
+  if secret_is_set linear_api_key; then
+    printf 'hydra\n'
+    return 0
+  fi
+
+  return 1
+}
+
+github_auth_source() {
+  if secret_is_set github_token; then
+    printf 'hydra\n'
+    return 0
+  fi
+
+  return 1
+}
+
+auth_status() {
+  local source
+
+  printf 'auth_backend: %s\n' "$(auth_backend)"
+
+  if source="$(linear_auth_source 2>/dev/null)"; then
+    printf 'linear: set (%s)\n' "$source"
+  else
+    printf 'linear: missing\n'
+  fi
+
+  if source="$(github_auth_source 2>/dev/null)"; then
+    printf 'github: set (%s)\n' "$source"
+  else
+    printf 'github: missing\n'
+  fi
+}
+
+auth_login_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra auth login
+  hydra auth login --provider github --method browser
+  hydra auth login --provider github --method token
+  hydra auth login --provider linear --method token
+
+When provider or method is omitted in a TTY session, Hydra shows an arrow-key menu.
+USAGE
+}
+
+auth_login() {
+  local provider=""
+  local method=""
+  local config_dir
+  local value
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -h|--help)
+        auth_login_usage
+        return 0
+        ;;
+      --provider)
+        [ "$#" -ge 2 ] || die "--provider requires a value"
+        provider="$2"
+        shift 2
+        ;;
+      --provider=*)
+        provider="${1#--provider=}"
+        shift
+        ;;
+      --method)
+        [ "$#" -ge 2 ] || die "--method requires a value"
+        method="$2"
+        shift 2
+        ;;
+      --method=*)
+        method="${1#--method=}"
+        shift
+        ;;
+      --browser)
+        method="browser"
+        shift
+        ;;
+      --token)
+        method="token"
+        shift
+        ;;
+      github|linear)
+        [ -z "$provider" ] || die "provider was already set to '$provider'"
+        provider="$1"
+        shift
+        ;;
+      browser|web|token|pat)
+        [ -z "$method" ] || die "method was already set to '$method'"
+        method="$1"
+        shift
+        ;;
+      *)
+        die "unknown auth login argument '$1'. Use: hydra auth login --provider github --method browser"
+        ;;
+    esac
+  done
+
+  case "$method" in
+    web) method="browser" ;;
+    pat) method="token" ;;
+  esac
+
+  if [ -z "$provider" ]; then
+    provider="$(choose_auth_provider)"
+  fi
+
+  case "$provider" in
+    github)
+      if [ -z "$method" ]; then
+        method="$(choose_github_auth_method)"
+      fi
+
+      if [ "$method" = "token" ]; then
+        value="$(read_secret_prompt "github token: ")"
+        set_secret github_token "$value"
+        printf 'github: set\n'
+        return
+      fi
+
+      [ "$method" = "browser" ] || die "unknown GitHub auth method '$method'. Use: browser or token"
+      command -v gh >/dev/null 2>&1 ||
+        die "GitHub browser auth requires GitHub CLI. Install gh, then run: hydra auth login --provider github --method browser"
+      ensure_local_home
+      config_dir="$(github_cli_config_dir)"
+      rm -rf "$config_dir"
+      mkdir -p "$config_dir"
+      chmod 700 "$config_dir" 2>/dev/null || true
+
+      if ! env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$config_dir" \
+        gh auth login --web --scopes repo,read:org --insecure-storage; then
+        rm -rf "$config_dir"
+        return 1
+      fi
+
+      value="$(env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$config_dir" gh auth token 2>/dev/null || true)"
+      rm -rf "$config_dir"
+      [ -n "$value" ] || die "GitHub browser login completed but no token was returned by gh"
+      set_secret github_token "$value"
+      printf 'github: set\n'
+      ;;
+    linear)
+      case "$method" in
+        ""|token|--token)
+          value="$(read_secret_prompt "linear api key: ")"
+          set_secret linear_api_key "$value"
+          printf 'linear: set\n'
+          ;;
+        browser|--browser|oauth|--oauth)
+          die "Linear browser auth requires a registered Linear OAuth app and callback handler. Use token login for now: hydra auth login --provider linear --method token"
+          ;;
+        *)
+          die "unknown Linear auth method '$method'. Use: token"
+          ;;
+      esac
+      ;;
+    *)
+      die "unknown auth provider '$provider'. Use: github or linear"
+      ;;
+  esac
+}
+
+auth_remove() {
+  local raw_key="${1:-}"
+  local key
+
+  key="$(auth_key_name "$raw_key")" || die "unknown auth key '$raw_key'. Use: linear or github"
+  remove_secret "$key"
+  printf '%s: removed\n' "$(auth_label "$key")"
+}
+
+legacy_env_value() {
+  local env_name="$1"
+  local env_path="$repo_root/.env"
+
+  [ -f "$env_path" ] || return 1
+
+  awk -v key="$env_name" '
+    $0 ~ "^[[:space:]]*" key "=" {
+      value = $0
+      sub("^[[:space:]]*" key "=", "", value)
+      gsub(/^"/, "", value)
+      gsub(/"$/, "", value)
+      gsub(/^'\''/, "", value)
+      gsub(/'\''$/, "", value)
+      print value
+      exit
+    }
+  ' "$env_path"
+}
+
+auth_import_env() {
+  local imported=0
+  local value
+
+  value="${LINEAR_API_KEY:-$(legacy_env_value LINEAR_API_KEY || true)}"
+  if [ -n "$value" ]; then
+    set_secret linear_api_key "$value"
+    printf 'linear: imported\n'
+    imported=1
+  fi
+
+  value="${GH_TOKEN:-${GITHUB_TOKEN:-$(legacy_env_value GH_TOKEN || legacy_env_value GITHUB_TOKEN || true)}}"
+  if [ -n "$value" ]; then
+    set_secret github_token "$value"
+    printf 'github: imported\n'
+    imported=1
+  fi
+
+  if [ "$imported" = "0" ]; then
+    printf 'nothing to import\n'
+  fi
+}
+
+auth_command() {
+  local action="${1:-status}"
+
+  case "$action" in
+    status)
+      auth_status
+      ;;
+    login)
+      shift
+      auth_login "$@"
+      ;;
+    remove|rm|delete)
+      shift
+      auth_remove "${1:-}"
+      ;;
+    import-env)
+      auth_import_env
+      ;;
+    *)
+      die "unknown auth action '$action'. Use: hydra auth status|login|remove|import-env"
+      ;;
+  esac
+}
+
+load_auth() {
+  local value
+
+  value="$(get_secret linear_api_key 2>/dev/null || true)"
+  if [ -n "$value" ]; then
+    export LINEAR_API_KEY="$value"
+  else
+    unset LINEAR_API_KEY
+  fi
+
+  value="$(get_secret github_token 2>/dev/null || true)"
+  if [ -n "$value" ]; then
+    export GH_TOKEN="$value"
+    unset GITHUB_TOKEN
+  else
+    unset GH_TOKEN
+    unset GITHUB_TOKEN
+  fi
+}
+
+github_auth_env_set() {
+  [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]
+}
+
+require_runtime_auth() {
+  local missing=0
+
+  if [ -z "${LINEAR_API_KEY:-}" ]; then
+    printf "hydra: linear auth is required. Run: hydra auth login --provider linear --method token\n" >&2
+    missing=1
+  fi
+
+  if ! github_auth_env_set; then
+    printf "hydra: github auth is required. Run: hydra auth login --provider github --method browser\n" >&2
+    missing=1
+  fi
+
+  [ "$missing" -eq 0 ] || exit 1
+}
+
+ensure_auth_ready() {
+  local legacy_needed=0
+
+  ensure_local_home
+
+  if [ -f "$repo_root/.env" ]; then
+    if ! secret_is_set linear_api_key && [ -n "$(legacy_env_value LINEAR_API_KEY || true)" ]; then
+      legacy_needed=1
+    fi
+
+    if ! github_auth_source >/dev/null 2>&1 &&
+      { [ -n "$(legacy_env_value GH_TOKEN || true)" ] || [ -n "$(legacy_env_value GITHUB_TOKEN || true)" ]; }; then
+      legacy_needed=1
+    fi
+  fi
+
+  if [ "$legacy_needed" = "1" ]; then
+    printf 'legacy_env: %s (ignored; run `hydra auth import-env` to migrate)\n' "$repo_root/.env"
+  fi
+}
+
+print_auth_summary() {
+  local source
+
+  if source="$(linear_auth_source 2>/dev/null)"; then
+    printf 'auth_linear: set (%s)\n' "$source"
+  else
+    printf 'auth_linear: missing (run `hydra auth login --provider linear --method token`)\n'
+  fi
+
+  if source="$(github_auth_source 2>/dev/null)"; then
+    printf 'auth_github: set (%s)\n' "$source"
+  else
+    printf 'auth_github: missing (run `hydra auth login --provider github --method browser`)\n'
+  fi
+}
+
+ensure_setup_auth() {
+  ensure_auth_ready
+  print_auth_summary
+}
+
+print_project_summary() {
+  local count
+  count="$(list_projects | wc -l | tr -d ' ')"
+
+  printf 'projects: %s (%s profiles)\n' "$project_dir" "$count"
+
+  if [ "$count" != "0" ]; then
+    list_projects | sed 's/^/  /'
+  fi
+}
+
+setup_sandbox() {
+  local include_github=1
+  local assume_yes=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --github)
+        include_github=1
+        shift
+        ;;
+      --no-github)
+        include_github=0
+        shift
+        ;;
+      -y|--yes)
+        assume_yes=1
+        shift
+        ;;
+      -h|--help)
+        sandbox_setup_usage
+        return 0
+        ;;
+      *)
+        die "unknown setup sandbox argument '$1'. Use: hydra setup sandbox [--yes] [--no-github]"
+        ;;
+    esac
+  done
+
+  ensure_sbx_installed "$assume_yes"
+  ensure_sbx_logged_in
+
+  if ! sbx_openai_secret_ready; then
+    sandbox_openai_secret --oauth
+  fi
+
+  if [ "$include_github" = "1" ] && ! sbx_github_secret_ready; then
+    sandbox_github_secret
+  fi
+
+  sandbox_status
+}
+
+sandbox_setup_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra setup sandbox [--yes] [--no-github]
+
+Sets up Docker Sandboxes for Hydra profiles:
+  1. Installs the sbx CLI when possible.
+  2. Runs sandbox login through Hydra.
+  3. Configures the required OpenAI sandbox secret.
+  4. Mirrors Hydra's GitHub token into sbx so agents can push and create PRs inside the sandbox.
+     Use --no-github only for profiles that never publish to GitHub from the sandbox.
+USAGE
+}
+
+sandbox_command() {
+  local action="${1:-status}"
+  shift || true
+
+  case "$action" in
+    status|check)
+      sandbox_status "$@"
+      ;;
+    setup)
+      setup_sandbox "$@"
+      ;;
+    install)
+      sandbox_install "$@"
+      ;;
+    login)
+      sandbox_login "$@"
+      ;;
+    openai)
+      sandbox_openai_secret "$@"
+      ;;
+    github)
+      sandbox_github_secret "$@"
+      ;;
+    doctor)
+      sandbox_doctor "$@"
+      ;;
+    inspect)
+      sandbox_inspect "$@"
+      ;;
+    exec)
+      sandbox_exec "$@"
+      ;;
+    logs)
+      sandbox_logs "$@"
+      ;;
+    ls|list)
+      require_sbx_installed
+      sbx ls "$@"
+      ;;
+    policy)
+      require_sbx_installed
+      if [ "$#" -eq 0 ]; then
+        sbx policy ls
+      else
+        sbx policy "$@"
+      fi
+      ;;
+    secrets|secret)
+      require_sbx_installed
+      if [ "$#" -eq 0 ]; then
+        sbx secret ls
+      else
+        sbx secret "$@"
+      fi
+      ;;
+    -h|--help)
+      sandbox_usage
+      ;;
+    *)
+      die "unknown sandbox action '$action'. Use: hydra sandbox status|doctor|inspect|exec|logs|setup|install|login|openai|github|ls|policy|secret"
+      ;;
+  esac
+}
+
+sandbox_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra sandbox status
+  hydra sandbox doctor [project]
+  hydra sandbox inspect <project> <issue>
+  hydra sandbox exec <project> <issue> -- <cmd> [args...]
+  hydra sandbox logs <project> [issue]
+  hydra sandbox setup [--yes] [--no-github]
+  hydra sandbox install [--yes]
+  hydra sandbox login
+  hydra sandbox openai [--oauth|--token <token>]
+  hydra sandbox github
+  hydra sandbox ls
+  hydra sandbox policy [args...]
+  hydra sandbox secret [args...]
+USAGE
+}
+
+setup_local() {
+
+  local remote_url=""
+  local wizard=""
+  local non_interactive=0
+
+  if [ "${1:-}" = "sandbox" ]; then
+    shift
+    setup_sandbox "$@"
+    return
+  fi
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --remote|--pull)
+        [ "$#" -ge 2 ] || die "$1 requires a git remote URL"
+        remote_url="$2"
+        shift 2
+        ;;
+      --remote=*)
+        remote_url="${1#--remote=}"
+        shift
+        ;;
+      --wizard)
+        wizard=1
+        shift
+        ;;
+      --no-wizard)
+        wizard=0
+        shift
+        ;;
+      --non-interactive)
+        non_interactive=1
+        wizard=0
+        shift
+        ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage:
+  hydra setup
+  hydra setup --wizard
+  hydra setup --non-interactive
+  hydra setup <git-remote-url>
+  hydra setup --remote <git-remote-url>
+
+Creates or refreshes the local Hydra home under ~/.hydra by default.
+When a remote URL is provided, setup pulls profile source from that Git remote first.
+In a TTY, setup runs a short first-run wizard unless --non-interactive or --no-wizard is passed.
+USAGE
+        return 0
+        ;;
+      *)
+        if [ -z "$remote_url" ]; then
+          remote_url="$1"
+          shift
+        else
+          die "unknown setup argument: $1"
+        fi
+        ;;
+    esac
+  done
+
+  if [ -z "$wizard" ]; then
+    if [ "$non_interactive" = "0" ] && [ -t 0 ]; then
+      wizard=1
+    else
+      wizard=0
+    fi
+  fi
+
+  if [ -n "$remote_url" ]; then
+    sync_pull "$remote_url"
+  else
+      ensure_local_home
+  fi
+
+  if [ "$wizard" = "1" ]; then
+    setup_wizard
+  fi
+
+  printf 'home: %s\n' "$repo_root"
+  print_project_summary
+  ensure_setup_auth
+  printf 'workspaces: %s\n' "$repo_root/workspaces"
+  printf 'logs: %s\n' "$repo_root/logs"
+
+  if [ -d "$repo_root/.git" ]; then
+    (
+      cd "$repo_root"
+      printf 'remote: %s\n' "$(git remote get-url origin 2>/dev/null || true)"
+    )
+  fi
+}
+
+setup_wizard() {
+  printf 'Hydra first-run setup\n'
+  printf 'home: %s\n' "$repo_root"
+
+  if [ ! -d "$project_dir" ] || [ "$(list_projects | wc -l | tr -d ' ')" = "0" ]; then
+    printf 'projects: none\n'
+    if confirm_menu "Pull project profiles from a Git remote now?" no; then
+      local remote_url
+      remote_url="$(read_text_prompt 'Git remote URL: ')"
+      [ -n "$remote_url" ] || die "Git remote URL is required"
+      sync_pull "$remote_url"
+    fi
+  else
+    print_project_summary
+  fi
+
+  configure_auth
+}
+
+configure_auth() {
+  ensure_local_home
+
+  if ! linear_auth_source >/dev/null 2>&1; then
+    if confirm_menu "Configure Linear auth now?" yes; then
+      auth_login --provider linear --method token
+    fi
+  else
+    printf 'linear: already configured\n'
+  fi
+
+  if ! github_auth_source >/dev/null 2>&1; then
+    if confirm_menu "Configure GitHub auth now?" yes; then
+      auth_login --provider github
+    fi
+  else
+    printf 'github: already configured\n'
+  fi
+}
+
+configure_sync() {
+  local action
+  local remote_url
+
+  ensure_local_home
+  sync_status
+
+  action="$(select_menu "Configure profile sync:" pull push skip)" || die "sync action is required in non-interactive mode"
+  case "$action" in
+    pull)
+      remote_url="$(read_text_prompt 'Git remote URL: ')"
+      [ -n "$remote_url" ] || die "Git remote URL is required"
+      sync_pull "$remote_url"
+      ;;
+    push)
+      remote_url="$(read_text_prompt 'Git remote URL (leave blank to use existing origin): ' || true)"
+      sync_push "$remote_url"
+      ;;
+    skip)
+      printf 'sync: skipped\n'
+      ;;
+  esac
+}
+
+configure_projects() {
+  print_project_summary
+
+  if [ "$(list_projects | wc -l | tr -d ' ')" = "0" ]; then
+    printf 'hint: run `hydra configure --section sync` to pull project profiles from Git.\n'
+  else
+    printf 'hint: run `hydra show <project>` to inspect one profile.\n'
+  fi
+}
+
+configure_command() {
+  local section=""
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --section)
+        [ "$#" -ge 2 ] || die "--section requires a value"
+        section="$2"
+        shift 2
+        ;;
+      --section=*)
+        section="${1#--section=}"
+        shift
+        ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage:
+  hydra configure
+  hydra configure --section auth
+  hydra configure --section sync
+  hydra configure --section projects
+USAGE
+        return 0
+        ;;
+      *)
+        die "unknown configure argument '$1'"
+        ;;
+    esac
+  done
+
+  if [ -z "$section" ]; then
+    section="$(select_menu "Configure Hydra:" auth sync projects)" ||
+      die "configure section is required in non-interactive mode. Use: hydra configure --section auth"
+  fi
+
+  case "$section" in
+    auth) configure_auth ;;
+    sync) configure_sync ;;
+    projects) configure_projects ;;
+    *) die "unknown configure section '$section'. Use: auth, sync, or projects" ;;
+  esac
+}
+
+doctor_command() {
+  local fix=0
+  local failed=0
+  local count
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --fix|--repair)
+        fix=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage:
+  hydra doctor
+  hydra doctor --fix
+
+Checks local Hydra CLI state, profile state, auth state, and runtime prerequisites.
+USAGE
+        return 0
+        ;;
+      *)
+        die "unknown doctor argument '$1'"
+        ;;
+    esac
+  done
+
+  if [ "$fix" = "1" ]; then
+      ensure_local_home
+    chmod 700 "$repo_root/auth" 2>/dev/null || true
+  fi
+
+  if [ -d "$repo_root" ]; then
+    printf 'home: ok (%s)\n' "$repo_root"
+  else
+    printf 'home: missing (%s)\n' "$repo_root"
+    printf 'hint: run `hydra setup --wizard`\n'
+    failed=1
+  fi
+
+  if [ -f "$repo_root/config.toml" ]; then
+    printf 'config: ok\n'
+  else
+    printf 'config: missing\n'
+    if [ "$fix" = "1" ]; then
+      ensure_local_home
+      printf 'config: repaired\n'
+    else
+      failed=1
+    fi
+  fi
+
+  count="$(list_projects | wc -l | tr -d ' ')"
+  if [ "$count" = "0" ]; then
+    printf 'projects: missing\n'
+    printf 'hint: run `hydra setup --wizard` or `hydra configure --section sync`\n'
+    failed=1
+  else
+    printf 'projects: ok (%s profiles)\n' "$count"
+  fi
+
+  if linear_auth_source >/dev/null 2>&1; then
+    printf 'linear_auth: ok\n'
+  else
+    printf 'linear_auth: missing\n'
+    printf 'hint: run `hydra auth login --provider linear --method token`\n'
+    failed=1
+  fi
+
+  if github_auth_source >/dev/null 2>&1; then
+    printf 'github_auth: ok\n'
+  else
+    printf 'github_auth: missing\n'
+    printf 'hint: run `hydra auth login --provider github --method browser`\n'
+    failed=1
+  fi
+
+  if command -v git >/dev/null 2>&1; then
+    printf 'git: ok\n'
+  else
+    printf 'git: missing\n'
+    failed=1
+  fi
+
+  if command -v gh >/dev/null 2>&1; then
+    printf 'gh: ok\n'
+  else
+    printf 'gh: missing (needed for browser GitHub login)\n'
+  fi
+
+  if command -v sbx >/dev/null 2>&1; then
+    printf 'sbx: ok\n'
+  else
+    printf 'sbx: missing (needed for worker.sbx profiles; run `hydra setup sandbox`)\n'
+  fi
+
+  if command -v mise >/dev/null 2>&1; then
+    printf 'mise: ok\n'
+  else
+    printf 'mise: missing (needed to run the Elixir runtime)\n'
+    failed=1
+  fi
+
+  if [ -f "$(runtime_elixir_dir)/mix.exs" ]; then
+    printf 'runtime: ok (%s)\n' "$(runtime_elixir_dir)"
+  else
+    printf 'runtime: missing (%s)\n' "$(runtime_elixir_dir)"
+    failed=1
+  fi
+
+  return "$failed"
+}
+
+ensure_git_repo() {
+  mkdir -p "$repo_root"
+
+  if [ ! -d "$repo_root/.git" ]; then
+    (
+      cd "$repo_root"
+      git init -b main >/dev/null 2>&1 || git init >/dev/null
+      git checkout -B "${HYDRA_SYNC_BRANCH:-main}" >/dev/null 2>&1 || true
+    )
+  fi
+}
+
+set_sync_remote() {
+  local remote_url="${1:-}"
+
+  [ -n "$remote_url" ] || return
+
+  (
+    cd "$repo_root"
+    if git remote get-url origin >/dev/null 2>&1; then
+      git remote set-url origin "$remote_url"
+    else
+      git remote add origin "$remote_url"
+    fi
+  )
+}
+
+require_sync_remote() {
+  (
+    cd "$repo_root"
+    git remote get-url origin >/dev/null 2>&1
+  ) || die "sync remote is not configured. Pass a GitHub remote URL, for example: hydra sync push git@github.com:owner/repo.git"
+}
+
+sync_status() {
+  if [ ! -d "$repo_root/.git" ]; then
+    printf 'home: %s\n' "$repo_root"
+    printf 'sync: not initialized\n'
+    printf 'hint: hydra sync push git@github.com:owner/repo.git\n'
+    return
+  fi
+
+  (
+    cd "$repo_root"
+    printf 'home: %s\n' "$repo_root"
+    printf 'branch: %s\n' "$(git branch --show-current 2>/dev/null || true)"
+    printf 'remote: %s\n' "$(git remote get-url origin 2>/dev/null || true)"
+    git status --short
+  )
+}
+
+sync_pull() {
+  local remote_url="${1:-}"
+  local branch="${HYDRA_SYNC_BRANCH:-main}"
+
+  mkdir -p "$repo_root"
+  ensure_git_repo
+  set_sync_remote "$remote_url"
+  require_sync_remote
+
+  (
+    cd "$repo_root"
+    git pull --ff-only origin "$branch"
+  )
+
+  ensure_local_home
+}
+
+sync_push() {
+  local remote_url="${1:-}"
+  local branch="${HYDRA_SYNC_BRANCH:-main}"
+
+  ensure_local_home
+  ensure_git_repo
+  set_sync_remote "$remote_url"
+  require_sync_remote
+
+  (
+    cd "$repo_root"
+    git add .gitignore config.toml projects
+
+    if ! git diff --cached --quiet; then
+      git commit -m "Update Hydra local profiles"
+    fi
+
+    git push -u origin "$branch"
+  )
+}
+
+sync_command() {
+  local action="${1:-status}"
+
+  case "$action" in
+    status)
+      sync_status
+      ;;
+    pull)
+      shift
+      sync_pull "${1:-}"
+      ;;
+    push)
+      shift
+      sync_push "${1:-}"
+      ;;
+    *)
+      die "unknown sync action '$action'. Use: hydra sync status|pull|push"
+      ;;
+  esac
+}
+
+
+nest_safe_name() {
+  printf '%s\n' "$1" | sed 's/\.git$//; s/[^A-Za-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//'
+}
+
+nest_source_name_from_url() {
+  local url="$1"
+  local stripped
+  stripped="${url%.git}"
+  stripped="${stripped##*/}"
+  nest_safe_name "${stripped:-nest}"
+}
+
+nest_source_dir_for() {
+  printf '%s/%s\n' "$source_dir" "$1"
+}
+
+nest_sources() {
+  [ -d "$source_dir" ] || return 0
+
+  find "$source_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
+}
+
+nest_project_value() {
+  local manifest_path="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ { next }
+    $0 ~ "^[[:space:]]*" key ":[[:space:]]*" {
+      value = $0
+      sub(/^[^:]+:[[:space:]]*/, "", value)
+      print clean_value(value)
+      exit
+    }
+
+    function clean_value(value) {
+      sub(/[[:space:]]+#.*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"/, "", value)
+      gsub(/"$/, "", value)
+      gsub(/^'"'"'/, "", value)
+      gsub(/'"'"'$/, "", value)
+      return value
+    }
+  ' "$manifest_path"
+}
+
+nest_project_extends() {
+  local manifest_path="$1"
+
+  awk '
+    /^[[:space:]]*($|#)/ { next }
+    /^[A-Za-z0-9_.-]+:[[:space:]]*/ {
+      key = $0
+      sub(/:.*/, "", key)
+      in_extends = (key == "extends")
+      next
+    }
+    in_extends && /^[[:space:]]*-[[:space:]]*/ {
+      item = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", item)
+      sub(/^bundle:[[:space:]]*/, "", item)
+      sub(/[[:space:]]+#.*/, "", item)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", item)
+      gsub(/^"/, "", item)
+      gsub(/"$/, "", item)
+      gsub(/^'"'"'/, "", item)
+      gsub(/'"'"'$/, "", item)
+      if (item != "") print item
+    }
+  ' "$manifest_path"
+}
+
+nest_copy_tree() {
+  local source_path="$1"
+  local target_path="$2"
+
+  [ -d "$source_path" ] || return 0
+  mkdir -p "$target_path"
+  cp -R "$source_path"/. "$target_path"/
+}
+
+nest_append_markdown() {
+  local source_path="$1"
+  local target_path="$2"
+  local label="$3"
+
+  [ -f "$source_path" ] || return 0
+  mkdir -p "$(dirname "$target_path")"
+
+  {
+    if [ -s "$target_path" ]; then
+      printf '\n\n'
+    fi
+    printf '<!-- hydra-nest: %s -->\n\n' "$label"
+    cat "$source_path"
+  } >> "$target_path"
+}
+
+nest_append_text() {
+  local source_path="$1"
+  local target_path="$2"
+  local label="$3"
+
+  [ -f "$source_path" ] || return 0
+  mkdir -p "$(dirname "$target_path")"
+
+  {
+    if [ -s "$target_path" ]; then
+      printf '\n\n'
+    fi
+    printf '# hydra-nest: %s\n' "$label"
+    cat "$source_path"
+  } >> "$target_path"
+}
+
+nest_materialize_artifacts_from_dir() {
+  local artifact_dir="$1"
+  local label="$2"
+  local codex_home="$3"
+  local codex_user_home="$4"
+
+  [ -d "$artifact_dir" ] || return 0
+
+  nest_append_markdown "$artifact_dir/AGENTS.md" "$codex_home/AGENTS.md" "$label/AGENTS.md"
+  nest_append_text "$artifact_dir/.codex/config.toml" "$codex_home/config.toml" "$label/.codex/config.toml"
+
+  nest_copy_tree "$artifact_dir/.codex/agents" "$codex_home/agents"
+  nest_copy_tree "$artifact_dir/.codex/hooks" "$codex_home/hooks"
+  nest_copy_tree "$artifact_dir/.codex/mcp" "$codex_home/mcp"
+  nest_copy_tree "$artifact_dir/.codex/plugins" "$codex_home/plugins"
+  nest_copy_tree "$artifact_dir/.codex/skills" "$codex_home/skills"
+
+  nest_copy_tree "$artifact_dir/.agents/agents" "$codex_home/agents"
+  nest_copy_tree "$artifact_dir/.agents/hooks" "$codex_home/hooks"
+  nest_copy_tree "$artifact_dir/.agents/plugins" "$codex_home/plugins"
+  nest_copy_tree "$artifact_dir/.agents/skills" "$codex_home/skills"
+
+  nest_copy_tree "$artifact_dir/.agents" "$codex_user_home/.agents"
+  nest_copy_tree "$artifact_dir/.codex" "$codex_user_home/.codex"
+}
+
+nest_default_branch() {
+  local source_path="$1"
+  local default_branch
+
+  default_branch="$(
+    cd "$source_path" && git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null
+  )"
+  default_branch="${default_branch#origin/}"
+
+  printf '%s\n' "${default_branch:-main}"
+}
+
+nest_pull_source() {
+  local source_path="$1"
+  local default_branch
+
+  [ -d "$source_path/.git" ] || return 0
+
+  (
+    cd "$source_path"
+    if git remote get-url origin >/dev/null 2>&1; then
+      if [ -n "$(git status --porcelain)" ]; then
+        die "Nest source has local changes. Run hydra nest publish --source $(basename "$source_path") or commit/stash before syncing."
+      fi
+
+      default_branch="$(nest_default_branch "$source_path")"
+      git fetch --quiet origin "$default_branch"
+
+      if git show-ref --verify --quiet "refs/heads/$default_branch"; then
+        git checkout --quiet "$default_branch"
+      else
+        git checkout --quiet -B "$default_branch" "origin/$default_branch"
+      fi
+
+      git pull --ff-only --quiet origin "$default_branch"
+    fi
+  )
+}
+
+nest_project_workflow_source() {
+  local source_path="$1"
+  local project_path="$2"
+  local manifest_path="$3"
+  local workflow_rel
+
+  workflow_rel="$(nest_project_value "$manifest_path" "workflow")"
+  workflow_rel="${workflow_rel:-WORKFLOW.md}"
+
+  if [ -f "$project_path/$workflow_rel" ]; then
+    printf '%s/%s\n' "$project_path" "$workflow_rel"
+    return
+  fi
+
+  if [ -f "$source_path/$workflow_rel" ]; then
+    printf '%s/%s\n' "$source_path" "$workflow_rel"
+    return
+  fi
+
+  die "Nest project $(basename "$project_path") references missing workflow '$workflow_rel'."
+}
+
+nest_source_ref() {
+  local source_path="$1"
+
+  if [ -d "$source_path/.git" ]; then
+    (cd "$source_path" && git rev-parse --short HEAD 2>/dev/null) || true
+  fi
+}
+
+nest_resolved_value() {
+  local resolved_path="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    $0 ~ "^" key ":[[:space:]]*" {
+      value = $0
+      sub(/^[^:]+:[[:space:]]*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "$resolved_path"
+}
+
+project_nest_sync_status() {
+  local project="$1"
+  local resolved_path="$project_dir/$project/resolved.yml"
+  local source_path
+  local source_ref
+  local default_branch
+  local current_branch
+  local current_ref
+  local remote_ref
+  local dirty
+
+  if [ ! -f "$resolved_path" ]; then
+    printf 'nest_sync: unmanaged (no resolved.yml)\n'
+    return 0
+  fi
+
+  source_path="$(nest_resolved_value "$resolved_path" "source_path")"
+  source_ref="$(nest_resolved_value "$resolved_path" "source_ref")"
+
+  if [ -z "$source_path" ] || [ ! -d "$source_path/.git" ]; then
+    printf 'nest_sync: source missing for %s (run `hydra nest sync %s`)\n' "$project" "$project"
+    return 1
+  fi
+
+  dirty="$(cd "$source_path" && git status --porcelain)"
+  if [ -n "$dirty" ]; then
+    printf 'nest_sync: source has local changes at %s (run `hydra nest publish --source %s` before running)\n' "$source_path" "$(basename "$source_path")"
+    return 1
+  fi
+
+  default_branch="$(nest_default_branch "$source_path")"
+  current_branch="$(cd "$source_path" && git branch --show-current)"
+  current_ref="$(nest_source_ref "$source_path")"
+
+  if [ "$current_branch" != "$default_branch" ]; then
+    printf 'nest_sync: source on %s, expected %s (run `hydra nest sync %s`)\n' "${current_branch:-detached}" "$default_branch" "$project"
+    return 1
+  fi
+
+  if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" != "$current_ref" ]; then
+    printf 'nest_sync: source moved for %s (generated from %s, local %s is %s; run `hydra nest sync %s`)\n' "$project" "$source_ref" "$default_branch" "$current_ref" "$project"
+    return 1
+  fi
+
+  if ! (cd "$source_path" && git fetch --quiet origin "$default_branch"); then
+    if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" = "$current_ref" ]; then
+      printf 'nest_sync: current locally (%s@%s; cannot fetch origin/%s for %s)\n' "$default_branch" "$current_ref" "$default_branch" "$(basename "$source_path")"
+      return 0
+    fi
+
+    printf 'nest_sync: cannot verify origin/%s for %s\n' "$default_branch" "$(basename "$source_path")"
+    return 1
+  fi
+
+  remote_ref="$(cd "$source_path" && git rev-parse --short "origin/$default_branch" 2>/dev/null || true)"
+
+  if [ -n "$source_ref" ] && [ -n "$remote_ref" ] && [ "$source_ref" != "$remote_ref" ]; then
+    printf 'nest_sync: stale for %s (generated from %s, origin/%s is %s; run `hydra nest sync %s`)\n' "$project" "$source_ref" "$default_branch" "$remote_ref" "$project"
+    return 1
+  fi
+
+  printf 'nest_sync: current (%s@%s)\n' "$default_branch" "${remote_ref:-unknown}"
+  return 0
+}
+
+require_project_nest_current() {
+  local project="$1"
+
+  project_nest_sync_status "$project" || die "$project is not synced with the Nest default branch."
+}
+
+run_project_nest_preflight() {
+  local project="$1"
+
+  project_nest_sync_status "$project" || die "$project is not synced with the Nest default branch."
+}
+
+nest_sync_source_project() {
+  local source_path="$1"
+  local project="$2"
+  local project_path="$source_path/projects/$project"
+  local manifest_path="$project_path/project.yml"
+  local workflow_source
+  local profile_path="$project_dir/$project"
+  local runtime_project_dir="$runtime_dir/$project"
+  local staging_dir="$runtime_project_dir.tmp.$$"
+  local codex_home="$staging_dir/codex-home"
+  local codex_user_home="$staging_dir/home"
+  local bundle
+  local ref
+
+  [ -f "$manifest_path" ] || return 1
+
+  workflow_source="$(nest_project_workflow_source "$source_path" "$project_path" "$manifest_path")"
+  rm -rf "$staging_dir"
+  mkdir -p "$codex_home" "$codex_user_home" "$profile_path"
+
+  while IFS= read -r bundle; do
+    [ -n "$bundle" ] || continue
+    if [ -d "$source_path/bundles/$bundle" ]; then
+      nest_materialize_artifacts_from_dir "$source_path/bundles/$bundle" "bundles/$bundle" "$codex_home" "$codex_user_home"
+    elif [ -d "$source_path/packs/$bundle" ]; then
+      nest_materialize_artifacts_from_dir "$source_path/packs/$bundle" "packs/$bundle" "$codex_home" "$codex_user_home"
+    else
+      die "Nest project $project references missing bundle '$bundle'."
+    fi
+  done < <(nest_project_extends "$manifest_path")
+
+  nest_materialize_artifacts_from_dir "$project_path" "projects/$project" "$codex_home" "$codex_user_home"
+
+  cp "$workflow_source" "$profile_path/WORKFLOW.md"
+  cp "$manifest_path" "$profile_path/project.yml"
+
+  ref="$(nest_source_ref "$source_path")"
+  {
+    printf 'generated_by: hydra nest sync\n'
+    printf 'project: %s\n' "$project"
+    printf 'source_path: %s\n' "$source_path"
+    printf 'source_ref: %s\n' "${ref:-unknown}"
+    printf 'workflow_source: %s\n' "$workflow_source"
+    printf 'codex_home: %s/codex-home\n' "$runtime_project_dir"
+    printf 'codex_user_home: %s/home\n' "$runtime_project_dir"
+    printf 'bundles:\n'
+    while IFS= read -r bundle; do
+      [ -n "$bundle" ] && printf '  - %s\n' "$bundle"
+    done < <(nest_project_extends "$manifest_path")
+  } > "$profile_path/resolved.yml"
+
+  rm -rf "$runtime_project_dir"
+  mv "$staging_dir" "$runtime_project_dir"
+  cp "$profile_path/resolved.yml" "$runtime_project_dir/resolved.yml"
+
+  printf 'synced: %s\n' "$project"
+  return 0
+}
+
+nest_add() {
+  local remote_url="${1:-}"
+  local name=""
+  local source_path
+
+  [ -n "$remote_url" ] || die "usage: hydra nest add <git-url> [--name <name>]"
+  shift || true
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --name)
+        name="${2:-}"
+        [ -n "$name" ] || die "--name requires a value"
+        shift 2
+        ;;
+      *)
+        die "unknown nest add option '$1'"
+        ;;
+    esac
+  done
+
+  ensure_local_home
+  name="$(nest_safe_name "${name:-$(nest_source_name_from_url "$remote_url")}")"
+  [ -n "$name" ] || die "invalid Nest source name"
+  source_path="$(nest_source_dir_for "$name")"
+
+  if [ -d "$source_path/.git" ]; then
+    (
+      cd "$source_path"
+      git remote set-url origin "$remote_url"
+      git pull --ff-only origin "$(git branch --show-current)"
+    )
+  elif [ -e "$source_path" ]; then
+    die "Nest source path exists but is not a git repo: $source_path"
+  else
+    git clone "$remote_url" "$source_path"
+  fi
+
+  printf 'nest_source: %s\n' "$name"
+  printf 'path: %s\n' "$source_path"
+}
+
+nest_sync() {
+  local requested_project="${1:-}"
+  local source_path
+  local project_path
+  local project
+  local found=0
+
+  ensure_local_home
+
+  if [ -z "$(nest_sources)" ]; then
+    die "no Nest sources configured. Run: hydra nest add git@github.com:openboa-ai/nest.git"
+  fi
+
+  while IFS= read -r source_path; do
+    [ -n "$source_path" ] || continue
+    nest_pull_source "$source_path"
+
+    if [ -n "$requested_project" ]; then
+      if nest_sync_source_project "$source_path" "$requested_project"; then
+        found=1
+      fi
+      continue
+    fi
+
+    [ -d "$source_path/projects" ] || continue
+    while IFS= read -r project_path; do
+      project="$(basename "$project_path")"
+      if nest_sync_source_project "$source_path" "$project"; then
+        found=1
+      fi
+    done < <(find "$source_path/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  done < <(nest_sources)
+
+  if [ "$found" -eq 0 ]; then
+    if [ -n "$requested_project" ]; then
+      die "Nest project '$requested_project' was not found in configured sources."
+    fi
+    die "no Nest projects found in configured sources."
+  fi
+}
+
+nest_status() {
+  local source_path
+  local name
+
+  ensure_local_home
+  printf 'home: %s\n' "$repo_root"
+
+  if [ -z "$(nest_sources)" ]; then
+    printf 'nest: no sources configured\n'
+    return
+  fi
+
+  while IFS= read -r source_path; do
+    [ -n "$source_path" ] || continue
+    name="$(basename "$source_path")"
+    printf '\nsource: %s\n' "$name"
+    printf 'path: %s\n' "$source_path"
+    if [ -d "$source_path/.git" ]; then
+      (
+        cd "$source_path"
+        printf 'branch: %s\n' "$(git branch --show-current 2>/dev/null || true)"
+        printf 'remote: %s\n' "$(git remote get-url origin 2>/dev/null || true)"
+        printf 'ref: %s\n' "$(git rev-parse --short HEAD 2>/dev/null || true)"
+        git status --short
+      )
+    else
+      printf 'state: not a git repo\n'
+    fi
+  done < <(nest_sources)
+}
+
+nest_publish() {
+  local source_name=""
+  local source_path=""
+  local branch
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --source)
+        source_name="${2:-}"
+        [ -n "$source_name" ] || die "--source requires a value"
+        shift 2
+        ;;
+      *)
+        die "unknown nest publish option '$1'"
+        ;;
+    esac
+  done
+
+  ensure_local_home
+
+  if [ -n "$source_name" ]; then
+    source_path="$(nest_source_dir_for "$source_name")"
+  else
+    source_path="$(nest_sources | head -n 1)"
+    if [ "$(nest_sources | wc -l | tr -d ' ')" -gt 1 ]; then
+      die "multiple Nest sources configured. Use: hydra nest publish --source <name>"
+    fi
+  fi
+
+  [ -n "$source_path" ] || die "no Nest source configured"
+  [ -d "$source_path/.git" ] || die "Nest source is not a git repo: $source_path"
+  command -v gh >/dev/null 2>&1 || die "gh is required to publish a Nest PR"
+
+  (
+    cd "$source_path"
+    if [ -z "$(git status --porcelain)" ]; then
+      printf 'nest_publish: no changes\n'
+      exit 0
+    fi
+
+    branch="hydra/nest-artifacts-$(date +%Y%m%d-%H%M%S)"
+    git checkout -b "$branch"
+    git add -A
+    git commit -m "Update Hydra runtime artifacts"
+    git push -u origin "$branch"
+    gh pr create --fill
+  )
+}
+
+nest_command() {
+  local action="${1:-status}"
+
+  case "$action" in
+    add)
+      shift
+      nest_add "$@"
+      ;;
+    sync)
+      shift
+      nest_sync "${1:-}"
+      ;;
+    status)
+      nest_status
+      ;;
+    publish)
+      shift
+      nest_publish "$@"
+      ;;
+    *)
+      die "unknown nest action '$action'. Use: hydra nest add|sync|status|publish"
+      ;;
+  esac
+}
+
+workflow_repo_url() {
+  workflow_value "$1" "project.repo"
+}
+
+workflow_requires_network() {
+  grep -q 'networkAccess:[[:space:]]*true' "$1"
+}
+
+
+workflow_uses_sbx_worker() {
+  local enabled
+  enabled="$(workflow_value "$1" "worker.sbx.enabled" | tr '[:upper:]' '[:lower:]')"
+
+  case "$enabled" in
+    true|1|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+workflow_worker_backend() {
+  local workflow_path="$1"
+
+  if workflow_uses_sbx_worker "$workflow_path"; then
+    printf 'sbx\n'
+  else
+    printf 'local\n'
+  fi
+}
+
+sbx_secret_set() {
+  local service="$1"
+  local output
+
+  command -v sbx >/dev/null 2>&1 || return 2
+  output="$(sbx secret ls 2>/dev/null)" || return 3
+  printf '%s\n' "$output" | awk -v service="$service" '
+    BEGIN { found = 0 }
+    tolower($0) ~ "(^|[[:space:]])" service "([[:space:]]|$)" { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+sbx_openai_secret_ready() {
+  sbx_secret_set openai
+}
+
+sbx_github_secret_ready() {
+  sbx_secret_set github
+}
+
+require_sbx_installed() {
+  command -v sbx >/dev/null 2>&1 || die "sbx is not installed. Run: hydra sandbox install"
+}
+
+sandbox_install() {
+  local assume_yes=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -y|--yes)
+        assume_yes=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage:\n  hydra sandbox install [--yes]\n'
+        return 0
+        ;;
+      *)
+        die "unknown sandbox install argument '$1'. Use: hydra sandbox install [--yes]"
+        ;;
+    esac
+  done
+
+  if command -v sbx >/dev/null 2>&1; then
+    printf 'sbx: ok (%s)\n' "$(command -v sbx)"
+    return 0
+  fi
+
+  [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] ||
+    die "automatic Docker Sandboxes installation is currently supported only on macOS. Install Docker Sandboxes, then rerun: hydra setup sandbox"
+
+  command -v brew >/dev/null 2>&1 ||
+    die "Homebrew is required for Hydra to install Docker Sandboxes automatically. Install Homebrew, then rerun: hydra setup sandbox"
+
+  if [ "$assume_yes" != "1" ]; then
+    if [ -t 0 ]; then
+      confirm_menu "Install Docker Sandboxes now?" yes || die "sandbox install cancelled"
+    else
+      die "non-interactive sandbox install requires --yes. Run: hydra sandbox install --yes"
+    fi
+  fi
+
+  brew install docker/tap/sbx
+  command -v sbx >/dev/null 2>&1 || die "Docker Sandboxes install finished but sbx is still not on PATH"
+  printf 'sbx: installed (%s)\n' "$(command -v sbx)"
+}
+
+ensure_sbx_installed() {
+  local assume_yes="${1:-0}"
+
+  if command -v sbx >/dev/null 2>&1; then
+    printf 'sbx: ok (%s)\n' "$(command -v sbx)"
+    return 0
+  fi
+
+  if [ "$assume_yes" = "1" ]; then
+    sandbox_install --yes
+  else
+    sandbox_install
+  fi
+}
+
+sandbox_login() {
+  require_sbx_installed
+  sbx login "$@"
+}
+
+ensure_sbx_logged_in() {
+  require_sbx_installed
+
+  if sbx secret ls >/dev/null 2>&1; then
+    printf 'sbx_login: ok\n'
+    return 0
+  fi
+
+  printf 'sbx_login: required\n'
+  sandbox_login
+}
+
+sandbox_openai_secret() {
+  local mode="oauth"
+  local token=""
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --oauth|oauth)
+        mode="oauth"
+        shift
+        ;;
+      --token|-t)
+        [ "$#" -ge 2 ] || die "$1 requires a token value"
+        mode="token"
+        token="$2"
+        shift 2
+        ;;
+      --token=*)
+        mode="token"
+        token="${1#--token=}"
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage:\n  hydra sandbox openai [--oauth|--token <token>]\n'
+        return 0
+        ;;
+      *)
+        die "unknown sandbox openai argument '$1'. Use: hydra sandbox openai [--oauth|--token <token>]"
+        ;;
+    esac
+  done
+
+  require_sbx_installed
+  ensure_sbx_logged_in
+
+  case "$mode" in
+    oauth)
+      sbx secret set -g openai --oauth
+      ;;
+    token)
+      [ -n "$token" ] || token="$(read_secret_prompt "openai api key: ")"
+      sbx secret set -g openai -t "$token"
+      ;;
+  esac
+
+  printf 'sbx_openai: set\n'
+}
+
+sandbox_github_secret() {
+  local token=""
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --token|-t)
+        [ "$#" -ge 2 ] || die "$1 requires a token value"
+        token="$2"
+        shift 2
+        ;;
+      --token=*)
+        token="${1#--token=}"
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage:\n  hydra sandbox github [--token <token>]\n'
+        return 0
+        ;;
+      *)
+        die "unknown sandbox github argument '$1'. Use: hydra sandbox github [--token <token>]"
+        ;;
+    esac
+  done
+
+  require_sbx_installed
+  ensure_sbx_logged_in
+
+  if [ -z "$token" ]; then
+    token="$(get_secret github_token 2>/dev/null || true)"
+  fi
+
+  [ -n "$token" ] || die "Hydra GitHub auth is missing. Run: hydra auth login --provider github --method browser"
+  sbx secret set -g github -t "$token"
+  printf 'sbx_github: set\n'
+}
+
+safe_sbx_name_part() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//'
+}
+
+sandbox_name_for() {
+  local project="$1"
+  local workflow_path="$2"
+  local issue="$3"
+  local configured_name
+  configured_name="$(workflow_value "$workflow_path" "worker.sbx.name")"
+
+  if [ -n "$configured_name" ]; then
+    printf '%s\n' "$configured_name"
+    return
+  fi
+
+  printf 'hydra-%s-%s\n' "$(safe_sbx_name_part "$project")" "$(safe_sbx_name_part "$issue")"
+}
+
+sandbox_issue_workspace() {
+  local project="$1"
+  local workflow_path="$2"
+  local issue="$3"
+  printf '%s/%s\n' "$(workspace_root_for "$project" "$workflow_path")" "$issue"
+}
+
+sandbox_line_for_name() {
+  local name="$1"
+  require_sbx_installed
+  sbx ls 2>/dev/null | awk -v wanted="$name" '$1 == wanted { print; found=1 } END { exit(found ? 0 : 1) }'
+}
+
+sandbox_doctor() {
+  local project="${1:-}"
+  local workflow_path=""
+  local failed=0
+
+  require_sbx_installed
+  printf 'sbx_path: %s\n' "$(command -v sbx)"
+  sbx version 2>/dev/null | sed 's/^/sbx_version: /' || failed=1
+
+  if ! sandbox_status; then
+    failed=1
+  fi
+
+  if [ -n "$project" ]; then
+    workflow_path="$(require_project "$project")"
+    printf 'project: %s\n' "$project"
+    printf 'worker_backend: %s\n' "$(workflow_worker_backend "$workflow_path")"
+    printf 'sbx_lifecycle: %s\n' "$(workflow_value "$workflow_path" "worker.sbx.lifecycle")"
+    printf 'sbx_agent: %s\n' "$(workflow_value "$workflow_path" "worker.sbx.agent")"
+    printf 'sbx_template: %s\n' "$(workflow_value "$workflow_path" "worker.sbx.template")"
+    printf 'sbx_network_policy: %s\n' "$(workflow_value "$workflow_path" "worker.sbx.network_policy")"
+    printf 'workspace_root: %s\n' "$(workspace_root_for "$project" "$workflow_path")"
+  fi
+
+  printf 'sbx_sandboxes:\n'
+  sbx ls 2>/dev/null | sed 's/^/  /' || failed=1
+
+  printf 'sbx_policies:\n'
+  sbx policy ls 2>/dev/null | sed 's/^/  /' || true
+
+  printf 'sbx_policy_log:\n'
+  sbx policy log 2>/dev/null | tail -20 | sed 's/^/  /' || true
+
+  printf 'sbx_diagnose:\n'
+  sbx diagnose 2>/dev/null | sed 's/^/  /' || true
+
+  return "$failed"
+}
+
+sandbox_inspect() {
+  local project="${1:-}"
+  local issue="${2:-}"
+  local workflow_path
+  local name
+  local workspace
+  local line
+
+  [ -n "$project" ] || die "project is required. Use: hydra sandbox inspect <project> <issue>"
+  [ -n "$issue" ] || die "issue is required. Use: hydra sandbox inspect <project> <issue>"
+  require_sbx_installed
+  workflow_path="$(require_project "$project")"
+  name="$(sandbox_name_for "$project" "$workflow_path" "$issue")"
+  workspace="$(sandbox_issue_workspace "$project" "$workflow_path" "$issue")"
+
+  printf 'project: %s\n' "$project"
+  printf 'issue: %s\n' "$issue"
+  printf 'sandbox_name: %s\n' "$name"
+  printf 'workspace: %s\n' "$workspace"
+  printf 'worker_backend: %s\n' "$(workflow_worker_backend "$workflow_path")"
+  printf 'network_policy: %s\n' "$(workflow_value "$workflow_path" "worker.sbx.network_policy")"
+
+  if line="$(sandbox_line_for_name "$name" 2>/dev/null)"; then
+    printf 'sandbox_status: %s\n' "$line"
+  else
+    printf 'sandbox_status: missing\n'
+  fi
+}
+
+sandbox_exec() {
+  local project="${1:-}"
+  local issue="${2:-}"
+  local workflow_path
+  local name
+  local workspace
+
+  [ -n "$project" ] || die "project is required. Use: hydra sandbox exec <project> <issue> -- <cmd>"
+  [ -n "$issue" ] || die "issue is required. Use: hydra sandbox exec <project> <issue> -- <cmd>"
+  shift 2
+  if [ "${1:-}" = "--" ]; then
+    shift
+  fi
+  [ "$#" -gt 0 ] || die "command is required. Use: hydra sandbox exec <project> <issue> -- <cmd>"
+
+  require_sbx_installed
+  workflow_path="$(require_project "$project")"
+  name="$(sandbox_name_for "$project" "$workflow_path" "$issue")"
+  workspace="$(sandbox_issue_workspace "$project" "$workflow_path" "$issue")"
+  exec sbx exec -w "$workspace" "$name" "$@"
+}
+
+sandbox_logs() {
+  local project="${1:-}"
+  local issue="${2:-}"
+  local workflow_path
+  local name
+
+  [ -n "$project" ] || die "project is required. Use: hydra sandbox logs <project> [issue]"
+  require_sbx_installed
+  workflow_path="$(require_project "$project")"
+
+  if [ -n "$issue" ]; then
+    name="$(sandbox_name_for "$project" "$workflow_path" "$issue")"
+    sandbox_inspect "$project" "$issue"
+  fi
+
+  printf 'sbx_sandboxes:\n'
+  if [ -n "$name" ]; then
+    sandbox_line_for_name "$name" 2>/dev/null | sed 's/^/  /' || true
+  else
+    sbx ls 2>/dev/null | sed 's/^/  /' || true
+  fi
+
+  printf 'sbx_policy_log:\n'
+  sbx policy log 2>/dev/null | tail -50 | sed 's/^/  /' || true
+}
+
+sandbox_status() {
+  local failed=0
+  local status=0
+
+  if command -v sbx >/dev/null 2>&1; then
+    printf 'sbx: ok (%s)\n' "$(command -v sbx)"
+  else
+    print_sbx_install_hint
+    return 1
+  fi
+
+  if sbx_openai_secret_ready; then
+    printf 'sbx_openai: set\n'
+  else
+    status=$?
+    case "$status" in
+      2)
+        print_sbx_install_hint
+        ;;
+      3)
+        print_sbx_login_hint
+        ;;
+      *)
+        print_sbx_openai_hint
+        ;;
+    esac
+    failed=1
+  fi
+
+  if sbx_github_secret_ready; then
+    printf 'sbx_github: set\n'
+  else
+    printf 'sbx_github: missing (run `hydra sandbox github`, or `hydra setup sandbox`)\n'
+    failed=1
+  fi
+
+  printf 'linear: host-controlled (Hydra keeps Linear auth on the host and exposes linear_graphql)\n'
+  return "$failed"
+}
+
+print_sbx_install_hint() {
+  printf 'sbx: missing (run `hydra sandbox install`, or `hydra setup sandbox`)\n'
+}
+
+print_sbx_login_hint() {
+  printf 'sbx_login: check failed (run `hydra sandbox login`, or `hydra setup sandbox`)\n'
+}
+
+print_sbx_openai_hint() {
+  printf 'sbx_openai: missing (run `hydra sandbox openai`, or `hydra setup sandbox`)\n'
+}
+
+check_sbx_worker_ready() {
+  command -v sbx >/dev/null 2>&1 || return 2
+  sbx_openai_secret_ready || return $?
+  sbx_github_secret_ready
+}
+
+
+relative_path() {
+
+  local path="$1"
+  case "$path" in
+    "$repo_root"/*) printf '%s\n' "${path#"$repo_root/"}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
+
+repo_root_path() {
+  local path="$1"
+
+  case "$path" in
+    "") return 1 ;;
+    /*) printf '%s\n' "$path" ;;
+    *) printf '%s/%s\n' "$repo_root" "$path" ;;
+  esac
+}
+
+workspace_root_for() {
+  local project="$1"
+  local workflow_path="$2"
+  local configured_root
+
+  if [ -n "${HYDRA_WORKSPACE_ROOT:-}" ]; then
+    printf '%s\n' "$HYDRA_WORKSPACE_ROOT"
+    return
+  fi
+
+  configured_root="$(workflow_value "$workflow_path" "project.workspace_root")"
+  repo_root_path "${configured_root:-workspaces/$project}"
+}
+
+logs_root_for() {
+  local project="$1"
+  local workflow_path="$2"
+  local configured_root
+
+  if [ -n "${HYDRA_LOGS_ROOT:-}" ]; then
+    printf '%s\n' "$HYDRA_LOGS_ROOT"
+    return
+  fi
+
+  configured_root="$(workflow_value "$workflow_path" "project.logs_root")"
+  repo_root_path "${configured_root:-logs/$project}"
+}
+
+
+codex_home_for_project() {
+  printf '%s/%s/codex-home\n' "$runtime_dir" "$1"
+}
+
+codex_user_home_for_project() {
+  printf '%s/%s/home\n' "$runtime_dir" "$1"
+}
+
+codex_runtime_ready() {
+  local project="$1"
+
+  [ -d "$(codex_home_for_project "$project")" ] && [ -d "$(codex_user_home_for_project "$project")" ]
+}
+
+require_codex_runtime() {
+  local project="$1"
+
+  if ! codex_runtime_ready "$project"; then
+    die "Codex runtime artifacts are missing for '$project'. Run: hydra nest sync $project"
+  fi
+}
+
+export_codex_runtime() {
+  local project="$1"
+
+  export HYDRA_CODEX_HOME
+  export HYDRA_CODEX_USER_HOME
+  HYDRA_CODEX_HOME="$(codex_home_for_project "$project")"
+  HYDRA_CODEX_USER_HOME="$(codex_user_home_for_project "$project")"
+}
+
+show_project() {
+  local project="$1"
+  local workflow_path
+  workflow_path="$(require_project "$project")"
+
+  printf 'project: %s\n' "$project"
+  printf 'project_name: %s\n' "$(workflow_value "$workflow_path" "project.name")"
+  printf 'project_key: %s\n' "$(workflow_value "$workflow_path" "project.key")"
+  printf 'workflow: %s\n' "$(relative_path "$workflow_path")"
+  printf 'target_repo: %s\n' "$(workflow_repo_url "$workflow_path")"
+  printf 'linear_team: %s\n' "$(workflow_value "$workflow_path" "project.linear_team")"
+  printf 'linear_project_slug: %s\n' "$(workflow_value "$workflow_path" "tracker.project_slug")"
+  printf 'dashboard: http://127.0.0.1:%s/\n' "$(workflow_value "$workflow_path" "server.port")"
+  printf 'color: %s\n' "$(workflow_value "$workflow_path" "ui.color")"
+  printf 'workspace_root: %s\n' "$(relative_path "$(workspace_root_for "$project" "$workflow_path")")"
+  printf 'logs_root: %s\n' "$(relative_path "$(logs_root_for "$project" "$workflow_path")")"
+  printf 'codex_home: %s\n' "$(relative_path "$(codex_home_for_project "$project")")"
+  printf 'codex_user_home: %s\n' "$(relative_path "$(codex_user_home_for_project "$project")")"
+  if codex_runtime_ready "$project"; then
+    printf 'codex_runtime: ready\n'
+  else
+    printf 'codex_runtime: missing (run `hydra nest sync %s`)\n' "$project"
+  fi
+  printf 'worker_backend: %s\n' "$(workflow_worker_backend "$workflow_path")"
+
+  if workflow_requires_network "$workflow_path"; then
+    printf 'shell_network: required (--allow-network)\n'
+  else
+    printf 'shell_network: disabled\n'
+  fi
+}
+
+count_child_dirs() {
+  local path="$1"
+
+  if [ ! -d "$path" ]; then
+    printf '0\n'
+    return
+  fi
+
+  find "$path" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '
+}
+
+count_files() {
+  local path="$1"
+
+  if [ ! -d "$path" ]; then
+    printf '0\n'
+    return
+  fi
+
+  find "$path" -type f 2>/dev/null | wc -l | tr -d ' '
+}
+
+dashboard_listener_pids() {
+  local port="$1"
+
+  [ -n "$port" ] || return 1
+  command -v lsof >/dev/null 2>&1 || return 2
+
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true
+}
+
+project_pid_file() {
+  local project="$1"
+  printf '%s/%s.pid\n' "$run_dir" "$project"
+}
+
+record_project_pid() {
+  local project="$1"
+
+  mkdir -p "$run_dir"
+  printf '%s\n' "$$" >"$(project_pid_file "$project")"
+}
+
+project_runtime_pids() {
+  local project="$1"
+  local workflow_path="${2:-}"
+  local pid_file
+  local pid
+  local command_line
+
+  pid_file="$(project_pid_file "$project")"
+  [ -f "$pid_file" ] || return 0
+
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    case "$pid" in
+      *[!0-9]*) continue ;;
+    esac
+
+    command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    [ -n "$command_line" ] || continue
+
+    if [ -n "$workflow_path" ]; then
+      case "$command_line" in
+        *"$workflow_path"*) printf '%s\n' "$pid" ;;
+      esac
+    else
+      printf '%s\n' "$pid"
+    fi
+  done <"$pid_file"
+}
+
+cleanup_stale_project_pid_file() {
+  local project="$1"
+  local workflow_path="${2:-}"
+  local pid_file
+
+  pid_file="$(project_pid_file "$project")"
+  [ -f "$pid_file" ] || return 0
+
+  if [ -z "$(project_runtime_pids "$project" "$workflow_path")" ]; then
+    rm -f "$pid_file"
+  fi
+}
+
+status_project() {
+  local project="$1"
+  local workflow_path
+  local port
+  local workspace_root
+  local logs_root
+  local recovery_path
+  local listener_pids
+  local runtime_pids
+  workflow_path="$(require_project "$project")"
+  port="$(workflow_value "$workflow_path" "server.port")"
+  workspace_root="$(workspace_root_for "$project" "$workflow_path")"
+  logs_root="$(logs_root_for "$project" "$workflow_path")"
+  recovery_path="$workspace_root/.hydra-recovery.json"
+  cleanup_stale_project_pid_file "$project" "$workflow_path"
+  listener_pids="$(dashboard_listener_pids "$port")"
+  runtime_pids="$(project_runtime_pids "$project" "$workflow_path")"
+
+  printf 'project: %s\n' "$project"
+  printf 'dashboard: http://127.0.0.1:%s/\n' "$port"
+
+  if [ -n "$listener_pids" ] || [ -n "$runtime_pids" ]; then
+    printf 'state: running\n'
+    if [ -n "$listener_pids" ]; then
+      printf 'listener_pids: %s\n' "$(printf '%s\n' "$listener_pids" | paste -sd ',' -)"
+    fi
+    if [ -n "$runtime_pids" ]; then
+      printf 'runtime_pids: %s\n' "$(printf '%s\n' "$runtime_pids" | paste -sd ',' -)"
+    fi
+  elif command -v lsof >/dev/null 2>&1; then
+    printf 'state: stopped\n'
+  else
+    printf 'state: unknown (lsof not available)\n'
+  fi
+
+  if [ -d "$workspace_root" ]; then
+    printf 'workspace_root: %s (exists, %s workspaces)\n' "$(relative_path "$workspace_root")" "$(count_child_dirs "$workspace_root")"
+  else
+    printf 'workspace_root: %s (missing)\n' "$(relative_path "$workspace_root")"
+  fi
+
+  if [ -d "$logs_root" ]; then
+    printf 'logs_root: %s (exists, %s files)\n' "$(relative_path "$logs_root")" "$(count_files "$logs_root")"
+  else
+    printf 'logs_root: %s (missing)\n' "$(relative_path "$logs_root")"
+  fi
+
+  if [ -f "$recovery_path" ]; then
+    printf 'recovery: %s\n' "$(relative_path "$recovery_path")"
+  else
+    printf 'recovery: none\n'
+  fi
+}
+
+status_projects() {
+  local project="${1:-}"
+  local first="1"
+
+  if [ -n "$project" ]; then
+    status_project "$project"
+    return
+  fi
+
+  while IFS= read -r project; do
+    [ -n "$project" ] || continue
+
+    if [ "$first" = "0" ]; then
+      printf '\n'
+    fi
+
+    first="0"
+    status_project "$project"
+  done < <(list_projects)
+}
+
+
+stop_project() {
+  local project="$1"
+  local workflow_path
+  local port
+  local listener_pids
+  local runtime_pids
+  local remaining_listener_pids
+  local remaining_runtime_pids
+  local waited=0
+  workflow_path="$(require_project "$project")"
+  port="$(workflow_value "$workflow_path" "server.port")"
+
+  command -v lsof >/dev/null 2>&1 || die "lsof is required to stop Hydra by dashboard port"
+
+  cleanup_stale_project_pid_file "$project" "$workflow_path"
+  listener_pids="$(dashboard_listener_pids "$port")"
+  runtime_pids="$(project_runtime_pids "$project" "$workflow_path")"
+
+  printf 'project: %s\n' "$project"
+  printf 'dashboard: http://127.0.0.1:%s/\n' "$port"
+
+  if [ -z "$listener_pids" ] && [ -z "$runtime_pids" ]; then
+    printf 'state: stopped\n'
+    return 0
+  fi
+
+  if [ -n "$listener_pids" ]; then
+    printf 'stopping_listener_pids: %s\n' "$(printf '%s\n' "$listener_pids" | paste -sd ',' -)"
+  fi
+  if [ -n "$runtime_pids" ]; then
+    printf 'stopping_runtime_pids: %s\n' "$(printf '%s\n' "$runtime_pids" | paste -sd ',' -)"
+  fi
+
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill "$pid" 2>/dev/null || true
+  done <<EOF
+$listener_pids
+$runtime_pids
+EOF
+
+  while [ "$waited" -lt 5 ]; do
+    sleep 1
+    remaining_listener_pids="$(dashboard_listener_pids "$port")"
+    remaining_runtime_pids="$(project_runtime_pids "$project" "$workflow_path")"
+
+    if [ -z "$remaining_listener_pids" ] && [ -z "$remaining_runtime_pids" ]; then
+      rm -f "$(project_pid_file "$project")"
+      printf 'state: stopped\n'
+      return 0
+    fi
+
+    waited=$((waited + 1))
+  done
+
+  printf 'state: still_running\n'
+  if [ -n "$remaining_listener_pids" ]; then
+    printf 'listener_pids: %s\n' "$(printf '%s\n' "$remaining_listener_pids" | paste -sd ',' -)"
+  fi
+  if [ -n "$remaining_runtime_pids" ]; then
+    printf 'runtime_pids: %s\n' "$(printf '%s\n' "$remaining_runtime_pids" | paste -sd ',' -)"
+  fi
+  return 1
+}
+
+stop_projects() {
+  local project="${1:-}"
+  local first="1"
+  local failed=0
+
+  if [ -n "$project" ]; then
+    stop_project "$project"
+    return
+  fi
+
+  while IFS= read -r project; do
+    [ -n "$project" ] || continue
+
+    if [ "$first" = "0" ]; then
+      printf '\n'
+    fi
+
+    first="0"
+    if ! stop_project "$project"; then
+      failed=1
+    fi
+  done < <(list_projects)
+
+  return "$failed"
+}
+
+ensure_runtime_ready() {
+  local runtime_elixir_dir
+  runtime_elixir_dir="$(runtime_elixir_dir)"
+
+  [ -f "$runtime_elixir_dir/mix.exs" ] || die "Hydra Elixir runtime not found: $runtime_elixir_dir"
+  command -v mise >/dev/null 2>&1 || die "mise is required to run Hydra"
+
+  cd "$runtime_elixir_dir"
+
+  if [ ! -d deps ]; then
+    mise trust >/dev/null 2>&1 || true
+    mise exec -- mix deps.get
+  fi
+
+  if [ "${HYDRA_SKIP_BUILD:-0}" != "1" ]; then
+    mise exec -- mix build >/dev/null
+  fi
+}
+
+runtime_elixir_dir() {
+  if [ -n "${HYDRA_ELIXIR_DIR:-}" ]; then
+    printf '%s\n' "$HYDRA_ELIXIR_DIR"
+    return
+  fi
+
+  if [ -f "$repo_root/elixir/mix.exs" ]; then
+    printf '%s\n' "$repo_root/elixir"
+    return
+  fi
+
+  if [ -f "$install_root/elixir/mix.exs" ]; then
+    printf '%s\n' "$install_root/elixir"
+    return
+  fi
+
+  printf '%s\n' "$repo_root/elixir"
+}
+
+validate_workflow_config() {
+  local workflow_path="$1"
+  local runtime_elixir_dir
+  runtime_elixir_dir="$(runtime_elixir_dir)"
+
+  (
+    cd "$runtime_elixir_dir"
+    HYDRA_WORKFLOW_PATH="$workflow_path" mise exec -- mix run -e '
+      path = System.fetch_env!("HYDRA_WORKFLOW_PATH")
+      SymphonyElixir.Workflow.set_workflow_file_path(path)
+      :ok = SymphonyElixir.Config.validate!()
+      IO.puts("workflow_config: ok")
+    '
+  )
+}
+
+check_project() {
+  local project="$1"
+  local workflow_path
+  local repo_url
+  local failed=0
+  workflow_path="$(require_project "$project")"
+  repo_url="$(workflow_repo_url "$workflow_path")"
+
+  load_auth
+
+  export HYDRA_ROOT="$repo_root"
+  export HYDRA_PROJECT="$project"
+  export HYDRA_REPO_URL="$repo_url"
+  export HYDRA_WORKSPACE_ROOT
+  HYDRA_WORKSPACE_ROOT="$(workspace_root_for "$project" "$workflow_path")"
+
+  case "$(workflow_worker_backend "$workflow_path")" in
+    sbx)
+      export_codex_runtime "$project"
+      ;;
+  esac
+
+  show_project "$project"
+
+  if ! project_nest_sync_status "$project"; then
+    failed=1
+  fi
+
+  if [ -n "$repo_url" ]; then
+    printf 'project.repo: set\n'
+  else
+    printf 'project.repo: missing\n'
+    failed=1
+  fi
+
+  if [ -n "${LINEAR_API_KEY:-}" ]; then
+    printf 'linear_auth: set\n'
+  else
+    printf 'linear_auth: missing (run `hydra auth login --provider linear --method token`)\n'
+    failed=1
+  fi
+
+  if github_auth_env_set; then
+    printf 'github_auth: set\n'
+  else
+    printf 'github_auth: missing (run `hydra auth login --provider github --method browser`)\n'
+    failed=1
+  fi
+
+  case "$(workflow_worker_backend "$workflow_path")" in
+    sbx)
+      if codex_runtime_ready "$project"; then
+        printf 'codex_runtime: ready\n'
+      else
+        printf 'codex_runtime: missing (run `hydra nest sync %s`)\n' "$project"
+        failed=1
+      fi
+
+      if check_sbx_worker_ready; then
+        printf 'sbx_openai: set\n'
+      else
+        case "$?" in
+          2)
+            print_sbx_install_hint
+            ;;
+          3)
+            print_sbx_login_hint
+            ;;
+          *)
+            print_sbx_openai_hint
+            ;;
+        esac
+        failed=1
+      fi
+      ;;
+  esac
+
+  if [ "$failed" -eq 0 ] && [ -n "${LINEAR_API_KEY:-}" ]; then
+    if ! validate_workflow_config "$workflow_path"; then
+      failed=1
+    fi
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    printf 'project_check: ok\n'
+  else
+    printf 'project_check: failed\n'
+  fi
+
+  return "$failed"
+}
+
+run_project() {
+  local project="$1"
+  local workflow_path
+  local repo_url
+  local allow_network="${HYDRA_ALLOW_NETWORK:-0}"
+  local hydra_args=()
+  local terminal_dashboard="auto"
+  local web_dashboard="1"
+
+  shift
+
+  workflow_path="$(require_project "$project")"
+  repo_url="$(workflow_repo_url "$workflow_path")"
+
+  run_project_nest_preflight "$project"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --allow-network)
+        allow_network="1"
+        shift
+        ;;
+      --terminal-dashboard)
+        terminal_dashboard="1"
+        shift
+        ;;
+      --no-terminal-dashboard)
+        terminal_dashboard="0"
+        shift
+        ;;
+      --web-dashboard)
+        web_dashboard="1"
+        shift
+        ;;
+      --no-web-dashboard)
+        web_dashboard="0"
+        shift
+        ;;
+      --)
+        shift
+        hydra_args+=("$@")
+        break
+        ;;
+      *)
+        hydra_args+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  load_auth
+
+  require_runtime_auth
+  [ -n "$repo_url" ] || die "$project is missing project.repo in $workflow_path."
+
+  case "$(workflow_worker_backend "$workflow_path")" in
+    sbx)
+      if check_sbx_worker_ready; then
+        :
+      else
+        case "$?" in
+          2)
+            print_sbx_install_hint >&2
+            ;;
+          3)
+            print_sbx_login_hint >&2
+            ;;
+          *)
+            print_sbx_openai_hint >&2
+            ;;
+        esac
+        exit 1
+      fi
+      ;;
+  esac
+
+  if workflow_requires_network "$workflow_path"; then
+    [ "$allow_network" = "1" ] || die "$project enables shell network access; rerun with --allow-network."
+  fi
+
+  export HYDRA_ROOT="$repo_root"
+  export HYDRA_PROJECT="$project"
+  export HYDRA_REPO_URL="$repo_url"
+  export HYDRA_WORKSPACE_ROOT
+  HYDRA_WORKSPACE_ROOT="$(workspace_root_for "$project" "$workflow_path")"
+
+  case "$(workflow_worker_backend "$workflow_path")" in
+    sbx)
+      require_codex_runtime "$project"
+      export_codex_runtime "$project"
+      ;;
+  esac
+
+  local logs_root
+  logs_root="$(logs_root_for "$project" "$workflow_path")"
+
+  record_project_pid "$project"
+  mkdir -p "$HYDRA_WORKSPACE_ROOT" "$logs_root" "$repo_root/codex"
+  ensure_runtime_ready
+
+  local terminal_dashboard_arg="--terminal-dashboard"
+  if [ "$terminal_dashboard" = "0" ]; then
+    terminal_dashboard_arg="--no-terminal-dashboard"
+  fi
+
+  local web_dashboard_arg="--no-web-dashboard"
+  if [ "$web_dashboard" = "1" ]; then
+    web_dashboard_arg="--web-dashboard"
+  fi
+
+  printf 'hydra: starting %s\n' "$project"
+  if [ "$terminal_dashboard" = "0" ]; then
+    printf 'hydra: terminal dashboard disabled\n'
+  fi
+  if [ "$web_dashboard" = "1" ]; then
+    printf 'hydra: dashboard http://127.0.0.1:%s/\n' "$(workflow_value "$workflow_path" "server.port")"
+  fi
+
+  if [ "${#hydra_args[@]}" -gt 0 ]; then
+    exec mise exec -- ./bin/hydra \
+      --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+      --logs-root "$logs_root" \
+      "$terminal_dashboard_arg" \
+      "$web_dashboard_arg" \
+      "${hydra_args[@]}" \
+      "$workflow_path"
+  fi
+
+  exec mise exec -- ./bin/hydra \
+    --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+    --logs-root "$logs_root" \
+    "$terminal_dashboard_arg" \
+    "$web_dashboard_arg" \
+    "$workflow_path"
+}
+
+command="${1:-}"
+
+case "$command" in
+  ""|-h|--help)
+    usage
+    exit 0
+    ;;
+  --list|list)
+    list_projects
+    exit 0
+    ;;
+  home)
+    printf '%s\n' "$repo_root"
+    ;;
+  setup)
+    shift
+    setup_local "$@"
+    ;;
+  configure)
+    shift
+    configure_command "$@"
+    ;;
+  doctor)
+    shift
+    doctor_command "$@"
+    ;;
+  init)
+    init_local
+    ;;
+  sync)
+    shift
+    sync_command "$@"
+    ;;
+  nest)
+    shift
+    nest_command "$@"
+    ;;
+  auth)
+    shift
+    auth_command "$@"
+    ;;
+  sandbox)
+    shift
+    sandbox_command "$@"
+    ;;
+  show)
+    shift
+    show_project "${1:-}"
+    ;;
+  check)
+    shift
+    check_project "${1:-}"
+    ;;
+  status)
+    shift
+    status_projects "${1:-}"
+    ;;
+  stop)
+    shift
+    stop_projects "${1:-}"
+    ;;
+  run)
+    shift
+    run_project "${1:-}" "${@:2}"
+    ;;
+  *)
+    run_project "$command" "${@:2}"
+    ;;
+esac

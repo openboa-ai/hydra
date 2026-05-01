@@ -139,11 +139,27 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp current_stamp(path) when is_binary(path) do
+    settings_path = Path.join(Path.dirname(path), "settings.yml")
+
+    with {:ok, workflow_stamp} <- file_stamp(path),
+         {:ok, settings_stamp} <- optional_file_stamp(settings_path) do
+      {:ok, {workflow_stamp, settings_stamp}}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp file_stamp(path) do
     with {:ok, stat} <- File.stat(path, time: :posix),
          {:ok, content} <- File.read(path) do
       {:ok, {stat.mtime, stat.size, :erlang.phash2(content)}}
-    else
-      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp optional_file_stamp(path) do
+    case file_stamp(path) do
+      {:ok, stamp} -> {:ok, stamp}
+      {:error, _reason} -> {:ok, nil}
     end
   end
 

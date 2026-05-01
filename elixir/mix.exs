@@ -3,7 +3,7 @@ defmodule SymphonyElixir.MixProject do
 
   def project do
     [
-      app: :symphony_elixir,
+      app: :hydra_elixir,
       version: "0.1.0",
       elixir: "~> 1.19",
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
@@ -91,8 +91,8 @@ defmodule SymphonyElixir.MixProject do
     [
       app: nil,
       main_module: SymphonyElixir.CLI,
-      name: "symphony",
-      path: "bin/symphony"
+      name: "hydra",
+      path: "bin/hydra"
     ]
   end
 end
