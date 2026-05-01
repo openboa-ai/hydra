@@ -21,8 +21,9 @@ defmodule SymphonyElixir.AgentRunner do
         :ok
 
       {:error, reason} ->
-        Logger.error("Agent run failed for #{issue_context(issue)}: #{inspect(reason)}")
-        raise RuntimeError, "Agent run failed for #{issue_context(issue)}: #{inspect(reason)}"
+        failure_reason = format_failure_reason(reason)
+        Logger.error("Agent run failed for #{issue_context(issue)}: #{failure_reason}")
+        raise RuntimeError, "Agent run failed for #{issue_context(issue)}: #{failure_reason}"
     end
   end
 
@@ -60,15 +61,25 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_codex_update(_recipient, _issue, _message), do: :ok
 
+  defp emit_startup_failed(recipient, issue, reason) do
+    send_codex_update(recipient, issue, %{
+      event: :startup_failed,
+      timestamp: DateTime.utc_now(),
+      payload: %{reason: reason},
+      reason: reason
+    })
+  end
+
   defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace)
        when is_binary(issue_id) and is_pid(recipient) and is_binary(workspace) do
+    runtime_metadata =
+      AppServer.worker_runtime_metadata(workspace, worker_host)
+      |> Map.put_new(:worker_host, worker_host)
+      |> Map.put(:workspace_path, workspace)
+
     send(
       recipient,
-      {:worker_runtime_info, issue_id,
-       %{
-         worker_host: worker_host,
-         workspace_path: workspace
-       }}
+      {:worker_runtime_info, issue_id, runtime_metadata}
     )
 
     :ok
@@ -80,12 +91,17 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
-      try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
-      after
-        AppServer.stop_session(session)
-      end
+    case AppServer.start_session(workspace, worker_host: worker_host, issue: issue) do
+      {:ok, session} ->
+        try do
+          do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
+        after
+          AppServer.stop_session(session)
+        end
+
+      {:error, reason} ->
+        emit_startup_failed(codex_update_recipient, issue, reason)
+        {:error, reason}
     end
   end
 
@@ -196,6 +212,21 @@ defmodule SymphonyElixir.AgentRunner do
     |> String.trim()
     |> String.downcase()
   end
+
+  defp format_failure_reason(:sbx_not_found), do: "Docker Sandboxes CLI is not installed. Install Docker Sandboxes and run `hydra setup sandbox`."
+  defp format_failure_reason({:sbx_not_authenticated, message, _diagnostic}), do: message
+  defp format_failure_reason({:sbx_openai_secret_missing, message, _diagnostic}), do: message
+
+  defp format_failure_reason({:sbx_remove_failed, message, diagnostic})
+       when is_binary(diagnostic) and diagnostic != "",
+       do: "#{message} #{diagnostic}"
+
+  defp format_failure_reason({:sbx_readiness_check_failed, message, diagnostic})
+       when is_binary(diagnostic) and diagnostic != "",
+       do: "#{message} #{diagnostic}"
+
+  defp format_failure_reason({:port_exit, status}), do: "agent process exited with status #{status}"
+  defp format_failure_reason(reason), do: inspect(reason)
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"

@@ -5,7 +5,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-cwd-guard-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-cwd-guard-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -43,7 +43,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-symlink-cwd-guard-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-symlink-cwd-guard-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -80,7 +80,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-supported-turn-policies-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-supported-turn-policies-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -183,11 +183,525 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "runtime preflight returns explicit sbx missing error" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-app-server-sbx-missing-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      bin_dir = Path.join(test_root, "bin")
+      previous_path = System.get_env("PATH")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+      end)
+
+      File.mkdir_p!(workspace_root)
+      File.mkdir_p!(bin_dir)
+      System.put_env("PATH", bin_dir)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_sbx: %{
+          enabled: true,
+          agent: "codex"
+        }
+      )
+
+      assert {:error, :sbx_not_found} = AppServer.ensure_runtime_ready()
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "returns explicit sbx auth error before launching Docker Sandboxes" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-app-server-sbx-auth-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1002")
+      bin_dir = Path.join(test_root, "bin")
+      sbx_binary = Path.join(bin_dir, "sbx")
+      previous_path = System.get_env("PATH")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+      end)
+
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(bin_dir)
+      System.put_env("PATH", bin_dir <> ":" <> previous_path)
+
+      File.write!(sbx_binary, """
+      #!/bin/sh
+      if [ "$1" = "secret" ] && [ "$2" = "ls" ]; then
+        printf '%s\n' 'ERROR: Not authenticated to Docker'
+        printf '%s\n' 'Sign in with: sbx login'
+        exit 1
+      fi
+      printf '%s\n' 'sbx run should not be reached'
+      exit 1
+      """)
+
+      File.chmod!(sbx_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_sbx: %{
+          enabled: true,
+          agent: "codex"
+        }
+      )
+
+      assert {:error, {:sbx_not_authenticated, message, diagnostic}} =
+               AppServer.start_session(workspace)
+
+      assert message =~ "hydra sandbox login"
+      assert diagnostic =~ "Not authenticated to Docker"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server removes an existing named Docker Sandbox before creating a new one" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-app-server-sbx-reuse-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1004")
+      bin_dir = Path.join(test_root, "bin")
+      sbx_binary = Path.join(bin_dir, "sbx")
+      trace_file = Path.join(test_root, "sbx-reuse.trace")
+      previous_path = System.get_env("PATH")
+      previous_trace = System.get_env("HYDRA_TEST_SBX_TRACE")
+      previous_project = System.get_env("HYDRA_PROJECT")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+        restore_env("HYDRA_TEST_SBX_TRACE", previous_trace)
+        restore_env("HYDRA_PROJECT", previous_project)
+      end)
+
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(bin_dir)
+      {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+      System.put_env("PATH", bin_dir <> ":" <> previous_path)
+      System.put_env("HYDRA_TEST_SBX_TRACE", trace_file)
+      System.put_env("HYDRA_PROJECT", "openboa")
+
+      File.write!(sbx_binary, """
+      #!/bin/sh
+      trace_file="${HYDRA_TEST_SBX_TRACE:-/tmp/hydra-sbx-reuse.trace}"
+      if [ "$1" = "secret" ] && [ "$2" = "ls" ]; then
+        printf '%s\n' 'openai'
+        printf '%s\n' 'github'
+        exit 0
+      fi
+      if [ "$1" = "ls" ]; then
+        printf '%s\n' 'SANDBOX               AGENT   STATUS    PORTS   WORKSPACE'
+        printf '%s\n' 'hydra-openboa-mt-1004 codex   stopped           /tmp/workspace'
+        exit 0
+      fi
+      if [ "$1" = "rm" ]; then
+        printf 'RM:%s\n' "$*" >> "$trace_file"
+        exit 0
+      fi
+      if [ "$1" = "create" ]; then
+        printf 'CREATE:%s\n' "$*" >> "$trace_file"
+        exit 0
+      fi
+      printf 'ARGV:%s\n' "$*" >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-reuse"}}}'
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(sbx_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_sbx: %{
+          enabled: true,
+          agent: "codex"
+        },
+        codex_command: "codex --config model=gpt-5.5 app-server",
+        codex_turn_sandbox_policy: nil
+      )
+
+      assert {:ok, session} = AppServer.start_session(workspace)
+      AppServer.stop_session(session)
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+      rm_line = Enum.find(lines, &String.starts_with?(&1, "RM:"))
+      create_line = Enum.find(lines, &String.starts_with?(&1, "CREATE:"))
+      argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+
+      assert rm_line == "RM:rm --force hydra-openboa-mt-1004"
+      assert create_line =~ "CREATE:create --quiet --name hydra-openboa-mt-1004 codex"
+      assert create_line =~ canonical_workspace
+      assert argv_line =~ "ARGV:exec -i -w #{canonical_workspace} hydra-openboa-mt-1004 codex"
+      assert argv_line =~ "--config model=gpt-5.5 app-server"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server passes Docker Sandboxes create options and read-only workspaces" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-app-server-sbx-options-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-OPTIONS")
+      docs_workspace = Path.join(test_root, "docs")
+      tools_workspace = Path.join(test_root, "tools")
+      bin_dir = Path.join(test_root, "bin")
+      sbx_binary = Path.join(bin_dir, "sbx")
+      trace_file = Path.join(test_root, "sbx-options.trace")
+      previous_path = System.get_env("PATH")
+      previous_trace = System.get_env("HYDRA_TEST_SBX_TRACE")
+      previous_project = System.get_env("HYDRA_PROJECT")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+        restore_env("HYDRA_TEST_SBX_TRACE", previous_trace)
+        restore_env("HYDRA_PROJECT", previous_project)
+      end)
+
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(docs_workspace)
+      File.mkdir_p!(tools_workspace)
+      File.mkdir_p!(bin_dir)
+      {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+      System.put_env("PATH", bin_dir <> ":" <> previous_path)
+      System.put_env("HYDRA_TEST_SBX_TRACE", trace_file)
+      System.put_env("HYDRA_PROJECT", "openboa")
+
+      File.write!(sbx_binary, """
+      #!/bin/sh
+      trace_file="${HYDRA_TEST_SBX_TRACE:-/tmp/hydra-sbx-options.trace}"
+      if [ "$1" = "secret" ] && [ "$2" = "ls" ]; then
+        printf '%s\n' 'openai'
+        printf '%s\n' 'github'
+        exit 0
+      fi
+      if [ "$1" = "ls" ]; then
+        exit 0
+      fi
+      if [ "$1" = "create" ]; then
+        printf 'CREATE:%s\n' "$*" >> "$trace_file"
+        exit 0
+      fi
+      printf 'ARGV:%s\n' "$*" >> "$trace_file"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        case "$count" in
+          1) printf '%s\n' '{"id":1,"result":{}}' ;;
+          2) printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-options"}}}' ;;
+          *) exit 0 ;;
+        esac
+      done
+      """)
+
+      File.chmod!(sbx_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_sbx: %{
+          enabled: true,
+          agent: "codex",
+          branch: "feature/sbx",
+          template: "hydra-codex",
+          kits: ["kit-a", "kit-b"],
+          cpus: 4,
+          memory: "8g",
+          extra_workspaces: [
+            %{path: docs_workspace},
+            %{path: tools_workspace, writable: true}
+          ]
+        },
+        codex_command: "codex app-server",
+        codex_turn_sandbox_policy: nil
+      )
+
+      assert {:ok, session} = AppServer.start_session(workspace)
+      AppServer.stop_session(session)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "CREATE:create --quiet --name hydra-openboa-mt-options"
+      assert trace =~ "--branch feature/sbx"
+      assert trace =~ "--template hydra-codex"
+      assert trace =~ "--kit kit-a --kit kit-b"
+      assert trace =~ "--cpus 4 --memory 8g"
+      assert trace =~ "codex #{canonical_workspace} #{docs_workspace}:ro #{tools_workspace}"
+      branch_workspace = Path.join([canonical_workspace, ".sbx", "hydra-openboa-mt-options-worktrees", "feature", "sbx"])
+      assert trace =~ "ARGV:exec -i -w #{branch_workspace} hydra-openboa-mt-options codex app-server"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server mounts Nest Codex runtime homes into Docker Sandboxes" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-app-server-sbx-codex-home-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-CODEX-HOME")
+      codex_home = Path.join(test_root, "runtime/codex-home")
+      codex_user_home = Path.join(test_root, "runtime/home")
+      bin_dir = Path.join(test_root, "bin")
+      sbx_binary = Path.join(bin_dir, "sbx")
+      trace_file = Path.join(test_root, "sbx-codex-home.trace")
+      previous_path = System.get_env("PATH")
+      previous_trace = System.get_env("HYDRA_TEST_SBX_TRACE")
+      previous_project = System.get_env("HYDRA_PROJECT")
+      previous_codex_home = System.get_env("HYDRA_CODEX_HOME")
+      previous_codex_user_home = System.get_env("HYDRA_CODEX_USER_HOME")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+        restore_env("HYDRA_TEST_SBX_TRACE", previous_trace)
+        restore_env("HYDRA_PROJECT", previous_project)
+        restore_env("HYDRA_CODEX_HOME", previous_codex_home)
+        restore_env("HYDRA_CODEX_USER_HOME", previous_codex_user_home)
+      end)
+
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(codex_home)
+      File.mkdir_p!(codex_user_home)
+      File.mkdir_p!(bin_dir)
+      {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+      System.put_env("PATH", bin_dir <> ":" <> previous_path)
+      System.put_env("HYDRA_TEST_SBX_TRACE", trace_file)
+      System.put_env("HYDRA_PROJECT", "openboa")
+      System.put_env("HYDRA_CODEX_HOME", codex_home)
+      System.put_env("HYDRA_CODEX_USER_HOME", codex_user_home)
+
+      File.write!(sbx_binary, """
+      #!/bin/sh
+      trace_file="${HYDRA_TEST_SBX_TRACE:-/tmp/hydra-sbx-codex-home.trace}"
+      if [ "$1" = "secret" ] && [ "$2" = "ls" ]; then
+        printf '%s\n' 'openai'
+        printf '%s\n' 'github'
+        exit 0
+      fi
+      if [ "$1" = "ls" ]; then
+        exit 0
+      fi
+      if [ "$1" = "create" ]; then
+        printf 'CREATE:%s\n' "$*" >> "$trace_file"
+        exit 0
+      fi
+      printf 'ARGV:%s\n' "$*" >> "$trace_file"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        case "$count" in
+          1) printf '%s\n' '{"id":1,"result":{}}' ;;
+          2) printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-codex-home"}}}' ;;
+          *) exit 0 ;;
+        esac
+      done
+      """)
+
+      File.chmod!(sbx_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_sbx: %{
+          enabled: true,
+          agent: "codex"
+        },
+        codex_command: "codex app-server",
+        codex_turn_sandbox_policy: nil
+      )
+
+      assert {:ok, session} = AppServer.start_session(workspace)
+      AppServer.stop_session(session)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "CREATE:create --quiet --name hydra-openboa-mt-codex-home codex"
+      assert trace =~ "codex #{canonical_workspace} #{codex_home} #{codex_user_home}"
+      assert trace =~ "ARGV:exec -i -w #{canonical_workspace} hydra-openboa-mt-codex-home env CODEX_HOME=#{codex_home} HOME=#{codex_user_home} codex app-server"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server runs Codex through Docker Sandboxes sbx using same-path workspaces" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-app-server-sbx-worker-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1003")
+      bin_dir = Path.join(test_root, "bin")
+      sbx_binary = Path.join(bin_dir, "sbx")
+      trace_file = Path.join(test_root, "sbx-worker.trace")
+      previous_path = System.get_env("PATH")
+      previous_trace = System.get_env("HYDRA_TEST_SBX_TRACE")
+      previous_project = System.get_env("HYDRA_PROJECT")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+        restore_env("HYDRA_TEST_SBX_TRACE", previous_trace)
+        restore_env("HYDRA_PROJECT", previous_project)
+      end)
+
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(bin_dir)
+      assert {_output, 0} = System.cmd("git", ["init"], cd: workspace, stderr_to_stdout: true)
+      {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+      System.put_env("PATH", bin_dir <> ":" <> previous_path)
+      System.put_env("HYDRA_TEST_SBX_TRACE", trace_file)
+      System.put_env("HYDRA_PROJECT", "openboa")
+
+      File.write!(sbx_binary, """
+      #!/bin/sh
+      trace_file="${HYDRA_TEST_SBX_TRACE:-/tmp/hydra-sbx-worker.trace}"
+      if [ "$1" = "secret" ] && [ "$2" = "ls" ]; then
+        printf '%s\n' 'openai'
+        printf '%s\n' 'github'
+        exit 0
+      fi
+      if [ "$1" = "ls" ]; then
+        exit 0
+      fi
+      if [ "$1" = "create" ]; then
+        printf 'CREATE:%s\n' "$*" >> "$trace_file"
+        exit 0
+      fi
+      printf 'ARGV:%s\n' "$*" >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            sleep 0.05
+            printf '%s\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-sbx"}}}'
+            ;;
+          3)
+            printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-sbx"}}}'
+            ;;
+          4)
+            printf '%s\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(sbx_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_sbx: %{
+          enabled: true,
+          agent: "codex",
+          startup_timeout_ms: 1_000
+        },
+        codex_command: "codex --config model=gpt-5.5 app-server",
+        codex_read_timeout_ms: 1,
+        codex_turn_sandbox_policy: nil
+      )
+
+      issue = %Issue{
+        id: "issue-sbx-worker",
+        identifier: "MT-1003",
+        title: "Validate sbx worker isolation",
+        description: "Ensure Codex runs in Docker Sandboxes while GitHub runs in the sandbox",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-1003",
+        labels: ["backend"]
+      }
+
+      assert {:ok, _result} = AppServer.run(workspace, "Validate sbx worker", issue)
+
+      trace = File.read!(trace_file)
+      branch_workspace = Path.join([canonical_workspace, ".sbx", "hydra-openboa-mt-1003-worktrees", "codex", "mt-1003"])
+      assert trace =~ "CREATE:create --quiet --name hydra-openboa-mt-1003 --branch codex/mt-1003 codex"
+      assert trace =~ "ARGV:exec -i -w #{branch_workspace} hydra-openboa-mt-1003 codex"
+      assert trace =~ "--config model=gpt-5.5 app-server"
+
+      json_messages =
+        trace
+        |> String.split("\n", trim: true)
+        |> Enum.filter(&String.starts_with?(&1, "JSON:"))
+        |> Enum.map(&(&1 |> String.trim_leading("JSON:") |> Jason.decode!()))
+
+      assert Enum.any?(json_messages, fn payload ->
+               payload["method"] == "thread/start" &&
+                 get_in(payload, ["params", "cwd"]) == branch_workspace &&
+                 Enum.map(get_in(payload, ["params", "dynamicTools"]), & &1["name"]) == ["linear_graphql"]
+             end)
+
+      assert Enum.any?(json_messages, fn payload ->
+               payload["method"] == "turn/start" &&
+                 get_in(payload, ["params", "cwd"]) == branch_workspace &&
+                 get_in(payload, ["params", "sandboxPolicy", "writableRoots"]) == [branch_workspace] &&
+                 get_in(payload, ["params", "sandboxPolicy", "networkAccess"]) == false
+             end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server marks request-for-input events as a hard failure" do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-input-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-input-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -266,7 +780,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-approval-required-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-approval-required-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -329,7 +843,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-auto-approve-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-auto-approve-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -427,19 +941,17 @@ defmodule SymphonyElixir.AppServerTest do
                    |> Jason.decode!()
 
                  payload["id"] == 2 and
-                   case get_in(payload, ["params", "dynamicTools"]) do
-                     [
-                       %{
-                         "description" => description,
-                         "inputSchema" => %{"required" => ["query"]},
-                         "name" => "linear_graphql"
-                       }
-                     ] ->
+                   Enum.any?(get_in(payload, ["params", "dynamicTools"]) || [], fn
+                     %{
+                       "description" => description,
+                       "inputSchema" => %{"required" => ["query"]},
+                       "name" => "linear_graphql"
+                     } ->
                        description =~ "Linear"
 
                      _ ->
                        false
-                   end
+                   end)
                else
                  false
                end
@@ -466,7 +978,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-tool-user-input-auto-approve-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-tool-user-input-auto-approve-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -565,7 +1077,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-tool-user-input-required-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-tool-user-input-required-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -641,7 +1153,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-tool-user-input-options-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-tool-user-input-options-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -741,7 +1253,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-tool-call-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-tool-call-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -842,7 +1354,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-supported-tool-call-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-supported-tool-call-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -964,7 +1476,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-tool-call-failed-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-tool-call-failed-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1070,7 +1582,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-partial-line-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-partial-line-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1134,7 +1646,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-stderr-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-stderr-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1209,7 +1721,7 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-malformed-protocol-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-malformed-protocol-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1280,15 +1792,15 @@ defmodule SymphonyElixir.AppServerTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-remote-ssh-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-remote-ssh-#{System.unique_integer([:positive])}"
       )
 
     previous_path = System.get_env("PATH")
-    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+    previous_trace = System.get_env("HYDRA_TEST_SSH_TRACE")
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
-      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+      restore_env("HYDRA_TEST_SSH_TRACE", previous_trace)
     end)
 
     try do
@@ -1297,12 +1809,12 @@ defmodule SymphonyElixir.AppServerTest do
       remote_workspace = "/remote/workspaces/MT-REMOTE"
 
       File.mkdir_p!(test_root)
-      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("HYDRA_TEST_SSH_TRACE", trace_file)
       System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
 
       File.write!(fake_ssh, """
       #!/bin/sh
-      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      trace_file="${HYDRA_TEST_SSH_TRACE:-/tmp/hydra-fake-ssh.trace}"
       count=0
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 

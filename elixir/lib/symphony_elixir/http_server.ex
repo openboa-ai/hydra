@@ -35,11 +35,11 @@ defmodule SymphonyElixir.HttpServer do
           ]
 
           endpoint_config =
-            :symphony_elixir
+            :hydra_elixir
             |> Application.get_env(Endpoint, [])
             |> Keyword.merge(endpoint_opts)
 
-          Application.put_env(:symphony_elixir, Endpoint, endpoint_config)
+          Application.put_env(:hydra_elixir, Endpoint, endpoint_config)
           Endpoint.start_link()
         end
 

@@ -55,7 +55,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_message: nil,
       last_codex_timestamp: nil,
       last_codex_event: nil,
-      started_at: started_at
+      started_at: started_at,
+      sandbox: %{name: "hydra-mt-188", status: "running", lifecycle: "fresh"}
     }
 
     state_with_issue =
@@ -92,13 +93,265 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert snapshot_entry.issue_id == issue_id
     assert snapshot_entry.session_id == "thread-live-turn-live"
     assert snapshot_entry.turn_count == 1
+    assert snapshot_entry.sandbox == %{name: "hydra-mt-188", status: "running", lifecycle: "fresh"}
     assert snapshot_entry.last_codex_timestamp == now
+    assert Enum.map(snapshot_entry.recent_events, & &1.event) == ["session_started", "notification"]
 
     assert snapshot_entry.last_codex_message == %{
              event: :notification,
              message: %{method: "some-event"},
              timestamp: now
            }
+  end
+
+  test "orchestrator trace skips noisy streaming telemetry updates" do
+    issue_id = "issue-trace-filter"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-FILTER",
+      title: "Trace filter test",
+      description: "Keep trace readable",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-FILTER"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :TraceFilterOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: "thread-turn",
+      turn_count: 1,
+      last_codex_message: %{event: :session_started, message: %{session_id: "thread-turn"}},
+      last_codex_timestamp: started_at,
+      last_codex_event: :session_started,
+      started_at: started_at,
+      trace: [
+        %{
+          at: started_at,
+          event: "session_started",
+          message: "session started",
+          session_id: "thread-turn"
+        }
+      ]
+    }
+
+    state_with_issue =
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+
+    :sys.replace_state(pid, fn _ -> state_with_issue end)
+
+    now = DateTime.utc_now()
+
+    for method <- [
+          "item/agentMessage/delta",
+          "item/commandExecution/outputDelta",
+          "thread/tokenUsage/updated",
+          "account/rateLimits/updated"
+        ] do
+      send(
+        pid,
+        {:codex_worker_update, issue_id,
+         %{
+           event: :notification,
+           payload: %{"method" => method, "params" => %{"delta" => "word"}},
+           timestamp: now
+         }}
+      )
+    end
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "item/completed",
+           "params" => %{
+             "item" => %{
+               "type" => "agentMessage",
+               "status" => "completed",
+               "content" => [%{"type" => "output_text", "text" => "Done with useful detail."}]
+             }
+           }
+         },
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+
+    assert Enum.map(snapshot_entry.recent_events, & &1.message) == [
+             "session started",
+             "agent message: Done with useful detail."
+           ]
+
+    assert snapshot_entry.last_codex_message.event == :notification
+  end
+
+  test "orchestrator persists running trace checkpoints for recovery" do
+    issue_id = "issue-recovery-running"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-RECOVER",
+      title: "Recovery checkpoint",
+      description: "Persist active state",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-RECOVER"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :RecoveryCheckpointOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      worker_host: nil,
+      workspace_path: "/tmp/mt-recover",
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-recovery-turn-recovery",
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    assert_eventually(fn ->
+      recovery_path = Path.join(Path.expand(Config.settings!().workspace.root), ".hydra-recovery.json")
+      {:ok, payload} = recovery_path |> File.read!() |> Jason.decode()
+
+      case payload["running"] do
+        [running] ->
+          running["issue_id"] == issue_id and
+            running["workspace_path"] == "/tmp/mt-recover" and
+            match?([%{"event" => "session_started"}], running["recent_events"])
+
+        _ ->
+          false
+      end
+    end)
+  end
+
+  test "orchestrator restores retry checkpoints after restart" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:hydra_elixir, :memory_tracker_issues, [])
+
+    workspace_root = Path.expand(Config.settings!().workspace.root)
+    File.mkdir_p!(workspace_root)
+
+    recovery_path = Path.join(workspace_root, ".hydra-recovery.json")
+
+    File.write!(
+      recovery_path,
+      Jason.encode!(%{
+        version: 1,
+        saved_at: "2026-04-30T00:00:00Z",
+        saved_at_unix_ms: System.system_time(:millisecond),
+        retrying: [
+          %{
+            issue_id: "issue-retry-restore",
+            identifier: "MT-RESTORE",
+            attempt: 3,
+            due_at_unix_ms: System.system_time(:millisecond) + 30_000,
+            error: "previous retry",
+            workspace_path: "/tmp/mt-restore",
+            recent_events: [
+              %{
+                at: "2026-04-30T00:00:00Z",
+                event: "notification",
+                message: "agent message streaming: word",
+                attempt: 3
+              },
+              %{
+                at: "2026-04-30T00:00:00Z",
+                event: "retry_scheduled",
+                message: "previous retry",
+                attempt: 3
+              }
+            ]
+          }
+        ],
+        running: [],
+        codex_totals: %{input_tokens: 7, output_tokens: 3, total_tokens: 10, seconds_running: 12},
+        rate_limits: %{"primary" => %{"remaining" => 1}}
+      })
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :RetryRecoveryOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    snapshot = GenServer.call(pid, :snapshot)
+
+    assert %{
+             retrying: [
+               %{
+                 issue_id: "issue-retry-restore",
+                 identifier: "MT-RESTORE",
+                 attempt: 3,
+                 error: "previous retry",
+                 workspace_path: "/tmp/mt-restore",
+                 recent_events: [%{event: "retry_scheduled"}]
+               }
+             ],
+             codex_totals: %{input_tokens: 7, output_tokens: 3, total_tokens: 10, seconds_running: 12},
+             rate_limits: %{"primary" => %{"remaining" => 1}}
+           } = snapshot
   end
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
@@ -987,18 +1240,50 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute rendered =~ "Dashboard:"
   end
 
+  test "status dashboard renders project UI identity in header" do
+    settings_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "settings.yml")
+
+    File.write!(settings_path, """
+    scope: project
+    ui:
+      title: OpenBOA
+      description: Hydra runtime for OpenBOA
+      color: "#16A34A"
+    """)
+
+    if Process.whereis(SymphonyElixir.WorkflowStore), do: SymphonyElixir.WorkflowStore.force_reload()
+
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil
+       }}
+
+    rendered =
+      snapshot_data
+      |> StatusDashboard.format_snapshot_content_for_test(0.0)
+      |> String.replace(~r/\e\[[0-9;]*m/, "")
+
+    assert rendered =~ "│ Instance: OpenBOA"
+    assert rendered =~ "│ Profile: Hydra runtime for OpenBOA"
+    assert rendered =~ "│ Color: #16A34A"
+  end
+
   test "status dashboard renders dashboard url on its own line when server port is configured" do
-    previous_port_override = Application.get_env(:symphony_elixir, :server_port_override)
+    previous_port_override = Application.get_env(:hydra_elixir, :server_port_override)
 
     on_exit(fn ->
       if is_nil(previous_port_override) do
-        Application.delete_env(:symphony_elixir, :server_port_override)
+        Application.delete_env(:hydra_elixir, :server_port_override)
       else
-        Application.put_env(:symphony_elixir, :server_port_override, previous_port_override)
+        Application.put_env(:hydra_elixir, :server_port_override, previous_port_override)
       end
     end)
 
-    Application.put_env(:symphony_elixir, :server_port_override, 4000)
+    Application.put_env(:hydra_elixir, :server_port_override, 4000)
 
     snapshot_data =
       {:ok,
@@ -1262,7 +1547,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "application configures a rotating file logger handler" do
-    assert {:ok, handler_config} = :logger.get_handler_config(:symphony_disk_log)
+    assert {:ok, handler_config} = :logger.get_handler_config(:hydra_disk_log)
     assert handler_config.module == :logger_disk_log_h
 
     disk_config = handler_config.config
@@ -1378,7 +1663,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              "status" => "running"
            }
          }
-       }, "item started: command execution"},
+       }, "command started"},
       {"item/completed", %{"params" => %{"item" => %{"type" => "fileChange", "status" => "completed"}}}, "item completed: file change"},
       {"item/agentMessage/delta", %{"params" => %{"delta" => "hello"}}, "agent message streaming"},
       {"item/plan/delta", %{"params" => %{"delta" => "step"}}, "plan streaming"},
@@ -1464,6 +1749,45 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     }
 
     assert StatusDashboard.humanize_codex_message(message) == "git status --short"
+  end
+
+  test "status dashboard summarizes completed agent messages and command lifecycle items" do
+    agent_message = %{
+      event: :notification,
+      message: %{
+        "method" => "item/completed",
+        "params" => %{
+          "item" => %{
+            "type" => "agentMessage",
+            "status" => "completed",
+            "content" => [
+              %{"type" => "output_text", "text" => "Validation passed and PR is pending."}
+            ]
+          }
+        }
+      }
+    }
+
+    command_message = %{
+      event: :notification,
+      message: %{
+        "method" => "item/completed",
+        "params" => %{
+          "item" => %{
+            "type" => "commandExecution",
+            "status" => "completed",
+            "command" => ["pnpm", "check:docs"],
+            "exitCode" => 0
+          }
+        }
+      }
+    }
+
+    assert StatusDashboard.humanize_codex_message(agent_message) ==
+             "agent message: Validation passed and PR is pending."
+
+    assert StatusDashboard.humanize_codex_message(command_message) ==
+             "command completed: pnpm check:docs (exit 0)"
   end
 
   test "status dashboard formats auto-approval updates from codex" do
@@ -1555,6 +1879,24 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_for_snapshot(pid, predicate, deadline_ms)
+  end
+
+  defp assert_eventually(fun, timeout_ms \\ 500) do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+    do_assert_eventually(fun, deadline_ms)
+  end
+
+  defp do_assert_eventually(fun, deadline_ms) do
+    if fun.() do
+      true
+    else
+      if System.monotonic_time(:millisecond) >= deadline_ms do
+        flunk("condition did not become true before timeout")
+      else
+        Process.sleep(10)
+        do_assert_eventually(fun, deadline_ms)
+      end
+    end
   end
 
   defp do_wait_for_snapshot(pid, predicate, deadline_ms) do

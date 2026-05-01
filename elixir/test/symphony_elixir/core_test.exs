@@ -17,6 +17,10 @@ defmodule SymphonyElixir.CoreTest do
     assert config.tracker.terminal_states == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
     assert config.tracker.assignee == nil
     assert config.agent.max_turns == 20
+    assert config.ui.title == "Hydra"
+    assert config.ui.project_name == nil
+    assert config.ui.description == nil
+    assert config.ui.color == nil
 
     write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: "invalid")
 
@@ -88,6 +92,67 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
   end
 
+  test "project settings YAML overrides workflow identity and runtime settings" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_project_slug: "project",
+      codex_command: "/bin/sh app-server"
+    )
+
+    settings_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "settings.yml")
+
+    File.write!(settings_path, """
+    scope: project
+    project:
+      name: OpenBOA Project
+    ui:
+      title: OpenBOA
+      description: Hydra runtime for OpenBOA
+      color: "#16A34A"
+    linear:
+      project_slug: openboa-bf82bb513f7b
+    runtime:
+      dashboard_port: 4101
+      dashboard_host: 127.0.0.1
+      workspace_root: ~/code/hydra-workspaces/openboa
+    agent:
+      max_concurrent_agents: 2
+      max_turns: 12
+    """)
+
+    config = Config.settings!()
+    assert config.ui.project_name == "OpenBOA Project"
+    assert config.ui.title == "OpenBOA"
+    assert config.ui.description == "Hydra runtime for OpenBOA"
+    assert config.ui.color == "#16A34A"
+    assert config.tracker.project_slug == "openboa-bf82bb513f7b"
+    assert config.server.port == 4101
+    assert config.server.host == "127.0.0.1"
+    assert config.workspace.root == "~/code/hydra-workspaces/openboa"
+    assert config.agent.max_concurrent_agents == 2
+    assert config.agent.max_turns == 12
+  end
+
+  test "workflow load surfaces project settings parse failures" do
+    workflow_path = Workflow.workflow_file_path()
+    settings_path = Path.join(Path.dirname(workflow_path), "settings.yml")
+
+    File.write!(settings_path, "- not-a-map\n")
+
+    assert {:error, {:project_settings_parse_error, ^settings_path, :settings_not_a_map}} =
+             Workflow.load(workflow_path)
+
+    File.write!(settings_path, "project: [\n")
+
+    assert {:error, {:project_settings_parse_error, ^settings_path, _reason}} =
+             Workflow.load(workflow_path)
+
+    File.rm!(settings_path)
+    File.mkdir!(settings_path)
+
+    assert {:error, {:project_settings_parse_error, ^settings_path, _reason}} =
+             Workflow.load(workflow_path)
+  end
+
   test "current WORKFLOW.md file is valid and complete" do
     original_workflow_path = Workflow.workflow_file_path()
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
@@ -105,7 +170,7 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
+    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openboa-ai/hydra ."
     assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
     assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
@@ -198,7 +263,7 @@ defmodule SymphonyElixir.CoreTest do
 
   test "SymphonyElixir.start_link delegates to the orchestrator" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
-    Application.put_env(:symphony_elixir, :memory_tracker_issues, [])
+    Application.put_env(:hydra_elixir, :memory_tracker_issues, [])
     orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
@@ -228,7 +293,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-nonactive-reconcile-#{System.unique_integer([:positive])}"
+        "hydra-elixir-nonactive-reconcile-#{System.unique_integer([:positive])}"
       )
 
     issue_id = "issue-1"
@@ -291,7 +356,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-terminal-reconcile-#{System.unique_integer([:positive])}"
+        "hydra-elixir-terminal-reconcile-#{System.unique_integer([:positive])}"
       )
 
     issue_id = "issue-2"
@@ -354,10 +419,10 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-missing-running-reconcile-#{System.unique_integer([:positive])}"
+        "hydra-elixir-missing-running-reconcile-#{System.unique_integer([:positive])}"
       )
 
-    previous_memory_issues = Application.get_env(:symphony_elixir, :memory_tracker_issues)
+    previous_memory_issues = Application.get_env(:hydra_elixir, :memory_tracker_issues)
     issue_id = "issue-missing"
     issue_identifier = "MT-557"
 
@@ -370,7 +435,7 @@ defmodule SymphonyElixir.CoreTest do
         poll_interval_ms: 30_000
       )
 
-      Application.put_env(:symphony_elixir, :memory_tracker_issues, [])
+      Application.put_env(:hydra_elixir, :memory_tracker_issues, [])
 
       orchestrator_name = Module.concat(__MODULE__, :MissingRunningIssueOrchestrator)
       {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
@@ -543,6 +608,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_down_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :normal})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -551,7 +617,7 @@ defmodule SymphonyElixir.CoreTest do
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_delay_in_range(due_at_ms, before_down_ms, 500, 2_000)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -584,6 +650,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_down_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -591,7 +658,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_due_delay_in_range(due_at_ms, before_down_ms, 39_500, 42_000)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -623,6 +690,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_down_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -630,7 +698,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert_due_delay_in_range(due_at_ms, before_down_ms, 9_500, 11_500)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -750,15 +818,15 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
   end
 
-  defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+  defp assert_due_delay_in_range(due_at_ms, baseline_ms, min_delay_ms, max_delay_ms) do
+    delay_ms = due_at_ms - baseline_ms
 
-    assert remaining_ms >= min_remaining_ms
-    assert remaining_ms <= max_remaining_ms
+    assert delay_ms >= min_delay_ms
+    assert delay_ms <= max_delay_ms
   end
 
-  defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
-  defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
+  defp restore_app_env(key, nil), do: Application.delete_env(:hydra_elixir, key)
+  defp restore_app_env(key, value), do: Application.put_env(:hydra_elixir, key, value)
 
   test "fetch issues by states with empty state set is a no-op" do
     assert {:ok, []} = Client.fetch_issues_by_states([])
@@ -996,7 +1064,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-agent-runner-retain-workspace-#{System.unique_integer([:positive])}"
+        "hydra-elixir-agent-runner-retain-workspace-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1080,7 +1148,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-agent-runner-updates-#{System.unique_integer([:positive])}"
+        "hydra-elixir-agent-runner-updates-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1168,15 +1236,15 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-agent-runner-single-host-#{System.unique_integer([:positive])}"
+        "hydra-elixir-agent-runner-single-host-#{System.unique_integer([:positive])}"
       )
 
     previous_path = System.get_env("PATH")
-    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+    previous_trace = System.get_env("HYDRA_TEST_SSH_TRACE")
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
-      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+      restore_env("HYDRA_TEST_SSH_TRACE", previous_trace)
     end)
 
     try do
@@ -1184,21 +1252,21 @@ defmodule SymphonyElixir.CoreTest do
       fake_ssh = Path.join(test_root, "ssh")
 
       File.mkdir_p!(test_root)
-      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("HYDRA_TEST_SSH_TRACE", trace_file)
       System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
 
       File.write!(fake_ssh, """
       #!/bin/sh
-      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      trace_file="${HYDRA_TEST_SSH_TRACE:-/tmp/hydra-fake-ssh.trace}"
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 
       case "$*" in
-        *worker-a*"__SYMPHONY_WORKSPACE__"*)
+        *worker-a*"__HYDRA_WORKSPACE__"*)
           printf '%s\\n' 'worker-a prepare failed' >&2
           exit 75
           ;;
-        *worker-b*"__SYMPHONY_WORKSPACE__"*)
-          printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '/remote/home/.symphony-remote-workspaces/MT-SSH-FAILOVER'
+        *worker-b*"__HYDRA_WORKSPACE__"*)
+          printf '%s\\t%s\\t%s\\n' '__HYDRA_WORKSPACE__' '1' '/remote/home/.hydra-remote-workspaces/MT-SSH-FAILOVER'
           exit 0
           ;;
         *)
@@ -1210,7 +1278,7 @@ defmodule SymphonyElixir.CoreTest do
       File.chmod!(fake_ssh, 0o755)
 
       write_workflow_file!(Workflow.workflow_file_path(),
-        workspace_root: "~/.symphony-remote-workspaces",
+        workspace_root: "~/.hydra-remote-workspaces",
         worker_ssh_hosts: ["worker-a", "worker-b"]
       )
 
@@ -1238,7 +1306,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-agent-runner-continuation-#{System.unique_integer([:positive])}"
+        "hydra-elixir-agent-runner-continuation-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1369,7 +1437,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-agent-runner-max-turns-#{System.unique_integer([:positive])}"
+        "hydra-elixir-agent-runner-max-turns-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1466,7 +1534,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-args-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-args-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1612,7 +1680,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-custom-args-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-custom-args-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1697,7 +1765,7 @@ defmodule SymphonyElixir.CoreTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-app-server-policy-overrides-#{System.unique_integer([:positive])}"
+        "hydra-elixir-app-server-policy-overrides-#{System.unique_integer([:positive])}"
       )
 
     try do

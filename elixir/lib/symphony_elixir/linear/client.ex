@@ -10,7 +10,7 @@ defmodule SymphonyElixir.Linear.Client do
   @max_error_body_log_bytes 1_000
 
   @query """
-  query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
+  query HydraLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
     issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
       nodes {
         id
@@ -55,7 +55,7 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   @query_by_ids """
-  query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
+  query HydraLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
     issues(filter: {id: {in: $ids}}, first: $first) {
       nodes {
         id
@@ -96,7 +96,7 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   @viewer_query """
-  query SymphonyLinearViewer {
+  query HydraLinearViewer {
     viewer {
       id
     }

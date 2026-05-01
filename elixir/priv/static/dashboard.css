@@ -10,6 +10,7 @@
   --line: #ececf1;
   --line-strong: #d9d9e3;
   --accent: #10a37f;
+  --instance-accent: var(--accent);
   --accent-ink: #0f513f;
   --accent-soft: #e8faf4;
   --danger: #b42318;
@@ -151,6 +152,7 @@ pre,
 .hero-card {
   border-radius: 28px;
   padding: clamp(1.25rem, 3vw, 2rem);
+  border-top: 4px solid var(--instance-accent, var(--accent));
   box-shadow: var(--shadow-lg);
 }
 
@@ -163,7 +165,7 @@ pre,
 
 .eyebrow {
   margin: 0;
-  color: var(--muted);
+  color: var(--instance-accent, var(--muted));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 0.76rem;
@@ -412,6 +414,46 @@ pre,
   color: var(--muted);
 }
 
+.trace-list {
+  display: grid;
+  gap: 0;
+  margin-top: 1rem;
+}
+
+.trace-row {
+  display: grid;
+  grid-template-columns: minmax(9.5rem, 13rem) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.trace-time {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.trace-body {
+  display: grid;
+  gap: 0.24rem;
+  min-width: 0;
+}
+
+.trace-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.trace-message {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .error-card {
   border-radius: 24px;
   padding: 1.25rem;
@@ -459,5 +501,10 @@ pre,
   .error-card {
     border-radius: 20px;
     padding: 1rem;
+  }
+
+  .trace-row {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
   }
 }

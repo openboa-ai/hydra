@@ -78,13 +78,13 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   setup do
-    linear_client_module = Application.get_env(:symphony_elixir, :linear_client_module)
+    linear_client_module = Application.get_env(:hydra_elixir, :linear_client_module)
 
     on_exit(fn ->
       if is_nil(linear_client_module) do
-        Application.delete_env(:symphony_elixir, :linear_client_module)
+        Application.delete_env(:hydra_elixir, :linear_client_module)
       else
-        Application.put_env(:symphony_elixir, :linear_client_module, linear_client_module)
+        Application.put_env(:hydra_elixir, :linear_client_module, linear_client_module)
       end
     end)
 
@@ -92,10 +92,10 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   setup do
-    endpoint_config = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])
+    endpoint_config = Application.get_env(:hydra_elixir, SymphonyElixirWeb.Endpoint, [])
 
     on_exit(fn ->
-      Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+      Application.put_env(:hydra_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     end)
 
     :ok
@@ -125,6 +125,19 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, %{prompt: "Third prompt"}} = WorkflowStore.current()
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
+  end
+
+  test "workflow store tracks settings file stamps" do
+    ensure_workflow_store_running()
+    settings_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "settings.yml")
+
+    File.write!(settings_path, "project:\n  name: Stamped Project\n")
+    assert :ok = WorkflowStore.force_reload()
+
+    state = :sys.get_state(WorkflowStore)
+    assert {_workflow_stamp, {_mtime, _size, _hash}} = state.stamp
+    assert {:ok, %{config: config}} = Workflow.current()
+    assert get_in(config, ["ui", "project_name"]) == "Stamped Project"
   end
 
   test "workflow store init stops on missing workflow file" do
@@ -183,8 +196,8 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "tracker delegates to memory and linear adapters" do
     issue = %Issue{id: "issue-1", identifier: "MT-1", state: "In Progress"}
-    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
-    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+    Application.put_env(:hydra_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
+    Application.put_env(:hydra_elixir, :memory_tracker_recipient, self())
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
 
     assert Config.settings!().tracker.kind == "memory"
@@ -197,7 +210,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive {:memory_tracker_comment, "issue-1", "comment"}
     assert_receive {:memory_tracker_state_update, "issue-1", "Done"}
 
-    Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
+    Application.delete_env(:hydra_elixir, :memory_tracker_recipient)
     assert :ok = Memory.create_comment("issue-1", "quiet")
     assert :ok = Memory.update_issue_state("issue-1", "Quiet")
 
@@ -206,7 +219,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   test "linear adapter delegates reads and validates mutation responses" do
-    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
+    Application.put_env(:hydra_elixir, :linear_client_module, FakeLinearClient)
 
     assert {:ok, [:candidate]} = Adapter.fetch_candidate_issues()
     assert_receive :fetch_candidate_issues_called
@@ -342,6 +355,13 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
+             "ui" => %{
+               "project_name" => nil,
+               "title" => "Hydra",
+               "description" => nil,
+               "color" => nil,
+               "project_slug" => "project"
+             },
              "counts" => %{"running" => 1, "retrying" => 1},
              "running" => [
                %{
@@ -350,12 +370,21 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "state" => "In Progress",
                  "worker_host" => nil,
                  "workspace_path" => nil,
+                 "sandbox" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
+                 "recent_events" => [
+                   %{
+                     "at" => "2026-04-30T00:00:00Z",
+                     "event" => "workspace_ready",
+                     "message" => "workspace ready",
+                     "workspace_path" => "/tmp/mt-http"
+                   }
+                 ],
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
                }
              ],
@@ -367,7 +396,16 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
                  "worker_host" => nil,
-                 "workspace_path" => nil
+                 "workspace_path" => nil,
+                 "sandbox" => nil,
+                 "recent_events" => [
+                   %{
+                     "at" => "2026-04-30T00:00:01Z",
+                     "event" => "retry_scheduled",
+                     "message" => "boom",
+                     "attempt" => 2
+                   }
+                 ]
                }
              ],
              "codex_totals" => %{
@@ -394,6 +432,7 @@ defmodule SymphonyElixir.ExtensionsTest do
              "running" => %{
                "worker_host" => nil,
                "workspace_path" => nil,
+               "sandbox" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
                "state" => "In Progress",
@@ -401,11 +440,27 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
+               "recent_events" => [
+                 %{
+                   "at" => "2026-04-30T00:00:00Z",
+                   "event" => "workspace_ready",
+                   "message" => "workspace ready",
+                   "workspace_path" => "/tmp/mt-http"
+                 }
+               ],
                "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
              },
+             "sandbox" => nil,
              "retry" => nil,
              "logs" => %{"codex_session_logs" => []},
-             "recent_events" => [],
+             "recent_events" => [
+               %{
+                 "at" => "2026-04-30T00:00:00Z",
+                 "event" => "workspace_ready",
+                 "message" => "workspace ready",
+                 "workspace_path" => "/tmp/mt-http"
+               }
+             ],
              "last_error" => nil,
              "tracked" => %{}
            }
@@ -451,6 +506,13 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert state_payload ==
              %{
                "generated_at" => state_payload["generated_at"],
+               "ui" => %{
+                 "project_name" => nil,
+                 "title" => "Hydra",
+                 "description" => nil,
+                 "color" => nil,
+                 "project_slug" => "project"
+               },
                "error" => %{"code" => "snapshot_unavailable", "message" => "Snapshot unavailable"}
              }
 
@@ -473,6 +535,13 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert timeout_payload ==
              %{
                "generated_at" => timeout_payload["generated_at"],
+               "ui" => %{
+                 "project_name" => nil,
+                 "title" => "Hydra",
+                 "description" => nil,
+                 "color" => nil,
+                 "project_slug" => "project"
+               },
                "error" => %{"code" => "snapshot_timeout", "message" => "Snapshot timed out"}
              }
   end
@@ -521,6 +590,16 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   test "dashboard liveview renders and refreshes over pubsub" do
+    settings_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "settings.yml")
+
+    File.write!(settings_path, """
+    scope: project
+    project:
+      name: OpenBOA Project
+    ui:
+      title: OpenBOA Runtime
+    """)
+
     orchestrator_name = Module.concat(__MODULE__, :DashboardOrchestrator)
     snapshot = static_snapshot()
 
@@ -539,7 +618,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
     {:ok, view, html} = live(build_conn(), "/")
-    assert html =~ "Operations Dashboard"
+    assert html =~ "OpenBOA Project"
+    assert html =~ "OpenBOA Runtime"
     assert html =~ "MT-HTTP"
     assert html =~ "MT-RETRY"
     assert html =~ "rendered"
@@ -548,6 +628,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Offline"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
+    assert html =~ "Execution trace"
+    assert html =~ "workspace ready"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -674,12 +756,12 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   defp start_test_endpoint(overrides) do
     endpoint_config =
-      :symphony_elixir
+      :hydra_elixir
       |> Application.get_env(SymphonyElixirWeb.Endpoint, [])
       |> Keyword.merge(server: false, secret_key_base: String.duplicate("s", 64))
       |> Keyword.merge(overrides)
 
-    Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+    Application.put_env(:hydra_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
   end
 
@@ -699,7 +781,15 @@ defmodule SymphonyElixir.ExtensionsTest do
           codex_input_tokens: 4,
           codex_output_tokens: 8,
           codex_total_tokens: 12,
-          started_at: DateTime.utc_now()
+          started_at: DateTime.utc_now(),
+          recent_events: [
+            %{
+              at: "2026-04-30T00:00:00Z",
+              event: "workspace_ready",
+              message: "workspace ready",
+              workspace_path: "/tmp/mt-http"
+            }
+          ]
         }
       ],
       retrying: [
@@ -708,7 +798,15 @@ defmodule SymphonyElixir.ExtensionsTest do
           identifier: "MT-RETRY",
           attempt: 2,
           due_in_ms: 2_000,
-          error: "boom"
+          error: "boom",
+          recent_events: [
+            %{
+              at: "2026-04-30T00:00:01Z",
+              event: "retry_scheduled",
+              message: "boom",
+              attempt: 2
+            }
+          ]
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},

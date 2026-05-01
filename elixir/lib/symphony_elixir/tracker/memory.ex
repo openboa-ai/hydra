@@ -48,7 +48,7 @@ defmodule SymphonyElixir.Tracker.Memory do
   end
 
   defp configured_issues do
-    Application.get_env(:symphony_elixir, :memory_tracker_issues, [])
+    Application.get_env(:hydra_elixir, :memory_tracker_issues, [])
   end
 
   defp issue_entries do
@@ -56,7 +56,7 @@ defmodule SymphonyElixir.Tracker.Memory do
   end
 
   defp send_event(message) do
-    case Application.get_env(:symphony_elixir, :memory_tracker_recipient) do
+    case Application.get_env(:hydra_elixir, :memory_tracker_recipient) do
       pid when is_pid(pid) -> send(pid, message)
       _ -> :ok
     end

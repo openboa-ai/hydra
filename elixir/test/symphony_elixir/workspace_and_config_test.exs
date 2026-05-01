@@ -9,7 +9,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hook-bootstrap-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hook-bootstrap-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -44,7 +44,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-deterministic-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-deterministic-#{System.unique_integer([:positive])}"
       )
 
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
@@ -60,7 +60,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-reuse-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-reuse-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -96,7 +96,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-stale-path-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-stale-path-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -119,7 +119,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-symlink-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-symlink-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -147,7 +147,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-root-symlink-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-root-symlink-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -174,7 +174,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-root-remove-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-root-remove-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -195,7 +195,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hook-failure-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hook-failure-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -215,7 +215,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hook-timeout-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hook-timeout-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -236,7 +236,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-workspace-empty-#{System.unique_integer([:positive])}"
+        "hydra-workspace-empty-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -257,7 +257,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-issue-workspace-cleanup-#{System.unique_integer([:positive])}"
+        "hydra-elixir-issue-workspace-cleanup-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -283,7 +283,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     missing_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-missing-workspaces-#{System.unique_integer([:positive])}"
+        "hydra-elixir-missing-workspaces-#{System.unique_integer([:positive])}"
       )
 
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: missing_root)
@@ -424,7 +424,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Enum.map(issues, & &1.id) == issue_ids
 
     assert_receive {:fetch_issue_states_page, query, %{ids: ^first_batch_ids, first: 50, relationFirst: 50}}
-    assert query =~ "SymphonyLinearIssuesById"
+    assert query =~ "HydraLinearIssuesById"
 
     assert_receive {:fetch_issue_states_page, ^query, %{ids: ^second_batch_ids, first: 5, relationFirst: 50}}
   end
@@ -588,7 +588,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     random_path =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-missing-#{System.unique_integer([:positive])}"
+        "hydra-elixir-missing-#{System.unique_integer([:positive])}"
       )
 
     assert {:ok, []} = Workspace.remove(random_path)
@@ -598,7 +598,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hooks-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hooks-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -636,7 +636,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hooks-fail-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hooks-fail-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -661,7 +661,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hooks-large-fail-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hooks-large-fail-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -683,22 +683,22 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   end
 
   test "workspace remove continues when before_remove hook times out" do
-    previous_timeout = Application.get_env(:symphony_elixir, :workspace_hook_timeout_ms)
+    previous_timeout = Application.get_env(:hydra_elixir, :workspace_hook_timeout_ms)
 
     on_exit(fn ->
       if is_nil(previous_timeout) do
-        Application.delete_env(:symphony_elixir, :workspace_hook_timeout_ms)
+        Application.delete_env(:hydra_elixir, :workspace_hook_timeout_ms)
       else
-        Application.put_env(:symphony_elixir, :workspace_hook_timeout_ms, previous_timeout)
+        Application.put_env(:hydra_elixir, :workspace_hook_timeout_ms, previous_timeout)
       end
     end)
 
-    Application.put_env(:symphony_elixir, :workspace_hook_timeout_ms, 10)
+    Application.put_env(:hydra_elixir, :workspace_hook_timeout_ms, 10)
 
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-workspace-hooks-timeout-#{System.unique_integer([:positive])}"
+        "hydra-elixir-workspace-hooks-timeout-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -741,7 +741,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.tracker.endpoint == "https://api.linear.app/graphql"
     assert config.tracker.api_key == nil
     assert config.tracker.project_slug == nil
-    assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+    assert config.workspace.root == Path.join(System.tmp_dir!(), "hydra_workspaces")
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
     assert config.codex.command == "codex app-server"
@@ -757,7 +757,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.thread_sandbox == "workspace-write"
 
     assert {:ok, canonical_default_workspace_root} =
-             SymphonyElixir.PathSafety.canonicalize(Path.join(System.tmp_dir!(), "symphony_workspaces"))
+             SymphonyElixir.PathSafety.canonicalize(Path.join(System.tmp_dir!(), "hydra_workspaces"))
 
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "workspaceWrite",
@@ -782,7 +782,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     explicit_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-explicit-sandbox-root-#{System.unique_integer([:positive])}"
+        "hydra-elixir-explicit-sandbox-root-#{System.unique_integer([:positive])}"
       )
 
     explicit_workspace = Path.join(explicit_root, "MT-EXPLICIT")
@@ -890,7 +890,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   test "config resolves $VAR references for env-backed secret and path values" do
     workspace_env_var = "SYMP_WORKSPACE_ROOT_#{System.unique_integer([:positive])}"
     api_key_env_var = "SYMP_LINEAR_API_KEY_#{System.unique_integer([:positive])}"
-    workspace_root = Path.join("/tmp", "symphony-workspace-root")
+    workspace_root = Path.join("/tmp", "hydra-workspace-root")
     api_key = "resolved-secret"
     codex_bin = Path.join(["~", "bin", "codex"])
 
@@ -920,7 +920,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   test "config no longer resolves legacy env: references" do
     workspace_env_var = "SYMP_WORKSPACE_ROOT_#{System.unique_integer([:positive])}"
     api_key_env_var = "SYMP_LINEAR_API_KEY_#{System.unique_integer([:positive])}"
-    workspace_root = Path.join("/tmp", "symphony-workspace-root")
+    workspace_root = Path.join("/tmp", "hydra-workspace-root")
     api_key = "resolved-secret"
 
     previous_workspace_root = System.get_env(workspace_env_var)
@@ -1034,7 +1034,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              })
 
     assert settings.tracker.api_key == nil
-    assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+    assert settings.workspace.root == Path.join(System.tmp_dir!(), "hydra_workspaces")
 
     assert settings.codex.approval_policy == %{
              "reject" => %{"sandbox_approval" => true}
@@ -1047,7 +1047,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              })
 
     assert settings.tracker.api_key == "fallback-linear-token"
-    assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+    assert settings.workspace.root == Path.join(System.tmp_dir!(), "hydra_workspaces")
   end
 
   test "schema resolves sandbox policies from explicit and default workspaces" do
@@ -1063,7 +1063,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              workspace: %Schema.Workspace{root: ""}
            }) == %{
              "type" => "workspaceWrite",
-             "writableRoots" => [Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))],
+             "writableRoots" => [Path.expand(Path.join(System.tmp_dir!(), "hydra_workspaces"))],
              "readOnlyAccess" => %{"type" => "fullAccess"},
              "networkAccess" => false,
              "excludeTmpdirEnvVar" => false,
@@ -1089,15 +1089,15 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   test "schema keeps workspace roots raw while sandbox helpers expand only for local use" do
     assert {:ok, settings} =
              Schema.parse(%{
-               workspace: %{root: "~/.symphony-workspaces"},
+               workspace: %{root: "~/.hydra-workspaces"},
                codex: %{}
              })
 
-    assert settings.workspace.root == "~/.symphony-workspaces"
+    assert settings.workspace.root == "~/.hydra-workspaces"
 
     assert Schema.resolve_turn_sandbox_policy(settings) == %{
              "type" => "workspaceWrite",
-             "writableRoots" => [Path.expand("~/.symphony-workspaces")],
+             "writableRoots" => [Path.expand("~/.hydra-workspaces")],
              "readOnlyAccess" => %{"type" => "fullAccess"},
              "networkAccess" => false,
              "excludeTmpdirEnvVar" => false,
@@ -1109,7 +1109,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert remote_policy == %{
              "type" => "workspaceWrite",
-             "writableRoots" => ["~/.symphony-workspaces"],
+             "writableRoots" => ["~/.hydra-workspaces"],
              "readOnlyAccess" => %{"type" => "fullAccess"},
              "networkAccess" => false,
              "excludeTmpdirEnvVar" => false,
@@ -1121,7 +1121,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-runtime-sandbox-#{System.unique_integer([:positive])}"
+        "hydra-elixir-runtime-sandbox-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1165,6 +1165,91 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "runtime sandbox policy resolves env-backed writable roots" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "hydra-elixir-runtime-sandbox-env-#{System.unique_integer([:positive])}"
+      )
+
+    env_name = "HYDRA_TEST_WORKSPACE_ROOT"
+    previous_workspace_root = System.get_env(env_name)
+
+    on_exit(fn -> restore_env(env_name, previous_workspace_root) end)
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      issue_workspace = Path.join(workspace_root, "MT-100")
+      File.mkdir_p!(issue_workspace)
+      System.put_env(env_name, workspace_root)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: "$#{env_name}",
+        codex_turn_sandbox_policy: %{
+          type: "workspaceWrite",
+          writableRoots: ["$#{env_name}"],
+          readOnlyAccess: %{type: "fullAccess"},
+          networkAccess: true
+        }
+      )
+
+      assert {:ok, runtime_settings} = Config.codex_runtime_settings(issue_workspace)
+
+      assert runtime_settings.turn_sandbox_policy == %{
+               "type" => "workspaceWrite",
+               "writableRoots" => [workspace_root],
+               "readOnlyAccess" => %{"type" => "fullAccess"},
+               "networkAccess" => true
+             }
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "schema normalizes sbx extra workspaces and unresolved sandbox roots" do
+    empty_env = "HYDRA_TEST_EMPTY_SANDBOX_ROOT"
+    missing_env = "HYDRA_TEST_MISSING_SANDBOX_ROOT"
+    previous_empty = System.get_env(empty_env)
+    previous_missing = System.get_env(missing_env)
+
+    on_exit(fn ->
+      restore_env(empty_env, previous_empty)
+      restore_env(missing_env, previous_missing)
+    end)
+
+    System.put_env(empty_env, "")
+    System.delete_env(missing_env)
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               worker: %{
+                 sbx: %{
+                   enabled: true,
+                   extra_workspaces: [
+                     "",
+                     "/tmp/tools",
+                     %{path: "/tmp/write", writable: true},
+                     %{path: "", readonly: false},
+                     123
+                   ]
+                 }
+               },
+               codex: %{
+                 turn_sandbox_policy: %{
+                   type: "workspaceWrite",
+                   writableRoots: ["$#{missing_env}", "$#{empty_env}", 123]
+                 }
+               }
+             })
+
+    assert settings.worker.sbx["extra_workspaces"] == [
+             %{"path" => "/tmp/tools", "readonly" => true},
+             %{"path" => "/tmp/write", "readonly" => false, "writable" => true}
+           ]
+
+    assert settings.codex.turn_sandbox_policy["writableRoots"] == ["$#{missing_env}", "$#{empty_env}", 123]
+  end
+
   test "path safety returns errors for invalid path segments" do
     invalid_segment = String.duplicate("a", 300)
     path = Path.join(System.tmp_dir!(), invalid_segment)
@@ -1178,7 +1263,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-runtime-sandbox-branches-#{System.unique_integer([:positive])}"
+        "hydra-elixir-runtime-sandbox-branches-#{System.unique_integer([:positive])}"
       )
 
     try do
@@ -1237,35 +1322,35 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     test_root =
       Path.join(
         System.tmp_dir!(),
-        "symphony-elixir-remote-workspace-#{System.unique_integer([:positive])}"
+        "hydra-elixir-remote-workspace-#{System.unique_integer([:positive])}"
       )
 
     previous_path = System.get_env("PATH")
-    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+    previous_trace = System.get_env("HYDRA_TEST_SSH_TRACE")
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
-      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+      restore_env("HYDRA_TEST_SSH_TRACE", previous_trace)
     end)
 
     try do
       trace_file = Path.join(test_root, "ssh.trace")
       fake_ssh = Path.join(test_root, "ssh")
-      workspace_root = "~/.symphony-remote-workspaces"
-      workspace_path = "/remote/home/.symphony-remote-workspaces/MT-SSH-WS"
+      workspace_root = "~/.hydra-remote-workspaces"
+      workspace_path = "/remote/home/.hydra-remote-workspaces/MT-SSH-WS"
 
       File.mkdir_p!(test_root)
-      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("HYDRA_TEST_SSH_TRACE", trace_file)
       System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
 
       File.write!(fake_ssh, """
       #!/bin/sh
-      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      trace_file="${HYDRA_TEST_SSH_TRACE:-/tmp/hydra-fake-ssh.trace}"
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 
       case "$*" in
-        *"__SYMPHONY_WORKSPACE__"*)
-          printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '#{workspace_path}'
+        *"__HYDRA_WORKSPACE__"*)
+          printf '%s\\t%s\\t%s\\n' '__HYDRA_WORKSPACE__' '1' '#{workspace_path}'
           ;;
       esac
 
@@ -1291,8 +1376,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "-p 2200 worker-01 bash -lc"
-      assert trace =~ "__SYMPHONY_WORKSPACE__"
-      assert trace =~ "~/.symphony-remote-workspaces/MT-SSH-WS"
+      assert trace =~ "__HYDRA_WORKSPACE__"
+      assert trace =~ "~/.hydra-remote-workspaces/MT-SSH-WS"
       assert trace =~ "${workspace#~/}"
       assert trace =~ "echo before-run"
       assert trace =~ "echo after-run"

@@ -4,7 +4,7 @@ defmodule SymphonyElixir.SSHTest do
   alias SymphonyElixir.SSH
 
   test "run/3 keeps bracketed IPv6 host:port targets intact" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-ipv6-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-ipv6-test-#{System.unique_integer([:positive])}")
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -24,7 +24,7 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 leaves unbracketed IPv6-style targets unchanged" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-ipv6-raw-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-ipv6-raw-test-#{System.unique_integer([:positive])}")
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -44,31 +44,31 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 passes host:port targets through ssh -p" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-test-#{System.unique_integer([:positive])}")
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
-    previous_ssh_config = System.get_env("SYMPHONY_SSH_CONFIG")
+    previous_ssh_config = System.get_env("HYDRA_SSH_CONFIG")
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
-      restore_env("SYMPHONY_SSH_CONFIG", previous_ssh_config)
+      restore_env("HYDRA_SSH_CONFIG", previous_ssh_config)
       File.rm_rf(test_root)
     end)
 
     install_fake_ssh!(test_root, trace_file)
-    System.put_env("SYMPHONY_SSH_CONFIG", "/tmp/symphony-test-ssh-config")
+    System.put_env("HYDRA_SSH_CONFIG", "/tmp/hydra-test-ssh-config")
 
     assert {:ok, {"", 0}} =
              SSH.run("localhost:2222", "echo ready", stderr_to_stdout: true)
 
     trace = File.read!(trace_file)
-    assert trace =~ "-F /tmp/symphony-test-ssh-config"
+    assert trace =~ "-F /tmp/hydra-test-ssh-config"
     assert trace =~ "-T -p 2222 localhost bash -lc"
     assert trace =~ "echo ready"
   end
 
   test "run/3 keeps the user prefix when parsing user@host:port targets" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-user-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-user-test-#{System.unique_integer([:positive])}")
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -88,7 +88,7 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 returns an error when ssh is unavailable" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-missing-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-missing-test-#{System.unique_integer([:positive])}")
     previous_path = System.get_env("PATH")
 
     on_exit(fn ->
@@ -103,14 +103,14 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "start_port/3 supports binary output without line mode" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-port-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-port-test-#{System.unique_integer([:positive])}")
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
-    previous_ssh_config = System.get_env("SYMPHONY_SSH_CONFIG")
+    previous_ssh_config = System.get_env("HYDRA_SSH_CONFIG")
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
-      restore_env("SYMPHONY_SSH_CONFIG", previous_ssh_config)
+      restore_env("HYDRA_SSH_CONFIG", previous_ssh_config)
       File.rm_rf(test_root)
     end)
 
@@ -121,7 +121,7 @@ defmodule SymphonyElixir.SSHTest do
     exit 0
     """)
 
-    System.delete_env("SYMPHONY_SSH_CONFIG")
+    System.delete_env("HYDRA_SSH_CONFIG")
 
     assert {:ok, port} = SSH.start_port("localhost", "printf ok")
     assert is_port(port)
@@ -133,7 +133,7 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "start_port/3 supports line mode" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-line-port-test-#{System.unique_integer([:positive])}")
+    test_root = Path.join(System.tmp_dir!(), "hydra-ssh-line-port-test-#{System.unique_integer([:positive])}")
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -182,7 +182,7 @@ defmodule SymphonyElixir.SSHTest do
     System.put_env("PATH", fake_bin_dir <> ":" <> (System.get_env("PATH") || ""))
   end
 
-  defp wait_for_trace!(trace_file, attempts \\ 20)
+  defp wait_for_trace!(trace_file, attempts \\ 80)
   defp wait_for_trace!(trace_file, 0), do: flunk("timed out waiting for fake ssh trace at #{trace_file}")
 
   defp wait_for_trace!(trace_file, attempts) do

@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  project_slug: "hydra"
   active_states:
     - Todo
     - In Progress
@@ -16,10 +16,10 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/symphony-workspaces
+  root: ~/code/hydra-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
+    git clone --depth 1 https://github.com/openboa-ai/hydra .
     if command -v mise >/dev/null 2>&1; then
       cd elixir && mise trust && mise exec -- mix deps.get
     fi
@@ -28,12 +28,17 @@ hooks:
 agent:
   max_concurrent_agents: 10
   max_turns: 20
+worker:
+  sbx:
+    enabled: true
+    agent: codex
+    lifecycle: fresh
+    network_policy: balanced
+    startup_timeout_ms: 120000
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: codex --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: workspace-write
-  turn_sandbox_policy:
-    type: workspaceWrite
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`
@@ -92,6 +97,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
+- GitHub operations run inside the Docker Sandbox. Use normal `git` and `gh` commands from the active sandbox worktree for commits, pushes, labels, PR creation, and PR feedback. Do not use host-side GitHub publishing tools.
 
 ## Related skills
 
@@ -150,7 +156,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 4.  Start work by writing/updating a hierarchical plan in the workpad comment.
 5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
     - Format: `<host>:<abs-workdir>@<short-sha>`
-    - Example: `devbox-01:/home/dev-user/code/symphony-workspaces/MT-32@7bdde33bc`
+    - Example: `devbox-01:/home/dev-user/code/hydra-workspaces/MT-32@7bdde33bc`
     - Do not include metadata already inferable from Linear issue fields (`issue ID`, `status`, `branch`, `PR link`).
 6.  Add explicit acceptance criteria and TODOs in checklist form in the same comment.
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
@@ -185,7 +191,7 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
 
 Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
 
-- GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
+- GitHub is **not** a valid blocker by default. GitHub auth is expected inside Docker Sandboxes through `hydra sandbox github`; always try fallback strategies first (verify `gh auth status`, alternate remote/auth mode, then continue publish/review flow).
 - Do not move to `Human Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
 - If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
   - what is missing,
@@ -216,7 +222,7 @@ Use this only when completion is blocked by missing required tools or missing au
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
-    - Ensure the GitHub PR has label `symphony` (add it if missing).
+    - Ensure the GitHub PR has label `hydra` (add it if missing).
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
@@ -266,7 +272,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - Validation/tests are green for the latest commit.
 - PR feedback sweep is complete and no actionable comments remain.
 - PR checks are green, branch is pushed, and PR is linked on the issue.
-- Required PR metadata is present (`symphony` label).
+- Required PR metadata is present (`hydra` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 
 ## Guardrails

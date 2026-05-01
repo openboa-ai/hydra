@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Workspace do
   require Logger
   alias SymphonyElixir.{Config, PathSafety, SSH}
 
-  @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
+  @remote_workspace_marker "__HYDRA_WORKSPACE__"
 
   @type worker_host :: String.t() | nil
 

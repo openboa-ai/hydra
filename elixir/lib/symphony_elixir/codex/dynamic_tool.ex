@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   @linear_graphql_tool "linear_graphql"
   @linear_graphql_description """
-  Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.
+  Execute a raw GraphQL query or mutation against Linear using Hydra's configured auth.
   """
   @linear_graphql_input_schema %{
     "type" => "object",
@@ -42,8 +42,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  @spec tool_specs() :: [map()]
-  def tool_specs do
+  @spec tool_specs(keyword()) :: [map()]
+  def tool_specs(_opts \\ []) do
     [
       %{
         "name" => @linear_graphql_tool,
@@ -171,7 +171,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(:missing_linear_api_token) do
     %{
       "error" => %{
-        "message" => "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
+        "message" => "Hydra is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
       }
     }
   end

@@ -1,15 +1,15 @@
-# Symphony Elixir
+# Hydra Elixir
 
-This directory contains the current Elixir/OTP implementation of Symphony, based on
+This directory contains the current Elixir/OTP implementation of Hydra, based on
 [`SPEC.md`](../SPEC.md) at the repository root.
 
 > [!WARNING]
-> Symphony Elixir is prototype software intended for evaluation only and is presented as-is.
+> Hydra Elixir is prototype software intended for evaluation only and is presented as-is.
 > We recommend implementing your own hardened version based on `SPEC.md`.
 
 ## Screenshot
 
-![Symphony Elixir screenshot](../.github/media/elixir-screenshot.png)
+![Hydra Elixir screenshot](../.github/media/elixir-screenshot.png)
 
 ## How it works
 
@@ -20,21 +20,21 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 4. Sends a workflow prompt to Codex
 5. Keeps Codex working on the issue until the work is done
 
-During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+During app-server sessions, Hydra serves the host-side `linear_graphql` tool for Linear updates. GitHub work should happen inside Docker Sandboxes branch worktrees with `git` and `gh`, using the Docker Sandboxes `github` secret configured by `hydra setup sandbox`.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
-Symphony stops the active agent for that issue and cleans up matching workspaces.
+Hydra stops the active agent for that issue and cleans up matching workspaces.
 
 ## How to use it
 
 1. Make sure your codebase is set up to work well with agents: see
    [Harness engineering](https://openai.com/index/harness-engineering/).
-2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
+2. Configure runtime access with `hydra auth login --provider linear --method token` and
+   `hydra auth login --provider github --method browser` when using the global launcher.
+   If you run `elixir/bin/hydra` directly, export `LINEAR_API_KEY` and `GH_TOKEN` yourself.
 3. Copy this directory's `WORKFLOW.md` to your repo.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
-   - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
+   - The `linear` skill expects Hydra's `linear_graphql` app-server tool for raw Linear GraphQL
      operations such as comment editing or upload flows.
 5. Customize the copied `WORKFLOW.md` file for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
@@ -56,32 +56,72 @@ mise exec -- elixir --version
 ## Run
 
 ```bash
-git clone https://github.com/openai/symphony
-cd symphony/elixir
+git clone https://github.com/openboa-ai/hydra
+cd hydra/elixir
 mise trust
 mise install
 mise exec -- mix setup
 mise exec -- mix build
-mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
+
+Run project profiles through the global `hydra` CLI:
+
+```bash
+hydra run openboa
+hydra run autokairos
+```
+
+The launcher reads credentials managed by `hydra auth`, including Hydra-specific GitHub
+browser login, selects
+`~/.hydra/projects/<project>/WORKFLOW.md`, stores workspaces under
+`~/.hydra/workspaces/<project>/`, and stores logs under `~/.hydra/logs/<project>/`.
+
+Repository-local launchers are not the default for OpenBOA AI profiles. Keep project profiles in
+`~/.hydra/projects/` unless you are deliberately testing a separate packaging flow.
 
 ## Configuration
 
-Pass a custom workflow file path to `./bin/symphony` when starting the service:
+Project profiles should be started through the global `hydra` command. Keep custom workflow
+profiles under `~/.hydra/projects/<project>/WORKFLOW.md`, then run:
 
 ```bash
-./bin/symphony /path/to/custom/WORKFLOW.md
+hydra run <project>
 ```
 
-If no path is passed, Symphony defaults to `./WORKFLOW.md`.
+The lower-level Elixir escript is an implementation detail behind the global launcher.
 
 Optional flags:
 
-- `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
-- `--port` also starts the Phoenix observability service (default: disabled)
+- `--logs-root` tells Hydra to write logs under a different directory (default: `./log`)
+- `--port` overrides the Phoenix observability service port
+- `--no-terminal-dashboard` disables the terminal status renderer while keeping the web dashboard enabled
+- `--terminal-dashboard` enables the terminal status renderer explicitly
 
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
-Codex session prompt.
+Codex session prompt. If a `settings.yml` file exists next to `WORKFLOW.md`, Hydra reads it at
+startup and merges supported project-local values over the generated front matter. The project
+settings file is intended for per-repo identity and runtime knobs when several dashboards run at the
+same time:
+
+```yaml
+scope: project
+project:
+  name: OpenBOA
+ui:
+  project_name: OpenBOA
+  title: OpenBOA
+  description: Hydra runtime for OpenBOA
+  color: "#16A34A"
+linear:
+  project_slug: openboa-bf82bb513f7b
+runtime:
+  dashboard_port: 4101
+  dashboard_host: 127.0.0.1
+  workspace_root: $HYDRA_WORKSPACE_ROOT
+agent:
+  max_concurrent_agents: 3
+  max_turns: 20
+```
 
 Minimal example:
 
@@ -98,6 +138,21 @@ hooks:
 agent:
   max_concurrent_agents: 10
   max_turns: 20
+worker:
+  sbx:
+    enabled: true
+    agent: codex
+    lifecycle: fresh
+    network_policy: balanced
+    startup_timeout_ms: 120000
+    # Optional Docker Sandboxes create options:
+    # template: hydra-codex
+    # kits: [kit-a]
+    # cpus: 4
+    # memory: 8g
+    # extra_workspaces:
+    #   - path: /path/to/docs
+    #     readonly: true
 codex:
   command: codex app-server
 ---
@@ -116,12 +171,18 @@ Notes:
   - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
 - Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
-- When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
+- When `codex.turn_sandbox_policy` is set explicitly, Hydra passes the map through to Codex
   unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
-  Symphony validation.
-- `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
+  Hydra validation.
+- The global `hydra` launcher keeps `workspace.root` portable by exporting
+  `$HYDRA_WORKSPACE_ROOT` at runtime, so workflow files do not need machine-specific absolute
+  paths.
+- Env-backed entries inside `codex.turn_sandbox_policy.writableRoots` are resolved before the policy
+  is sent to Codex. For Docker Sandboxes (`worker.sbx`), leave the policy omitted unless you need a
+  custom override; sbx exposes the workspace at the same absolute path as the host.
+- `agent.max_turns` caps how many back-to-back Codex turns Hydra will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
-- If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
+- If the Markdown body is blank, Hydra uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
   `git clone ... .` there, along with any other setup commands you need.
@@ -137,7 +198,7 @@ Notes:
 tracker:
   api_key: $LINEAR_API_KEY
 workspace:
-  root: $SYMPHONY_WORKSPACE_ROOT
+  root: $HYDRA_WORKSPACE_ROOT
 hooks:
   after_create: |
     git clone --depth 1 "$SOURCE_REPO_URL" .
@@ -145,11 +206,20 @@ codex:
   command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
 ```
 
-- If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.
-- If a later reload fails, Symphony keeps running with the last known good workflow and logs the
+- If `WORKFLOW.md` is missing or has invalid YAML at startup, Hydra does not boot.
+- If a later reload fails, Hydra keeps running with the last known good workflow and logs the
   reload error until the file is fixed.
-- `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+- `server.port` sets the Phoenix LiveView dashboard and JSON API port. The global `hydra run`
+  launcher starts that browser dashboard by default; pass `--no-web-dashboard` only when you do not
+  need `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, or `/api/v1/refresh`.
+- The dashboard includes an execution trace showing recent scheduler, workspace, retry, and Codex
+  events. The same trace appears in the JSON payloads under `recent_events`.
+- Hydra writes `.hydra-recovery.json` under `workspace.root`. On restart, existing retry
+  entries are restored with their remaining backoff and in-flight issues are requeued immediately
+  so the next Codex run can continue in the same workspace.
+
+Project-specific OpenBOA AI workflow profiles live in `~/.hydra/projects/` so `elixir/` can stay
+focused on runtime code.
 
 ## Web dashboard
 
@@ -173,7 +243,7 @@ The observability UI now runs on a minimal Phoenix stack:
 make all
 ```
 
-Run the real external end-to-end test only when you want Symphony to create disposable Linear
+Run the real external end-to-end test only when you want Hydra to create disposable Linear
 resources and launch a real `codex app-server` session:
 
 ```bash
@@ -184,20 +254,15 @@ make e2e
 
 Optional environment variables:
 
-- `SYMPHONY_LIVE_LINEAR_TEAM_KEY` defaults to `SYME2E`
-- `SYMPHONY_LIVE_SSH_WORKER_HOSTS` uses those SSH hosts when set, as a comma-separated list
+- `HYDRA_LIVE_LINEAR_TEAM_KEY` defaults to `SYME2E`
+- `HYDRA_LIVE_SSH_WORKER_HOSTS` uses those SSH hosts when set, as a comma-separated list
 
 `make e2e` runs two live scenarios:
 - one with a local worker
 - one with SSH workers
 
-If `SYMPHONY_LIVE_SSH_WORKER_HOSTS` is unset, the SSH scenario uses `docker compose` to start two
-disposable SSH workers on `localhost:<port>`. The live test generates a temporary SSH keypair,
-mounts the host `~/.codex/auth.json` into each worker, verifies that Symphony can talk to them
-over real SSH, then runs the same orchestration flow against those worker addresses. This keeps
-the transport representative without depending on long-lived external machines.
-
-Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` if you want `make e2e` to target real SSH hosts instead.
+The SSH scenario requires `HYDRA_LIVE_SSH_WORKER_HOSTS`. If it is unset, that scenario
+fails fast.
 
 The live test creates a temporary Linear project and issue, writes a temporary `WORKFLOW.md`, runs
 a real agent turn, verifies the workspace side effect, requires Codex to comment on and close the
@@ -213,7 +278,7 @@ actively running subagents, which is very useful during development.
 
 ### What's the easiest way to set this up for my own codebase?
 
-Launch `codex` in your repo, give it the URL to the Symphony repo, and ask it to set things up for
+Launch `codex` in your repo, give it the URL to the Hydra repo, and ask it to set things up for
 you.
 
 ## License

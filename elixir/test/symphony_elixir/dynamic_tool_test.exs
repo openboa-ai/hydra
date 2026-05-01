@@ -3,10 +3,12 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
   alias SymphonyElixir.Codex.DynamicTool
 
-  test "tool_specs advertises the linear_graphql input contract" do
+  test "tool_specs advertises Linear only" do
+    specs = DynamicTool.tool_specs()
+
     assert [
              %{
-               "description" => description,
+               "description" => linear_description,
                "inputSchema" => %{
                  "properties" => %{
                    "query" => _,
@@ -17,9 +19,9 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                },
                "name" => "linear_graphql"
              }
-           ] = DynamicTool.tool_specs()
+           ] = specs
 
-    assert description =~ "Linear"
+    assert linear_description =~ "Linear"
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
@@ -245,7 +247,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     assert Jason.decode!(missing_token["output"]) == %{
              "error" => %{
-               "message" => "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
+               "message" => "Hydra is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
              }
            }
 

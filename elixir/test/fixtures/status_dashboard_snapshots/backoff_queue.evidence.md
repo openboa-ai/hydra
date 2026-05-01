@@ -1,10 +1,12 @@
 ```text
-╭─ SYMPHONY STATUS
+╭─ HYDRA STATUS
+│ Instance: Hydra
 │ Agents: 1/10
 │ Throughput: 15 tps
 │ Runtime: 45m 0s
 │ Tokens: in 18,000 | out 2,200 | total 20,200
 │ Rate Limits: gpt-5 | primary 0/20,000 reset 95s | secondary 0/60 reset 45s | credits none
+│ SBX: disabled
 │ Project: https://linear.app/project/project/issues
 │ Next refresh: n/a
 ├─ Running

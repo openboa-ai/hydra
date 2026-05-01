@@ -1,4 +1,13 @@
 Copyright 2025 OpenAI
+Copyright 2026 OpenBOA AI contributors
+
+This project includes code from openai/symphony.
+Hydra is a modified fork of OpenAI Symphony.
+
+Modifications:
+- Renamed the public CLI, documentation, local state, and runtime branding to Hydra.
+- Added global local profile management for OpenBOA project workflows.
+- Extended scheduler, workspace, observability, and recovery behavior for autonomous agent runs.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
