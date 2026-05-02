@@ -71,7 +71,8 @@ CalVer in the form `vYYYY.MM.DD.N`, for example `v2026.05.02.1`. When a release 
 `release / homebrew formula` workflow opens a formula update PR that points `openboa-hydra` at the
 release source asset and checksum. Configure `HYDRA_RELEASE_TOKEN` as a fine-grained PAT or GitHub
 App token with `contents:write` and `pull_requests:write` so the workflow can upload the release
-asset, create the formula PR, and auto-merge it after required checks pass.
+asset and create the formula PR. Review and merge the generated formula PR manually after required
+checks pass.
 
 Alternatively, install Hydra with the bootstrap script:
 
