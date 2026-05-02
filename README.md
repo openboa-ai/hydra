@@ -47,7 +47,26 @@ development repository. Each `WORKFLOW.md` in `~/.hydra/projects/` is the single
 for metadata, Linear selection, dashboard settings, workspace roots, hooks, and Codex runtime
 policy.
 
-Install Hydra as a local CLI:
+Install Hydra with Homebrew:
+
+```bash
+brew tap openboa-ai/hydra https://github.com/openboa-ai/hydra
+brew install openboa-hydra
+```
+
+The Homebrew formula is named `openboa-hydra` because Homebrew core already has `hydra` and
+`ory-hydra` formulae that install a `hydra` executable. The installed command remains `hydra`.
+If either formula is already installed, uninstall it before installing `openboa-hydra`.
+
+Update a Homebrew-managed CLI:
+
+```bash
+brew update
+brew upgrade openboa-hydra
+hydra version
+```
+
+Alternatively, install Hydra with the bootstrap script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh | bash
@@ -62,7 +81,7 @@ HYDRA_INSTALL_DIR="$HOME/.hydra-cli" HYDRA_BIN_DIR="$HOME/bin" \
   bash <(curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh)
 ```
 
-Update an installed CLI:
+Update a bootstrap-installed CLI:
 
 ```bash
 hydra update
