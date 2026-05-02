@@ -151,10 +151,3 @@ jobs:
           fi
 
           echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
-
-      - name: Enable formula PR auto-merge
-        if: ${{ steps.formula-pr.outputs.pr_url != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.HYDRA_RELEASE_TOKEN }}
-        run: |
-          gh pr merge "${{ steps.formula-pr.outputs.pr_url }}" --auto --squash --delete-branch
