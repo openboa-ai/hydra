@@ -31,8 +31,11 @@ jobs:
       - name: Check formula style
         run: brew style openboa-ai/hydra/openboa-hydra
 
-      - name: Check tap syntax
-        run: brew test-bot --only-tap-syntax --testing-formulae=openboa-hydra
+      - name: Audit formula
+        run: brew audit --strict --online openboa-ai/hydra/openboa-hydra
+
+      - name: Read all tap formulae
+        run: brew readall --aliases --os=all --arch=all openboa-ai/hydra
 
       - name: Check install graph
         run: brew install --dry-run openboa-ai/hydra/openboa-hydra
