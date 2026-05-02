@@ -47,6 +47,9 @@ jobs:
             scripts/check-gitleaks.sh \
             scripts/setup-git-hooks.sh
 
+      - name: Check Ruby scripts
+        run: ruby -c scripts/update-homebrew-formula.rb
+
       - name: Check shell scripts
         run: |
           shellcheck -S warning \
