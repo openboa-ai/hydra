@@ -1,0 +1,52 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  repository-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ACTIONLINT_VERSION: v1.7.12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install quality tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Check shell syntax
+        run: bash -n hydra install.sh scripts/check-apache-compliance.sh scripts/check-gitleaks.sh
+
+      - name: Check shell scripts
+        run: shellcheck -S warning hydra install.sh scripts/check-apache-compliance.sh scripts/check-gitleaks.sh
+
+      - name: Check GitHub Actions workflows
+        run: actionlint -color
+
+      - name: Check JSON manifests
+        run: |
+          ruby -rjson -e 'ARGV.each { |path| JSON.parse(File.read(path)); puts "json: #{path}" }' \
+            .agents/plugins/marketplace.json \
+            plugins/hydra/.codex-plugin/plugin.json \
+            plugins/hydra/hooks/hooks.json \
+            plugins/hydra/.mcp.json
+
+      - name: Check repository compliance
+        run: scripts/check-apache-compliance.sh --worktree
