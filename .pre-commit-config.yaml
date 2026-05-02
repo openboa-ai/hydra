@@ -1,3 +1,9 @@
+minimum_pre_commit_version: "3.2.0"
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+  - pre-push
+
 repos:
   - repo: local
     hooks:
@@ -6,8 +12,25 @@ repos:
         entry: scripts/check-apache-compliance.sh --worktree
         language: script
         pass_filenames: false
-      - id: hydra-gitleaks
-        name: Hydra secret scan with gitleaks
+        stages:
+          - pre-commit
+      - id: hydra-gitleaks-staged
+        name: Hydra staged secret scan with gitleaks
         entry: scripts/check-gitleaks.sh --staged
         language: script
         pass_filenames: false
+        stages:
+          - pre-commit
+      - id: hydra-conventional-commit
+        name: Hydra conventional commit message
+        entry: scripts/check-conventional-title.sh --message-file
+        language: script
+        stages:
+          - commit-msg
+      - id: hydra-gitleaks-pre-push
+        name: Hydra pushed commit secret scan with gitleaks
+        entry: scripts/check-gitleaks.sh --pre-push
+        language: script
+        pass_filenames: false
+        stages:
+          - pre-push

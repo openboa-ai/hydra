@@ -29,14 +29,46 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
+          python3 -m pip install --user pre-commit==4.1.0
           go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Check shell syntax
-        run: bash -n hydra install.sh scripts/check-apache-compliance.sh scripts/check-gitleaks.sh
+        run: |
+          bash -n \
+            hydra \
+            install.sh \
+            .githooks/commit-msg \
+            .githooks/pre-commit \
+            .githooks/pre-push \
+            scripts/check-apache-compliance.sh \
+            scripts/check-conventional-title.sh \
+            scripts/check-gitleaks.sh \
+            scripts/setup-git-hooks.sh
 
       - name: Check shell scripts
-        run: shellcheck -S warning hydra install.sh scripts/check-apache-compliance.sh scripts/check-gitleaks.sh
+        run: |
+          shellcheck -S warning \
+            hydra \
+            install.sh \
+            .githooks/commit-msg \
+            .githooks/pre-commit \
+            .githooks/pre-push \
+            scripts/check-apache-compliance.sh \
+            scripts/check-conventional-title.sh \
+            scripts/check-gitleaks.sh \
+            scripts/setup-git-hooks.sh
+
+      - name: Check git hook executability
+        run: test -x .githooks/commit-msg -a -x .githooks/pre-commit -a -x .githooks/pre-push -a -x scripts/setup-git-hooks.sh
+
+      - name: Validate pre-commit config
+        run: pre-commit validate-config
+
+      - name: Validate commit convention checker
+        run: |
+          scripts/check-conventional-title.sh --message "ci: validate repository quality gates"
 
       - name: Check GitHub Actions workflows
         run: actionlint -color

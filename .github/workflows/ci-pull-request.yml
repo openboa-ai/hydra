@@ -1,4 +1,4 @@
-name: ci / pr description
+name: ci / pull request
 
 on:
   pull_request:
@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-pr-description:
-    name: template compliance
+  validate-pr:
+    name: title and description
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -23,6 +23,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate PR title convention
+        env:
+          PR_TITLE_JSON: ${{ toJson(github.event.pull_request.title) }}
+        run: |
+          printf '%s' "$PR_TITLE_JSON" | jq -r '.' > /tmp/pr_title.txt
+          ../scripts/check-conventional-title.sh --message-file /tmp/pr_title.txt --context pr-title
 
       - name: Set up mise tools
         uses: jdx/mise-action@9dc7d5dd454262207dea3ab5a06a3df6afc8ff26 # v3.4.1

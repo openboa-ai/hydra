@@ -284,6 +284,37 @@ help with the setup:
 > Set up Hydra for my repository based on
 > https://github.com/openboa-ai/hydra/blob/main/elixir/README.md
 
+## Development Quality Gates
+
+Contributor workflow details live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Install the repo-owned Git hooks before committing:
+
+```bash
+scripts/setup-git-hooks.sh
+```
+
+The hooks run Apache fork-compliance checks before commits, scan staged changes for secrets before
+commits, validate commit messages, and scan pushed commit ranges for secrets before pushes. They
+require [gitleaks](https://github.com/gitleaks/gitleaks); on macOS install it with:
+
+```bash
+brew install gitleaks
+```
+
+Git hooks are local Git configuration, so they cannot be forced by clone alone. The same secret
+scanner also runs in `ci / secrets` on pull requests and `main` pushes; protect `main` with that
+required check so leaked secrets cannot merge even when a contributor has not installed local hooks.
+
+Commit messages and PR titles use Conventional Commits:
+
+```text
+<type>[optional scope][!]: <description>
+```
+
+Allowed types are documented in [CONTRIBUTING.md](CONTRIBUTING.md). The `ci / pull request`
+workflow enforces PR title and description format for every pull request.
+
 ---
 
 ## License
