@@ -45,6 +45,7 @@ jobs:
             scripts/check-apache-compliance.sh \
             scripts/check-conventional-title.sh \
             scripts/check-gitleaks.sh \
+            scripts/check-hydra-gateway-smoke.sh \
             scripts/setup-git-hooks.sh
 
       - name: Check Ruby scripts
@@ -77,6 +78,9 @@ jobs:
             exit 1
           fi
           grep -F "unknown command: list" list.err
+
+      - name: Check Hydra gateway smoke
+        run: scripts/check-hydra-gateway-smoke.sh
 
       - name: Check diagnostics preflight shape
         run: |
@@ -121,10 +125,11 @@ jobs:
             scripts/check-apache-compliance.sh \
             scripts/check-conventional-title.sh \
             scripts/check-gitleaks.sh \
+            scripts/check-hydra-gateway-smoke.sh \
             scripts/setup-git-hooks.sh
 
-      - name: Check git hook executability
-        run: test -x .githooks/commit-msg -a -x .githooks/pre-commit -a -x .githooks/pre-push -a -x scripts/setup-git-hooks.sh
+      - name: Check script executability
+        run: test -x .githooks/commit-msg -a -x .githooks/pre-commit -a -x .githooks/pre-push -a -x scripts/setup-git-hooks.sh -a -x scripts/check-hydra-gateway-smoke.sh
 
       - name: Validate pre-commit config
         run: pre-commit validate-config
