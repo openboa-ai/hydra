@@ -113,15 +113,16 @@ Linear browser OAuth requires a registered OAuth app plus callback handling. Unt
 OAuth app flow, configure Hydra-specific Linear runtime access through
 `hydra auth login --provider linear --method token`.
 
-Run Hydra like `codex` or `claude`:
+Use Hydra through explicit commands:
 
 ```bash
 hydra list
 ```
 
-The `hydra` command is the CLI. Normal users should install it with Homebrew and update it
-with `brew upgrade openboa-hydra`. During local CLI development, you may still link a checkout
-directly with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`.
+The `hydra` command is the CLI. Project execution is explicit: use `hydra run <project>`
+so project names cannot collide with command names. Normal users should install it with Homebrew
+and update it with `brew upgrade openboa-hydra`. During local CLI development, you may still
+link a checkout directly with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`.
 
 Run a profile:
 

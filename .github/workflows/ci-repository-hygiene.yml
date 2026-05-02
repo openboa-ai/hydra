@@ -50,6 +50,21 @@ jobs:
       - name: Check Ruby scripts
         run: ruby -c scripts/update-homebrew-formula.rb
 
+      - name: Check CLI help shape
+        run: |
+          ./hydra --help | tee hydra-help.txt
+          grep -F "hydra <command> [options]" hydra-help.txt
+          if grep -F "hydra <project>" hydra-help.txt; then
+            echo "top-level help must not expose hydra <project> shorthand" >&2
+            exit 1
+          fi
+          ./hydra run --help | grep -F "hydra run <project>"
+          if ./hydra openboa 2>unknown.err; then
+            echo "hydra <project> shorthand should not dispatch" >&2
+            exit 1
+          fi
+          grep -F "unknown command: openboa" unknown.err
+
       - name: Check shell scripts
         run: |
           shellcheck -S warning \
