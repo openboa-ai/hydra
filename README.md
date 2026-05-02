@@ -66,6 +66,9 @@ brew upgrade openboa-hydra
 hydra version
 ```
 
+Until Hydra switches to tagged release artifacts, the Homebrew formula version is automatically
+bumped after merges to `main` so `brew upgrade openboa-hydra` can pick up the latest main build.
+
 Alternatively, install Hydra with the bootstrap script:
 
 ```bash
