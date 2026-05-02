@@ -16,7 +16,7 @@ an isolated temporary GitHub CLI config only for login, then store the resulting
 Hydra's own auth backend; Linear still needs Hydra-managed runtime auth unless a first-class
 Linear OAuth app flow is added.
 
-Treat Linear and GitHub as mandatory runtime credentials. `hydra check <project>` and
+Treat Linear and GitHub as mandatory runtime credentials. `hydra project check <project>` and
 `hydra run <project>` should fail when either provider is missing; do not make GitHub auth
 conditional on `networkAccess`.
 
@@ -27,17 +27,17 @@ path visible on the host. Keep Linear host-controlled through Hydra dynamic tool
 `hydra sandbox github` plus in-sandbox `git` and `gh`; do not add host-side GitHub
 publishing fallbacks.
 
-GitHub sync, when used, should push and pull the local `~/.hydra` profile source. Do not move
-canonical workflow profiles back into this development repository unless the user explicitly changes
-that decision.
+Artifact sources, when used, should be managed through `hydra source ...` and project changes should
+be made through `hydra project ...`. Do not move canonical workflow profiles back into this
+development repository unless the user explicitly changes that decision.
 
 Nest is the preferred source for shared Hydra runtime artifacts such as `AGENTS.md`, Codex skills,
 subagents, hooks, plugins, MCP templates, and project-owned `WORKFLOW.md` definitions. Treat Nest as
-an artifact source, not an infrastructure/environment repo. `hydra nest sync <project>` should
+an artifact source, not an infrastructure/environment repo. `hydra project sync <project>` should
 materialize source artifacts into local `~/.hydra/projects/<project>` and
 `~/.hydra/runtime/<project>`, while target code repositories stay code-only. Do not copy Nest
-artifacts into target repo PRs. If artifact changes need review, publish a PR against the Nest
-source via `hydra nest publish`, not against the target repo.
+artifacts into target repo PRs. If artifact changes need review, publish a PR against the artifact
+source via `hydra project publish <project>` or `hydra source publish`, not against the target repo.
 
 Use `hydra` as the CLI command in docs, examples, and verification. Do not add or document a
 `hydra install-cli` subcommand; the `hydra` launcher is the CLI. For local development, the
