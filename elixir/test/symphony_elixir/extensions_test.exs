@@ -360,7 +360,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                "title" => "Hydra",
                "description" => nil,
                "color" => nil,
-               "project_slug" => "project"
+               "project_slug" => "project",
+               "runtime_context" => %{}
              },
              "counts" => %{"running" => 1, "retrying" => 1},
              "running" => [
@@ -517,7 +518,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "title" => "Hydra",
                  "description" => nil,
                  "color" => nil,
-                 "project_slug" => "project"
+                 "project_slug" => "project",
+                 "runtime_context" => %{}
                },
                "error" => %{"code" => "snapshot_unavailable", "message" => "Snapshot unavailable"}
              }
@@ -546,7 +548,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "title" => "Hydra",
                  "description" => nil,
                  "color" => nil,
-                 "project_slug" => "project"
+                 "project_slug" => "project",
+                 "runtime_context" => %{}
                },
                "error" => %{"code" => "snapshot_timeout", "message" => "Snapshot timed out"}
              }

@@ -112,6 +112,26 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Runtime context</h2>
+              <p class="section-copy">Nest sync state and Codex artifacts loaded for this Hydra process.</p>
+            </div>
+          </div>
+
+          <%= if runtime_context_items(@payload.ui.runtime_context) == [] do %>
+            <p class="empty-state">Runtime context was not exported by the launcher.</p>
+          <% else %>
+            <div class="context-grid">
+              <article class="context-item" :for={{label, value} <- runtime_context_items(@payload.ui.runtime_context)}>
+                <p class="context-label"><%= label %></p>
+                <p class="context-value mono"><%= value %></p>
+              </article>
+            </div>
+          <% end %>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Rate limits</h2>
               <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
             </div>
@@ -397,6 +417,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
   end
+
+  defp runtime_context_items(context) when is_map(context) do
+    [
+      {"Nest sync", context[:project_sync] || context["project_sync"]},
+      {"Codex runtime", context[:codex_runtime] || context["codex_runtime"]},
+      {"Codex artifacts", context[:codex_artifacts] || context["codex_artifacts"]}
+    ]
+    |> Enum.reject(fn {_label, value} -> value in [nil, ""] end)
+  end
+
+  defp runtime_context_items(_context), do: []
 
   defp pretty_value(nil), do: "n/a"
   defp pretty_value(value), do: inspect(value, pretty: true, limit: :infinity)
