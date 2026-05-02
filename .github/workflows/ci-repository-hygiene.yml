@@ -65,6 +65,36 @@ jobs:
           fi
           grep -F "unknown command: openboa" unknown.err
 
+      - name: Check diagnostics preflight shape
+        run: |
+          tmp_home="$(mktemp -d)"
+          mkdir -p "${tmp_home}/projects/demo"
+          cat > "${tmp_home}/projects/demo/WORKFLOW.md" <<'EOF'
+          ---
+          project:
+            name: Demo
+            key: demo
+            repo: https://github.com/openboa-ai/openboa.git
+          worker:
+            sbx:
+              enabled: true
+          tracker:
+            kind: linear
+            api_key: $LINEAR_API_KEY
+            project_slug: demo
+          ---
+          Demo workflow.
+          EOF
+          HYDRA_HOME="${tmp_home}" ./hydra doctor --json > doctor.json || true
+          ruby -rjson -e 'data = JSON.parse(File.read("doctor.json")); abort "missing ok" unless data.key?("ok")'
+          if HYDRA_HOME="${tmp_home}" ./hydra run demo --no-web-dashboard --no-terminal-dashboard > run.out 2>&1; then
+            echo "expected preflight to fail without runtime credentials" >&2
+            exit 1
+          fi
+          grep -F "hydra: preflight demo" run.out
+          grep -F "preflight: failed" run.out
+          grep -F "codex_runtime: missing" run.out
+
       - name: Check shell scripts
         run: |
           shellcheck -S warning \

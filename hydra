@@ -1401,11 +1401,138 @@ USAGE
   esac
 }
 
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g'
+}
+
+json_string() {
+  printf '"%s"' "$(json_escape "$1")"
+}
+
+doctor_json() {
+  local project="$1"
+  local fix="$2"
+  local failed=0
+  local manager
+  local update_command
+  local home_status="ok"
+  local config_status="ok"
+  local projects_status="ok"
+  local linear_status="ok"
+  local github_status="ok"
+  local git_status="ok"
+  local gh_status="ok"
+  local sbx_status="ok"
+  local runner
+  local runner_tool_status="ok"
+  local runtime_status="ok"
+  local count="0"
+  local workflow_path=""
+  local repo_url=""
+  local project_status="ok"
+  local nest_status="ok"
+  local codex_status="ok"
+  local project_sbx_status="skipped"
+  local worker_backend=""
+  local install_status="ok"
+  local ok_json="false"
+
+  if [ "$fix" = "1" ]; then
+    ensure_local_home
+    chmod 700 "$repo_root/auth" 2>/dev/null || true
+  fi
+
+  manager="$(install_manager)"
+  update_command="$(install_update_command)"
+  if [ "$manager" = "unmanaged" ]; then
+    install_status="unmanaged"
+    failed=1
+  fi
+
+  [ -d "$repo_root" ] || { home_status="missing"; failed=1; }
+  if [ -f "$repo_root/config.toml" ]; then
+    config_status="ok"
+  elif [ "$fix" = "1" ]; then
+    ensure_local_home
+    config_status="repaired"
+  else
+    config_status="missing"
+    failed=1
+  fi
+
+  count="$(list_projects | wc -l | tr -d ' ')"
+  [ "$count" != "0" ] || { projects_status="missing"; failed=1; }
+
+  linear_auth_source >/dev/null 2>&1 || { linear_status="missing"; failed=1; }
+  github_auth_source >/dev/null 2>&1 || { github_status="missing"; failed=1; }
+  command -v git >/dev/null 2>&1 || { git_status="missing"; failed=1; }
+  command -v gh >/dev/null 2>&1 || gh_status="missing"
+  command -v sbx >/dev/null 2>&1 || sbx_status="missing"
+
+  runner="$(runtime_runner)"
+  case "$runner" in
+    mise)
+      command -v mise >/dev/null 2>&1 || { runner_tool_status="missing"; failed=1; }
+      ;;
+    system)
+      if ! command -v mix >/dev/null 2>&1 || ! command -v escript >/dev/null 2>&1; then
+        runner_tool_status="missing"
+        failed=1
+      fi
+      ;;
+  esac
+
+  [ -f "$(runtime_elixir_dir)/mix.exs" ] || { runtime_status="missing"; failed=1; }
+
+  if [ -n "$project" ]; then
+    workflow_path="$(require_project "$project")"
+    repo_url="$(workflow_repo_url "$workflow_path")"
+    worker_backend="$(workflow_worker_backend "$workflow_path")"
+    [ -n "$repo_url" ] || { project_status="missing_repo"; failed=1; }
+    project_nest_sync_status "$project" >/dev/null 2>&1 || { nest_status="failed"; failed=1; }
+    codex_runtime_ready "$project" || { codex_status="missing"; failed=1; }
+    case "$worker_backend" in
+      sbx)
+        if check_sbx_worker_ready; then
+          project_sbx_status="ok"
+        else
+          project_sbx_status="failed"
+          failed=1
+        fi
+        ;;
+    esac
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    ok_json="true"
+  fi
+
+  printf '{\n'
+  printf '  "ok": %s,\n' "$ok_json"
+  printf '  "install": {"status": '; json_string "$install_status"; printf ', "manager": '; json_string "$manager"; printf ', "update_command": '; json_string "$update_command"; printf '},\n'
+  printf '  "home": {"status": '; json_string "$home_status"; printf ', "path": '; json_string "$repo_root"; printf '},\n'
+  printf '  "config": {"status": '; json_string "$config_status"; printf ', "path": '; json_string "$repo_root/config.toml"; printf ', "next": '; json_string "hydra setup --wizard"; printf '},\n'
+  printf '  "projects": {"status": '; json_string "$projects_status"; printf ', "count": %s, "next": ' "$count"; json_string "hydra setup --wizard or hydra configure --section sync"; printf '},\n'
+  printf '  "auth": {"linear": '; json_string "$linear_status"; printf ', "github": '; json_string "$github_status"; printf ', "linear_next": '; json_string "hydra auth login --provider linear --method token"; printf ', "github_next": '; json_string "hydra auth login --provider github --method browser"; printf '},\n'
+  printf '  "tools": {"git": '; json_string "$git_status"; printf ', "gh": '; json_string "$gh_status"; printf ', "sbx": '; json_string "$sbx_status"; printf '},\n'
+  printf '  "runtime": {"runner": '; json_string "$runner"; printf ', "tool": '; json_string "$runner_tool_status"; printf ', "status": '; json_string "$runtime_status"; printf ', "path": '; json_string "$(runtime_elixir_dir)"; printf '}'
+  if [ -n "$project" ]; then
+    printf ',\n  "project": {"name": '; json_string "$project"; printf ', "status": '; json_string "$project_status"; printf ', "workflow": '; json_string "$(relative_path "$workflow_path")"; printf ', "repo": '; json_string "${repo_url:-missing}"; printf ', "worker_backend": '; json_string "$worker_backend"; printf ', "nest_sync": '; json_string "$nest_status"; printf ', "codex_runtime": '; json_string "$codex_status"; printf ', "sbx": '; json_string "$project_sbx_status"; printf '}'
+  fi
+  printf '\n}\n'
+  return "$failed"
+}
+
 doctor_command() {
   local fix=0
+  local json=0
   local failed=0
   local project=""
   local count
+  local workflow_path
+  local repo_url
+  local worker_backend
+  local section_status
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1413,14 +1540,17 @@ doctor_command() {
         fix=1
         shift
         ;;
+      --json)
+        json=1
+        shift
+        ;;
       -h|--help)
         cat <<'USAGE'
 Usage:
-  hydra doctor
-  hydra doctor <project>
-  hydra doctor <project> --fix
+  hydra doctor [--json]
+  hydra doctor <project> [--fix] [--json]
 
-Checks local Hydra CLI state, profile state, auth state, runtime prerequisites, and optional project Codex runtime state.
+Checks local installation, auth, project profile, Nest sync, Codex runtime, and Docker Sandboxes readiness.
 USAGE
         return 0
         ;;
@@ -1435,138 +1565,183 @@ USAGE
     esac
   done
 
+  if [ "$json" = "1" ]; then
+    doctor_json "$project" "$fix"
+    return $?
+  fi
+
   if [ "$fix" = "1" ]; then
-      ensure_local_home
+    ensure_local_home
     chmod 700 "$repo_root/auth" 2>/dev/null || true
   fi
 
+  printf 'install:\n'
   case "$(install_manager)" in
     homebrew)
-      printf "install: ok (homebrew, update with: %s)\n" "$(install_update_command)"
+      printf '  status: ok\n'
+      printf '  manager: homebrew\n'
+      printf '  update: %s\n' "$(install_update_command)"
       ;;
     git)
-      printf "install: ok (development checkout, update with: %s)\n" "$(install_update_command)"
+      printf '  status: ok\n'
+      printf '  manager: development checkout\n'
+      printf '  update: %s\n' "$(install_update_command)"
       ;;
     *)
-      printf "install: unmanaged (%s)\n" "$install_root"
-      printf "hint: use Homebrew for public installs: brew install %s\n" "$(homebrew_formula_name)"
+      printf '  status: unmanaged\n'
+      printf '  root: %s\n' "$install_root"
+      printf '  next: brew install %s\n' "$(homebrew_formula_name)"
       failed=1
       ;;
   esac
 
+  printf '\nhome:\n'
   if [ -d "$repo_root" ]; then
-    printf 'home: ok (%s)\n' "$repo_root"
+    printf '  status: ok\n'
+    printf '  path: %s\n' "$repo_root"
   else
-    printf 'home: missing (%s)\n' "$repo_root"
-    printf 'hint: run `hydra setup --wizard`\n'
+    printf '  status: missing\n'
+    printf '  path: %s\n' "$repo_root"
+    printf '  next: hydra setup --wizard\n'
     failed=1
   fi
 
   if [ -f "$repo_root/config.toml" ]; then
-    printf 'config: ok\n'
+    printf '  config: ok\n'
+  elif [ "$fix" = "1" ]; then
+    ensure_local_home
+    printf '  config: repaired\n'
   else
-    printf 'config: missing\n'
-    if [ "$fix" = "1" ]; then
-      ensure_local_home
-      printf 'config: repaired\n'
-    else
-      failed=1
-    fi
+    printf '  config: missing\n'
+    printf '  next: hydra setup --wizard\n'
+    failed=1
   fi
 
   count="$(list_projects | wc -l | tr -d ' ')"
   if [ "$count" = "0" ]; then
-    printf 'projects: missing\n'
-    printf 'hint: run `hydra setup --wizard` or `hydra configure --section sync`\n'
+    printf '  projects: missing\n'
+    printf '  next: hydra setup --wizard or hydra configure --section sync\n'
     failed=1
   else
-    printf 'projects: ok (%s profiles)\n' "$count"
+    printf '  projects: ok (%s profiles)\n' "$count"
   fi
 
+  printf '\nauth:\n'
   if linear_auth_source >/dev/null 2>&1; then
-    printf 'linear_auth: ok\n'
+    printf '  linear: ok\n'
   else
-    printf 'linear_auth: missing\n'
-    printf 'hint: run `hydra auth login --provider linear --method token`\n'
+    printf '  linear: missing\n'
+    printf '  next: hydra auth login --provider linear --method token\n'
     failed=1
   fi
 
   if github_auth_source >/dev/null 2>&1; then
-    printf 'github_auth: ok\n'
+    printf '  github: ok\n'
   else
-    printf 'github_auth: missing\n'
-    printf 'hint: run `hydra auth login --provider github --method browser`\n'
+    printf '  github: missing\n'
+    printf '  next: hydra auth login --provider github --method browser\n'
     failed=1
   fi
 
+  printf '\ntools:\n'
   if command -v git >/dev/null 2>&1; then
-    printf 'git: ok\n'
+    printf '  git: ok\n'
   else
-    printf 'git: missing\n'
+    printf '  git: missing\n'
     failed=1
   fi
 
   if command -v gh >/dev/null 2>&1; then
-    printf 'gh: ok\n'
+    printf '  gh: ok\n'
   else
-    printf 'gh: missing (needed for browser GitHub login)\n'
+    printf '  gh: missing\n'
+    printf '  next: install gh for browser GitHub login\n'
   fi
 
   if command -v sbx >/dev/null 2>&1; then
-    printf 'sbx: ok\n'
+    printf '  sbx: ok\n'
   else
-    printf 'sbx: missing (needed for worker.sbx profiles; run `hydra setup sandbox`)\n'
+    printf '  sbx: missing\n'
+    printf '  next: hydra setup sandbox\n'
   fi
 
+  printf '\nruntime:\n'
   case "$(runtime_runner)" in
     mise)
+      printf '  runner: mise\n'
       if command -v mise >/dev/null 2>&1; then
-        printf 'mise: ok\n'
+        printf '  mise: ok\n'
       else
-        printf 'mise: missing (needed to run the Elixir runtime)\n'
+        printf '  mise: missing\n'
         failed=1
       fi
       ;;
     system)
-      printf 'runtime_runner: system\n'
+      printf '  runner: system\n'
       if command -v mix >/dev/null 2>&1; then
-        printf 'mix: ok\n'
+        printf '  mix: ok\n'
       else
-        printf 'mix: missing (needed to run the Elixir runtime)\n'
+        printf '  mix: missing\n'
         failed=1
       fi
 
       if command -v escript >/dev/null 2>&1; then
-        printf 'escript: ok\n'
+        printf '  escript: ok\n'
       else
-        printf 'escript: missing (needed to run the Elixir runtime)\n'
+        printf '  escript: missing\n'
         failed=1
       fi
       ;;
   esac
 
   if [ -f "$(runtime_elixir_dir)/mix.exs" ]; then
-    printf 'runtime: ok (%s)\n' "$(runtime_elixir_dir)"
+    printf '  elixir: ok (%s)\n' "$(runtime_elixir_dir)"
   else
-    printf 'runtime: missing (%s)\n' "$(runtime_elixir_dir)"
+    printf '  elixir: missing (%s)\n' "$(runtime_elixir_dir)"
     failed=1
   fi
 
   if [ -n "$project" ]; then
-    local workflow_path
     workflow_path="$(require_project "$project")"
+    repo_url="$(workflow_repo_url "$workflow_path")"
+    worker_backend="$(workflow_worker_backend "$workflow_path")"
 
-    printf '\nproject_preflight:\n'
-    project_nest_sync_status "$project" || failed=1
+    printf '\nproject:\n'
+    printf '  name: %s\n' "$project"
+    printf '  workflow: %s\n' "$(relative_path "$workflow_path")"
+    if [ -n "$repo_url" ]; then
+      printf '  repo: set\n'
+    else
+      printf '  repo: missing\n'
+      printf '  next: add project.repo to %s\n' "$(relative_path "$workflow_path")"
+      failed=1
+    fi
+    printf '  worker_backend: %s\n' "$worker_backend"
 
-    case "$(workflow_worker_backend "$workflow_path")" in
+    printf '\nnest:\n'
+    section_status=0
+    project_nest_sync_status "$project" | sed 's/^/  /' || section_status=$?
+    if [ "$section_status" -ne 0 ]; then
+      printf '  next: hydra nest sync %s\n' "$project"
+      failed=1
+    fi
+
+    printf '\ncodex:\n'
+    if codex_runtime_ready "$project"; then
+      printf '  runtime: ready\n'
+      printf '  inspect: hydra codex inspect %s\n' "$project"
+    else
+      printf '  runtime: missing\n'
+      printf '  next: hydra nest sync %s\n' "$project"
+      failed=1
+    fi
+
+    case "$worker_backend" in
       sbx)
-        sandbox_status || failed=1
+        printf '\nsbx:\n'
+        sandbox_status | sed 's/^/  /' || failed=1
         ;;
     esac
-
-    printf '\n'
-    codex_inspect "$project" || failed=1
   fi
 
   return "$failed"
@@ -2044,7 +2219,7 @@ project_nest_sync_status() {
     return 1
   fi
 
-  if ! (cd "$source_path" && git fetch --quiet origin "$default_branch"); then
+  if ! (cd "$source_path" && git fetch --quiet origin "$default_branch" >/dev/null 2>&1); then
     if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" = "$current_ref" ]; then
       printf 'nest_sync: current locally (%s@%s; cannot fetch origin/%s for %s)\n' "$default_branch" "$current_ref" "$default_branch" "$(basename "$source_path")"
       return 0
@@ -2069,6 +2244,98 @@ require_project_nest_current() {
   local project="$1"
 
   project_nest_sync_status "$project" || die "$project is not synced with the Nest default branch."
+}
+
+run_project_preflight() {
+  local project="$1"
+  local workflow_path="$2"
+  local repo_url="$3"
+  local allow_network="$4"
+  local worker_backend
+  local output
+  local failed=0
+
+  worker_backend="$(workflow_worker_backend "$workflow_path")"
+  printf 'hydra: preflight %s\n' "$project"
+  printf 'preflight:\n'
+
+  if output="$(project_nest_sync_status "$project")"; then
+    printf '%s\n' "$output" | sed 's/^/  /'
+  else
+    printf '%s\n' "$output" | sed 's/^/  /'
+    printf '  next: hydra nest sync %s\n' "$project"
+    failed=1
+  fi
+
+  if [ -n "$repo_url" ]; then
+    printf '  project.repo: set\n'
+  else
+    printf '  project.repo: missing\n'
+    printf '  next: add project.repo to %s\n' "$(relative_path "$workflow_path")"
+    failed=1
+  fi
+
+  if [ -n "${LINEAR_API_KEY:-}" ]; then
+    printf '  linear_auth: set\n'
+  else
+    printf '  linear_auth: missing\n'
+    printf '  next: hydra auth login --provider linear --method token\n'
+    failed=1
+  fi
+
+  if github_auth_env_set; then
+    printf '  github_auth: set\n'
+  else
+    printf '  github_auth: missing\n'
+    printf '  next: hydra auth login --provider github --method browser\n'
+    failed=1
+  fi
+
+  case "$worker_backend" in
+    sbx)
+      if codex_runtime_ready "$project"; then
+        printf '  codex_runtime: ready\n'
+      else
+        printf '  codex_runtime: missing\n'
+        printf '  next: hydra nest sync %s\n' "$project"
+        failed=1
+      fi
+
+      if output="$(print_sbx_secret_status sbx_openai sbx_openai_secret_ready)"; then
+        printf '%s\n' "$output" | sed 's/^/  /'
+      else
+        printf '%s\n' "$output" | sed 's/^/  /'
+        failed=1
+      fi
+
+      if output="$(print_sbx_secret_status sbx_github sbx_github_secret_ready)"; then
+        printf '%s\n' "$output" | sed 's/^/  /'
+      else
+        printf '%s\n' "$output" | sed 's/^/  /'
+        failed=1
+      fi
+      ;;
+  esac
+
+  if workflow_requires_network "$workflow_path"; then
+    if [ "$allow_network" = "1" ]; then
+      printf '  shell_network: allowed\n'
+    else
+      printf '  shell_network: blocked\n'
+      printf '  next: hydra run %s --allow-network\n' "$project"
+      failed=1
+    fi
+  else
+    printf '  shell_network: disabled\n'
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    printf 'preflight: ok\n'
+  else
+    printf 'preflight: failed\n'
+  fi
+
+  return "$failed"
 }
 
 run_project_nest_preflight() {
@@ -2946,8 +3213,8 @@ codex_print_worker_auth() {
   printf 'worker_auth:\n'
   case "$worker_backend" in
     sbx)
-      print_sbx_secret_status sbx_openai sbx_openai_secret_ready || true
-      print_sbx_secret_status sbx_github sbx_github_secret_ready || true
+      print_sbx_secret_status sbx_openai sbx_openai_secret_ready | sed 's/^/  /' || true
+      print_sbx_secret_status sbx_github sbx_github_secret_ready | sed 's/^/  /' || true
       printf '  linear: host-controlled via Hydra dynamic tools\n'
       ;;
     *)
@@ -3053,6 +3320,123 @@ codex_path_status() {
     printf '%s: missing %s\n' "$label" "$(relative_path "$path")"
     return 1
   fi
+}
+
+codex_source_for_path() {
+  local path="$1"
+  local project="$2"
+  local workspace="${3:-}"
+
+  case "$path" in
+    "$runtime_dir/$project"/*)
+      printf 'nest\n'
+      return
+      ;;
+    "$install_root"/*)
+      printf 'hydra\n'
+      return
+      ;;
+  esac
+
+  if [ -n "$workspace" ]; then
+    case "$path" in
+      "$workspace"/*)
+        printf 'project\n'
+        return
+        ;;
+    esac
+  fi
+
+  printf 'unknown\n'
+}
+
+codex_print_source_item() {
+  local project="$1"
+  local workspace="$2"
+  local type="$3"
+  local path="$4"
+
+  [ -n "$path" ] || return 0
+  [ -e "$path" ] || return 0
+  printf '  - type: %s source: %s path: %s\n' "$type" "$(codex_source_for_path "$path" "$project" "$workspace")" "$(relative_path "$path")"
+}
+
+codex_print_artifact_sources() {
+  local project="$1"
+  local workspace="${2:-}"
+  local codex_home
+  local codex_user_home
+  local root
+  local item_path
+  local count=0
+
+  codex_home="$(codex_home_for_project "$project")"
+  codex_user_home="$(codex_user_home_for_project "$project")"
+  printf 'artifact_sources:\n'
+
+  for item_path in \
+    "$codex_home/AGENTS.override.md" \
+    "$codex_home/AGENTS.md" \
+    "$workspace/AGENTS.override.md" \
+    "$workspace/AGENTS.md"; do
+    if [ -f "$item_path" ]; then
+      codex_print_source_item "$project" "$workspace" agents_md "$item_path"
+      count=$((count + 1))
+    fi
+  done
+
+  for root in "$codex_user_home/.agents/skills" "$workspace/.agents/skills"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r item_path; do
+      codex_print_source_item "$project" "$workspace" skill "$item_path"
+      count=$((count + 1))
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | sort)
+  done
+
+  for root in "$codex_home/agents" "$workspace/.codex/agents"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r item_path; do
+      codex_print_source_item "$project" "$workspace" agent "$item_path"
+      count=$((count + 1))
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -name '*.toml' -type f 2>/dev/null | sort)
+  done
+
+  for item_path in \
+    "$codex_home/hooks.json" \
+    "$codex_home/hooks/hooks.json" \
+    "$workspace/.codex/hooks.json"; do
+    if [ -f "$item_path" ]; then
+      codex_print_source_item "$project" "$workspace" hook "$item_path"
+      count=$((count + 1))
+    fi
+  done
+
+  for root in "$codex_home/plugins" "$workspace/.codex/plugins"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r item_path; do
+      codex_print_source_item "$project" "$workspace" plugin "$item_path"
+      count=$((count + 1))
+    done < <(find "$root" -mindepth 3 -maxdepth 3 -path '*/.codex-plugin/plugin.json' -type f 2>/dev/null | sort)
+  done
+
+  if [ -f "$codex_home/config.toml" ]; then
+    codex_print_source_item "$project" "$workspace" mcp_config "$codex_home/config.toml"
+    count=$((count + 1))
+  fi
+
+  if [ -d "$codex_home/mcp" ]; then
+    while IFS= read -r item_path; do
+      codex_print_source_item "$project" "$workspace" mcp_template "$item_path"
+      count=$((count + 1))
+    done < <(find "$codex_home/mcp" -type f 2>/dev/null | sort)
+  fi
+
+  if [ -f "$install_root/plugins/hydra/.codex-plugin/plugin.json" ]; then
+    codex_print_source_item "$project" "$workspace" hydra_plugin_source "$install_root/plugins/hydra/.codex-plugin/plugin.json"
+    count=$((count + 1))
+  fi
+
+  [ "$count" -gt 0 ] || printf '  none\n'
 }
 
 codex_print_existing_files() {
@@ -3274,6 +3658,7 @@ codex_inspect() {
   printf 'worker_backend: %s\n' "$worker_backend"
   codex_print_worker_auth "$worker_backend"
   codex_runtime_status "$project" || failed=1
+  codex_print_artifact_sources "$project" "$workspace"
   if command -v codex >/dev/null 2>&1; then
     codex --version 2>/dev/null | sed 's/^/codex_cli: /' || true
   else
@@ -3327,6 +3712,12 @@ codex_inspect() {
       printf '  sbx_cli: missing\n'
       failed=1
     fi
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    printf 'codex_inspect_status: ok\n'
+  else
+    printf 'codex_inspect_status: failed\n'
   fi
 
   return "$failed"
@@ -3794,8 +4185,6 @@ run_project() {
   workflow_path="$(require_project "$project")"
   repo_url="$(workflow_repo_url "$workflow_path")"
 
-  run_project_nest_preflight "$project"
-
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --allow-network)
@@ -3831,6 +4220,8 @@ run_project() {
   done
 
   load_auth
+
+  run_project_preflight "$project" "$workflow_path" "$repo_url" "$allow_network" || exit 1
 
   require_runtime_auth
   [ -n "$repo_url" ] || die "$project is missing project.repo in $workflow_path."
