@@ -150,8 +150,18 @@ hydra status openboa
 hydra stop openboa
 hydra configure
 hydra doctor
-hydra doctor --fix
+hydra doctor openboa
+hydra doctor openboa --json
+hydra codex inspect openboa
 ```
+
+`hydra doctor <project>` groups install, home, auth, tool, runtime, project, Nest, Codex,
+and sandbox readiness checks. When a check fails, the output includes the next Hydra command to run.
+`hydra codex inspect <project>` shows the detailed Codex materialization, including whether loaded
+AGENTS, skills, agents, hooks, plugins, and MCP files came from Nest, the working repo, or Hydra.
+`hydra run <project>` performs the same high-signal preflight before starting the scheduler and
+stops early when required auth, Nest sync, Codex runtime, sandbox secrets, repo metadata, or network
+permission is missing.
 
 The launcher sets `HYDRA_WORKSPACE_ROOT` for the selected project:
 
