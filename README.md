@@ -74,28 +74,6 @@ App token with `contents:write` and `pull_requests:write` so the workflow can up
 asset and create the formula PR. Review and merge the generated formula PR manually after required
 checks pass.
 
-Alternatively, install Hydra with the bootstrap script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh | bash
-```
-
-The installer clones Hydra into `~/.local/share/hydra/hydra`, links `hydra` into
-`~/.local/bin`, and builds the Elixir runtime when `mise` is available. Override locations when
-needed:
-
-```bash
-HYDRA_INSTALL_DIR="$HOME/.hydra-cli" HYDRA_BIN_DIR="$HOME/bin" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh)
-```
-
-Update a bootstrap-installed CLI:
-
-```bash
-hydra update
-hydra version
-```
-
 Set up the local Hydra home:
 
 ```bash
@@ -141,9 +119,9 @@ Run Hydra like `codex` or `claude`:
 hydra list
 ```
 
-The `hydra` command is the CLI. During local CLI development, you may still link a checkout
-directly with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`, but normal users should install
-with `install.sh` and update with `hydra update`.
+The `hydra` command is the CLI. Normal users should install it with Homebrew and update it
+with `brew upgrade openboa-hydra`. During local CLI development, you may still link a checkout
+directly with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`.
 
 Run a profile:
 

@@ -6,10 +6,12 @@ usage() {
 Usage:
   install.sh [--repo <git-url>] [--ref <ref>] [--install-dir <path>] [--bin-dir <path>] [--no-build]
 
-Installs Hydra as a local CLI:
+Development/CI bootstrap helper for installing a Hydra checkout:
   - clones or updates the Hydra repository under ~/.local/share/hydra/hydra
   - links the `hydra` command into ~/.local/bin
   - builds the Elixir runtime when `mise` is available
+
+Public installation should use Homebrew: brew install openboa-hydra
 
 Environment overrides:
   HYDRA_REPO_URL       Git repository URL. Default: https://github.com/openboa-ai/hydra.git
@@ -18,9 +20,9 @@ Environment overrides:
   HYDRA_BIN_DIR        Command symlink directory. Default: ~/.local/bin
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh | bash -s -- --ref main
-  HYDRA_INSTALL_DIR="$HOME/.hydra-cli" bash install.sh --no-build
+  ./install.sh --no-build
+  ./install.sh --ref main --no-build
+  HYDRA_INSTALL_DIR="$HOME/.hydra-cli" ./install.sh --no-build
 USAGE
 }
 
@@ -144,9 +146,7 @@ case ":$PATH:" in
     ;;
 esac
 
-info "installed"
-printf '\nNext steps:\n'
-printf '  hydra setup --wizard\n'
-printf '  hydra setup sandbox\n'
-printf '  hydra nest add git@github.com:openboa-ai/nest.git --name openboa-ai-nest\n'
-printf '  hydra nest sync openboa\n'
+info "development bootstrap installed"
+printf '\nDevelopment smoke checks:\n'
+printf '  hydra version\n'
+printf '  hydra --help\n'

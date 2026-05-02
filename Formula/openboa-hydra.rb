@@ -35,7 +35,6 @@ class OpenboaHydra < Formula
       SPEC.md
       elixir
       hydra
-      install.sh
       plugins
       scripts
       .agents
