@@ -73,7 +73,9 @@ jobs:
           HYDRA_VERSION: ci
           MIX_ENV: prod
         run: |
-          ./hydra version
+          ./hydra version | tee version.out
+          grep -F "install_manager: homebrew" version.out
+          grep -F "update_command: brew upgrade openboa-hydra" version.out
           ./hydra setup --non-interactive
           if ./hydra update 2>update.err; then
             echo "expected Homebrew-managed update to fail" >&2

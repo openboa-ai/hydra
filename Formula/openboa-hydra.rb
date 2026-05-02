@@ -60,7 +60,10 @@ class OpenboaHydra < Formula
     hydra_home = testpath/"hydra-home"
     ENV["HYDRA_HOME"] = hydra_home
 
-    assert_match "install_root: #{libexec}", shell_output("#{bin}/hydra version")
+    version_output = shell_output("#{bin}/hydra version")
+    assert_match "install_manager: homebrew", version_output
+    assert_match "update_command: brew upgrade openboa-hydra", version_output
+    assert_match "install_root: #{libexec}", version_output
     assert_match "home: #{hydra_home}", shell_output("#{bin}/hydra setup --non-interactive")
     assert_path_exists hydra_home/"config.toml"
   end

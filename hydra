@@ -4,83 +4,56 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  hydra run <project> [--allow-network] [--terminal-dashboard|--no-terminal-dashboard] [--web-dashboard|--no-web-dashboard] [-- <hydra-args>]
-  hydra <project> [--allow-network] [--terminal-dashboard|--no-terminal-dashboard] [--web-dashboard|--no-web-dashboard] [-- <hydra-args>]
-  hydra list
-  hydra show <project>
-  hydra check <project>
-  hydra status [project]
-  hydra stop [project]
-  hydra home
-  hydra version
-  hydra update [--ref <ref>] [--no-build]
-  hydra setup [--wizard|--non-interactive] [--remote <git-remote-url>]
-  hydra setup sandbox [--yes] [--no-github]
-  hydra configure [--section auth|sync|projects]
-  hydra doctor [project] [--fix]
-  hydra init
-  hydra auth status
-  hydra auth login [--provider linear|github] [--method browser|token]
-  hydra auth remove <linear|github>
-  hydra auth import-env
-  hydra sync status
-  hydra sync pull [git-remote-url]
-  hydra sync push [git-remote-url]
-  hydra nest add <git-url> [--name <name>]
-  hydra nest sync [project]
-  hydra nest status
-  hydra nest publish [--source <name>] [--dry-run]
-  hydra codex inspect <project> [issue]
-  hydra sandbox status
-  hydra sandbox doctor [project]
-  hydra sandbox inspect <project> <issue>
-  hydra sandbox exec <project> <issue> -- <cmd> [args...]
-  hydra sandbox logs <project> [issue]
-  hydra sandbox install [--yes]
-  hydra sandbox login
-  hydra sandbox openai [--oauth|--token <token>]
-  hydra sandbox github
+  hydra <command> [options]
+
+Core commands:
+  run <project>       Start a project profile.
+  list                List configured project profiles.
+  show <project>      Show profile configuration.
+  check <project>     Validate profile, auth, Nest, and runtime readiness.
+  status [project]    Show running Hydra processes.
+  stop [project]      Stop running Hydra processes.
+
+Setup and diagnostics:
+  setup               Prepare local Hydra home and optional sync.
+  configure           Revisit local settings.
+  doctor [project]    Diagnose local installation and project readiness.
+  version             Show CLI version, install manager, and update command.
+  update              Update a development git checkout.
+
+Command groups:
+  auth                Manage Hydra-owned credentials.
+  sync                Push or pull local profile source.
+  nest                Manage Nest artifact sources and syncs.
+  codex               Inspect Codex runtime materialization.
+  sandbox             Manage Docker Sandboxes integration.
 
 Projects are loaded from ~/.hydra/projects by default.
 Set HYDRA_HOME to use a different local config root.
 
-Options:
-  --allow-network        Required for workflows that set codex.turn_sandbox_policy.networkAccess=true.
-  --terminal-dashboard   Render the live terminal dashboard. Default: on.
-  --no-terminal-dashboard
-                         Disable the terminal dashboard.
-  --web-dashboard        Start the browser dashboard. Default: on.
-  --no-web-dashboard     Disable the browser dashboard.
-  -h, --help        Show this help.
-
-Examples:
-  hydra list
-  hydra show openboa
-  hydra check openboa
-  hydra status
-  hydra status openboa
-  hydra stop openboa
-  hydra version
-  hydra update
-  hydra setup --wizard
-  hydra setup sandbox
-  hydra configure
-  hydra doctor
-  hydra doctor openboa
-  hydra codex inspect openboa
-  hydra codex inspect openboa BOA-1
-  hydra auth login
-  hydra auth login --provider github --method browser
-  hydra auth login --provider linear --method token
-  hydra auth status
-  hydra setup git@github.com:openboa-ai/hydra-workflows.git
-  hydra sync push git@github.com:openboa-ai/hydra-workflows.git
-  hydra nest add git@github.com:openboa-ai/nest.git
-  hydra nest sync openboa
-  hydra openboa
-  hydra autokairos
+Run: hydra run --help
+Run: hydra setup --help, hydra auth --help, or hydra sandbox --help
 USAGE
 }
+
+run_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra run <project> [options] [-- <runtime-args>]
+
+Options:
+  --allow-network             Required only when a workflow enables shell network access.
+  --terminal-dashboard        Render the live terminal dashboard. Default: on.
+  --no-terminal-dashboard     Disable the terminal dashboard.
+  --web-dashboard             Start the browser dashboard. Default: on.
+  --no-web-dashboard          Disable the browser dashboard.
+
+Examples:
+  hydra run openboa
+  hydra run openboa --no-web-dashboard
+USAGE
+}
+
 
 die() {
   printf 'hydra: %s\n' "$*" >&2
@@ -139,10 +112,40 @@ git_short_rev() {
   git -C "$install_root" rev-parse --short HEAD 2>/dev/null || printf 'unknown'
 }
 
+homebrew_formula_name() {
+  printf "%s\n" "${HYDRA_HOMEBREW_FORMULA:-openboa-hydra}"
+}
+
+install_manager() {
+  if [ "${HYDRA_PACKAGE_MANAGER:-}" = "homebrew" ] || [ -n "${HYDRA_HOMEBREW_FORMULA:-}" ]; then
+    printf "homebrew\n"
+  elif [ -d "$install_root/.git" ]; then
+    printf "git\n"
+  else
+    printf "unmanaged\n"
+  fi
+}
+
+install_update_command() {
+  case "$(install_manager)" in
+    homebrew)
+      printf "brew upgrade %s\n" "$(homebrew_formula_name)"
+      ;;
+    git)
+      printf "hydra update\n"
+      ;;
+    *)
+      printf "reinstall with Homebrew: brew install %s\n" "$(homebrew_formula_name)"
+      ;;
+  esac
+}
+
 version_command() {
-  printf 'hydra: %s\n' "$(git_short_rev)"
-  printf 'install_root: %s\n' "$install_root"
-  printf 'hydra_home: %s\n' "$repo_root"
+  printf "hydra: %s\n" "$(git_short_rev)"
+  printf "install_manager: %s\n" "$(install_manager)"
+  printf "update_command: %s\n" "$(install_update_command)"
+  printf "install_root: %s\n" "$install_root"
+  printf "hydra_home: %s\n" "$repo_root"
 }
 
 list_projects() {
@@ -362,7 +365,8 @@ update_usage() {
 Usage:
   hydra update [--ref <ref>] [--no-build]
 
-Updates the installed Hydra git checkout and rebuilds the Elixir runtime.
+Updates a development git checkout and rebuilds the Elixir runtime.
+Homebrew-managed installs should use: brew upgrade openboa-hydra.
 
 Options:
   --ref <ref>    Git ref to update to. Default: current branch, or main.
@@ -916,12 +920,27 @@ auth_import_env() {
   fi
 }
 
+auth_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra auth status
+  hydra auth login [--provider linear|github] [--method browser|token]
+  hydra auth remove <linear|github>
+  hydra auth import-env
+
+Hydra stores runtime credentials in its own auth backend and does not fall back to local gh or ChatGPT connector credentials.
+USAGE
+}
+
 auth_command() {
   local action="${1:-status}"
 
   case "$action" in
     status)
       auth_status
+      ;;
+    -h|--help)
+      auth_usage
       ;;
     login)
       shift
@@ -1421,6 +1440,20 @@ USAGE
     chmod 700 "$repo_root/auth" 2>/dev/null || true
   fi
 
+  case "$(install_manager)" in
+    homebrew)
+      printf "install: ok (homebrew, update with: %s)\n" "$(install_update_command)"
+      ;;
+    git)
+      printf "install: ok (development checkout, update with: %s)\n" "$(install_update_command)"
+      ;;
+    *)
+      printf "install: unmanaged (%s)\n" "$install_root"
+      printf "hint: use Homebrew for public installs: brew install %s\n" "$(homebrew_formula_name)"
+      failed=1
+      ;;
+  esac
+
   if [ -d "$repo_root" ]; then
     printf 'home: ok (%s)\n' "$repo_root"
   else
@@ -1628,12 +1661,26 @@ sync_push() {
   )
 }
 
+sync_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra sync status
+  hydra sync pull [git-remote-url]
+  hydra sync push [git-remote-url]
+
+Sync moves local Hydra profile source only. Credentials, workspaces, logs, and runtime state stay local.
+USAGE
+}
+
 sync_command() {
   local action="${1:-status}"
 
   case "$action" in
     status)
       sync_status
+      ;;
+    -h|--help)
+      sync_usage
       ;;
     pull)
       shift
@@ -2287,6 +2334,18 @@ nest_publish() {
   )
 }
 
+nest_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra nest add <git-url> [--name <name>]
+  hydra nest sync [project]
+  hydra nest status
+  hydra nest publish [--source <name>] [--dry-run]
+
+Nest is the source for shared Hydra runtime artifacts. Target code repositories stay code-only.
+USAGE
+}
+
 nest_command() {
   local action="${1:-status}"
 
@@ -2301,6 +2360,9 @@ nest_command() {
       ;;
     status)
       nest_status
+      ;;
+    -h|--help)
+      nest_usage
       ;;
     publish)
       shift
@@ -3918,9 +3980,15 @@ case "$command" in
     ;;
   run)
     shift
+    case "${1:-}" in
+      ""|-h|--help)
+        run_usage
+        exit 0
+        ;;
+    esac
     run_project "${1:-}" "${@:2}"
     ;;
   *)
-    run_project "$command" "${@:2}"
+    die "unknown command: $command. Run: hydra --help"
     ;;
 esac
