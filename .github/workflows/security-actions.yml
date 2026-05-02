@@ -1,4 +1,4 @@
-name: codeql
+name: security / actions codeql
 
 on:
   pull_request:
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   analyze:
-    name: Analyze GitHub Actions workflows
+    name: codeql
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

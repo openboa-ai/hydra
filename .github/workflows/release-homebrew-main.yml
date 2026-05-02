@@ -1,4 +1,4 @@
-name: homebrew-cd
+name: release / homebrew main bump
 
 on:
   push:
@@ -9,11 +9,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: homebrew-cd-main
+  group: release-homebrew-main
   cancel-in-progress: false
 
 jobs:
   bump-formula-version:
+    name: bump formula version
     if: ${{ !startsWith(github.event.head_commit.message, 'Bump Homebrew formula for ') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

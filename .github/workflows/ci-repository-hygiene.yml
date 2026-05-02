@@ -1,4 +1,4 @@
-name: quality
+name: ci / repository hygiene
 
 on:
   pull_request:
@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   repository-quality:
+    name: shell, workflows, manifests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

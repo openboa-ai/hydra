@@ -1,4 +1,4 @@
-name: homebrew
+name: ci / homebrew package
 
 on:
   pull_request:
@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   homebrew:
+    name: formula and packaged runtime
     runs-on: macos-latest
     timeout-minutes: 45
     env:
