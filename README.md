@@ -7,7 +7,7 @@ Hydra is a modified fork of OpenAI Symphony under the `openboa-ai/hydra` reposit
 Original project: <https://github.com/openai/symphony>
 
 Hydra extends the upstream scheduler with a global CLI, local profile management, Docker Sandboxes
-worker support, Nest-managed Codex artifacts, Linear polling, GitHub-ready project workflows, and
+worker support, artifact-source-managed Codex artifacts, Linear polling, GitHub-ready project workflows, and
 operator-visible runtime status.
 
 Public CLI, local state, OTP application config, and docs use the Hydra name. Some internal
@@ -16,7 +16,7 @@ Elixir module names still retain `SymphonyElixir` while the fork stabilizes.
 Hydra manages three local surfaces:
 - `~/.hydra/projects/<project>/WORKFLOW.md` for project runtime policy
 - `~/.hydra/workspaces/<project>/<issue>/` for isolated agent workspaces
-- `~/.hydra/runtime/<project>/` for Nest-synced Codex home artifacts
+- `~/.hydra/runtime/<project>/` for artifact-source-synced Codex home artifacts
 
 > [!WARNING]
 > Hydra is a low-key engineering preview for testing in trusted environments.
@@ -95,7 +95,7 @@ hydra auth status
 In a terminal, `hydra auth login` opens an arrow-key menu. Move with up/down and confirm with
 Enter or Space. Use `--provider` and `--method` for scripts or copyable setup commands.
 
-Both Linear and GitHub auth are mandatory for runtime profiles. `hydra check <project>` and
+Both Linear and GitHub auth are mandatory for runtime profiles. `hydra project check <project>` and
 `hydra run <project>` fail before starting if either provider is missing.
 
 On macOS, Hydra stores credentials in Keychain when available. In non-Keychain environments it
@@ -113,41 +113,37 @@ Linear browser OAuth requires a registered OAuth app plus callback handling. Unt
 OAuth app flow, configure Hydra-specific Linear runtime access through
 `hydra auth login --provider linear --method token`.
 
-Use Hydra through explicit commands:
+Use Hydra as the single gateway. Project names are never top-level commands, so they cannot collide
+with CLI verbs. Normal users should install Hydra with Homebrew and update it with
+`brew upgrade openboa-hydra`. During local CLI development, you may still link a checkout directly
+with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`.
+
+Add or sync project definitions through Hydra-managed artifact sources:
 
 ```bash
-hydra list
+hydra source add git@github.com:openboa-ai/nest.git --name nest
+hydra project add openboa \
+  --source nest \
+  --repo https://github.com/openboa-ai/openboa.git \
+  --linear-project-slug openboa-bf82bb513f7b
+hydra project publish openboa --source nest
+hydra project sync openboa
 ```
 
-The `hydra` command is the CLI. Project execution is explicit: use `hydra run <project>`
-so project names cannot collide with command names. Normal users should install it with Homebrew
-and update it with `brew upgrade openboa-hydra`. During local CLI development, you may still
-link a checkout directly with `ln -sf /path/to/hydra/hydra ~/.local/bin/hydra`.
+`hydra project add` includes `base` and `repo-worker` only when those bundles already exist in the
+selected artifact source. Explicit `--bundle <name>` values fail fast when the source does not
+contain `bundles/<name>` or `packs/<name>`.
 
-Run a profile:
-
-```bash
-hydra run openboa
-```
-
-`hydra run` renders one live terminal status panel, updates that panel in place, and starts the
-browser dashboard at the profile's configured port. Disable the browser dashboard only when needed
-with `hydra run openboa --no-web-dashboard`.
-
-List available profiles:
+Inspect, validate, run, or stop projects through the project gateway:
 
 ```bash
-hydra list
-```
-
-Inspect, validate, or check runtime status without starting the scheduler:
-
-```bash
-hydra show openboa
-hydra check openboa
+hydra project list
+hydra project show openboa
+hydra project check openboa
 hydra status
 hydra status openboa
 hydra stop openboa
+hydra run openboa
 hydra configure
 hydra doctor
 hydra doctor openboa
@@ -155,13 +151,17 @@ hydra doctor openboa --json
 hydra codex inspect openboa
 ```
 
-`hydra doctor <project>` groups install, home, auth, tool, runtime, project, Nest, Codex,
+`hydra run` renders one live terminal status panel, updates that panel in place, and starts the
+browser dashboard at the profile's configured port. Disable the browser dashboard only when needed
+with `hydra run openboa --no-web-dashboard`.
+
+`hydra doctor <project>` groups install, home, auth, tool, runtime, project, source, Codex,
 and sandbox readiness checks. When a check fails, the output includes the next Hydra command to run.
 `hydra codex inspect <project>` shows the detailed Codex materialization, including whether loaded
-AGENTS, skills, agents, hooks, plugins, and MCP files came from Nest, the working repo, or Hydra.
-`hydra run <project>` performs the same high-signal preflight before starting the scheduler and
-stops early when required auth, Nest sync, Codex runtime, sandbox secrets, repo metadata, or network
-permission is missing.
+AGENTS, skills, agents, hooks, plugins, and MCP files came from the artifact source, the working
+repo, or Hydra. `hydra run <project>` performs the same high-signal preflight before starting the
+scheduler and stops early when required auth, project sync, Codex runtime, sandbox secrets, repo
+metadata, or network permission is missing.
 
 The launcher sets `HYDRA_WORKSPACE_ROOT` for the selected project:
 
@@ -250,16 +250,17 @@ keep only repo-specific instructions and skills; they should not copy Hydra runt
 application code PRs. The plugin is also exposed through the repo marketplace at
 `.agents/plugins/marketplace.json` for local Codex testing.
 
-### Optional GitHub Sync
+### Artifact Source PRs
 
-Local profiles can optionally be backed by a GitHub repository. Secrets and runtime state are ignored;
-only profile source under `projects/` is pushed.
+Project definitions and shared Codex artifacts live in an artifact source repository, commonly the
+Nest repository. Hydra edits that source working tree, but source changes should still go through a
+PR before they are synced into the local runtime.
 
 ```bash
-hydra setup git@github.com:<owner>/<repo>.git
-hydra sync status
-hydra sync pull git@github.com:<owner>/<repo>.git
-hydra sync push git@github.com:<owner>/<repo>.git
+hydra source status
+hydra source pull nest
+hydra project publish openboa --source nest --dry-run
+hydra project publish openboa --source nest
 ```
 
 ### Option 1. Make your own

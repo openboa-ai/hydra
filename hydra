@@ -6,33 +6,32 @@ usage() {
 Usage:
   hydra <command> [options]
 
-Core commands:
+Core workflow:
+  setup               Prepare local Hydra home.
+  project             Add, inspect, validate, sync, and publish project profiles.
   run <project>       Start a project profile.
-  list                List configured project profiles.
-  show <project>      Show profile configuration.
-  check <project>     Validate profile, auth, Nest, and runtime readiness.
+  doctor [project]    Diagnose local installation and project readiness.
   status [project]    Show running Hydra processes.
   stop [project]      Stop running Hydra processes.
 
-Setup and diagnostics:
-  setup               Prepare local Hydra home and optional sync.
-  configure           Revisit local settings.
-  doctor [project]    Diagnose local installation and project readiness.
-  version             Show CLI version, install manager, and update command.
-  update              Update a development git checkout.
-
-Command groups:
+Subsystems:
   auth                Manage Hydra-owned credentials.
-  sync                Push or pull local profile source.
-  nest                Manage Nest artifact sources and syncs.
+  source              Manage project artifact source repositories.
   codex               Inspect Codex runtime materialization.
   sandbox             Manage Docker Sandboxes integration.
 
-Projects are loaded from ~/.hydra/projects by default.
+Maintenance:
+  configure           Revisit local settings.
+  home                Print the Hydra home path.
+  version             Show CLI version, install manager, and update command.
+  update              Update a development git checkout.
+
+Projects are loaded from ~/.hydra/projects by default after `hydra project sync`.
 Set HYDRA_HOME to use a different local config root.
 
+Run: hydra project --help
+Run: hydra source --help
 Run: hydra run --help
-Run: hydra setup --help, hydra auth --help, or hydra sandbox --help
 USAGE
 }
 
@@ -51,6 +50,43 @@ Options:
 Examples:
   hydra run openboa
   hydra run openboa --no-web-dashboard
+USAGE
+}
+
+project_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra project add <project> --repo <git-url> --linear-project-slug <slug> [options]
+  hydra project list
+  hydra project show <project>
+  hydra project check <project>
+  hydra project sync [project]
+  hydra project publish [project] [--source <name>] [--dry-run]
+
+Add options:
+  --source <name>              Artifact source name. Required when more than one source exists.
+  --name <display-name>        Human-readable project name. Default: project key.
+  --linear-team <team>         Linear team key/name. Default: project key.
+  --port <port>                Dashboard port. Default: next available project port.
+  --color <hex>                Dashboard color. Default: #2563EB.
+  --bundle <name>              Runtime bundle to extend. Can be repeated. Defaults to existing base/repo-worker bundles.
+
+Project definitions are written to the configured artifact source repository and published by PR.
+Synced runtime copies under ~/.hydra/projects are generated output and should not be edited.
+USAGE
+}
+
+source_usage() {
+  cat <<'USAGE'
+Usage:
+  hydra source add <git-url> [--name <name>]
+  hydra source list
+  hydra source status
+  hydra source pull [name]
+  hydra source publish [--source <name>] [--dry-run]
+
+Artifact sources hold Hydra project definitions, workflows, Codex bundles, skills, hooks, plugins,
+and MCP templates. Source changes should be published by PR before syncing projects locally.
 USAGE
 }
 
@@ -1205,14 +1241,8 @@ setup_local() {
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --remote|--pull)
-        [ "$#" -ge 2 ] || die "$1 requires a git remote URL"
-        remote_url="$2"
-        shift 2
-        ;;
-      --remote=*)
-        remote_url="${1#--remote=}"
-        shift
+      --remote|--pull|--remote=*)
+        die "setup no longer pulls project definitions directly. Use: hydra source add <git-url>"
         ;;
       --wizard)
         wizard=1
@@ -1233,22 +1263,15 @@ Usage:
   hydra setup
   hydra setup --wizard
   hydra setup --non-interactive
-  hydra setup <git-remote-url>
-  hydra setup --remote <git-remote-url>
 
 Creates or refreshes the local Hydra home under ~/.hydra by default.
-When a remote URL is provided, setup pulls profile source from that Git remote first.
+Use `hydra source add <git-url>` and `hydra project sync` to install project definitions.
 In a TTY, setup runs a short first-run wizard unless --non-interactive or --no-wizard is passed.
 USAGE
         return 0
         ;;
       *)
-        if [ -z "$remote_url" ]; then
-          remote_url="$1"
-          shift
-        else
-          die "unknown setup argument: $1"
-        fi
+        die "unknown setup argument: $1"
         ;;
     esac
   done
@@ -1261,11 +1284,7 @@ USAGE
     fi
   fi
 
-  if [ -n "$remote_url" ]; then
-    sync_pull "$remote_url"
-  else
-      ensure_local_home
-  fi
+  ensure_local_home
 
   if [ "$wizard" = "1" ]; then
     setup_wizard
@@ -1291,11 +1310,18 @@ setup_wizard() {
 
   if [ ! -d "$project_dir" ] || [ "$(list_projects | wc -l | tr -d ' ')" = "0" ]; then
     printf 'projects: none\n'
-    if confirm_menu "Pull project profiles from a Git remote now?" no; then
+    if confirm_menu "Add an artifact source and sync projects now?" no; then
       local remote_url
-      remote_url="$(read_text_prompt 'Git remote URL: ')"
+      local source_name
+      remote_url="$(read_text_prompt 'Artifact source Git remote URL: ')"
       [ -n "$remote_url" ] || die "Git remote URL is required"
-      sync_pull "$remote_url"
+      source_name="$(read_text_prompt 'Source name (optional): ' || true)"
+      if [ -n "$source_name" ]; then
+        nest_add "$remote_url" --name "$source_name"
+      else
+        nest_add "$remote_url"
+      fi
+      nest_sync
     fi
   else
     print_project_summary
@@ -1324,26 +1350,34 @@ configure_auth() {
   fi
 }
 
-configure_sync() {
+configure_source() {
   local action
   local remote_url
+  local source_name
 
   ensure_local_home
-  sync_status
+  source_status
 
-  action="$(select_menu "Configure profile sync:" pull push skip)" || die "sync action is required in non-interactive mode"
+  action="$(select_menu "Configure artifact sources:" add pull publish skip)" || die "source action is required in non-interactive mode"
   case "$action" in
-    pull)
-      remote_url="$(read_text_prompt 'Git remote URL: ')"
+    add)
+      remote_url="$(read_text_prompt 'Artifact source Git remote URL: ')"
       [ -n "$remote_url" ] || die "Git remote URL is required"
-      sync_pull "$remote_url"
+      source_name="$(read_text_prompt 'Source name (optional): ' || true)"
+      if [ -n "$source_name" ]; then
+        nest_add "$remote_url" --name "$source_name"
+      else
+        nest_add "$remote_url"
+      fi
       ;;
-    push)
-      remote_url="$(read_text_prompt 'Git remote URL (leave blank to use existing origin): ' || true)"
-      sync_push "$remote_url"
+    pull)
+      source_pull
+      ;;
+    publish)
+      nest_publish
       ;;
     skip)
-      printf 'sync: skipped\n'
+      printf 'source: skipped\n'
       ;;
   esac
 }
@@ -1352,9 +1386,9 @@ configure_projects() {
   print_project_summary
 
   if [ "$(list_projects | wc -l | tr -d ' ')" = "0" ]; then
-    printf 'hint: run `hydra configure --section sync` to pull project profiles from Git.\n'
+    printf 'hint: run `hydra source add <git-url>` and `hydra project sync` to materialize projects.\n'
   else
-    printf 'hint: run `hydra show <project>` to inspect one profile.\n'
+    printf 'hint: run `hydra project show <project>` to inspect one profile.\n'
   fi
 }
 
@@ -1377,7 +1411,7 @@ configure_command() {
 Usage:
   hydra configure
   hydra configure --section auth
-  hydra configure --section sync
+  hydra configure --section source
   hydra configure --section projects
 USAGE
         return 0
@@ -1389,20 +1423,20 @@ USAGE
   done
 
   if [ -z "$section" ]; then
-    section="$(select_menu "Configure Hydra:" auth sync projects)" ||
+    section="$(select_menu "Configure Hydra:" auth source projects)" ||
       die "configure section is required in non-interactive mode. Use: hydra configure --section auth"
   fi
 
   case "$section" in
     auth) configure_auth ;;
-    sync) configure_sync ;;
+    source) configure_source ;;
     projects) configure_projects ;;
-    *) die "unknown configure section '$section'. Use: auth, sync, or projects" ;;
+    *) die "unknown configure section '$section'. Use: auth, source, or projects" ;;
   esac
 }
 
 json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g'
+  printf '%s' "$1" | perl -0777 -pe 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
 }
 
 json_string() {
@@ -1430,7 +1464,7 @@ doctor_json() {
   local workflow_path=""
   local repo_url=""
   local project_status="ok"
-  local nest_status="ok"
+  local source_status="ok"
   local codex_status="ok"
   local project_sbx_status="skipped"
   local worker_backend=""
@@ -1489,7 +1523,7 @@ doctor_json() {
     repo_url="$(workflow_repo_url "$workflow_path")"
     worker_backend="$(workflow_worker_backend "$workflow_path")"
     [ -n "$repo_url" ] || { project_status="missing_repo"; failed=1; }
-    project_nest_sync_status "$project" >/dev/null 2>&1 || { nest_status="failed"; failed=1; }
+    project_nest_sync_status "$project" >/dev/null 2>&1 || { source_status="failed"; failed=1; }
     codex_runtime_ready "$project" || { codex_status="missing"; failed=1; }
     case "$worker_backend" in
       sbx)
@@ -1512,12 +1546,12 @@ doctor_json() {
   printf '  "install": {"status": '; json_string "$install_status"; printf ', "manager": '; json_string "$manager"; printf ', "update_command": '; json_string "$update_command"; printf '},\n'
   printf '  "home": {"status": '; json_string "$home_status"; printf ', "path": '; json_string "$repo_root"; printf '},\n'
   printf '  "config": {"status": '; json_string "$config_status"; printf ', "path": '; json_string "$repo_root/config.toml"; printf ', "next": '; json_string "hydra setup --wizard"; printf '},\n'
-  printf '  "projects": {"status": '; json_string "$projects_status"; printf ', "count": %s, "next": ' "$count"; json_string "hydra setup --wizard or hydra configure --section sync"; printf '},\n'
+  printf '  "projects": {"status": '; json_string "$projects_status"; printf ', "count": %s, "next": ' "$count"; json_string "hydra setup --wizard or hydra configure --section source"; printf '},\n'
   printf '  "auth": {"linear": '; json_string "$linear_status"; printf ', "github": '; json_string "$github_status"; printf ', "linear_next": '; json_string "hydra auth login --provider linear --method token"; printf ', "github_next": '; json_string "hydra auth login --provider github --method browser"; printf '},\n'
   printf '  "tools": {"git": '; json_string "$git_status"; printf ', "gh": '; json_string "$gh_status"; printf ', "sbx": '; json_string "$sbx_status"; printf '},\n'
   printf '  "runtime": {"runner": '; json_string "$runner"; printf ', "tool": '; json_string "$runner_tool_status"; printf ', "status": '; json_string "$runtime_status"; printf ', "path": '; json_string "$(runtime_elixir_dir)"; printf '}'
   if [ -n "$project" ]; then
-    printf ',\n  "project": {"name": '; json_string "$project"; printf ', "status": '; json_string "$project_status"; printf ', "workflow": '; json_string "$(relative_path "$workflow_path")"; printf ', "repo": '; json_string "${repo_url:-missing}"; printf ', "worker_backend": '; json_string "$worker_backend"; printf ', "nest_sync": '; json_string "$nest_status"; printf ', "codex_runtime": '; json_string "$codex_status"; printf ', "sbx": '; json_string "$project_sbx_status"; printf '}'
+    printf ',\n  "project": {"name": '; json_string "$project"; printf ', "status": '; json_string "$project_status"; printf ', "workflow": '; json_string "$(relative_path "$workflow_path")"; printf ', "repo": '; json_string "${repo_url:-missing}"; printf ', "worker_backend": '; json_string "$worker_backend"; printf ', "project_sync": '; json_string "$source_status"; printf ', "nest_sync": '; json_string "$source_status"; printf ', "codex_runtime": '; json_string "$codex_status"; printf ', "sbx": '; json_string "$project_sbx_status"; printf '}'
   fi
   printf '\n}\n'
   return "$failed"
@@ -1550,7 +1584,7 @@ Usage:
   hydra doctor [--json]
   hydra doctor <project> [--fix] [--json]
 
-Checks local installation, auth, project profile, Nest sync, Codex runtime, and Docker Sandboxes readiness.
+Checks local installation, auth, project profile, source sync, Codex runtime, and Docker Sandboxes readiness.
 USAGE
         return 0
         ;;
@@ -1620,7 +1654,7 @@ USAGE
   count="$(list_projects | wc -l | tr -d ' ')"
   if [ "$count" = "0" ]; then
     printf '  projects: missing\n'
-    printf '  next: hydra setup --wizard or hydra configure --section sync\n'
+    printf '  next: hydra setup --wizard or hydra configure --section source\n'
     failed=1
   else
     printf '  projects: ok (%s profiles)\n' "$count"
@@ -1718,11 +1752,11 @@ USAGE
     fi
     printf '  worker_backend: %s\n' "$worker_backend"
 
-    printf '\nnest:\n'
+    printf '\nsource:\n'
     section_status=0
     project_nest_sync_status "$project" | sed 's/^/  /' || section_status=$?
     if [ "$section_status" -ne 0 ]; then
-      printf '  next: hydra nest sync %s\n' "$project"
+      printf '  next: hydra project sync %s\n' "$project"
       failed=1
     fi
 
@@ -1732,7 +1766,7 @@ USAGE
       printf '  inspect: hydra codex inspect %s\n' "$project"
     else
       printf '  runtime: missing\n'
-      printf '  next: hydra nest sync %s\n' "$project"
+      printf '  next: hydra project sync %s\n' "$project"
       failed=1
     fi
 
@@ -1745,130 +1779,6 @@ USAGE
   fi
 
   return "$failed"
-}
-
-ensure_git_repo() {
-  mkdir -p "$repo_root"
-
-  if [ ! -d "$repo_root/.git" ]; then
-    (
-      cd "$repo_root"
-      git init -b main >/dev/null 2>&1 || git init >/dev/null
-      git checkout -B "${HYDRA_SYNC_BRANCH:-main}" >/dev/null 2>&1 || true
-    )
-  fi
-}
-
-set_sync_remote() {
-  local remote_url="${1:-}"
-
-  [ -n "$remote_url" ] || return
-
-  (
-    cd "$repo_root"
-    if git remote get-url origin >/dev/null 2>&1; then
-      git remote set-url origin "$remote_url"
-    else
-      git remote add origin "$remote_url"
-    fi
-  )
-}
-
-require_sync_remote() {
-  (
-    cd "$repo_root"
-    git remote get-url origin >/dev/null 2>&1
-  ) || die "sync remote is not configured. Pass a GitHub remote URL, for example: hydra sync push git@github.com:owner/repo.git"
-}
-
-sync_status() {
-  if [ ! -d "$repo_root/.git" ]; then
-    printf 'home: %s\n' "$repo_root"
-    printf 'sync: not initialized\n'
-    printf 'hint: hydra sync push git@github.com:owner/repo.git\n'
-    return
-  fi
-
-  (
-    cd "$repo_root"
-    printf 'home: %s\n' "$repo_root"
-    printf 'branch: %s\n' "$(git branch --show-current 2>/dev/null || true)"
-    printf 'remote: %s\n' "$(git remote get-url origin 2>/dev/null || true)"
-    git status --short
-  )
-}
-
-sync_pull() {
-  local remote_url="${1:-}"
-  local branch="${HYDRA_SYNC_BRANCH:-main}"
-
-  mkdir -p "$repo_root"
-  ensure_git_repo
-  set_sync_remote "$remote_url"
-  require_sync_remote
-
-  (
-    cd "$repo_root"
-    git pull --ff-only origin "$branch"
-  )
-
-  ensure_local_home
-}
-
-sync_push() {
-  local remote_url="${1:-}"
-  local branch="${HYDRA_SYNC_BRANCH:-main}"
-
-  ensure_local_home
-  ensure_git_repo
-  set_sync_remote "$remote_url"
-  require_sync_remote
-
-  (
-    cd "$repo_root"
-    git add .gitignore config.toml projects
-
-    if ! git diff --cached --quiet; then
-      git commit -m "Update Hydra local profiles"
-    fi
-
-    git push -u origin "$branch"
-  )
-}
-
-sync_usage() {
-  cat <<'USAGE'
-Usage:
-  hydra sync status
-  hydra sync pull [git-remote-url]
-  hydra sync push [git-remote-url]
-
-Sync moves local Hydra profile source only. Credentials, workspaces, logs, and runtime state stay local.
-USAGE
-}
-
-sync_command() {
-  local action="${1:-status}"
-
-  case "$action" in
-    status)
-      sync_status
-      ;;
-    -h|--help)
-      sync_usage
-      ;;
-    pull)
-      shift
-      sync_pull "${1:-}"
-      ;;
-    push)
-      shift
-      sync_push "${1:-}"
-      ;;
-    *)
-      die "unknown sync action '$action'. Use: hydra sync status|pull|push"
-      ;;
-  esac
 }
 
 
@@ -1945,17 +1855,36 @@ nest_project_extends() {
   ' "$manifest_path"
 }
 
+nest_bundle_exists() {
+  local source_path="$1"
+  local bundle="$2"
+
+  [ -d "$source_path/bundles/$bundle" ] || [ -d "$source_path/packs/$bundle" ]
+}
+
+bundle_in_list() {
+  local candidate="$1"
+  local item
+  shift || true
+
+  for item in "$@"; do
+    [ "$item" = "$candidate" ] && return 0
+  done
+
+  return 1
+}
+
 nest_require_safe_component() {
   local value="$1"
   local label="$2"
 
   if ! printf '%s\n' "$value" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-    die "Nest $label must stay inside the Nest source root: $value"
+    die "artifact source $label must stay inside the artifact source root: $value"
   fi
 
   case "$value" in
     .|..)
-      die "Nest $label must stay inside the Nest source root: $value"
+      die "artifact source $label must stay inside the artifact source root: $value"
       ;;
   esac
 }
@@ -1966,7 +1895,7 @@ nest_require_relative_path() {
 
   case "$value" in
     /*|..|../*|*/../*)
-      die "Nest $label path must stay inside the Nest source root: $value"
+      die "artifact source $label path must stay inside the artifact source root: $value"
       ;;
   esac
 }
@@ -2099,6 +2028,15 @@ nest_default_branch() {
   )"
   default_branch="${default_branch#origin/}"
 
+  if [ -z "$default_branch" ]; then
+    default_branch="$(cd "$source_path" && git remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF; exit}' || true)"
+    [ "$default_branch" = "(unknown)" ] && default_branch=""
+  fi
+
+  if [ -z "$default_branch" ]; then
+    default_branch="$(cd "$source_path" && git branch --show-current 2>/dev/null || true)"
+  fi
+
   printf '%s\n' "${default_branch:-main}"
 }
 
@@ -2112,7 +2050,7 @@ nest_pull_source() {
     cd "$source_path"
     if git remote get-url origin >/dev/null 2>&1; then
       if [ -n "$(git status --porcelain)" ]; then
-        die "Nest source has local changes. Run hydra nest publish --source $(basename "$source_path") or commit/stash before syncing."
+        die "artifact source has local changes. Run hydra source publish --source $(basename "$source_path") or commit/stash before syncing."
       fi
 
       default_branch="$(nest_default_branch "$source_path")"
@@ -2149,7 +2087,7 @@ nest_project_workflow_source() {
     return
   fi
 
-  die "Nest project $(basename "$project_path") references missing workflow '$workflow_rel'."
+  die "project $(basename "$project_path") references missing workflow '$workflow_rel'."
 }
 
 nest_source_ref() {
@@ -2187,7 +2125,7 @@ project_nest_sync_status() {
   local dirty
 
   if [ ! -f "$resolved_path" ]; then
-    printf 'nest_sync: unmanaged (no resolved.yml)\n'
+    printf 'project_sync: unmanaged (no resolved.yml)\n'
     return 0
   fi
 
@@ -2195,13 +2133,13 @@ project_nest_sync_status() {
   source_ref="$(nest_resolved_value "$resolved_path" "source_ref")"
 
   if [ -z "$source_path" ] || [ ! -d "$source_path/.git" ]; then
-    printf 'nest_sync: source missing for %s (run `hydra nest sync %s`)\n' "$project" "$project"
+    printf 'project_sync: source missing for %s (run `hydra project sync %s`)\n' "$project" "$project"
     return 1
   fi
 
   dirty="$(cd "$source_path" && git status --porcelain)"
   if [ -n "$dirty" ]; then
-    printf 'nest_sync: source has local changes at %s (run `hydra nest publish --source %s` before running)\n' "$source_path" "$(basename "$source_path")"
+    printf 'project_sync: source has local changes at %s (run `hydra source publish --source %s` before running)\n' "$source_path" "$(basename "$source_path")"
     return 1
   fi
 
@@ -2210,40 +2148,40 @@ project_nest_sync_status() {
   current_ref="$(nest_source_ref "$source_path")"
 
   if [ "$current_branch" != "$default_branch" ]; then
-    printf 'nest_sync: source on %s, expected %s (run `hydra nest sync %s`)\n' "${current_branch:-detached}" "$default_branch" "$project"
+    printf 'project_sync: source on %s, expected %s (run `hydra project sync %s`)\n' "${current_branch:-detached}" "$default_branch" "$project"
     return 1
   fi
 
   if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" != "$current_ref" ]; then
-    printf 'nest_sync: source moved for %s (generated from %s, local %s is %s; run `hydra nest sync %s`)\n' "$project" "$source_ref" "$default_branch" "$current_ref" "$project"
+    printf 'project_sync: source moved for %s (generated from %s, local %s is %s; run `hydra project sync %s`)\n' "$project" "$source_ref" "$default_branch" "$current_ref" "$project"
     return 1
   fi
 
   if ! (cd "$source_path" && git fetch --quiet origin "$default_branch" >/dev/null 2>&1); then
     if [ -n "$source_ref" ] && [ -n "$current_ref" ] && [ "$source_ref" = "$current_ref" ]; then
-      printf 'nest_sync: current locally (%s@%s; cannot fetch origin/%s for %s)\n' "$default_branch" "$current_ref" "$default_branch" "$(basename "$source_path")"
+      printf 'project_sync: current locally (%s@%s; cannot fetch origin/%s for %s)\n' "$default_branch" "$current_ref" "$default_branch" "$(basename "$source_path")"
       return 0
     fi
 
-    printf 'nest_sync: cannot verify origin/%s for %s\n' "$default_branch" "$(basename "$source_path")"
+    printf 'project_sync: cannot verify origin/%s for %s\n' "$default_branch" "$(basename "$source_path")"
     return 1
   fi
 
   remote_ref="$(cd "$source_path" && git rev-parse --short "origin/$default_branch" 2>/dev/null || true)"
 
   if [ -n "$source_ref" ] && [ -n "$remote_ref" ] && [ "$source_ref" != "$remote_ref" ]; then
-    printf 'nest_sync: stale for %s (generated from %s, origin/%s is %s; run `hydra nest sync %s`)\n' "$project" "$source_ref" "$default_branch" "$remote_ref" "$project"
+    printf 'project_sync: stale for %s (generated from %s, origin/%s is %s; run `hydra project sync %s`)\n' "$project" "$source_ref" "$default_branch" "$remote_ref" "$project"
     return 1
   fi
 
-  printf 'nest_sync: current (%s@%s)\n' "$default_branch" "${remote_ref:-unknown}"
+  printf 'project_sync: current (%s@%s)\n' "$default_branch" "${remote_ref:-unknown}"
   return 0
 }
 
 require_project_nest_current() {
   local project="$1"
 
-  project_nest_sync_status "$project" || die "$project is not synced with the Nest default branch."
+  project_nest_sync_status "$project" || die "$project is not synced with the artifact source default branch."
 }
 
 run_project_preflight() {
@@ -2263,7 +2201,7 @@ run_project_preflight() {
     printf '%s\n' "$output" | sed 's/^/  /'
   else
     printf '%s\n' "$output" | sed 's/^/  /'
-    printf '  next: hydra nest sync %s\n' "$project"
+    printf '  next: hydra project sync %s\n' "$project"
     failed=1
   fi
 
@@ -2297,7 +2235,7 @@ run_project_preflight() {
         printf '  codex_runtime: ready\n'
       else
         printf '  codex_runtime: missing\n'
-        printf '  next: hydra nest sync %s\n' "$project"
+        printf '  next: hydra project sync %s\n' "$project"
         failed=1
       fi
 
@@ -2341,7 +2279,7 @@ run_project_preflight() {
 run_project_nest_preflight() {
   local project="$1"
 
-  project_nest_sync_status "$project" || die "$project is not synced with the Nest default branch."
+  project_nest_sync_status "$project" || die "$project is not synced with the artifact source default branch."
 }
 
 nest_sync_source_project() {
@@ -2375,7 +2313,7 @@ nest_sync_source_project() {
     elif [ -d "$source_path/packs/$bundle" ]; then
       nest_materialize_artifacts_from_dir "$source_path/packs/$bundle" "packs/$bundle" "$codex_home" "$codex_user_home"
     else
-      die "Nest project $project references missing bundle '$bundle'."
+      die "project $project references missing bundle '$bundle'."
     fi
   done < <(nest_project_extends "$manifest_path")
 
@@ -2387,7 +2325,7 @@ nest_sync_source_project() {
 
   ref="$(nest_source_ref "$source_path")"
   {
-    printf 'generated_by: hydra nest sync\n'
+    printf 'generated_by: hydra project sync\n'
     printf 'project: %s\n' "$project"
     printf 'source_path: %s\n' "$source_path"
     printf 'source_ref: %s\n' "${ref:-unknown}"
@@ -2414,7 +2352,7 @@ nest_add() {
   local name=""
   local source_path
 
-  [ -n "$remote_url" ] || die "usage: hydra nest add <git-url> [--name <name>]"
+  [ -n "$remote_url" ] || die "usage: hydra source add <git-url> [--name <name>]"
   shift || true
 
   while [ "$#" -gt 0 ]; do
@@ -2425,14 +2363,14 @@ nest_add() {
         shift 2
         ;;
       *)
-        die "unknown nest add option '$1'"
+        die "unknown source add option '$1'"
         ;;
     esac
   done
 
   ensure_local_home
   name="$(nest_safe_name "${name:-$(nest_source_name_from_url "$remote_url")}")"
-  [ -n "$name" ] || die "invalid Nest source name"
+  [ -n "$name" ] || die "invalid artifact source name"
   source_path="$(nest_source_dir_for "$name")"
 
   if [ -d "$source_path/.git" ]; then
@@ -2442,12 +2380,12 @@ nest_add() {
       git pull --ff-only origin "$(git branch --show-current)"
     )
   elif [ -e "$source_path" ]; then
-    die "Nest source path exists but is not a git repo: $source_path"
+    die "artifact source path exists but is not a git repo: $source_path"
   else
     git clone "$remote_url" "$source_path"
   fi
 
-  printf 'nest_source: %s\n' "$name"
+  printf 'source: %s\n' "$name"
   printf 'path: %s\n' "$source_path"
 }
 
@@ -2461,7 +2399,7 @@ nest_sync() {
   ensure_local_home
 
   if [ -z "$(nest_sources)" ]; then
-    die "no Nest sources configured. Run: hydra nest add git@github.com:openboa-ai/nest.git"
+    die "no artifact sources configured. Run: hydra source add git@github.com:openboa-ai/nest.git"
   fi
 
   while IFS= read -r source_path; do
@@ -2486,13 +2424,13 @@ nest_sync() {
 
   if [ "$found" -eq 0 ]; then
     if [ -n "$requested_project" ]; then
-      die "Nest project '$requested_project' was not found in configured sources."
+      die "project '$requested_project' was not found in configured sources."
     fi
-    die "no Nest projects found in configured sources."
+    die "no projects found in configured sources."
   fi
 }
 
-nest_status() {
+source_status() {
   local source_path
   local name
 
@@ -2500,7 +2438,7 @@ nest_status() {
   printf 'home: %s\n' "$repo_root"
 
   if [ -z "$(nest_sources)" ]; then
-    printf 'nest: no sources configured\n'
+    printf 'sources: none\n'
     return
   fi
 
@@ -2523,11 +2461,152 @@ nest_status() {
   done < <(nest_sources)
 }
 
-nest_publish() {
-  local source_name=""
+source_name_for_path() {
+  basename "$1"
+}
+
+source_path_for_name_or_default() {
+  local source_name="${1:-}"
   local source_path=""
-  local branch
-  local dry_run=0
+  local count
+
+  ensure_local_home
+
+  if [ -n "$source_name" ]; then
+    source_name="$(nest_safe_name "$source_name")"
+    source_path="$(nest_source_dir_for "$source_name")"
+    [ -d "$source_path/.git" ] || die "unknown source '$source_name'. Run: hydra source list"
+    printf '%s\n' "$source_path"
+    return
+  fi
+
+  count="$(nest_sources | wc -l | tr -d ' ')"
+  case "$count" in
+    0)
+      die "no artifact sources configured. Run: hydra source add git@github.com:openboa-ai/nest.git --name nest"
+      ;;
+    1)
+      nest_sources | head -n 1
+      ;;
+    *)
+      die "multiple artifact sources configured. Use --source <name>"
+      ;;
+  esac
+}
+
+source_list() {
+  local source_path
+  local name
+
+  ensure_local_home
+
+  if [ -z "$(nest_sources)" ]; then
+    printf 'sources: none\n'
+    printf 'next: hydra source add git@github.com:openboa-ai/nest.git --name nest\n'
+    return
+  fi
+
+  while IFS= read -r source_path; do
+    [ -n "$source_path" ] || continue
+    name="$(source_name_for_path "$source_path")"
+    printf '%s\t%s\n' "$name" "$source_path"
+  done < <(nest_sources)
+}
+
+source_pull() {
+  local source_name="${1:-}"
+  local source_path
+
+  if [ -n "$source_name" ]; then
+    source_path="$(source_path_for_name_or_default "$source_name")"
+    nest_pull_source "$source_path"
+    printf 'source_pulled: %s\n' "$(source_name_for_path "$source_path")"
+    return
+  fi
+
+  if [ -z "$(nest_sources)" ]; then
+    die "no artifact sources configured. Run: hydra source add git@github.com:openboa-ai/nest.git --name nest"
+  fi
+
+  while IFS= read -r source_path; do
+    [ -n "$source_path" ] || continue
+    nest_pull_source "$source_path"
+    printf 'source_pulled: %s\n' "$(source_name_for_path "$source_path")"
+  done < <(nest_sources)
+}
+
+yaml_double_quote() {
+  printf '"'
+  printf '%s' "$1" | perl -0777 -pe 's/\\/\\\\/g; s/"/\\"/g; s/\r/\\r/g; s/\n/\\n/g'
+  printf '"'
+}
+
+repo_label_from_url() {
+  local url="$1"
+  local stripped
+  stripped="${url%.git}"
+  case "$stripped" in
+    git@github.com:*) printf '%s\n' "${stripped#git@github.com:}" ;;
+    https://github.com/*) printf '%s\n' "${stripped#https://github.com/}" ;;
+    http://github.com/*) printf '%s\n' "${stripped#http://github.com/}" ;;
+    *) printf '%s\n' "$stripped" ;;
+  esac
+}
+
+next_project_port() {
+  local source_path="${1:-}"
+  local max=4100
+  local port
+
+  while IFS= read -r port; do
+    case "$port" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    if [ "$port" -gt "$max" ]; then
+      max="$port"
+    fi
+  done < <(
+    {
+      [ -n "$source_path" ] && [ -d "$source_path/projects" ] && find "$source_path/projects" -type f -name WORKFLOW.md 2>/dev/null
+      [ -d "$project_dir" ] && find "$project_dir" -type f -name WORKFLOW.md 2>/dev/null
+    } | while IFS= read -r workflow; do
+      awk '/^[[:space:]]*port:[[:space:]]*[0-9]+[[:space:]]*$/ {print $2}' "$workflow"
+    done
+  )
+
+  printf '%s\n' "$((max + 1))"
+}
+
+project_add() {
+  local project="${1:-}"
+  local source_name=""
+  local source_path
+  local project_path
+  local repo_url=""
+  local display_name=""
+  local linear_team=""
+  local project_slug=""
+  local port=""
+  local color="#2563EB"
+  local repo_label
+  local yaml_display_name
+  local yaml_repo_url
+  local yaml_linear_team
+  local yaml_project_slug
+  local yaml_color
+  local yaml_description
+  local bundle
+  local requested_bundle
+  local default_bundle
+  local default_bundles=(base repo-worker)
+  local requested_bundles=("")
+  local bundles=("")
+  local source_default_branch
+  local source_current_branch
+
+  [ -n "$project" ] || die "project name is required. Use: hydra project add <project> --repo <git-url> --linear-project-slug <slug>"
+  nest_require_safe_component "$project" "project"
+  shift || true
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -2536,84 +2615,308 @@ nest_publish() {
         [ -n "$source_name" ] || die "--source requires a value"
         shift 2
         ;;
-      --dry-run)
-        dry_run=1
-        shift
+      --repo)
+        repo_url="${2:-}"
+        [ -n "$repo_url" ] || die "--repo requires a value"
+        shift 2
+        ;;
+      --name)
+        display_name="${2:-}"
+        [ -n "$display_name" ] || die "--name requires a value"
+        shift 2
+        ;;
+      --linear-team)
+        linear_team="${2:-}"
+        [ -n "$linear_team" ] || die "--linear-team requires a value"
+        shift 2
+        ;;
+      --linear-project-slug)
+        project_slug="${2:-}"
+        [ -n "$project_slug" ] || die "--linear-project-slug requires a value"
+        shift 2
+        ;;
+      --port)
+        port="${2:-}"
+        case "$port" in ''|*[!0-9]*) die "--port must be an integer" ;; esac
+        shift 2
+        ;;
+      --color)
+        color="${2:-}"
+        [ -n "$color" ] || die "--color requires a value"
+        shift 2
+        ;;
+      --bundle)
+        bundle="${2:-}"
+        [ -n "$bundle" ] || die "--bundle requires a value"
+        nest_require_safe_component "$bundle" "bundle"
+        requested_bundles+=("$bundle")
+        shift 2
+        ;;
+      -h|--help)
+        project_usage
+        return 0
         ;;
       *)
-        die "unknown nest publish option '$1'. Use: hydra nest publish [--source <name>] [--dry-run]"
+        die "unknown project add option '$1'. Run: hydra project --help"
         ;;
     esac
   done
 
-  ensure_local_home
+  [ -n "$repo_url" ] || die "--repo is required"
+  [ -n "$project_slug" ] || die "--linear-project-slug is required"
 
-  if [ -n "$source_name" ]; then
-    source_path="$(nest_source_dir_for "$source_name")"
-  else
-    source_path="$(nest_sources | head -n 1)"
-    if [ "$(nest_sources | wc -l | tr -d ' ')" -gt 1 ]; then
-      die "multiple Nest sources configured. Use: hydra nest publish --source <name>"
-    fi
+  display_name="${display_name:-$project}"
+  linear_team="${linear_team:-$project}"
+  source_path="$(source_path_for_name_or_default "$source_name")"
+  source_name="$(source_name_for_path "$source_path")"
+  project_path="$source_path/projects/$project"
+
+  if [ -e "$project_path" ]; then
+    die "project already exists in source '$source_name': projects/$project"
   fi
 
-  [ -n "$source_path" ] || die "no Nest source configured"
-  [ -d "$source_path/.git" ] || die "Nest source is not a git repo: $source_path"
-  command -v gh >/dev/null 2>&1 || die "gh is required to publish a Nest PR"
-
-  (
+  source_default_branch="$(
     cd "$source_path"
-    if [ -z "$(git status --porcelain)" ]; then
-      printf 'nest_publish: no changes\n'
-      exit 0
-    fi
+    git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true
+  )"
+  if [ -z "$source_default_branch" ]; then
+    source_default_branch="$(cd "$source_path" && git remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF; exit}' || true)"
+    [ "$source_default_branch" = "(unknown)" ] && source_default_branch=""
+  fi
+  source_current_branch="$(cd "$source_path" && git branch --show-current)"
+  if [ -n "$source_default_branch" ] && [ -n "$source_current_branch" ] && [ "$source_current_branch" != "$source_default_branch" ]; then
+    die "source '$source_name' is on $source_current_branch, expected $source_default_branch before adding a project"
+  fi
+  if [ -n "$(cd "$source_path" && git status --porcelain)" ]; then
+    die "source '$source_name' has local changes. Run hydra source publish --source $source_name or commit/stash before adding a project."
+  fi
 
-    printf 'nest_publish: source %s\n' "$source_path"
-    printf 'nest_publish: changes\n'
-    git status --short | sed 's/^/  /'
-
-    if [ "$dry_run" = "1" ]; then
-      git diff --check
-      if [ -x scripts/check-gitleaks.sh ]; then
-        scripts/check-gitleaks.sh --worktree
-      elif command -v gitleaks >/dev/null 2>&1; then
-        gitleaks detect --source . --redact --no-banner --log-level warn
-      else
-        die "gitleaks is required before publishing Nest artifacts"
-      fi
-      printf 'nest_publish: dry-run ok (run `hydra nest publish --source %s` to create the PR)\n' "$(basename "$source_path")"
-      exit 0
+  for default_bundle in "${default_bundles[@]}"; do
+    if nest_bundle_exists "$source_path" "$default_bundle"; then
+      bundles+=("$default_bundle")
     fi
+  done
 
-    branch="hydra/nest-artifacts-$(date +%Y%m%d-%H%M%S)"
-    git checkout -b "$branch"
-    git add -A
-    if [ -x scripts/check-gitleaks.sh ]; then
-      scripts/check-gitleaks.sh --staged
-    elif command -v gitleaks >/dev/null 2>&1; then
-      gitleaks git --staged --redact --no-banner --log-level warn
-    else
-      die "gitleaks is required before publishing Nest artifacts"
+  for requested_bundle in "${requested_bundles[@]}"; do
+    [ -n "$requested_bundle" ] || continue
+    if ! nest_bundle_exists "$source_path" "$requested_bundle"; then
+      die "bundle '$requested_bundle' does not exist in source '$source_name' (expected bundles/$requested_bundle or packs/$requested_bundle)"
     fi
-    git commit -m "Update Hydra runtime artifacts"
-    git push -u origin "$branch"
-    gh pr create --fill
-  )
+    if ! bundle_in_list "$requested_bundle" "${bundles[@]}"; then
+      bundles+=("$requested_bundle")
+    fi
+  done
+
+  port="${port:-$(next_project_port "$source_path")}"
+  repo_label="$(repo_label_from_url "$repo_url")"
+  yaml_display_name="$(yaml_double_quote "$display_name")"
+  yaml_repo_url="$(yaml_double_quote "$repo_url")"
+  yaml_linear_team="$(yaml_double_quote "$linear_team")"
+  yaml_project_slug="$(yaml_double_quote "$project_slug")"
+  yaml_color="$(yaml_double_quote "$color")"
+  yaml_description="$(yaml_double_quote "Central Hydra runtime for $display_name")"
+
+  mkdir -p "$project_path"
+
+  {
+    printf 'name: %s\n' "$yaml_display_name"
+    printf 'key: %s\n' "$project"
+    printf 'workflow: WORKFLOW.md\n'
+    printf 'extends:\n'
+    for bundle in "${bundles[@]}"; do
+      [ -n "$bundle" ] && printf '  - %s\n' "$bundle"
+    done
+  } >"$project_path/project.yml"
+
+  cat >"$project_path/WORKFLOW.md" <<EOF
+---
+project:
+  name: $yaml_display_name
+  key: $project
+  repo: $yaml_repo_url
+  linear_team: $yaml_linear_team
+  workspace_root: workspaces/$project
+  logs_root: logs/$project
+tracker:
+  kind: linear
+  api_key: "\$LINEAR_API_KEY"
+  project_slug: $yaml_project_slug
+  active_states:
+    - Todo
+    - In Progress
+  terminal_states:
+    - Canceled
+    - Duplicate
+    - Done
+polling:
+  interval_ms: 5000
+workspace:
+  root: "\$HYDRA_WORKSPACE_ROOT"
+worker:
+  sbx:
+    enabled: true
+    agent: codex
+    lifecycle: fresh
+    network_policy: balanced
+    startup_timeout_ms: 120000
+hooks:
+  after_create: |
+    set -euo pipefail
+    : "\${HYDRA_REPO_URL:?HYDRA_REPO_URL is required}"
+    git clone --depth 1 "\$HYDRA_REPO_URL" .
+  before_run: |
+    set -euo pipefail
+    default_branch="\$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+    if [ -z "\$default_branch" ]; then
+      default_branch="\$(git remote show origin 2>/dev/null | awk '/HEAD branch/ {print \$NF; exit}' || true)"
+      [ "\$default_branch" = "(unknown)" ] && default_branch=""
+    fi
+    if [ -z "\$default_branch" ]; then
+      default_branch="\$(git branch --show-current 2>/dev/null || true)"
+    fi
+    default_branch="\${default_branch:-main}"
+    git fetch origin "\$default_branch" --depth 1
+  before_remove: |
+    set -euo pipefail
+    git status --short
+agent:
+  max_concurrent_agents: 3
+  max_turns: 20
+codex:
+  command: codex --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  approval_policy: never
+  thread_sandbox: workspace-write
+server:
+  port: $port
+ui:
+  project_name: $yaml_display_name
+  title: $yaml_display_name
+  description: $yaml_description
+  color: $yaml_color
+---
+
+You are working on Linear ticket {{ issue.identifier }} for $repo_label.
+
+{% if attempt %}
+Continuation context:
+
+- This is retry attempt {{ attempt }} because the ticket is still in an active state.
+- Resume from the current workspace state instead of restarting from scratch.
+- Reconcile the existing Linear workpad before doing new work.
+{% endif %}
+
+Issue context:
+Identifier: {{ issue.identifier }}
+Title: {{ issue.title }}
+Current status: {{ issue.state }}
+Labels: {{ issue.labels }}
+URL: {{ issue.url }}
+
+Description:
+{% if issue.description %}
+{{ issue.description }}
+{% else %}
+No description provided.
+{% endif %}
+
+## Operating Model
+
+Hydra runs centrally and starts this work inside a Docker Sandbox. Your working directory is an isolated clone of $repo_label under the Hydra workspace root.
+
+Do not edit the Hydra repository, the artifact source repository, or any local source checkout outside this cloned issue workspace. Use the target repo's AGENTS.md, .agents/, docs, tests, and package scripts as the source of truth.
+
+Follow the harness-engineering loop:
+
+1. Make the current state legible: read AGENTS.md, .agents/AGENTS.md when present, repo docs, and the issue description.
+2. Reproduce or otherwise capture a concrete current-state signal before changing code.
+3. Fetch the repository default branch before edits and record the exact base state.
+4. Implement narrowly against the acceptance criteria.
+5. Validate with repo-native checks and any issue-provided test plan.
+6. Create or update a GitHub PR from inside the Docker Sandbox using git and gh.
+7. Collect and address CI, agent, and human review feedback.
+8. Move the Linear issue to In Review only after the PR and validation evidence are ready.
+
+## Linear Workpad
+
+- Use one persistent Linear comment headed ## Codex Workpad.
+- Keep the workpad current with environment stamp, plan, acceptance criteria, notes, validation, PR state, and blockers.
+- Do not scatter progress across multiple top-level comments.
+- Keep checklist items truthful; do not check PR/review/state items until they are actually complete.
+
+## State Routing
+
+- Backlog: do not start work.
+- Todo: move to In Progress, create or refresh the workpad, then start execution.
+- In Progress: continue execution until the PR is ready for review.
+- In Review: handoff state; do not continue unless a human moves the ticket back to In Progress with requested changes.
+- Done, Canceled, Duplicate: terminal states.
+
+Final response must report completed actions and blockers only. Do not ask the human for routine follow-up actions inside the unattended run.
+EOF
+
+  printf 'project_added: %s\n' "$project"
+  printf 'source: %s\n' "$source_name"
+  printf 'path: %s\n' "$(relative_path "$project_path")"
+  printf 'next: hydra project publish %s --source %s\n' "$project" "$source_name"
+  printf 'next_after_merge: hydra project sync %s\n' "$project"
 }
 
-nest_usage() {
-  cat <<'USAGE'
-Usage:
-  hydra nest add <git-url> [--name <name>]
-  hydra nest sync [project]
-  hydra nest status
-  hydra nest publish [--source <name>] [--dry-run]
+project_publish() {
+  local project=""
 
-Nest is the source for shared Hydra runtime artifacts. Target code repositories stay code-only.
-USAGE
+  case "${1:-}" in
+    ''|--*) ;;
+    *)
+      project="$1"
+      shift
+      ;;
+  esac
+
+  if [ -n "$project" ]; then
+    nest_require_safe_component "$project" "project"
+    nest_publish --project "$project" "$@"
+  else
+    nest_publish "$@"
+  fi
 }
 
-nest_command() {
+project_command() {
+  local action="${1:-}"
+
+  case "$action" in
+    ''|-h|--help)
+      project_usage
+      ;;
+    add)
+      shift
+      project_add "$@"
+      ;;
+    list)
+      list_projects
+      ;;
+    show)
+      shift
+      show_project "${1:-}"
+      ;;
+    check)
+      shift
+      check_project "${1:-}"
+      ;;
+    sync)
+      shift
+      nest_sync "${1:-}"
+      ;;
+    publish)
+      shift
+      project_publish "$@"
+      ;;
+    *)
+      die "unknown project command '$action'. Run: hydra project --help"
+      ;;
+  esac
+}
+
+source_command() {
   local action="${1:-status}"
 
   case "$action" in
@@ -2621,25 +2924,169 @@ nest_command() {
       shift
       nest_add "$@"
       ;;
-    sync)
-      shift
-      nest_sync "${1:-}"
+    list)
+      source_list
       ;;
     status)
-      nest_status
+      source_status
       ;;
-    -h|--help)
-      nest_usage
+    pull)
+      shift
+      source_pull "${1:-}"
       ;;
     publish)
       shift
       nest_publish "$@"
       ;;
+    -h|--help)
+      source_usage
+      ;;
     *)
-      die "unknown nest action '$action'. Use: hydra nest add|sync|status|publish"
+      die "unknown source command '$action'. Run: hydra source --help"
       ;;
   esac
 }
+
+nest_publish() {
+  local source_name=""
+  local source_path=""
+  local branch
+  local dry_run=0
+  local project=""
+  local project_rel=""
+  local subject="Update Hydra source artifacts"
+  local body
+  local gh_config_dir
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --source)
+        source_name="${2:-}"
+        [ -n "$source_name" ] || die "--source requires a value"
+        shift 2
+        ;;
+      --project)
+        project="${2:-}"
+        [ -n "$project" ] || die "--project requires a value"
+        nest_require_safe_component "$project" "project"
+        shift 2
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      *)
+        die "unknown publish option '$1'. Use: hydra source publish [--source <name>] [--dry-run]"
+        ;;
+    esac
+  done
+
+  ensure_local_home
+  source_path="$(source_path_for_name_or_default "$source_name")"
+  source_name="$(source_name_for_path "$source_path")"
+
+  [ -d "$source_path/.git" ] || die "artifact source is not a git repo: $source_path"
+  if [ "$dry_run" != "1" ]; then
+    load_auth
+    github_auth_env_set || die "GitHub auth is required. Run: hydra auth login --provider github --method browser"
+    command -v gh >/dev/null 2>&1 || die "gh is required to publish source changes"
+  fi
+
+  if [ -n "$project" ] && [ ! -d "$source_path/projects/$project" ]; then
+    die "project '$project' does not exist in source '$source_name'"
+  fi
+
+  if [ -n "$project" ]; then
+    subject="Update Hydra project $project"
+    project_rel="projects/$project"
+  fi
+
+  (
+    cd "$source_path"
+    if [ -n "$project_rel" ]; then
+      scoped_changes="$(git status --porcelain -- "$project_rel")"
+      outside_changes="$(git status --porcelain -- . ":(exclude)$project_rel")"
+      if [ -n "$outside_changes" ]; then
+        printf 'source_publish: source %s\n' "$source_path"
+        printf 'source_publish: project %s\n' "$project"
+        printf 'source_publish: changes outside %s\n' "$project_rel"
+        printf '%s\n' "$outside_changes" | sed 's/^/  /'
+        die "source has changes outside $project_rel; run hydra source publish --source $source_name or clean them before project publish"
+      fi
+      if [ -z "$scoped_changes" ]; then
+        printf 'source_publish: no changes for %s\n' "$project_rel"
+        exit 0
+      fi
+    elif [ -z "$(git status --porcelain)" ]; then
+      printf 'source_publish: no changes\n'
+      exit 0
+    fi
+
+    printf 'source_publish: source %s\n' "$source_path"
+    if [ -n "$project" ]; then
+      printf 'source_publish: project %s\n' "$project"
+    fi
+    printf 'source_publish: changes\n'
+    if [ -n "$project_rel" ]; then
+      git status --short -- "$project_rel" | sed 's/^/  /'
+    else
+      git status --short | sed 's/^/  /'
+    fi
+
+    if [ "$dry_run" = "1" ]; then
+      if [ -n "$project_rel" ]; then
+        git diff --check -- "$project_rel"
+      else
+        git diff --check
+      fi
+      if [ -x scripts/check-gitleaks.sh ]; then
+        scripts/check-gitleaks.sh --worktree
+      elif command -v gitleaks >/dev/null 2>&1; then
+        gitleaks detect --source . --redact --no-banner --log-level warn
+      else
+        die "gitleaks is required before publishing source artifacts"
+      fi
+      if [ -n "$project" ]; then
+        printf 'source_publish: dry-run ok for %s (run hydra project publish %s --source %s to create the PR)\n' "$project_rel" "$project" "$source_name"
+      else
+        printf 'source_publish: dry-run ok (run hydra source publish --source %s to create the PR)\n' "$source_name"
+      fi
+      exit 0
+    fi
+
+    branch="hydra/${project:-source}-artifacts-$(date +%Y%m%d-%H%M%S)"
+    git checkout -b "$branch"
+    if [ -n "$project_rel" ]; then
+      git add -A -- "$project_rel"
+    else
+      git add -A
+    fi
+    if [ -x scripts/check-gitleaks.sh ]; then
+      scripts/check-gitleaks.sh --staged
+    elif command -v gitleaks >/dev/null 2>&1; then
+      gitleaks git --staged --redact --no-banner --log-level warn
+    else
+      die "gitleaks is required before publishing source artifacts"
+    fi
+    git commit -m "$subject"
+    git push -u origin "$branch"
+    body="$(cat <<EOF
+## Summary
+- Publish Hydra source artifact changes from \`$source_name\`.
+
+## Validation
+- git diff --check
+- gitleaks secret scan before commit
+
+## Related
+- Generated by \`hydra source publish\`.
+EOF
+)"
+    gh_config_dir="$(mktemp -d)"
+    GH_CONFIG_DIR="$gh_config_dir" gh pr create --title "$subject" --body "$body"
+  )
+}
+
 
 workflow_repo_url() {
   workflow_value "$1" "project.repo"
@@ -3199,11 +3646,11 @@ codex_runtime_status() {
   local project="$1"
 
   if codex_runtime_ready "$project"; then
-    printf 'codex_runtime: ready (Nest + working repo; local ~/.codex is not used)\n'
+    printf 'codex_runtime: ready (artifact source + working repo; local ~/.codex is not used)\n'
     return 0
   fi
 
-  printf 'codex_runtime: missing (run `hydra nest sync %s`)\n' "$project"
+  printf 'codex_runtime: missing (run `hydra project sync %s`)\n' "$project"
   return 1
 }
 
@@ -3235,13 +3682,13 @@ codex_print_source_summary() {
 
   printf 'source:\n'
   if [ ! -f "$resolved_path" ]; then
-    printf '  nest: unmanaged\n'
+    printf '  artifact_source: unmanaged\n'
     return 0
   fi
 
   source_path="$(nest_resolved_value "$resolved_path" "source_path")"
   source_ref="$(nest_resolved_value "$resolved_path" "source_ref")"
-  printf '  nest: %s\n' "${source_path##*/}"
+  printf '  artifact_source: %s\n' "${source_path##*/}"
   [ -n "$source_ref" ] && printf '  ref: %s\n' "$source_ref"
   printf '  root: included\n'
   printf '  project: projects/%s\n' "$project"
@@ -3294,7 +3741,7 @@ require_codex_runtime() {
   local project="$1"
 
   if ! codex_runtime_ready "$project"; then
-    die "Codex runtime artifacts are missing for '$project'. Run: hydra nest sync $project"
+    die "Codex runtime artifacts are missing for '$project'. Run: hydra project sync $project"
   fi
 }
 
@@ -3736,7 +4183,7 @@ codex_command() {
 Usage:
   hydra codex inspect <project> [issue]
 
-Shows the Nest source, target repository, isolated Codex runtime readiness,
+Shows the artifact source, target repository, isolated Codex runtime readiness,
 AGENTS.md, skills, custom agents, hooks, plugins, MCP config, app-server schema,
 trust entries, and sbx mount/policy metadata.
 USAGE
@@ -3764,11 +4211,11 @@ show_project() {
   printf 'color: %s\n' "$(workflow_value "$workflow_path" "ui.color")"
   printf 'workspace_root: %s\n' "$(relative_path "$(workspace_root_for "$project" "$workflow_path")")"
   printf 'logs_root: %s\n' "$(relative_path "$(logs_root_for "$project" "$workflow_path")")"
-  printf 'codex_scope: nest+working-repo\n'
+  printf 'codex_scope: source+working-repo\n'
   if codex_runtime_ready "$project"; then
     printf 'codex_runtime: ready\n'
   else
-    printf 'codex_runtime: missing (run `hydra nest sync %s`)\n' "$project"
+    printf 'codex_runtime: missing (run `hydra project sync %s`)\n' "$project"
   fi
   printf 'worker_backend: %s\n' "$(workflow_worker_backend "$workflow_path")"
 
@@ -4142,7 +4589,7 @@ check_project() {
       if codex_runtime_ready "$project"; then
         printf 'codex_runtime: ready\n'
       else
-        printf 'codex_runtime: missing (run `hydra nest sync %s`)\n' "$project"
+        printf 'codex_runtime: missing (run `hydra project sync %s`)\n' "$project"
         failed=1
       fi
 
@@ -4304,10 +4751,6 @@ case "$command" in
     usage
     exit 0
     ;;
-  --list|list)
-    list_projects
-    exit 0
-    ;;
   home)
     printf '%s\n' "$repo_root"
     ;;
@@ -4333,13 +4776,13 @@ case "$command" in
   init)
     init_local
     ;;
-  sync)
+  project)
     shift
-    sync_command "$@"
+    project_command "$@"
     ;;
-  nest)
+  source)
     shift
-    nest_command "$@"
+    source_command "$@"
     ;;
   auth)
     shift
@@ -4352,14 +4795,6 @@ case "$command" in
   codex)
     shift
     codex_command "$@"
-    ;;
-  show)
-    shift
-    show_project "${1:-}"
-    ;;
-  check)
-    shift
-    check_project "${1:-}"
     ;;
   status)
     shift

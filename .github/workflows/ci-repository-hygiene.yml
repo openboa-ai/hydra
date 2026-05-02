@@ -54,16 +54,29 @@ jobs:
         run: |
           ./hydra --help | tee hydra-help.txt
           grep -F "hydra <command> [options]" hydra-help.txt
+          grep -F "project             Add, inspect, validate, sync, and publish project profiles." hydra-help.txt
+          grep -F "source              Manage project artifact source repositories." hydra-help.txt
           if grep -F "hydra <project>" hydra-help.txt; then
             echo "top-level help must not expose hydra <project> shorthand" >&2
             exit 1
           fi
           ./hydra run --help | grep -F "hydra run <project>"
+          ./hydra project --help | grep -F "hydra project add <project>"
+          ./hydra source --help | grep -F "hydra source add <git-url>"
+          if grep -F "git fetch origin main --depth 1" hydra; then
+            echo "generated project hooks must not hardcode main" >&2
+            exit 1
+          fi
           if ./hydra openboa 2>unknown.err; then
             echo "hydra <project> shorthand should not dispatch" >&2
             exit 1
           fi
           grep -F "unknown command: openboa" unknown.err
+          if ./hydra list 2>list.err; then
+            echo "legacy hydra list should not dispatch" >&2
+            exit 1
+          fi
+          grep -F "unknown command: list" list.err
 
       - name: Check diagnostics preflight shape
         run: |
@@ -85,6 +98,8 @@ jobs:
           ---
           Demo workflow.
           EOF
+          HYDRA_HOME="${tmp_home}" ./hydra project list | grep -F demo
+          HYDRA_HOME="${tmp_home}" ./hydra project show demo | grep -F "project: demo"
           HYDRA_HOME="${tmp_home}" ./hydra doctor --json > doctor.json || true
           ruby -rjson -e 'data = JSON.parse(File.read("doctor.json")); abort "missing ok" unless data.key?("ok")'
           if HYDRA_HOME="${tmp_home}" ./hydra run demo --no-web-dashboard --no-terminal-dashboard > run.out 2>&1; then
