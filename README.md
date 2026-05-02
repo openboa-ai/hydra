@@ -66,8 +66,12 @@ brew upgrade openboa-hydra
 hydra version
 ```
 
-Until Hydra switches to tagged release artifacts, the Homebrew formula version is automatically
-bumped after merges to `main` so `brew upgrade openboa-hydra` can pick up the latest main build.
+Hydra Homebrew releases are based on GitHub Release tags, not mutable branches. Release tags use
+CalVer in the form `vYYYY.MM.DD.N`, for example `v2026.05.02.1`. When a release is published, the
+`release / homebrew formula` workflow opens a formula update PR that points `openboa-hydra` at the
+release source asset and checksum. Configure `HYDRA_RELEASE_TOKEN` as a fine-grained PAT or GitHub
+App token with `contents:write` and `pull_requests:write` so the workflow can upload the release
+asset, create the formula PR, and auto-merge it after required checks pass.
 
 Alternatively, install Hydra with the bootstrap script:
 
