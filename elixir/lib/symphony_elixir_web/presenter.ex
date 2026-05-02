@@ -41,8 +41,19 @@ defmodule SymphonyElixirWeb.Presenter do
       title: display_value(ui.title) || "Hydra",
       description: display_value(ui.description),
       color: display_value(ui.color),
-      project_slug: display_value(settings.tracker.project_slug)
+      project_slug: display_value(settings.tracker.project_slug),
+      runtime_context: runtime_context_payload()
     }
+  end
+
+  defp runtime_context_payload do
+    %{
+      project_sync: display_value(System.get_env("HYDRA_PROJECT_SYNC_STATUS")),
+      codex_runtime: display_value(System.get_env("HYDRA_CODEX_RUNTIME_STATUS")),
+      codex_artifacts: display_value(System.get_env("HYDRA_CODEX_ARTIFACT_SUMMARY"))
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp display_value(value) when is_binary(value) do

@@ -362,6 +362,7 @@ defmodule SymphonyElixir.StatusDashboard do
         running_to_backoff_spacer = if(running == [], do: [], else: ["│"])
         backoff_rows = format_retry_rows(retrying)
         ui_lines = format_ui_lines()
+        runtime_context_lines = format_runtime_context_lines()
 
         ([
            colorize("╭─ HYDRA STATUS", @ansi_bold),
@@ -382,6 +383,7 @@ defmodule SymphonyElixir.StatusDashboard do
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
            format_sandbox_runtime_line(running, retrying),
            format_codex_runtime_line(running, retrying),
+           runtime_context_lines,
            project_link_lines,
            project_refresh_line,
            colorize("├─ Running", @ansi_bold),
@@ -449,7 +451,34 @@ defmodule SymphonyElixir.StatusDashboard do
         colorize("│ Codex: ", @ansi_bold) <> colorize(format_codex_runtime_summary(runtime), @ansi_cyan)
 
       _ ->
-        nil
+        []
+    end
+  end
+
+  defp format_runtime_context_lines do
+    project_sync = compact_env_value("HYDRA_PROJECT_SYNC_STATUS")
+    codex_runtime = compact_env_value("HYDRA_CODEX_RUNTIME_STATUS")
+    codex_artifacts = compact_env_value("HYDRA_CODEX_ARTIFACT_SUMMARY")
+
+    [
+      if(project_sync, do: colorize("│ Nest: ", @ansi_bold) <> colorize(project_sync, @ansi_cyan), else: nil),
+      if(codex_runtime || codex_artifacts,
+        do:
+          colorize("│ Codex Artifacts: ", @ansi_bold) <>
+            colorize(Enum.reject([codex_runtime, codex_artifacts], &is_nil/1) |> Enum.join(" | "), @ansi_cyan),
+        else: nil
+      )
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp compact_env_value(name) do
+    name
+    |> System.get_env()
+    |> display_value()
+    |> case do
+      nil -> nil
+      value -> value |> String.split(~r/[\r\n]+/, trim: true) |> Enum.join(" | ")
     end
   end
 

@@ -18,6 +18,38 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     Snapshot.assert_dashboard_snapshot!("idle", render_snapshot(snapshot_data, 0.0))
   end
 
+  test "terminal dashboard renders launcher runtime context" do
+    previous_sync = System.get_env("HYDRA_PROJECT_SYNC_STATUS")
+    previous_codex_runtime = System.get_env("HYDRA_CODEX_RUNTIME_STATUS")
+    previous_codex_artifacts = System.get_env("HYDRA_CODEX_ARTIFACT_SUMMARY")
+
+    on_exit(fn ->
+      restore_env("HYDRA_PROJECT_SYNC_STATUS", previous_sync)
+      restore_env("HYDRA_CODEX_RUNTIME_STATUS", previous_codex_runtime)
+      restore_env("HYDRA_CODEX_ARTIFACT_SUMMARY", previous_codex_artifacts)
+    end)
+
+    System.put_env("HYDRA_PROJECT_SYNC_STATUS", "project_sync: current (main@abc123)")
+    System.put_env("HYDRA_CODEX_RUNTIME_STATUS", "ready")
+    System.put_env("HYDRA_CODEX_ARTIFACT_SUMMARY", "AGENTS=1 skills=2 agents=3 hooks=1 plugins=1 MCP=1")
+
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil
+       }}
+
+    rendered = render_snapshot(snapshot_data, 0.0)
+
+    assert rendered =~ "Nest: "
+    assert rendered =~ "project_sync: current (main@abc123)"
+    assert rendered =~ "Codex Artifacts: "
+    assert rendered =~ "ready | AGENTS=1 skills=2 agents=3 hooks=1 plugins=1 MCP=1"
+  end
+
   test "snapshot fixture: idle dashboard with observability url" do
     previous_port_override = Application.get_env(:hydra_elixir, :server_port_override)
 

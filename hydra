@@ -1465,7 +1465,9 @@ doctor_json() {
   local repo_url=""
   local project_status="ok"
   local source_status="ok"
+  local source_detail=""
   local codex_status="ok"
+  local codex_summary=""
   local project_sbx_status="skipped"
   local worker_backend=""
   local install_status="ok"
@@ -1523,8 +1525,18 @@ doctor_json() {
     repo_url="$(workflow_repo_url "$workflow_path")"
     worker_backend="$(workflow_worker_backend "$workflow_path")"
     [ -n "$repo_url" ] || { project_status="missing_repo"; failed=1; }
-    project_nest_sync_status "$project" >/dev/null 2>&1 || { source_status="failed"; failed=1; }
-    codex_runtime_ready "$project" || { codex_status="missing"; failed=1; }
+    if source_detail="$(project_nest_sync_status "$project" 2>&1)"; then
+      source_status="ok"
+    else
+      source_status="failed"
+      failed=1
+    fi
+    if codex_summary="$(codex_runtime_artifact_summary "$project" 2>&1)"; then
+      codex_status="ready"
+    else
+      codex_status="missing"
+      failed=1
+    fi
     case "$worker_backend" in
       sbx)
         if check_sbx_worker_ready; then
@@ -1551,7 +1563,7 @@ doctor_json() {
   printf '  "tools": {"git": '; json_string "$git_status"; printf ', "gh": '; json_string "$gh_status"; printf ', "sbx": '; json_string "$sbx_status"; printf '},\n'
   printf '  "runtime": {"runner": '; json_string "$runner"; printf ', "tool": '; json_string "$runner_tool_status"; printf ', "status": '; json_string "$runtime_status"; printf ', "path": '; json_string "$(runtime_elixir_dir)"; printf '}'
   if [ -n "$project" ]; then
-    printf ',\n  "project": {"name": '; json_string "$project"; printf ', "status": '; json_string "$project_status"; printf ', "workflow": '; json_string "$(relative_path "$workflow_path")"; printf ', "repo": '; json_string "${repo_url:-missing}"; printf ', "worker_backend": '; json_string "$worker_backend"; printf ', "project_sync": '; json_string "$source_status"; printf ', "nest_sync": '; json_string "$source_status"; printf ', "codex_runtime": '; json_string "$codex_status"; printf ', "sbx": '; json_string "$project_sbx_status"; printf '}'
+    printf ',\n  "project": {"name": '; json_string "$project"; printf ', "status": '; json_string "$project_status"; printf ', "workflow": '; json_string "$(relative_path "$workflow_path")"; printf ', "repo": '; json_string "${repo_url:-missing}"; printf ', "worker_backend": '; json_string "$worker_backend"; printf ', "project_sync": '; json_string "$source_status"; printf ', "nest_sync": '; json_string "$source_status"; printf ', "project_sync_detail": '; json_string "$source_detail"; printf ', "codex_runtime": '; json_string "$codex_status"; printf ', "codex_artifacts": '; json_string "$codex_summary"; printf ', "sbx": '; json_string "$project_sbx_status"; printf '}'
   fi
   printf '\n}\n'
   return "$failed"
@@ -1763,6 +1775,7 @@ USAGE
     printf '\ncodex:\n'
     if codex_runtime_ready "$project"; then
       printf '  runtime: ready\n'
+      printf '  artifacts: %s\n' "$(codex_runtime_artifact_summary "$project")"
       printf '  inspect: hydra codex inspect %s\n' "$project"
     else
       printf '  runtime: missing\n'
@@ -2233,6 +2246,7 @@ run_project_preflight() {
     sbx)
       if codex_runtime_ready "$project"; then
         printf '  codex_runtime: ready\n'
+        printf '  codex_artifacts: %s\n' "$(codex_runtime_artifact_summary "$project")"
       else
         printf '  codex_runtime: missing\n'
         printf '  next: hydra project sync %s\n' "$project"
@@ -3654,6 +3668,121 @@ codex_runtime_status() {
   return 1
 }
 
+
+codex_runtime_artifact_count() {
+  local project="$1"
+  local workspace="${2:-}"
+  local kind="$3"
+  local codex_home
+  local codex_user_home
+  local count=0
+  local root
+  local path
+
+  codex_home="$(codex_home_for_project "$project")"
+  codex_user_home="$(codex_user_home_for_project "$project")"
+
+  case "$kind" in
+    agents_md)
+      for path in \
+        "$codex_home/AGENTS.override.md" \
+        "$codex_home/AGENTS.md"; do
+        [ -f "$path" ] && count=$((count + 1))
+      done
+      if [ -n "$workspace" ]; then
+        for path in \
+          "$workspace/AGENTS.override.md" \
+          "$workspace/AGENTS.md"; do
+          [ -f "$path" ] && count=$((count + 1))
+        done
+      fi
+      ;;
+    skills)
+      root="$codex_user_home/.agents/skills"
+      [ -d "$root" ] && count=$((count + $(find "$root" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | wc -l | tr -d ' ')))
+      if [ -n "$workspace" ]; then
+        root="$workspace/.agents/skills"
+        [ -d "$root" ] && count=$((count + $(find "$root" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | wc -l | tr -d ' ')))
+      fi
+      ;;
+    agents)
+      root="$codex_home/agents"
+      [ -d "$root" ] && count=$((count + $(find "$root" -mindepth 1 -maxdepth 1 -name '*.toml' -type f 2>/dev/null | wc -l | tr -d ' ')))
+      if [ -n "$workspace" ]; then
+        root="$workspace/.codex/agents"
+        [ -d "$root" ] && count=$((count + $(find "$root" -mindepth 1 -maxdepth 1 -name '*.toml' -type f 2>/dev/null | wc -l | tr -d ' ')))
+      fi
+      ;;
+    hooks)
+      for path in \
+        "$codex_home/hooks.json" \
+        "$codex_home/hooks/hooks.json"; do
+        [ -f "$path" ] && count=$((count + 1))
+      done
+      if [ -n "$workspace" ]; then
+        path="$workspace/.codex/hooks.json"
+        [ -f "$path" ] && count=$((count + 1))
+      fi
+      ;;
+    plugins)
+      root="$codex_home/plugins"
+      [ -d "$root" ] && count=$((count + $(find "$root" -mindepth 3 -maxdepth 3 -path '*/.codex-plugin/plugin.json' -type f 2>/dev/null | wc -l | tr -d ' ')))
+      if [ -n "$workspace" ]; then
+        root="$workspace/.codex/plugins"
+        [ -d "$root" ] && count=$((count + $(find "$root" -mindepth 3 -maxdepth 3 -path '*/.codex-plugin/plugin.json' -type f 2>/dev/null | wc -l | tr -d ' ')))
+      fi
+      ;;
+    mcp)
+      count="$(codex_config_mcp_servers "$codex_home/config.toml" | wc -l | tr -d ' ')"
+      if [ -d "$codex_home/mcp" ]; then
+        count=$((count + $(find "$codex_home/mcp" -type f 2>/dev/null | wc -l | tr -d ' ')))
+      fi
+      ;;
+    *)
+      die "unknown Codex artifact kind '$kind'"
+      ;;
+  esac
+
+  printf '%s\n' "$count"
+}
+
+codex_runtime_artifact_summary() {
+  local project="$1"
+  local workspace="${2:-}"
+
+  if ! codex_runtime_ready "$project"; then
+    printf 'missing (run `hydra project sync %s`)\n' "$project"
+    return 1
+  fi
+
+  printf 'AGENTS=%s skills=%s agents=%s hooks=%s plugins=%s MCP=%s\n' \
+    "$(codex_runtime_artifact_count "$project" "$workspace" agents_md)" \
+    "$(codex_runtime_artifact_count "$project" "$workspace" skills)" \
+    "$(codex_runtime_artifact_count "$project" "$workspace" agents)" \
+    "$(codex_runtime_artifact_count "$project" "$workspace" hooks)" \
+    "$(codex_runtime_artifact_count "$project" "$workspace" plugins)" \
+    "$(codex_runtime_artifact_count "$project" "$workspace" mcp)"
+}
+
+export_project_runtime_context() {
+  local project="$1"
+  local sync_status
+  local codex_summary
+
+  sync_status="$(project_nest_sync_status "$project" 2>/dev/null || true)"
+  codex_summary="$(codex_runtime_artifact_summary "$project" 2>/dev/null || true)"
+
+  export HYDRA_PROJECT_SYNC_STATUS="$sync_status"
+  export HYDRA_CODEX_RUNTIME_STATUS
+  export HYDRA_CODEX_ARTIFACT_SUMMARY="$codex_summary"
+
+  if codex_runtime_ready "$project"; then
+    HYDRA_CODEX_RUNTIME_STATUS="ready"
+  else
+    HYDRA_CODEX_RUNTIME_STATUS="missing"
+  fi
+}
+
 codex_print_worker_auth() {
   local worker_backend="$1"
 
@@ -4326,7 +4455,7 @@ status_project() {
   logs_root="$(logs_root_for "$project" "$workflow_path")"
   recovery_path="$workspace_root/.hydra-recovery.json"
   cleanup_stale_project_pid_file "$project" "$workflow_path"
-  listener_pids="$(dashboard_listener_pids "$port")"
+  listener_pids="$(dashboard_listener_pids "$port" || true)"
   runtime_pids="$(project_runtime_pids "$project" "$workflow_path")"
 
   printf 'project: %s\n' "$project"
@@ -4344,6 +4473,14 @@ status_project() {
     printf 'state: stopped\n'
   else
     printf 'state: unknown (lsof not available)\n'
+  fi
+
+  project_nest_sync_status "$project" || true
+  if codex_runtime_ready "$project"; then
+    printf 'codex_runtime: ready\n'
+    printf 'codex_artifacts: %s\n' "$(codex_runtime_artifact_summary "$project")"
+  else
+    printf 'codex_runtime: missing (run `hydra project sync %s`)\n' "$project"
   fi
 
   if [ -d "$workspace_root" ]; then
@@ -4588,6 +4725,7 @@ check_project() {
     sbx)
       if codex_runtime_ready "$project"; then
         printf 'codex_runtime: ready\n'
+        printf 'codex_artifacts: %s\n' "$(codex_runtime_artifact_summary "$project")"
       else
         printf 'codex_runtime: missing (run `hydra project sync %s`)\n' "$project"
         failed=1
@@ -4700,6 +4838,8 @@ run_project() {
       export_codex_runtime "$project"
       ;;
   esac
+
+  export_project_runtime_context "$project"
 
   local logs_root
   logs_root="$(logs_root_for "$project" "$workflow_path")"
