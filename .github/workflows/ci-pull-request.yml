@@ -1,0 +1,49 @@
+name: ci / pull request
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  validate-pr:
+    name: title and description
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: elixir
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate PR title convention
+        env:
+          PR_TITLE_JSON: ${{ toJson(github.event.pull_request.title) }}
+        run: |
+          printf '%s' "$PR_TITLE_JSON" | jq -r '.' > /tmp/pr_title.txt
+          ../scripts/check-conventional-title.sh --message-file /tmp/pr_title.txt --context pr-title
+
+      - name: Set up mise tools
+        uses: jdx/mise-action@9dc7d5dd454262207dea3ab5a06a3df6afc8ff26 # v3.4.1
+        with:
+          install: true
+          cache: true
+          working_directory: elixir
+
+      - name: Validate PR description format
+        env:
+          PR_BODY_JSON: ${{ toJson(github.event.pull_request.body) }}
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+          printf '%s' "$PR_BODY_JSON" | jq -r '.' > /tmp/pr_body.md
+          mix pr_body.check --file /tmp/pr_body.md

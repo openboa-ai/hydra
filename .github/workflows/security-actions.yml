@@ -1,4 +1,4 @@
-name: codeql
+name: security / actions codeql
 
 on:
   pull_request:
@@ -13,9 +13,13 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
-    name: Analyze GitHub Actions workflows
+    name: codeql
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

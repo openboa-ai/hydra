@@ -126,6 +126,16 @@ runtime_dir="$repo_root/runtime"
 run_dir="$repo_root/run"
 
 git_short_rev() {
+  if [ -n "${HYDRA_VERSION:-}" ]; then
+    printf '%s\n' "$HYDRA_VERSION"
+    return
+  fi
+
+  if [ -f "$install_root/.hydra-version" ]; then
+    sed -n '1p' "$install_root/.hydra-version"
+    return
+  fi
+
   git -C "$install_root" rev-parse --short HEAD 2>/dev/null || printf 'unknown'
 }
 
@@ -269,19 +279,81 @@ EOF
   fi
 }
 
+runtime_runner() {
+  case "${HYDRA_RUNTIME_RUNNER:-mise}" in
+    mise|system)
+      printf '%s\n' "${HYDRA_RUNTIME_RUNNER:-mise}"
+      ;;
+    *)
+      die "unsupported HYDRA_RUNTIME_RUNNER=${HYDRA_RUNTIME_RUNNER}. Use 'mise' or 'system'."
+      ;;
+  esac
+}
+
+homebrew_formula_name() {
+  printf '%s\n' "${HYDRA_HOMEBREW_FORMULA:-openboa-hydra}"
+}
+
+ensure_runtime_tooling() {
+  case "$(runtime_runner)" in
+    mise)
+      command -v mise >/dev/null 2>&1 ||
+        die "mise is required to run Hydra"
+      ;;
+    system)
+      command -v mix >/dev/null 2>&1 ||
+        die "mix is required to run Hydra with HYDRA_RUNTIME_RUNNER=system"
+      command -v escript >/dev/null 2>&1 ||
+        die "escript is required to run Hydra with HYDRA_RUNTIME_RUNNER=system"
+      ;;
+  esac
+}
+
+runtime_exec() {
+  case "$(runtime_runner)" in
+    mise)
+      mise exec -- "$@"
+      ;;
+    system)
+      "$@"
+      ;;
+  esac
+}
+
+runtime_exec_replace() {
+  case "$(runtime_runner)" in
+    mise)
+      exec mise exec -- "$@"
+      ;;
+    system)
+      exec "$@"
+      ;;
+  esac
+}
+
+prepare_runtime_tool_versions() {
+  case "$(runtime_runner)" in
+    mise)
+      mise trust
+      mise install
+      ;;
+    system)
+      :
+      ;;
+  esac
+}
+
 build_installed_runtime() {
   local runtime_dir="$install_root/elixir"
 
   [ -f "$runtime_dir/mix.exs" ] || die "Hydra Elixir runtime not found: $runtime_dir"
-  command -v mise >/dev/null 2>&1 ||
-    die "mise is required to build Hydra runtime. Install mise, then rerun: hydra update"
+  ensure_runtime_tooling
 
   (
     cd "$runtime_dir"
-    mise trust
-    mise install
-    mise exec -- mix setup
-    mise exec -- mix build
+    prepare_runtime_tool_versions
+    runtime_exec mix setup
+    runtime_exec mix build
   )
 }
 
@@ -323,6 +395,10 @@ update_self() {
         ;;
     esac
   done
+
+  if [ "${HYDRA_PACKAGE_MANAGER:-}" = "homebrew" ] || [ -n "${HYDRA_HOMEBREW_FORMULA:-}" ]; then
+    die "this Hydra install is managed by Homebrew. Use: brew upgrade $(homebrew_formula_name)"
+  fi
 
   [ -d "$install_root/.git" ] ||
     die "Hydra update requires a git-installed Hydra checkout: $install_root"
@@ -1409,12 +1485,32 @@ USAGE
     printf 'sbx: missing (needed for worker.sbx profiles; run `hydra setup sandbox`)\n'
   fi
 
-  if command -v mise >/dev/null 2>&1; then
-    printf 'mise: ok\n'
-  else
-    printf 'mise: missing (needed to run the Elixir runtime)\n'
-    failed=1
-  fi
+  case "$(runtime_runner)" in
+    mise)
+      if command -v mise >/dev/null 2>&1; then
+        printf 'mise: ok\n'
+      else
+        printf 'mise: missing (needed to run the Elixir runtime)\n'
+        failed=1
+      fi
+      ;;
+    system)
+      printf 'runtime_runner: system\n'
+      if command -v mix >/dev/null 2>&1; then
+        printf 'mix: ok\n'
+      else
+        printf 'mix: missing (needed to run the Elixir runtime)\n'
+        failed=1
+      fi
+
+      if command -v escript >/dev/null 2>&1; then
+        printf 'escript: ok\n'
+      else
+        printf 'escript: missing (needed to run the Elixir runtime)\n'
+        failed=1
+      fi
+      ;;
+  esac
 
   if [ -f "$(runtime_elixir_dir)/mix.exs" ]; then
     printf 'runtime: ok (%s)\n' "$(runtime_elixir_dir)"
@@ -3487,17 +3583,19 @@ ensure_runtime_ready() {
   runtime_elixir_dir="$(runtime_elixir_dir)"
 
   [ -f "$runtime_elixir_dir/mix.exs" ] || die "Hydra Elixir runtime not found: $runtime_elixir_dir"
-  command -v mise >/dev/null 2>&1 || die "mise is required to run Hydra"
+  ensure_runtime_tooling
 
   cd "$runtime_elixir_dir"
 
   if [ ! -d deps ]; then
-    mise trust >/dev/null 2>&1 || true
-    mise exec -- mix deps.get
+    if [ "$(runtime_runner)" = "mise" ]; then
+      mise trust >/dev/null 2>&1 || true
+    fi
+    runtime_exec mix deps.get
   fi
 
   if [ "${HYDRA_SKIP_BUILD:-0}" != "1" ]; then
-    mise exec -- mix build >/dev/null
+    runtime_exec mix build >/dev/null
   fi
 }
 
@@ -3527,7 +3625,8 @@ validate_workflow_config() {
 
   (
     cd "$runtime_elixir_dir"
-    HYDRA_WORKFLOW_PATH="$workflow_path" mise exec -- mix run -e '
+    export HYDRA_WORKFLOW_PATH="$workflow_path"
+    runtime_exec mix run -e '
       path = System.fetch_env!("HYDRA_WORKFLOW_PATH")
       SymphonyElixir.Workflow.set_workflow_file_path(path)
       :ok = SymphonyElixir.Config.validate!()
@@ -3728,7 +3827,7 @@ run_project() {
   fi
 
   if [ "${#hydra_args[@]}" -gt 0 ]; then
-    exec mise exec -- ./bin/hydra \
+    runtime_exec_replace ./bin/hydra \
       --i-understand-that-this-will-be-running-without-the-usual-guardrails \
       --logs-root "$logs_root" \
       "$terminal_dashboard_arg" \
@@ -3737,7 +3836,7 @@ run_project() {
       "$workflow_path"
   fi
 
-  exec mise exec -- ./bin/hydra \
+  runtime_exec_replace ./bin/hydra \
     --i-understand-that-this-will-be-running-without-the-usual-guardrails \
     --logs-root "$logs_root" \
     "$terminal_dashboard_arg" \

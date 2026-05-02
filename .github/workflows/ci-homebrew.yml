@@ -1,0 +1,82 @@
+name: ci / homebrew package
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  homebrew:
+    name: formula and packaged runtime
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Register checkout as tap
+        run: brew tap openboa-ai/hydra "$PWD"
+
+      - name: Check formula syntax
+        run: ruby -c Formula/openboa-hydra.rb
+
+      - name: Check formula style
+        run: brew style openboa-ai/hydra/openboa-hydra
+
+      - name: Audit formula
+        run: brew audit --strict --online openboa-ai/hydra/openboa-hydra
+
+      - name: Read all tap formulae
+        run: brew readall --aliases --os=all --arch=all openboa-ai/hydra
+
+      - name: Check install graph
+        run: brew install --dry-run openboa-ai/hydra/openboa-hydra
+
+      - name: Install Homebrew Elixir
+        run: brew install elixir
+
+      - name: Build packaged runtime
+        working-directory: elixir
+        env:
+          MIX_ENV: prod
+          MIX_HOME: ${{ runner.temp }}/mix-home
+          HEX_HOME: ${{ runner.temp }}/hex-home
+          REBAR_CACHE_DIR: ${{ runner.temp }}/rebar3-cache
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get --only prod
+          mix compile
+          mix escript.build
+
+      - name: Verify Homebrew launcher mode
+        env:
+          HYDRA_HOME: ${{ runner.temp }}/hydra-home
+          HYDRA_PACKAGE_MANAGER: homebrew
+          HYDRA_HOMEBREW_FORMULA: openboa-hydra
+          HYDRA_RUNTIME_RUNNER: system
+          HYDRA_SKIP_BUILD: "1"
+          HYDRA_ELIXIR_DIR: ${{ github.workspace }}/elixir
+          HYDRA_VERSION: ci
+          MIX_ENV: prod
+        run: |
+          ./hydra version
+          ./hydra setup --non-interactive
+          if ./hydra update 2>update.err; then
+            echo "expected Homebrew-managed update to fail" >&2
+            exit 1
+          fi
+          grep -F "brew upgrade openboa-hydra" update.err

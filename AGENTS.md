@@ -81,18 +81,26 @@ Required rules for every agent working in this repository:
 - Before finalizing rename, branding, or distribution-related changes, run a focused search for
   stale public names and legal-surface regressions, including `LICENSE`, `NOTICE`, `README.md`,
   CLI help text, dashboard titles, workflow templates, and package metadata.
-- Keep `.pre-commit-config.yaml` and `scripts/check-apache-compliance.sh` active. The pre-commit
-  hook is the commit-time gate for this section, so do not bypass it with `--no-verify` unless the
-  user explicitly approves that risk.
-- Keep `scripts/check-gitleaks.sh` active in pre-commit. Gitleaks must run on staged changes before
-  every commit, and commits should fail when `gitleaks` is missing or finds a secret.
-- New clones should run `pre-commit install` before committing. If `pre-commit` is unavailable,
-  run `scripts/check-apache-compliance.sh --worktree` and `scripts/check-gitleaks.sh --staged`
-  manually before committing.
+- Keep `.githooks/`, `.pre-commit-config.yaml`, and `scripts/check-apache-compliance.sh` active.
+  The pre-commit hook is the commit-time gate for this section, so do not bypass it with
+  `--no-verify` unless the user explicitly approves that risk.
+- Use Conventional Commits for commits and PR titles:
+  `<type>[optional scope][!]: <description>`. Allowed types are `feat`, `fix`, `docs`, `style`,
+  `refactor`, `perf`, `test`, `build`, `ci`, `chore`, and `revert`.
+- Keep `scripts/check-gitleaks.sh` active in pre-commit, pre-push, and CI. Gitleaks must run on
+  staged changes before every commit and on pushed commits before every push. Commits and pushes
+  should fail when `gitleaks` is missing or finds a secret.
+- New clones should run `scripts/setup-git-hooks.sh` before committing. If hook setup is unavailable,
+  run `scripts/check-apache-compliance.sh --worktree`, validate the commit or PR title with
+  `scripts/check-conventional-title.sh --message "ci: validate repository gates"`, and run
+  `scripts/check-gitleaks.sh --staged` plus `scripts/check-gitleaks.sh --pre-push` before publishing
+  work.
 
 Useful compliance check:
 
 ```bash
 scripts/check-apache-compliance.sh --worktree
+scripts/check-conventional-title.sh --message "ci: validate repository gates"
 scripts/check-gitleaks.sh --staged
+scripts/check-gitleaks.sh --pre-push
 ```

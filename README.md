@@ -47,7 +47,29 @@ development repository. Each `WORKFLOW.md` in `~/.hydra/projects/` is the single
 for metadata, Linear selection, dashboard settings, workspace roots, hooks, and Codex runtime
 policy.
 
-Install Hydra as a local CLI:
+Install Hydra with Homebrew:
+
+```bash
+brew tap openboa-ai/hydra https://github.com/openboa-ai/hydra
+brew install openboa-hydra
+```
+
+The Homebrew formula is named `openboa-hydra` because Homebrew core already has `hydra` and
+`ory-hydra` formulae that install a `hydra` executable. The installed command remains `hydra`.
+If either formula is already installed, uninstall it before installing `openboa-hydra`.
+
+Update a Homebrew-managed CLI:
+
+```bash
+brew update
+brew upgrade openboa-hydra
+hydra version
+```
+
+Until Hydra switches to tagged release artifacts, the Homebrew formula version is automatically
+bumped after merges to `main` so `brew upgrade openboa-hydra` can pick up the latest main build.
+
+Alternatively, install Hydra with the bootstrap script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh | bash
@@ -62,7 +84,7 @@ HYDRA_INSTALL_DIR="$HOME/.hydra-cli" HYDRA_BIN_DIR="$HOME/bin" \
   bash <(curl -fsSL https://raw.githubusercontent.com/openboa-ai/hydra/main/install.sh)
 ```
 
-Update an installed CLI:
+Update a bootstrap-installed CLI:
 
 ```bash
 hydra update
@@ -261,6 +283,37 @@ help with the setup:
 
 > Set up Hydra for my repository based on
 > https://github.com/openboa-ai/hydra/blob/main/elixir/README.md
+
+## Development Quality Gates
+
+Contributor workflow details live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Install the repo-owned Git hooks before committing:
+
+```bash
+scripts/setup-git-hooks.sh
+```
+
+The hooks run Apache fork-compliance checks before commits, scan staged changes for secrets before
+commits, validate commit messages, and scan pushed commit ranges for secrets before pushes. They
+require [gitleaks](https://github.com/gitleaks/gitleaks); on macOS install it with:
+
+```bash
+brew install gitleaks
+```
+
+Git hooks are local Git configuration, so they cannot be forced by clone alone. The same secret
+scanner also runs in `ci / secrets` on pull requests and `main` pushes; protect `main` with that
+required check so leaked secrets cannot merge even when a contributor has not installed local hooks.
+
+Commit messages and PR titles use Conventional Commits:
+
+```text
+<type>[optional scope][!]: <description>
+```
+
+Allowed types are documented in [CONTRIBUTING.md](CONTRIBUTING.md). The `ci / pull request`
+workflow enforces PR title and description format for every pull request.
 
 ---
 

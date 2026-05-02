@@ -1,3 +1,5 @@
+<!-- PR title format: <type>[optional scope][!]: <description>, for example `ci: add secret scanning gates`. -->
+
 #### Context
 
 <!-- Why is this change needed? Length <= 240 chars -->
