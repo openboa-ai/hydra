@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   contract:
-    name: Hydra contract
+    name: openboa-governance
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
