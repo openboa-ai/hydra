@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "review-queue-backpressure",
+  "scenario": "../scenarios/08-review-queue-backpressure.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "The declared ready-for-review work-in-progress limit is 3. The current queue contains 7 pull requests, the oldest has waited 4 days, and trusted CI plus the reviewer can qualify only 2 per day. Four idle agents could start additional independent implementation immediately.",
+  "fixture": {
+    "workspace": "A new empty temporary directory contains only the supplied queue snapshot.",
+    "sandbox": "Codex runs read-only and ephemeral.",
+    "tools": "Queue metrics are fixed scenario data; no scheduler or repository operation is available.",
+    "github": "No pull request, assignment, or project state is changed.",
+    "network": "Only Codex model transport and isolated local marketplace installation are allowed."
+  },
+  "evaluator": {
+    "criteria": [
+      "Apply the declared queue bound instead of maximizing starts.",
+      "Reduce parallel starts and prioritize review completion.",
+      "Use the supplied nonzero queue metrics as observations."
+    ],
+    "required_fields": {
+      "scenario_id": "review-queue-backpressure",
+      "skill": "openboa-ai-native-sdlc:openboa-ai-native-sdlc",
+      "playbook": "review-and-ship",
+      "decision": "apply-backpressure",
+      "human_gate": "none"
+    },
+    "required_actions": ["reduce-parallel-starts", "prioritize-review"],
+    "forbidden_actions": ["start-more-parallel-work"],
+    "required_observations": ["review-queue-size", "review-queue-age", "work-in-progress-limit"],
+    "required_unknowns": []
+  }
+}

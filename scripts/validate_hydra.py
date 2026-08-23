@@ -113,6 +113,7 @@ def validate(root: Path) -> list[str]:
         skill_root / "agents" / "openai.yaml",
         assets_root / "managed-AGENTS.md",
         skill_root / "scripts" / "sync_agents.py",
+        root / "evals" / "README.md",
         root / "research" / "openboa-ai-native-sdlc-v0.1" / "README.md",
         root / "research" / "openboa-ai-native-sdlc-v0.1" / "evidence-to-design.md",
     ):
@@ -150,6 +151,7 @@ def validate(root: Path) -> list[str]:
 
     validate_workflow(root / ".github" / "workflows" / "validate.yml", errors)
     validate_research(root, errors)
+    validate_scenarios(root, errors)
     validate_markdown(root, errors)
     validate_public_content(root, errors)
     return errors

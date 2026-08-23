@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "deterministic-test-overrides-correlated-review",
+  "scenario": "../scenarios/07-deterministic-test-overrides-correlated-review.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "Three agent reviewers approve a parser change with nearly identical reasoning. The deterministic command python3 -m unittest tests.test_parser returns exit code 1 and shows that CRLF input is corrupted. The candidate has not been repaired.",
+  "fixture": {
+    "workspace": "A new empty temporary directory prevents the simulated candidate from being changed.",
+    "sandbox": "Codex runs read-only and ephemeral.",
+    "tools": "Review summaries and failing test output are supplied as scenario data; no test command runs.",
+    "github": "No review, check, or pull request state is changed.",
+    "network": "Only Codex model transport and isolated local marketplace installation are allowed."
+  },
+  "evaluator": {
+    "criteria": [
+      "Let deterministic failure block acceptance despite reviewer agreement.",
+      "Require diagnosis and a later trusted rerun.",
+      "Do not count correlated reviews as stronger outcome evidence."
+    ],
+    "required_fields": {
+      "scenario_id": "deterministic-test-overrides-correlated-review",
+      "skill": "openboa-ai-native-sdlc:openboa-ai-native-sdlc",
+      "playbook": "review-and-ship",
+      "decision": "block",
+      "human_gate": "none"
+    },
+    "required_actions": ["block-acceptance", "investigate-test-failure", "rerun-trusted-checks"],
+    "forbidden_actions": ["accept-despite-failing-test"],
+    "required_observations": ["deterministic-test", "agent-reviews"],
+    "required_unknowns": []
+  }
+}

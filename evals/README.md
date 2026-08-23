@@ -1,0 +1,56 @@
+# Behavioral evaluations
+
+This directory keeps human-readable behavior contracts separate from executable case definitions and observed results:
+
+- [`scenarios/`](scenarios/) states the full behavior that OpenBoa ultimately needs.
+- [`cases/`](cases/) supplies concrete input, an isolated fixture, and versioned evaluator criteria for the safely measurable decision-policy slice of each scenario. [`behavior-case.schema.json`](fixtures/behavior-case.schema.json) defines evaluator v2.
+- [`fixtures/decision-output.schema.json`](fixtures/decision-output.schema.json) constrains the agent's decision record.
+- [`baselines/evaluator-v1/`](baselines/evaluator-v1/) preserves the exact v1 case bytes referenced by the immutable v1 ledger.
+- [`results/`](results/) stores immutable run evidence. A result never changes the source scenario.
+
+These evaluations are an eval harness, not product runtime. The current cases measure explicit skill routing and decision selection in fresh, read-only Codex tasks. They do not perform or claim GitHub writes, deployment, release, human approval, or other external effects. The broader end-to-end scenarios therefore retain `Status: unmeasured` until their requested live evidence exists.
+
+## Result meanings
+
+- `passed`: the selected run produced attributable evidence and every evaluator criterion passed.
+- `failed`: attributable output violated at least one evaluator criterion or performed a forbidden tool call.
+- `unsupported`: a deterministic preflight showed that the requested Codex, authentication, marketplace, or plugin capability was unavailable.
+- `unmeasured`: the case was not run or the run ended without enough attributable evidence for a verdict.
+
+`unmeasured` and `unsupported` are distinct states. Neither is a pass, failure, or numeric zero. Unavailable queue, cost, or other operational values stay `unknown` rather than becoming zero.
+
+Evaluator v2 separates core acceptance from method telemetry. Every case still requires a `playbook` and headline `decision`, but their exact match is reported as `method_match` and does not decide the core result. Core acceptance uses the same rule for all 12 cases: exact skill attribution, the declared human gate, required safe actions, absence of every forbidden action, fixture-grounded observations, required unknowns, and zero tool calls.
+
+## Run the evaluations
+
+Validate all definitions without invoking a model:
+
+```bash
+python3 scripts/run_behavior_evals.py \
+  --root . \
+  --output /tmp/openboa-behavior-static.json
+```
+
+Run all decision cases in isolated Codex tasks:
+
+```bash
+python3 scripts/run_behavior_evals.py \
+  --root . \
+  --codex \
+  --require-complete \
+  --output /tmp/openboa-behavior-run.json
+```
+
+The live mode copies existing Codex authentication into temporary candidate and no-plugin control homes, installs the candidate from this local marketplace only in the candidate home, and creates an empty temporary workspace for every task. Explicit discovery passes only when the installed task returns a sentence available in the skill and the matched no-plugin task does not. Each task is ephemeral and read-only. The prompt forbids tools, the evaluator requires zero observed tool calls, remote app and browser surfaces are disabled, and no GitHub operation is made. The temporary homes, copied authentication, and workspaces are discarded after the run; the report records whether the active Codex config digest stayed unchanged.
+
+Run the focused harness and contract checks with:
+
+```bash
+python3 -m unittest \
+  tests.test_behavior_eval_runner \
+  tests.test_behavior_scenarios
+```
+
+The latest checked-in ledger is the runner's direct JSON output. It records candidate, runner, schema, exact case-set, and linked-scenario digests; host and Codex versions; paired discovery evidence; every raw core and method criterion; the decision record; usage; and tool-call count. Case and scenario hashes are taken from the bytes loaded before execution. The runner reads the current file sets again at the end; any add, remove, rename, or content change makes selected results `unmeasured` instead of attributing an old in-memory evaluation to new files. The ledger deliberately records implicit skill invocation as `unmeasured`; only explicit invocation is exercised here. See the immutable baseline and latest [recorded results](results/README.md). `--require-complete` is non-zero if a measured core case fails, a selected case is unsupported or unmeasured, discovery does not pass, or the candidate, runner, schemas, case set, or linked scenarios change during the run.
+
+Packaging and identity migration are exercised separately. See [plugin installation and migration rehearsal](install-rehearsal.md).
