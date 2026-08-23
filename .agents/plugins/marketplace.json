@@ -1,14 +1,14 @@
 {
   "name": "openboa-hydra",
   "interface": {
-    "displayName": "Openboa Hydra"
+    "displayName": "OpenBoa Hydra"
   },
   "plugins": [
     {
-      "name": "openboa-operations",
+      "name": "openboa-ai-native-sdlc",
       "source": {
         "source": "local",
-        "path": "./plugins/openboa-operations"
+        "path": "./plugins/openboa-ai-native-sdlc"
       },
       "policy": {
         "installation": "AVAILABLE",

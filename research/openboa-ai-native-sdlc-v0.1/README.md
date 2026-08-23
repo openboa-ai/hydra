@@ -6,7 +6,7 @@
 
 **Human owner:** SonSangjoon
 
-**Risk lane:** `risk:human-gate`
+**Risk:** Approval required
 
 This package asks a practical question: what should an operating guide make explicit when humans set goals and agents can plan, implement, verify, and prepare delivery? It summarizes external evidence without inventing another lifecycle specification.
 

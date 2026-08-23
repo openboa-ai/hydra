@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Improve Workflow"
+  short_description: "Turn repeated failures into tested improvements"
+  default_prompt: "Use $openboa-improve-workflow to diagnose this repeated failure and improve the right layer."

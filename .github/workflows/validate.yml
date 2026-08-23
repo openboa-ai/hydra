@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  contract:
-    name: openboa-governance
+  ai_native_sdlc:
+    name: openboa-ai-native-sdlc
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -21,5 +21,19 @@ jobs:
           python-version: "3.12"
       - name: Validate repository contract
         run: python3 scripts/validate_hydra.py .
+      - name: Validate research evidence
+        run: python3 scripts/validate_research.py .
       - name: Run contract tests
         run: python3 -m unittest discover -s tests -v
+
+  # Keep the old required-check name until a human updates the GitHub ruleset.
+  required-check-compatibility:
+    name: openboa-governance
+    needs: ai_native_sdlc
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror the AI-Native SDLC validation result
+        env:
+          VALIDATION_RESULT: ${{ needs.ai_native_sdlc.result }}
+        run: test "$VALIDATION_RESULT" = "success"

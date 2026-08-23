@@ -25,6 +25,6 @@ Local `git` remains the data plane for worktrees, diffs, commits, and tests. A d
 
 ## Review and approval
 
-Review judges the change and its evidence. Approval authorizes the next action. Keep those meanings separate: a useful review is not approval for a human-gate action, and an approval does not prove the outcome.
+Review judges the change and its evidence. Approval authorizes the next action. Keep those meanings separate: a useful review is not human approval for a sensitive action, and approval does not prove the outcome.
 
 Trusted workflows should inspect candidate changes without executing them with secrets or write credentials. Branch rules and required checks remain stronger than task text.

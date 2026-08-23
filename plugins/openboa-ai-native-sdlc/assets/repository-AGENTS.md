@@ -1,4 +1,4 @@
-# OpenBoa Hydra
+# OpenBoa repository
 
 <!-- openboa-ai-native-sdlc:managed:start version=0.1.0 -->
 ## Development workflow
@@ -15,8 +15,6 @@
 
 ## Repository-local instructions
 
-- Hydra publishes the `openboa-ai-native-sdlc` plugin through the `openboa-hydra` marketplace. It is not a live agent dispatcher.
-- Shared guidance lives in [doctrine](plugins/openboa-ai-native-sdlc/references/doctrine.md), [operating model](plugins/openboa-ai-native-sdlc/references/operating-model.md), [workflow](plugins/openboa-ai-native-sdlc/references/workflow.md), [governance](plugins/openboa-ai-native-sdlc/references/governance.md), [GitHub](plugins/openboa-ai-native-sdlc/references/github.md), and [evals](plugins/openboa-ai-native-sdlc/references/evals.md).
-- Build from current evidence and do not import retired repository designs. Keep public material safe to publish and in English.
-- Run both repository validators, every unittest, the official plugin validator, and the skill validator for all six skills before release.
-- Doctrine, marketplace identity, plugin manifest, managed guidance, and GitHub approval settings require human review.
+- Record product-specific commands, architecture facts, acceptance criteria, and local ownership below this heading.
+- Keep secrets, credentials, private customer data, and temporary execution artifacts out of committed documentation.
+- Preserve stronger repository controls.

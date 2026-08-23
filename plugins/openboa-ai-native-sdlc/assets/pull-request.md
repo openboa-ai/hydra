@@ -1,9 +1,8 @@
 ## Summary
 
 - Goal issue: [link to one governing issue, or explain the supervised fast path]
-- Accountable human owner: [GitHub handle]
-- Risk lane: `routine` | `material` | `human-gate`
-- GitHub transport: `codex-github-connector` | exception [link and reason]
+- Human owner: [GitHub handle]
+- Risk: `routine` | `approval required`
 - Change intent: [one sentence]
 
 ## Changed surface
@@ -17,7 +16,7 @@
 
 - Tests/checks: [commands and results]
 - CI: [run links and status]
-- Runtime or delivery observation: [link, screenshot, metric, or not applicable]
+- Runtime or delivery observation: [link, screenshot, preview, metric, or not applicable]
 - Security/privacy review: [result or not applicable]
 
 ## Approval and delivery

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Review Change"
+  short_description: "Review diffs, outcomes, tests, and evals"
+  default_prompt: "Use $openboa-review-change to review this change against its intended outcome."

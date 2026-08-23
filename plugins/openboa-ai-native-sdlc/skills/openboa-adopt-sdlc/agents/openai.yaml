@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Adopt SDLC"
+  short_description: "Adopt shared guidance without losing local rules"
+  default_prompt: "Use $openboa-adopt-sdlc to audit and prepare this repository for the OpenBoa workflow."

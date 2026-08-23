@@ -1,0 +1,28 @@
+{
+  "name": "openboa-ai-native-sdlc",
+  "version": "0.1.0",
+  "description": "Plan, build, review, ship, and improve agent-assisted software work with Codex and GitHub.",
+  "author": {
+    "name": "OpenBoa AI",
+    "url": "https://github.com/openboa-ai"
+  },
+  "homepage": "https://github.com/openboa-ai/hydra",
+  "repository": "https://github.com/openboa-ai/hydra",
+  "license": "Apache-2.0",
+  "keywords": ["openboa", "ai-native-sdlc", "codex", "github", "evals"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OpenBoa AI-Native SDLC",
+    "shortDescription": "Run a Codex and GitHub development workflow.",
+    "longDescription": "OpenBoa AI-Native SDLC provides focused skills and shared guidance for planning goals, building in worktrees, reviewing outcomes, shipping through GitHub, and improving the workflow from evidence.",
+    "developerName": "OpenBoa AI",
+    "category": "Developer Tools",
+    "capabilities": ["Guidance", "Workflow"],
+    "websiteURL": "https://github.com/openboa-ai/hydra",
+    "defaultPrompt": [
+      "Plan this development goal with Codex and GitHub.",
+      "Review this change against its outcome and evidence.",
+      "Prepare this change for safe delivery and observation."
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Plan Work"
+  short_description: "Plan goals and GitHub work without tiny tasks"
+  default_prompt: "Use $openboa-plan-work to turn this goal into a clear Codex and GitHub plan."

@@ -22,3 +22,5 @@ A human owns the goal, desired outcome, priorities, and public or irreversible d
 - **Three loops.** Engineer development, delivery, and learning as connected feedback loops.
 - **Improve the system.** Turn repeated failures into better context, skills, plugins, tools, tests, evals, graders, or policy.
 - **Portable meaning.** Keep goal, task, owner, evidence, review, and approval semantics stable while local harnesses and GitHub workflows vary.
+
+The external basis and remaining evidence gaps are recorded in Hydra's [40-source research package](https://github.com/openboa-ai/hydra/tree/main/research/openboa-ai-native-sdlc-v0.1).

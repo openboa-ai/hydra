@@ -4,9 +4,9 @@
 
 ## Choose the work unit
 
-Use a GitHub Issue before mutation for delegated, asynchronous, cross-repository, multi-PR, long-running, high-risk, dependency-bound work or work likely to need a handoff. Record one human owner, outcome, acceptance evidence, dependencies, and risk lane.
+For work that may take many steps, state the outcome, constraints, and verification, then link one GitHub parent Issue as the shared record. Create a Codex Goal when the user explicitly asks Codex to track it. Use sub-issues and issue dependencies only when tasks have separate owners, review surfaces, or ordering.
 
-Use the fast path only for a human-supervised, single-repository, single-PR, routine, reversible change with obvious acceptance criteria. If scope grows, create and link an Issue before continuing.
+Use a single Issue or supervised fast path for a routine, reversible change with obvious acceptance criteria. If scope grows, create or link the parent Issue before continuing.
 
 ## Development loop
 
@@ -22,7 +22,7 @@ Use the fast path only for a human-supervised, single-repository, single-PR, rou
 
 `Review → Approval → Deliver → Observe`
 
-Routine automation may approve routine work. Human-gate work requires explicit approval before the sensitive or irreversible action. Deliver through the repository's merge, release, deployment, publication, or handoff path, then inspect the realized state.
+Routine automation may approve routine work. Work requiring human approval waits for that approval before the sensitive or irreversible action. Deliver through the repository's merge, release, deployment, publication, or handoff path, then inspect the realized state.
 
 ## Learning loop
 
@@ -32,7 +32,7 @@ Improve the smallest useful layer behind a failure: context, skill, plugin, harn
 
 ## GitHub state
 
-Use `status:backlog`, `status:ready`, `status:in-progress`, and `status:in-review`; close only with evidence or a not-planned rationale. `blocked` is an overlay that names the dependency, owner, and unblock condition. Session or harness states do not belong in the public goal state.
+Use `Backlog`, `Ready`, `In progress`, `In review`, and `Done`. A `blocked` item names the dependency, owner, and unblock condition. Session or harness states do not replace the public work state.
 
 ## Handoff and completion
 

@@ -18,7 +18,7 @@ A handoff records the goal, current state, completed and remaining work, changed
 
 `Review → Approval → Deliver → Observe`
 
-Routine checks may supply approval for routine work. Human-gate work waits for the named reviewer before a sensitive or irreversible action. Delivery may mean merge, release, deploy, publish, or a bounded handoff.
+Routine checks may supply approval for routine work. Work requiring human approval waits for the named reviewer before a sensitive or irreversible action. Delivery may mean merge, release, deploy, publish, or a bounded handoff.
 
 After delivery, inspect the realized target: required checks, deployment state, UI, telemetry, incident signals, or other acceptance evidence. A green local command or open pull request is not the delivered outcome.
 

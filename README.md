@@ -1,41 +1,76 @@
 # OpenBoa Hydra
 
-OpenBoa Hydra is the public Git marketplace for the OpenBoa Operations plugin. It distributes concise, portable guidance for agent-assisted work: doctrine, ownership, workflow, governance, GitHub policy, evals, observation, and repository bootstrap templates.
+Hydra publishes **OpenBoa AI-Native SDLC**, a skills-first Codex plugin for running software work through Codex and GitHub.
 
-The repository is intentionally independent of the former Nest and Hydra contents. The current doctrine is a draft until `SonSangjoon` approves it; no release tag or organization-wide enforcement rollout is implied by the draft.
+The plugin uses familiar development objects instead of a new workflow language:
+
+```text
+Codex Goal → GitHub parent Issue → sub-issues and dependencies
+  → task worktree → tests and evals → pull request and review
+  → approval → merge or deploy → observation and improvement
+```
+
+The current doctrine is a draft until `SonSangjoon` approves it. This repository does not apply GitHub administrator settings or dispatch live agents.
 
 ## Install
 
-Add the public marketplace and install the plugin in Codex:
-
 ```text
 codex plugin marketplace add openboa-ai/hydra
-codex plugin add openboa-operations@openboa-hydra
+codex plugin add openboa-ai-native-sdlc@openboa-hydra
 ```
 
-Then invoke the `openboa-operations` skill to bootstrap a workspace, audit repository adoption, or synchronize the managed `AGENTS.md` block. GitHub control-plane actions use the Codex GitHub connector by default; a direct `gh` or API fallback requires a recorded governance exception.
+## Skills
 
-## Package map
+- `$openboa-plan-work` — turn a goal into Issues, acceptance criteria, and dependencies.
+- `$openboa-build-change` — implement a linked task in an isolated worktree and leave a handoff.
+- `$openboa-review-change` — review the diff, tests, evals, and actual outcome.
+- `$openboa-ship-change` — handle checks, approval, merge, deployment, rollback, and observation.
+- `$openboa-improve-workflow` — turn repeated failures into tested workflow improvements.
+- `$openboa-adopt-sdlc` — audit and update `AGENTS.md` and propose GitHub adoption changes.
 
-- [Doctrine](plugins/openboa-operations/skills/openboa-operations/references/doctrine.md) — purpose, human responsibility, and working principles
-- [Operating model](plugins/openboa-operations/skills/openboa-operations/references/operating-model.md) — ownership, repository roles, and decision rights
-- [Workflow](plugins/openboa-operations/skills/openboa-operations/references/workflow.md) — goals, states, delivery, handoff, and completion
-- [Governance](plugins/openboa-operations/skills/openboa-operations/references/governance.md) — risk lanes, human gates, audit, exceptions, and rollback
-- [GitHub profile](plugins/openboa-operations/skills/openboa-operations/references/github.md) — GitHub projection and enforcement contract
-- [Evals and observation](plugins/openboa-operations/skills/openboa-operations/references/evals.md) — outcome checks, graders, trajectories, and learning
+## Guidance
 
-These plugin references are the portable source of truth. Root files route maintainers and agents to them; product repositories add only local facts and stricter controls.
+- [Doctrine](plugins/openboa-ai-native-sdlc/references/doctrine.md) — purpose, human responsibility, and principles.
+- [Operating model](plugins/openboa-ai-native-sdlc/references/operating-model.md) — ownership and decision rights.
+- [Workflow](plugins/openboa-ai-native-sdlc/references/workflow.md) — development, delivery, and learning loops.
+- [Governance](plugins/openboa-ai-native-sdlc/references/governance.md) — routine work and approval-required boundaries.
+- [GitHub](plugins/openboa-ai-native-sdlc/references/github.md) — Issues, pull requests, Actions, rulesets, `CODEOWNERS`, and environments.
+- [Evals and observation](plugins/openboa-ai-native-sdlc/references/evals.md) — outcome checks, graders, and production evidence.
 
-## Development
+These references are the portable source of truth. Product repositories keep product commands and architecture facts in their own `AGENTS.md`.
 
-The repository is English-only. Keep the skill self-contained: reference documents and templates belong inside the skill directory, while the root files route maintainers to them. Run the repository validator and the official Codex plugin validator before publishing a release.
+The [40-source research package](research/openboa-ai-native-sdlc-v0.1/README.md) records the external evidence, limits, and open questions behind this version.
+
+## GitHub boundary
+
+The Codex GitHub connector is the default for supported GitHub operations. Authentication is not authority: every write remains tied to the intended repository, linked Goal or Issue, risk, and exact action. Local `git` handles worktrees, diffs, commits, and tests. Use `gh` or a direct API only for a missing connector capability and record the exception.
+
+Routine, reversible changes may auto-merge after required checks and independent review. Workflows, `CODEOWNERS`, permissions, secrets, security, migrations, infrastructure, public doctrine, and irreversible actions require human approval.
+
+## Migrate from OpenBoa Operations
+
+Version `0.1.0` replaces the preview `openboa-operations` plugin rather than keeping two policy sources. `$openboa-adopt-sdlc` uses [sync_agents.py](plugins/openboa-ai-native-sdlc/scripts/sync_agents.py) to replace one valid legacy managed block while preserving repository-local text. Duplicate, malformed, or unknown-version markers are refused.
+
+The required check named `openboa-governance` remains as a temporary compatibility check. After a repository administrator changes the GitHub ruleset to require `openboa-ai-native-sdlc`, remove the compatibility job in a follow-up pull request.
+
+If the preview plugin is installed, remove it before refreshing the marketplace and installing the replacement:
+
+```bash
+codex plugin remove openboa-operations@openboa-hydra
+codex plugin marketplace upgrade openboa-hydra
+codex plugin add openboa-ai-native-sdlc@openboa-hydra
+codex plugin list --marketplace openboa-hydra
+```
+
+Start a new Codex task after installation so the six new skills are loaded. Do not keep both plugin identities enabled.
+
+## Validate
 
 ```bash
 python3 scripts/validate_hydra.py .
-python3 /Users/sangjoon/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/openboa-operations
+python3 scripts/validate_research.py .
 python3 -m unittest discover -s tests -v
+python3 scripts/validate_codex.py .
 ```
 
-## Release posture
-
-`0.1.0` is the first preview contract. The doctrine remains non-normative until explicit human-gate approval is recorded. Promote to `1.0.0` only after approval, all public OpenBoa repositories have adopted the managed contract, and the GitHub audit is clean. Do not rewrite release tags.
+`validate_codex.py` finds the official plugin and skill validators through `CODEX_HOME`, falling back to `~/.codex`, and validates the plugin plus all six skills.
