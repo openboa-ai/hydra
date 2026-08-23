@@ -3,6 +3,7 @@
 - Goal and accountable human owner: [link and handle]
 - Current state: [state and concise summary]
 - Risk lane: `routine` | `material` | `human-gate`
+- GitHub transport: `codex-github-connector` | exception [link and reason]
 - Completed work: [files, commands, and observable results]
 - Evidence links: [issue, PR, CI, artifact, or runtime observation]
 - Blocker or decision needed: [specific question]

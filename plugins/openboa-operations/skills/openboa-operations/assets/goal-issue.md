@@ -9,6 +9,7 @@
 - Acceptance evidence: [tests, artifact, deployment, or observation]
 - Dependencies: [issues, systems, people, or none]
 - Risk lane: `routine` | `material` | `human-gate`
+- GitHub transport: `codex-github-connector` | exception [link and reason]
 - Target delivery window: [date or explicitly unbounded]
 
 ## Execution boundary

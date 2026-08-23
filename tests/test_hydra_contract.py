@@ -58,6 +58,23 @@ class HydraContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("managed marker", result.stdout)
 
+    def test_github_control_plane_is_connector_scoped(self) -> None:
+        github_reference = (
+            ROOT
+            / "plugins"
+            / "openboa-operations"
+            / "skills"
+            / "openboa-operations"
+            / "references"
+            / "github.md"
+        )
+        text = github_reference.read_text(encoding="utf-8")
+
+        self.assertIn("Codex GitHub connector is the default control-plane", text)
+        self.assertIn("account identity is not authority", text)
+        self.assertIn("`gh` CLI", text)
+        self.assertIn("governance exception", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,7 @@ codex plugin marketplace add openboa-ai/hydra
 codex plugin add openboa-operations@openboa-hydra
 ```
 
-Then invoke the `openboa-operations` skill to bootstrap a workspace, audit repository adoption, or synchronize the managed `AGENTS.md` block. GitHub audit and sync actions require an authenticated `gh` session; reading the references does not.
+Then invoke the `openboa-operations` skill to bootstrap a workspace, audit repository adoption, or synchronize the managed `AGENTS.md` block. GitHub control-plane actions use the Codex GitHub connector by default; a direct `gh` or API fallback requires a recorded governance exception.
 
 ## Package map
 
