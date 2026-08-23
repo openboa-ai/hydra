@@ -110,6 +110,10 @@ def validate(root: Path) -> list[str]:
             "schema: 1",
             f'contract: "{CONTRACT_VERSION}"',
             "profile: public-standard",
+            "control_plane: codex-github-connector",
+            "scope_key: workspace/repository/goal",
+            "account_is_not_authority: true",
+            "cli_fallback: human-gated",
         ):
             if required_line not in governance_text:
                 errors.append(f"governance profile is missing `{required_line}`")

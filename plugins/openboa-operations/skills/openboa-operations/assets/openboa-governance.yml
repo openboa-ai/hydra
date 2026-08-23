@@ -2,6 +2,12 @@ schema: 1
 contract: "0.1.0"
 profile: public-standard
 
+github:
+  control_plane: codex-github-connector
+  scope_key: workspace/repository/goal
+  account_is_not_authority: true
+  cli_fallback: human-gated
+
 # This profile is a portable baseline. A repository may strengthen it locally.
 human_gate:
   owner: SonSangjoon

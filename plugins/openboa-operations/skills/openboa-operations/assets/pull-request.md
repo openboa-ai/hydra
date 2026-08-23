@@ -3,6 +3,7 @@
 - Goal issue: [link to one governing issue, or explain the supervised fast path]
 - Accountable human owner: [GitHub handle]
 - Risk lane: `routine` | `material` | `human-gate`
+- GitHub transport: `codex-github-connector` | exception [link and reason]
 - Change intent: [one sentence]
 
 ## Changed surface
