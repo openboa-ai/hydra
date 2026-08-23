@@ -75,6 +75,19 @@ class HydraContractTests(unittest.TestCase):
         self.assertIn("`gh` CLI", text)
         self.assertIn("governance exception", text)
 
+    def test_evals_reference_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = Path(temp_dir) / "hydra"
+            shutil.copytree(ROOT, fixture, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            evals = fixture / "plugins" / "openboa-operations" / "skills" / "openboa-operations" / "references" / "evals.md"
+            if evals.exists():
+                evals.unlink()
+
+            result = self.run_validator(fixture)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("references/evals.md", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

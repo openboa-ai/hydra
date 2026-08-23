@@ -33,6 +33,13 @@ REQUIRED_COLUMNS = {
 REQUIRED_FILES = {
     "README.md",
     "sources.csv",
+    "lessons.md",
+    "workflow.md",
+    "github.md",
+    "evals.md",
+    "open-questions.md",
+}
+OBSOLETE_FILES = {
     "evidence-synthesis.md",
     "lifecycle-matrix.md",
     "artifact-catalog.md",
@@ -41,7 +48,6 @@ REQUIRED_FILES = {
     "decision-traceability.md",
     "draft-model.md",
     "application-hydra.md",
-    "open-questions.md",
 }
 REQUIRED_ORGANIZATIONS = {
     "OpenAI",
@@ -70,6 +76,9 @@ def main() -> int:
     missing = sorted(name for name in REQUIRED_FILES if not (package / name).is_file())
     if missing:
         return fail(f"missing required artifact(s): {', '.join(missing)}")
+    obsolete = sorted(name for name in OBSOLETE_FILES if (package / name).exists())
+    if obsolete:
+        return fail(f"obsolete artifact(s) remain: {', '.join(obsolete)}")
     source_path = root / SOURCE_FILE
     if not source_path.is_file():
         return fail("source ledger is missing")

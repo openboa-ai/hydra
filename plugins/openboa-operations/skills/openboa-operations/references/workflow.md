@@ -4,49 +4,38 @@
 
 ## Choose the work unit
 
-Use a GitHub Issue before mutation when work is delegated, asynchronous, cross-repository, multi-PR, long-running, high-risk, dependent on another goal, or likely to require a handoff. The Issue must name one human owner, outcome, acceptance evidence, dependencies, and risk lane.
+Use a GitHub Issue before mutation for delegated, asynchronous, cross-repository, multi-PR, long-running, high-risk, dependency-bound work or work likely to need a handoff. Record one human owner, outcome, acceptance evidence, dependencies, and risk lane.
 
-The fast path is allowed only when a human is actively supervising a single-repository, single-PR, routine, reversible change with obvious acceptance criteria. Record the same goal, risk, and verification fields in the PR. If the scope grows, create and link an Issue before continuing.
+Use the fast path only for a human-supervised, single-repository, single-PR, routine, reversible change with obvious acceptance criteria. If scope grows, create and link an Issue before continuing.
 
-## Goal states
+## Development loop
 
-GitHub Issues use these mutually exclusive status labels:
+`Goal → Plan → Task → Worktree → Verify → Review`
 
-1. `status:backlog` — captured but not yet admitted.
-2. `status:ready` — owner, outcome, criteria, dependencies, and risk are clear; eligible to start.
-3. `status:in-progress` — a human or agent run is actively advancing the goal.
-4. `status:in-review` — a candidate outcome and review packet exist; qualification, approval, delivery, or observation remains.
-5. Closed — completed with evidence or closed as not planned with rationale.
-
-`blocked` is an overlay, not a replacement status. It names the dependency, unblock condition, and owner. Internal run states such as claimed, running, retry queued, and released belong to the executor, not to the Issue label set.
+- Read the nearest `AGENTS.md` and relevant skill references.
+- Plan in proportion to risk and split only genuinely independent tasks.
+- Preserve unrelated work and execute in an isolated worktree or clean clone.
+- Verify against acceptance evidence with executable checks and environment evidence.
+- Review the diff, evidence, uncertainty, and scope before delivery.
 
 ## Delivery loop
 
-Use the following evidence-bearing stages without turning every stage into an Issue status:
+`Review → Approval → Deliver → Observe`
 
-`Plan → Execute → Verify → Approve → Deliver → Observe`
+Routine automation may approve routine work. Human-gate work requires explicit approval before the sensitive or irreversible action. Deliver through the repository's merge, release, deployment, publication, or handoff path, then inspect the realized state.
 
-- Plan: clarify the goal, owner, boundaries, acceptance evidence, and risk.
-- Execute: work in an isolated workspace; open a draft PR or produce the requested artifact early when useful.
-- Verify: run local checks, tests, evals, independent review, and relevant product or UI checks.
-- Approve: let routine automation authorize normal work; route only defined human-gate actions to the human reviewer.
-- Deliver: merge, release, deploy, publish, or hand off the artifact according to the repository profile.
-- Observe: inspect the realized environment and record evidence before closing the goal.
+## Learning loop
 
-## Handoff packet
+`Observe → Classify → Improve → Re-evaluate`
 
-Every handoff records:
+Improve the smallest useful layer behind a failure: context, skill, plugin, harness, sandbox, tool, test, eval, grader, guardrail, or workflow. Add a regression check when possible. Create a follow-up goal if the improvement is outside current scope or authority.
 
-- goal and human owner;
-- current Issue/PR/run state;
-- completed and uncompleted work;
-- changed files or artifacts;
-- commands, checks, and environment evidence;
-- blocker or decision required;
-- next safe action and the authority needed.
+## GitHub state
 
-Do not include hidden chain-of-thought. Record concise decisions, uncertainty, and observable evidence.
+Use `status:backlog`, `status:ready`, `status:in-progress`, and `status:in-review`; close only with evidence or a not-planned rationale. `blocked` is an overlay that names the dependency, owner, and unblock condition. Session or harness states do not belong in the public goal state.
 
-## Completion
+## Handoff and completion
 
-Close a goal only when its acceptance criteria, required delivery state, and required observation evidence are satisfied. A successful agent process, green unit test, open PR, or generated report is evidence, not completion by itself.
+A handoff records the goal and owner, current state, completed and remaining work, changed files, checks and observed evidence, blocker or decision, and next safe action.
+
+Close a goal only when acceptance evidence, required delivery state, and required observation are satisfied. A successful session, green command, open pull request, or approval is evidence, not completion by itself.

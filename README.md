@@ -1,6 +1,6 @@
 # OpenBoa Hydra
 
-OpenBoa Hydra is the public Git marketplace for the OpenBoa Operations plugin. It distributes a portable operating contract for agentic work: doctrine, ownership, workflow, governance, GitHub policy, and repository bootstrap templates.
+OpenBoa Hydra is the public Git marketplace for the OpenBoa Operations plugin. It distributes concise, portable guidance for agent-assisted work: doctrine, ownership, workflow, governance, GitHub policy, evals, observation, and repository bootstrap templates.
 
 The repository is intentionally independent of the former Nest and Hydra contents. The current doctrine is a draft until `SonSangjoon` approves it; no release tag or organization-wide enforcement rollout is implied by the draft.
 
@@ -22,6 +22,9 @@ Then invoke the `openboa-operations` skill to bootstrap a workspace, audit repos
 - [Workflow](plugins/openboa-operations/skills/openboa-operations/references/workflow.md) — goals, states, delivery, handoff, and completion
 - [Governance](plugins/openboa-operations/skills/openboa-operations/references/governance.md) — risk lanes, human gates, audit, exceptions, and rollback
 - [GitHub profile](plugins/openboa-operations/skills/openboa-operations/references/github.md) — GitHub projection and enforcement contract
+- [Evals and observation](plugins/openboa-operations/skills/openboa-operations/references/evals.md) — outcome checks, graders, trajectories, and learning
+
+These plugin references are the portable source of truth. Root files route maintainers and agents to them; product repositories add only local facts and stricter controls.
 
 ## Development
 

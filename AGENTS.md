@@ -17,7 +17,8 @@
 ## Repository-local instructions
 
 - Hydra is a public marketplace and policy distribution repository, not a live agent dispatcher.
-- The portable skill under `plugins/openboa-operations/skills/openboa-operations/` is the single source for doctrine, operating model, workflow, governance, and GitHub references.
+- The portable skill under `plugins/openboa-operations/skills/openboa-operations/` is the single source for doctrine, operating model, workflow, governance, GitHub, eval, and observation references.
+- Read the portable [doctrine](plugins/openboa-operations/skills/openboa-operations/references/doctrine.md), [operating model](plugins/openboa-operations/skills/openboa-operations/references/operating-model.md), [workflow](plugins/openboa-operations/skills/openboa-operations/references/workflow.md), [governance](plugins/openboa-operations/skills/openboa-operations/references/governance.md), [GitHub profile](plugins/openboa-operations/skills/openboa-operations/references/github.md), and [eval guidance](plugins/openboa-operations/skills/openboa-operations/references/evals.md) before changing their respective surfaces.
 - Do not copy prior Nest or Hydra content into this repository. Keep all public material safe to publish and in English.
 - Before a release, run `python3 scripts/validate_hydra.py .`, the official plugin validator, and the full unittest suite.
 - Changes to doctrine, authority, marketplace identity, plugin manifest, managed contract, or validation are human-gate changes.

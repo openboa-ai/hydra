@@ -1,66 +1,34 @@
 # OpenBoa AI-Native SDLC v0.1 Research
 
-**Status:** Research package and design candidate; not an approved doctrine or managed contract.
+**Status:** External-evidence synthesis for review; not approved policy.
 
-**Durable goal:** [Hydra Issue #3](https://github.com/openboa-ai/hydra/issues/3)
+**Goal:** [Hydra Issue #3](https://github.com/openboa-ai/hydra/issues/3)
 
 **Human owner:** SonSangjoon
 
-**Risk lane:** `risk:human-gate` — the eventual name, doctrine, authority model, and managed contract are public policy surfaces.
+**Risk lane:** `risk:human-gate`
 
-## Purpose
+This package asks a practical question: what should an operating guide make explicit when humans set goals and agents can plan, implement, verify, and prepare delivery? It summarizes external evidence without inventing another lifecycle specification.
 
-This package establishes an evidence base for redesigning OpenBoa Operations as **OpenBoa AI-Native SDLC v0.1**. It studies how frontier labs and AI-native companies change the software lifecycle when agents can plan, execute, verify, and operate across long-running tasks.
+## Reading path
 
-The working hypothesis is deliberately provisional:
+1. [Lessons](lessons.md) — evidence, source grades, vocabulary, and limits.
+2. [Workflow](workflow.md) — the development, delivery, and learning loops.
+3. [GitHub](github.md) — parent Issues, sub-issues, dependencies, worktrees, PRs, and handoffs.
+4. [Evals](evals.md) — outcome checks, graders, trajectories, and observation.
+5. [Open questions](open-questions.md) — decisions and evidence gaps that remain.
 
-> AI-Native SDLC is a software lifecycle in which goals, context, execution environments, evaluation, authority, and observability are designed as first-class artifacts for humans and agents together.
+[sources.csv](sources.csv) is the verified 40-source ledger behind the synthesis. It preserves source grading and separates each claim from its evidence, conditions, failure modes, controls, metrics, confidence, and applicability.
 
-The hypothesis becomes a doctrine only after source review, an application exercise, and explicit human approval.
+## Scope
 
-## Research corpus
+The plugin references are the portable source of truth for OpenBoa work. This research explains why those guides take their current shape; it does not replace them or authorize a release, rename, managed-contract change, or GitHub policy change.
 
-`sources.csv` contains 40 first-party sources selected from:
+Ouroboros and Coffee Chat are possible later canary products. They are not sources for the design.
 
-- frontier labs and platforms: OpenAI, Anthropic, NVIDIA, Google/DeepMind, and Microsoft/GitHub;
-- AI-native development companies and platforms: Cursor, Factory, Replit, Vercel, Linear, and Sourcegraph.
-
-The first pass uses sources published from 2024 onward. Older material is included only when it explains a still-relevant operating pattern. Product claims and self-reported metrics are marked as such; they are not treated as standalone design evidence.
-
-## Source grading
-
-| Grade | Meaning | Use |
-| --- | --- | --- |
-| A | Reproducible implementation, evaluation, security, or operational detail | Can support a candidate rule when corroborated |
-| B | Detailed first-party engineering case or technical documentation | Strong supporting evidence |
-| C | Product announcement or company-reported result | Directional evidence; never sufficient alone |
-| D | Secondary commentary or context only | Discovery and triangulation, not normative evidence |
-
-Every record keeps the claim, observed pattern, precondition, failure mode, control, metric, confidence, and applicability separate. This prevents a product claim from silently becoming an OpenBoa rule.
-
-## Reading order
-
-1. [Evidence synthesis](evidence-synthesis.md) — recurring patterns, conflicts, and candidate principles.
-2. [Lifecycle matrix](lifecycle-matrix.md) — stage-by-stage human/agent responsibilities and evidence.
-3. [Artifact catalog](artifact-catalog.md) — durable goal, context, handoff, evidence, delivery, and observation records.
-4. [Source verification](source-verification.md) — provenance, manual verification method, and claim treatment.
-5. [Risk and authority](risk-and-authority.md) — autonomy lanes, control-plane boundaries, and approval rules.
-6. [Decision traceability](decision-traceability.md) — source evidence mapped to proposed OpenBoa rules.
-7. [Draft model](draft-model.md) — the unapproved OpenBoa AI-Native SDLC v0.1 candidate.
-8. [Hydra application](application-hydra.md) — a bounded exercise on this research goal itself.
-9. [Open questions](open-questions.md) — unresolved conflicts and human decisions.
-
-## Scope boundary
-
-This package does **not** rename `openboa-operations`, change the marketplace manifest, edit the managed `AGENTS.md` contract, or claim doctrine approval. The repository `hydra` and marketplace `openboa-hydra` remain stable until the human gate is completed.
-
-## Verification
-
-Run the research validator from the repository root:
+## Verify
 
 ```bash
 python3 scripts/validate_research.py .
-python3 -m unittest discover -s tests -v
+python3 -m unittest tests.test_research_artifacts -v
 ```
-
-The validator checks the source-count target, required evidence fields, duplicate citations, source-grade values, and required synthesis artifacts.

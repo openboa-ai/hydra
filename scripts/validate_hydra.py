@@ -22,6 +22,7 @@ REQUIRED_REFERENCES = (
     "workflow.md",
     "governance.md",
     "github.md",
+    "evals.md",
 )
 REQUIRED_ASSETS = (
     "workspace-AGENTS.md",
