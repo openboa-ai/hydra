@@ -39,6 +39,13 @@ REQUIRED_FILES = {
     "evals.md",
     "open-questions.md",
 }
+REQUIRED_GUIDES = {
+    "lessons.md",
+    "workflow.md",
+    "github.md",
+    "evals.md",
+    "open-questions.md",
+}
 OBSOLETE_FILES = {
     "evidence-synthesis.md",
     "lifecycle-matrix.md",
@@ -76,9 +83,24 @@ def main() -> int:
     missing = sorted(name for name in REQUIRED_FILES if not (package / name).is_file())
     if missing:
         return fail(f"missing required artifact(s): {', '.join(missing)}")
+    for name in sorted(REQUIRED_GUIDES):
+        if not (package / name).read_text(encoding="utf-8").strip():
+            return fail(f"required guide is blank: {name}")
     obsolete = sorted(name for name in OBSOLETE_FILES if (package / name).exists())
     if obsolete:
         return fail(f"obsolete artifact(s) remain: {', '.join(obsolete)}")
+    custom_contracts = sorted(
+        path.name
+        for path in package.iterdir()
+        if path.is_file()
+        and path.suffix.lower() in {".md", ".json", ".yaml", ".yml"}
+        and any(term in path.stem.lower() for term in ("protocol", "schema", "model"))
+    )
+    if custom_contracts:
+        return fail(
+            "custom lifecycle protocol/schema artifact(s) remain: "
+            + ", ".join(custom_contracts)
+        )
     source_path = root / SOURCE_FILE
     if not source_path.is_file():
         return fail("source ledger is missing")

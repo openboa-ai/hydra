@@ -17,7 +17,7 @@ Then invoke the `openboa-operations` skill to bootstrap a workspace, audit repos
 
 ## Package map
 
-- [Doctrine](plugins/openboa-operations/skills/openboa-operations/references/doctrine.md) — vision, era thesis, and principles
+- [Doctrine](plugins/openboa-operations/skills/openboa-operations/references/doctrine.md) — purpose, human responsibility, and working principles
 - [Operating model](plugins/openboa-operations/skills/openboa-operations/references/operating-model.md) — ownership, repository roles, and decision rights
 - [Workflow](plugins/openboa-operations/skills/openboa-operations/references/workflow.md) — goals, states, delivery, handoff, and completion
 - [Governance](plugins/openboa-operations/skills/openboa-operations/references/governance.md) — risk lanes, human gates, audit, exceptions, and rollback

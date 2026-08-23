@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RESEARCH_VALIDATOR = ROOT / "scripts" / "validate_research.py"
 PACKAGE = ROOT / "research" / "openboa-ai-native-sdlc-v0.1"
+REQUIRED_GUIDES = ("lessons.md", "workflow.md", "github.md", "evals.md", "open-questions.md")
 
 
 class ResearchArtifactTests(unittest.TestCase):
@@ -52,6 +53,51 @@ class ResearchArtifactTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("obsolete artifact(s) remain", result.stdout + result.stderr)
+
+    def test_required_guides_cannot_be_blank(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for name in REQUIRED_GUIDES:
+                with self.subTest(name=name):
+                    fixture = Path(temp_dir) / name.removesuffix(".md")
+                    shutil.copytree(ROOT, fixture, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+                    guide = fixture / "research" / "openboa-ai-native-sdlc-v0.1" / name
+                    guide.write_text(" \n\t", encoding="utf-8")
+
+                    result = self.run_validator(fixture)
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"required guide is blank: {name}", result.stdout + result.stderr)
+
+    def test_custom_lifecycle_protocol_artifacts_are_rejected(self) -> None:
+        custom_artifacts = (
+            "delivery-protocol.md",
+            "lifecycle-schema.json",
+            "research-model.yaml",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for name in custom_artifacts:
+                with self.subTest(name=name):
+                    fixture = Path(temp_dir) / name.replace(".", "-")
+                    shutil.copytree(ROOT, fixture, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+                    artifact = fixture / "research" / "openboa-ai-native-sdlc-v0.1" / name
+                    artifact.write_text("{}\n", encoding="utf-8")
+
+                    result = self.run_validator(fixture)
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("custom lifecycle protocol/schema artifact(s)", result.stdout + result.stderr)
+                    self.assertIn(name, result.stdout + result.stderr)
+
+    def test_normal_supplemental_document_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = Path(temp_dir) / "hydra"
+            shutil.copytree(ROOT, fixture, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            notes = fixture / "research" / "openboa-ai-native-sdlc-v0.1" / "notes.md"
+            notes.write_text("# Review notes\n", encoding="utf-8")
+
+            result = self.run_validator(fixture)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
