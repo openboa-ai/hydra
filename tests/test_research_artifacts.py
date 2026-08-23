@@ -28,15 +28,16 @@ class ResearchArtifactTests(unittest.TestCase):
     def test_research_package_is_valid(self) -> None:
         result = self.run_validator(ROOT)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("40 source records", result.stdout)
+        self.assertIn("source records", result.stdout)
 
     def test_ledger_has_required_source_cohorts(self) -> None:
         with (PACKAGE / "sources.csv").open(newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
 
         organizations = {row["organization"] for row in rows}
-        self.assertEqual(len(rows), 40)
+        self.assertGreaterEqual(len(rows), 40)
         self.assertTrue({"OpenAI", "Anthropic", "NVIDIA"} <= organizations)
+        self.assertIn("Microsoft Research", organizations)
         self.assertTrue({"Cursor", "Factory", "Replit", "Vercel"} <= organizations)
 
     def test_obsolete_model_artifacts_are_rejected(self) -> None:

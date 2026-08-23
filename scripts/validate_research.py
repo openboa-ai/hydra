@@ -68,6 +68,7 @@ REQUIRED_ORGANIZATIONS = {
     "Vercel",
     "Linear",
     "Sourcegraph",
+    "Microsoft Research",
 }
 ALLOWED_GRADES = {"A", "B", "C", "D"}
 
@@ -112,8 +113,8 @@ def main() -> int:
             return fail(f"source ledger missing column(s): {', '.join(missing_columns)}")
         rows = list(reader)
 
-    if not 30 <= len(rows) <= 40:
-        return fail(f"expected 30–40 source records, found {len(rows)}")
+    if not 30 <= len(rows) <= 50:
+        return fail(f"expected 30–50 source records, found {len(rows)}")
 
     ids = [row["source_id"] for row in rows]
     urls = [row["citation"] for row in rows]

@@ -1,30 +1,29 @@
 # Eval and Observation Lessons
 
-An eval asks whether an agent-assisted workflow produced the intended outcome under known conditions. It complements ordinary tests and review; it does not replace them.
+Evaluation answers four separate questions. Collapsing them into one agent score hides the decision that the evidence should support.
 
-## What to evaluate
+## Outcome
 
-Start with the goal's acceptance evidence. Use the smallest useful layer:
+Did the intended state exist in the target environment? Use deterministic tests, scenario evals, review, preview, deployment evidence, and observation as appropriate. A completion message is not an outcome.
 
-- deterministic checks for code, documents, schemas, and policy contracts;
-- scenario evals for workflows with tool use or environmental variation;
-- review for judgment, maintainability, safety, and fit;
-- observation for delivery state and realized product behavior.
+## Work lead
 
-The outcome is primary. Inspect the trajectory only when the path can create risk or explains a failure, such as using the wrong tool, crossing scope, ignoring a failed check, or repeatedly recovering from the same error.
+Did the lead make progress with appropriate independence? Inspect scope control, tool choice, resource use, escalation quality, recovery, review rework, and handoff. Inspect a compact trajectory only when the path affects safety or explains a failure.
 
-## Graders
+## Team and system
 
-Prefer executable graders with clear pass/fail conditions. Use rubric or model graders only for qualities that deterministic checks cannot measure, and calibrate them against human examples. Record the grader version, scenario, environment, result, and known limits.
+Did the assignment provide enough context, authority, tools, environment, feedback, and independent review? A failure caused by a missing test or unusable sandbox should not be recorded only as weak agent performance.
 
-An eval should catch a named failure. Avoid a score that merely restates the generated answer or rewards activity. Independent review is valuable when self-evaluation could hide the error.
+## Leadership
 
-## Observation
+Did human attention go to high-leverage decisions rather than routine supervision? Track intervention count and time, approval wait, resource conflicts, preventable rework, and whether the agent was given responsibility without matching authority or resources.
 
-Observation happens after the candidate change reaches its intended surface. Depending on the goal, inspect merged state, deployment health, UI behavior, telemetry, incidents, user or operator signals, and rollback readiness.
+## Using evidence
 
-Close a goal only when acceptance evidence, required delivery state, and required observation are present. Passing tests, an approved pull request, or a successful agent session are evidence items, not completion by themselves.
+Use multiple trials for behavior that varies. Prefer executable graders with clear pass/fail conditions; use rubric or model graders only for judgment that deterministic checks cannot measure and calibrate them against human examples.
 
-## Learning from failures
+Evidence can support a broader, narrower, or differently shaped future assignment. Authority changes remain a leadership decision and must consider the impact and reversibility of the next work, not only the agent's historical success rate.
 
-Preserve enough evidence to classify the failure without keeping a full hidden transcript. Improve the smallest responsible layer: context, skill, plugin, harness, sandbox, tool, test, eval, grader, or policy. Add the resulting regression case to the development or delivery loop and measure whether the change improves future outcomes.
+## Observation and learning
+
+After delivery, inspect the realized surface: merge or deployment state, UI, telemetry, incidents, user or operator signals, and rollback readiness. When evidence exposes failure, improve the smallest responsible layer and add a regression case. Preserve decisions and observable evidence; a full hidden transcript is not required.

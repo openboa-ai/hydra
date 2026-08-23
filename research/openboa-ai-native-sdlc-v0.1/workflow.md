@@ -1,41 +1,41 @@
 # Workflow Lessons
 
-OpenBoa work can be explained with three loops. A goal may move through them once or repeat a loop when evidence exposes a gap.
+The workflow is a current method for responsible delegation. It is not the timeless definition of AI-native work.
 
-## Development loop
+`Direction → Assignment → Lead → Review → Deliver → Learn`
 
-`Goal → Plan → Task → Worktree → Verify → Review`
+## Direction
 
-1. Name one human owner, the desired outcome, acceptance evidence, dependencies, and risk lane.
-2. Write a proportionate plan and split it into tasks only where separate ownership or review is useful.
-3. Work in an isolated worktree or clean clone. Keep each change bounded and reversible.
-4. Verify with executable checks and relevant environment evidence.
-5. Present the diff, evidence, limits, and unresolved questions for review.
+The accountable human names why the work matters, the desired outcome, competing priorities, and the resources the organization is willing to use. The human should not prescribe implementation steps unless those steps are part of the actual constraint.
 
-A handoff records the goal, current state, completed and remaining work, changed files, checks, blockers, and next safe action. A new session should be able to resume from repository state and the handoff without hidden transcript context.
+## Assignment
 
-## Delivery loop
+Choose a work lead based on the task and current evidence. The lead may be a human or an agent role. Record the lead's decision rights, available context and tools, budget, boundaries, acceptance evidence, and conditions that require escalation.
 
-`Review → Approval → Deliver → Observe`
+An assignment is incomplete when it gives responsibility without enough authority or resources, or authority without a clear outcome and boundary.
 
-Routine checks may supply approval for routine work. Work requiring human approval waits for the named reviewer before a sensitive or irreversible action. Delivery may mean merge, release, deploy, publish, or a bounded handoff.
+## Lead
 
-After delivery, inspect the realized target: required checks, deployment state, UI, telemetry, incident signals, or other acceptance evidence. A green local command or open pull request is not the delivered outcome.
+The work lead chooses the method, plans the work, coordinates contributors, executes, and verifies inside the assignment. An agent lead may challenge assumptions, propose a better outcome, and request a decision. It should not stop for routine confirmation that the assignment already grants.
 
-## Learning loop
+Use worktrees or clean environments for isolation. Use subagents only for genuinely independent work when delegation is authorized and integration capacity exists.
 
-`Observe → Classify → Improve → Re-evaluate`
+## Review and delivery
 
-Classify a failure at the smallest useful layer: missing context, weak skill, unreliable tool, absent test, poor eval, misleading grader, unsafe boundary, or unsuitable workflow. Improve that layer, add a regression check when possible, and run the relevant eval again.
+Review should be independent of the work lead and should judge the outcome, evidence, scope, maintainability, and remaining uncertainty. Routine and reversible work may proceed after required checks and authorized review. Purpose changes and consequential external effects wait for the accountable human or designated human approver.
 
-Learning should create a follow-up goal when the improvement is not part of the current authority or scope. It must not silently weaken a gate.
+Delivery may be a merge, release, deployment, publication, or handoff. Inspect the realized target after delivery; an open pull request or successful agent turn is not the outcome.
 
-## Choosing the work unit
+## Learn
 
-Use a GitHub Issue when work is delegated, asynchronous, long-running, cross-repository, multi-PR, high-risk, dependency-bound, or likely to need a handoff. A human-supervised, single-repository, single-PR, routine, reversible change with obvious acceptance may use the fast path.
+Classify failure across the whole working system: direction, assignment, role fit, context, tool, environment, implementation, review, eval, or boundary. Improve the smallest responsible layer and add a regression case where possible.
 
-Parallel tasks are useful only when they are independent and review capacity exists. Sequential work should remain sequential. The evidence does not support multi-agent execution as a default.
+Evidence may justify a broader or narrower future assignment. One successful task does not establish unlimited trust, and one failure does not establish that the agent is incapable.
+
+## Human attention
+
+Human attention is used where it has leverage: purpose, priority conflicts, resource decisions, novel judgment, exceptions, and consequential effects. Requiring a person to approve every ordinary step is a workflow defect, not a safety strategy.
 
 ## Canary boundary
 
-Hydra should qualify the portable guidance and validators first. Ouroboros and Coffee Chat may later test the guidance as canary products after the human owner selects bounded goals and acceptance evidence. Product behavior must not be copied back as doctrine without external evidence, review, and approval.
+Hydra qualifies the portable guidance first. Ouroboros tests long-running and cross-repository continuity; Coffee Chat tests creative product work where problem framing and implementation evolve together. Canary behavior may revise the current method but does not change doctrine without review and approval.

@@ -1,58 +1,64 @@
 # Lessons from External Evidence
 
-The 40-source corpus converges on a modest conclusion: better agent work comes from clearer goals, legible repositories, bounded execution, objective review, and feedback into the system. Longer prompts or more autonomous sessions do not remove those needs.
+The evidence does not define OpenBoa's philosophy. It reveals the conditions that any serious human-agent organization must address.
 
-## What the evidence supports
+## What was observed
 
-### Start with a human-owned goal
+### Capable agents are easy to waste through micromanagement
 
-A goal states the outcome, owner, acceptance evidence, dependencies, and risk. A plan organizes the work and tasks bound a reviewable change. A session, worktree, branch, or pull request is an attempt to advance the goal, not the goal itself.
+OpenAI's agent-first teams report that human attention becomes the bottleneck when people supervise sessions instead of delegating outcomes. OpenAI Frontier uses the language of AI coworkers and describes shared business context, memory, identity, permissions, and evaluation as requirements for dependable work. These sources support a management problem; they do not prove that an agent is legally or morally an employee.
 
-This follows the issue-centered orchestration and ownership patterns in OA-02, AN-02, GH-01, and LI-01.
+Supported by OA-02, OA-08, OA-09, OA-10, and LI-01.
 
-### Treat context and the harness as engineering surfaces
+### Capability is produced by the working environment
 
-Agents perform better when repository boundaries, local commands, architecture, and acceptance checks are discoverable and executable. The harness supplies tools and context; the sandbox bounds execution. Neither should be replaced by prompt-only rules.
+Model quality matters, but repository legibility, onboarding context, tools, a predictable workspace, executable checks, and feedback determine how much of that quality reaches the outcome. Repeated failure is often a missing capability in the system rather than a reason to add more supervision.
 
-This is strongly supported by OA-01, OA-03, OA-05, AN-05, AN-06, AN-07, GH-04, and SG-01.
+Supported by OA-01, OA-07, AN-02, AN-03, AN-07, SG-01, and VE-01.
 
-### Verify outcomes, not activity
+### Durable work must outlive the model and session
 
-Tests, previews, review, evals, and observed runtime behavior answer whether the outcome works. Token counts, session length, lines changed, or a plausible final message do not. When path quality matters, retain a compact trajectory of consequential tool use and decisions.
+Long work benefits from separating the role and work record from the current model, conversation, harness, and sandbox. Stable artifacts and handoffs let a new session or model continue without pretending that a transcript is a permanent identity.
 
-This follows OA-06, AN-03, AN-04, NV-02, RE-01, and VE-01.
+Supported by OA-05, OA-07, AN-02, AN-05, MS-01, VE-02, and VE-05.
 
-### Scale autonomy inside explicit boundaries
+### Autonomy and safety are not opposites
 
-Autonomy can grow inside a worktree or sandbox while approval remains required at boundaries such as secrets, identity, security, privacy, irreversible state, and public commitments. The connected account identifies the actor; it does not define authority.
+Repeated permission prompts create friction and encourage blanket approval. Stronger isolation, narrow tools, task-scoped credentials, safe outputs, and runtime enforcement allow more ordinary work to proceed independently while preserving human decisions at consequential boundaries. Authority must be enforced below agent-controlled text.
 
-This is supported by OA-03, AN-06, NV-01, NV-05, GH-02, LI-01, and VE-04.
+Supported by OA-03, AN-06, NV-01, NV-05, NV-06, GH-02, GH-05, RE-02, and VE-04.
 
-### Build three loops, not a new lifecycle vocabulary
+### Evaluation must cover the outcome and the team system
 
-The recurring practices fit three ordinary loops:
+A plausible final response is not evidence that the intended state exists. Agent evaluations need representative tasks, multiple trials when behavior varies, outcome checks, and selective trajectory inspection. For OpenBoa this also implies measuring human attention, handoff recovery, escalation quality, review rework, and whether the environment improves future work.
 
-- development turns a goal and plan into a reviewed change;
-- delivery moves an approved change into its target environment and observes it;
-- learning turns failures and evidence into better context, skills, tools, tests, evals, graders, or policy.
+Supported by OA-06, AN-03, AN-04, NV-02, NV-03, and RE-01.
 
-These loops summarize the corpus without proposing a new graph file format or a second issue-state system.
+### Effective collaboration needs adjustable initiative
 
-## Vocabulary
+Mixed-initiative research treats control, delegation, role negotiation, and changing work structure as part of collaboration. A fixed rule that either the human or the agent always leads is therefore a weak default. The assignment should fit purpose, demonstrated capability, available resources, impact, and reversibility.
 
-Use the ordinary OpenAI product terms `goal`, `plan`, `task`, `worktree`, `handoff`, `review`, `approval`, `skill`, and `plugin` for the operating guide.
+Supported by MS-01, OA-02, AN-03, AN-08, and LI-01.
 
-Use Anthropic's `session`, `harness`, `sandbox`, `outcome`, `eval`, `grader`, and `trajectory` only when those words name a specific technical concern more accurately. Provider-specific implementations remain examples, not OpenBoa policy.
+## OpenBoa's position
+
+OpenBoa treats an agent as an organization member rather than a disposable tool. A member may propose, disagree, lead, create, review, and learn. Human leaders retain purpose, resource allocation, and present-day organizational accountability; agent leads take responsibility for the work entrusted to their role.
+
+This is not a claim about consciousness or legal personhood. It is the operating stance from which OpenBoa designs the software lifecycle.
+
+## Current methods are replaceable
+
+GitHub Issues, Codex tasks, worktrees, pull requests, checks, skills, and the current workflow are implementation choices for v0.1. They should change when platform capability or canary evidence produces a better way to preserve purpose, responsibility, context, evidence, and learning.
 
 ## Source grading and verification
 
-The corpus was checked against first-party engineering, research, security, product, and platform pages on 2026-08-23. The offline validator checks fields, counts, duplicate IDs and citations, grades, organization coverage, and URL syntax; it does not claim continuous page reachability.
+The corpus was checked against first-party engineering, research, security, product, and platform pages on 2026-08-23. The offline validator checks fields, duplicate IDs and citations, grades, organization coverage, and URL syntax; it does not claim continuous page reachability.
 
 | Grade | Meaning | Use |
 | --- | --- | --- |
 | A | Reproducible implementation, evaluation, security, or operational detail | May support guidance when corroborated |
 | B | Detailed first-party engineering case or technical documentation | Strong supporting evidence |
-| C | Product announcement or company-reported result | Directional only; never sufficient alone |
+| C | Product announcement or company-reported result | Directional or vocabulary evidence only; never sufficient alone |
 | D | Secondary commentary | Discovery and triangulation only |
 
-Vendor claims remain source-specific. The corpus overrepresents vendors, and independent evaluations and incident reports are still needed before stronger policy conclusions.
+Vendor claims remain source-specific. The corpus still overrepresents vendors. Independent research, canary results, and failure evidence must be used before expanding authority or treating a current method as permanent.
