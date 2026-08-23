@@ -1,45 +1,50 @@
 # OpenBoa on GitHub
 
-**Contract:** `0.1.0`
+**Current practice:** `0.1.0`
 
-## Issues and task dependencies
+GitHub is the current shared control plane for assignments, code changes, review evidence, delivery, and observation. It does not define the OpenBoa doctrine and may be replaced later.
+
+## Issues and projects
 
 Use GitHub's existing planning features:
 
-- a parent Issue for a shared goal;
-- sub-issues for work that deserves its own owner, test cycle, or review;
-- issue dependencies for ordering and blockers;
-- pull requests, commits, checks, reviews, approvals, deployments, and handoffs as attached evidence.
+- a parent Issue for a substantial shared outcome;
+- sub-issues for work with a separate lead, review surface, or test cycle;
+- issue dependencies for real ordering and blockers;
+- a Project with familiar states such as `Backlog`, `Ready`, `In progress`, `In review`, and `Done` when the team needs a portfolio view.
 
-Do not create a separate graph file format. A routine change can use one Issue, and closely related tasks can share one cohesive pull request.
+Record the purpose, outcome, work lead, decision rights, resources, boundaries, dependencies, and acceptance evidence in the Issue. OpenBoa's accountable human is inherited from the operating model and is not repeated. Record another human only when that person has a specific delegated decision. The work lead may be a human or agent role even when GitHub requires a human account as the formal assignee.
 
-Use the Issue type `Feature`, `Bug`, or `Task`. Use `Backlog`, `Ready`, `In progress`, `In review`, and `Done` in a GitHub Project when one exists; otherwise use matching status labels. Keep labels minimal: `blocked`, `codex`, and `risk:approval` cover the portable workflow.
+Keep labels minimal. `blocked`, `codex`, and `risk:approval` are enough for the portable workflow. The `risk:approval` label routes attention; it does not grant authority or replace an enforced approval.
 
 ## Codex GitHub connector
 
-The Codex GitHub connector is the default for supported GitHub operations. Before any write, confirm the workspace, repository, linked Goal or Issue, risk, and exact action. Authentication is not authority: the connected account identifies the actor but does not expand the work or bypass approval.
+Use the Codex GitHub connector for supported Issue, pull request, review, check, and merge operations. Before a write, confirm the workspace, repository, linked assignment, exact operation, and authority. Authentication is not authority.
 
-Use local `git` for worktrees, diffs, commits, and tests. Use `gh` or a direct API only when the connector lacks the required operation, and record the reason, target, action, result, and expiry in the Issue or handoff.
+Use local `git` for worktrees, diffs, commits, tests, and Git-object pushes. Use `gh` or a direct API only when the connector lacks the operation, and record the bounded exception in the Issue or handoff.
 
-## Pull requests and rulesets
+## Pull requests and review
 
-Protect the default branch with a GitHub ruleset:
+A pull request connects the assignment to the change, checks, independent review, delivery plan, recovery, and observation. Review tests the outcome and material risk; it is not a ritual sign-off and does not transfer accountability.
 
-- require a pull request;
-- require current status checks;
-- require review from Code Owners for matching sensitive paths;
-- require conversation resolution;
-- block force-push and branch deletion;
-- dismiss stale approval or require approval of the latest reviewable push for approval-required changes.
+Routine, reversible agent-led work may use auto-merge after required checks and independent review. Do not add a human approval solely because an agent led the work. When governance reserves an exact decision for a human, keep the pull request blocked only at that boundary and name the decision needed.
 
-Use `CODEOWNERS` for security, permissions, data migrations, infrastructure, workflows, and other sensitive paths. Assign an owner to `/.github/CODEOWNERS` itself so the review requirement cannot be removed without Code Owner review. `CODEOWNERS` requests the appropriate reviewers; the ruleset's **Require review from Code Owners** setting enforces their approval. Routine changes can use auto-merge after checks and independent review.
+## Rulesets and ownership
 
-The `risk:approval` label is for routing and visibility. It does not grant approval or replace the ruleset, Code Owner review, or environment protection.
+Protect the default branch with a GitHub ruleset that:
 
-## Actions and deployments
+- requires a pull request and current status checks;
+- requires conversation resolution;
+- blocks force-push and branch deletion;
+- requires Code Owner review for matching sensitive paths;
+- dismisses stale approval or requires approval of the latest reviewable push when a human decision is required.
 
-Run product tests, lint, type checks, security checks, and relevant evals in GitHub Actions. Give each required job a unique name. Trusted workflow code comes from the base branch or an immutable reference; candidate pull-request content is untrusted data and must not receive organization secrets, OIDC, or write credentials.
+Use `CODEOWNERS` for security, identity and permissions, data migrations, infrastructure, workflows, policy, and other sensitive paths. Own `/.github/CODEOWNERS` itself, or all of `/.github/`, so its protection cannot be silently removed. `CODEOWNERS` requests reviewers; the ruleset's **Require review from Code Owners** setting enforces their approval.
 
-Use GitHub environments for deployment targets. Limit deployment concurrency, expose environment secrets only after protection rules pass, and require a human reviewer with self-review prevention for approval-required production changes. Record the rollback and post-deployment observation in the pull request or linked Issue.
+## Actions and delivery
 
-The plugin prepares and checks this setup; repository administrators apply rulesets, `CODEOWNERS`, and environment protection in GitHub.
+Run product tests, lint, type checks, security checks, and relevant evals in GitHub Actions. Give required jobs stable, unique names. Treat pull-request content as untrusted: do not expose organization secrets, OIDC, or write credentials to candidate code. Use least-privilege workflow permissions and immutable references for shared workflow code.
+
+Use GitHub environments for consequential deployment targets. Configure protection and self-review prevention where a human decision is required. Record delivery, rollback or recovery, and post-delivery observation in the pull request or linked Issue.
+
+The v0.1 plugin supplies guidance, templates, and validation. Repository administrators apply rulesets, `CODEOWNERS`, Actions permissions, and environment protection. Future GitHub agent workflows may automate stable jobs only after their authority, inputs, effects, evidence, and recovery are proven.

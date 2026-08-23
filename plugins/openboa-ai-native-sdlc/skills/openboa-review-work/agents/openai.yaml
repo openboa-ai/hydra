@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Review Work"
+  short_description: "Review the outcome, evidence, and working system"
+  default_prompt: "Use $openboa-review-work to independently review this assignment and its result."

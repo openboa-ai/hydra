@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Improve System"
+  short_description: "Grow the capability of the human-agent team"
+  default_prompt: "Use $openboa-improve-system to diagnose this failure and strengthen the working system."

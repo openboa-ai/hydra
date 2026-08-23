@@ -1,13 +1,24 @@
-## Task
+## Task outcome
 
 - Parent Issue: [link]
-- Expected change: [one reviewable outcome]
-- Human owner: [GitHub handle]
-- Dependencies: [issue dependencies or none]
-- Affected repository and paths: [links]
-- Acceptance criteria: [observable checks]
-- Tests or evals: [commands and expected results]
-- Risk: `routine` | `approval required`
-- Handoff condition: [when another session, owner, or approval is needed]
+- Purpose in the parent outcome: [why this task exists]
+- Observable outcome: [one coherent reviewable result]
 
-Keep one Task Issue large enough to carry its own test cycle and meaningful review. Do not create an Issue or pull request for every file edit.
+## Team and authority
+
+- Work lead: [human or agent role]
+- Decision rights: [what this lead may decide, change, delegate, deliver, or spend]
+- Resources: [repository, paths, context, tools, environment, access, time, and budget]
+- Boundaries and escalation: [exact conditions]
+- Dependencies: [Issue dependencies, people, systems, or none]
+
+## Evidence
+
+- Acceptance evidence: [tests, evals, preview, artifact, or operating signal]
+- Independent review: [reviewer or method]
+- Delivery or handoff: [path and authority]
+- Recovery and observation: [method or not applicable]
+
+OpenBoa accountability is inherited from the operating model; do not repeat it on this task.
+
+Keep one Task Issue large enough to carry a meaningful outcome, one lead, its own evidence, and a useful review. Do not create an Issue or pull request for every file edit.

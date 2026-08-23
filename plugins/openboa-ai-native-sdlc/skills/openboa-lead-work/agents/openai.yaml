@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Lead Work"
+  short_description: "Own an assigned outcome with bounded autonomy"
+  default_prompt: "Use $openboa-lead-work to lead this assignment through implementation and evidence."

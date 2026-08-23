@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Delegate Work"
+  short_description: "Give a work lead a complete, responsible assignment"
+  default_prompt: "Use $openboa-delegate-work to turn this intent into an assignment a human or agent lead can own."

@@ -16,11 +16,11 @@ MARKETPLACE_NAME = "openboa-hydra"
 MANAGED_START = f"<!-- openboa-ai-native-sdlc:managed:start version={VERSION} -->"
 MANAGED_END = "<!-- openboa-ai-native-sdlc:managed:end -->"
 EXPECTED_SKILLS = {
-    "openboa-plan-work",
-    "openboa-build-change",
-    "openboa-review-change",
-    "openboa-ship-change",
-    "openboa-improve-workflow",
+    "openboa-delegate-work",
+    "openboa-lead-work",
+    "openboa-review-work",
+    "openboa-deliver-work",
+    "openboa-improve-system",
     "openboa-adopt-sdlc",
 }
 REQUIRED_REFERENCES = {
@@ -28,6 +28,7 @@ REQUIRED_REFERENCES = {
     "operating-model.md",
     "workflow.md",
     "governance.md",
+    "codex.md",
     "github.md",
     "evals.md",
 }
@@ -119,8 +120,33 @@ def validate(root: Path) -> list[str]:
 
     for name in sorted(REQUIRED_REFERENCES):
         validate_nonempty(references_root / name, f"references/{name}", errors)
+
+    doctrine_path = references_root / "doctrine.md"
+    if doctrine_path.is_file():
+        doctrine = doctrine_path.read_text(encoding="utf-8")
+        for required_text in (
+            "organization member",
+            "OpenBoa's accountable human is `SonSangjoon`",
+            "Methods are replaceable",
+        ):
+            if required_text not in doctrine:
+                errors.append(f"doctrine.md is missing `{required_text}`")
+        if "**Contract:**" in doctrine:
+            errors.append("doctrine.md must not version stable purpose as a workflow contract")
     for name in sorted(REQUIRED_ASSETS):
         validate_nonempty(assets_root / name, f"assets/{name}", errors)
+
+    for name in ("goal-issue.md", "task-issue.md", "pull-request.md", "handoff.md"):
+        assignment_template = assets_root / name
+        if assignment_template.is_file():
+            text = assignment_template.read_text(encoding="utf-8")
+            for required_text in ("Work lead", "inherited"):
+                if required_text not in text:
+                    errors.append(f"assets/{name} is missing `{required_text}`")
+            if "Accountable owner (human)" in text:
+                errors.append(
+                    f"assets/{name} must inherit OpenBoa accountability instead of repeating it"
+                )
 
     forbidden_assets = {"openboa-governance.yml", "governance-exception.md"}
     for name in sorted(forbidden_assets):
@@ -245,6 +271,11 @@ def validate_managed_template(path: Path, errors: list[str]) -> None:
         for heading in ("## Repository-local instructions", "## Workspace-local instructions")
     ):
         errors.append(f"{path.name} is missing its local instructions section")
+    for required_text in ("agents as team members", "accountability is inherited", "work lead"):
+        if required_text not in text:
+            errors.append(f"{path.name} is missing `{required_text}`")
+    if "step-by-step" not in text:
+        errors.append(f"{path.name} must state the step-by-step approval boundary")
 
 
 def extract_managed_block(path: Path) -> str | None:

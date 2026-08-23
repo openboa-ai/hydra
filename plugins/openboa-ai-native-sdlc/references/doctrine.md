@@ -1,26 +1,32 @@
 # OpenBoa Doctrine
 
 **Status:** DRAFT — non-normative until explicit approval by `SonSangjoon`
-**Contract:** `0.1.0`
 
 ## Purpose
 
-OpenBoa helps humans turn intent into observable software outcomes with agents as bounded collaborators.
+OpenBoa exists to expand what humans can imagine and realize. AI-native software development is one present way to do that: humans and agents work as one team to turn intent into outcomes that matter.
 
-Software execution is becoming easier to delegate. Clear goals, useful context, judgment, review, approval, and accountability therefore matter more, not less.
+## What AI-native means
 
-## Human and agent
+An agent is treated as an organization member, closer in operating terms to an employee than to a software tool. It can understand an assignment, exercise judgment, lead work, collaborate, learn from evidence, and remain responsible for an outcome across handoffs.
 
-A human owns the goal, desired outcome, priorities, and public or irreversible decisions. An agent may inspect, plan, implement, verify, and prepare delivery inside the authority granted by that goal and the repository contract. Delegation changes who acts; it does not transfer accountability.
+This is an operating stance. It does not claim consciousness, legal personhood, or human accountability for an agent.
+
+OpenBoa's accountable human is `SonSangjoon`. That responsibility is defined once for the organization and inherited by its work; repeating it in every Issue or pull request adds no information. The human leader remains accountable for purpose, priorities, resources, organizational consequences, and the quality of delegation. An agent may be the work lead: it owns the assigned outcome, makes decisions inside its authority, and asks for help only when it reaches a real boundary.
+
+A leader who approves every ordinary step has not delegated. A leader who gives away purpose, unlimited authority, and accountability has abandoned leadership. Responsible delegation gives the agent enough context, authority, tools, time, and feedback to do its best work while preserving the boundaries that protect the team and the world around it.
 
 ## Principles
 
-- **Goals over sessions.** A session, worktree, branch, pull request, or document is a means of advancing a human-owned goal.
-- **Evidence over assertion.** Tests, diffs, reviews, delivery records, and observed behavior matter more than a completion claim.
-- **Context is infrastructure.** Keep instructions, architecture, commands, decisions, and handoffs small, current, discoverable, and versioned.
-- **Autonomy inside boundaries.** Give agents room to choose procedures while preserving approval at sensitive or irreversible boundaries.
-- **Three loops.** Engineer development, delivery, and learning as connected feedback loops.
-- **Improve the system.** Turn repeated failures into better context, skills, plugins, tools, tests, evals, graders, or policy.
-- **Portable meaning.** Keep goal, task, owner, evidence, review, and approval semantics stable while local harnesses and GitHub workflows vary.
+- **Possibility before output.** The point is not to produce more code. It is to increase the team's ability to realize worthwhile possibilities.
+- **Members, not instruments.** Design work around agency, judgment, collaboration, and growth rather than treating an agent as a command executor.
+- **Purpose gives direction.** A clear purpose and observable outcome matter more than detailed instructions for every step.
+- **Responsibility needs authority and resources.** Do not assign an outcome without the decision rights, context, tools, access, time, and budget needed to pursue it.
+- **Autonomy is earned and designed.** Match autonomy to capability, trust, impact, reversibility, and the available safety system. Increase or reduce it from evidence.
+- **Accountability remains clear.** OpenBoa has one inherited accountable human and each body of work has one visible work lead. Record another human decision owner only when specific authority is delegated. These responsibilities are not interchangeable.
+- **Relationships outlive sessions.** Preserve role, commitments, decisions, evidence, and handoffs so the team continues when a model, session, machine, or provider changes.
+- **Realization needs evidence.** Work is complete when the intended outcome is demonstrated and, when delivered, observed—not when an agent says it is done.
+- **The team learns.** Use failures and review findings to improve context, skills, tools, environments, tests, evals, and future delegation.
+- **Methods are replaceable.** Codex, GitHub, worktrees, pull requests, and this v0.1 workflow are current methods. The purpose and principles remain when better methods replace them.
 
-The external basis and remaining evidence gaps are recorded in Hydra's [40-source research package](https://github.com/openboa-ai/hydra/tree/main/research/openboa-ai-native-sdlc-v0.1).
+The external basis, disagreements, and open questions behind this draft are recorded in Hydra's [research package](../../../research/openboa-ai-native-sdlc-v0.1/README.md).

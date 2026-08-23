@@ -1,32 +1,33 @@
-## Summary
+## Assignment
 
-- Goal issue: [link to one governing issue, or explain the supervised fast path]
-- Human owner: [GitHub handle]
-- Risk: `routine` | `approval required`
-- Change intent: [one sentence]
+- Goal or task Issue: [link, or explain the supervised fast path]
+- Purpose and outcome: [one sentence]
+- Work lead: [human or agent role]
+- Decision rights and delivery authority: [relevant scope]
+- Boundary requiring a human decision: [exact decision, or none]
 
-## Changed surface
+OpenBoa accountability is inherited from the operating model; do not repeat it in the pull request.
 
-- Repositories: [links]
-- Files/components: [links]
+## Change
+
+- Repositories and surfaces: [links]
+- Material decisions: [summary or links]
 - User or operational impact: [impact]
 - Out of scope: [explicit exclusions]
 
 ## Evidence
 
-- Tests/checks: [commands and results]
+- Tests and evals: [commands and results]
 - CI: [run links and status]
-- Runtime or delivery observation: [link, screenshot, preview, metric, or not applicable]
-- Security/privacy review: [result or not applicable]
+- Preview or runtime evidence: [link, screenshot, metric, or not applicable]
+- Independent review: [reviewer, findings, and resolution]
+- Authority and safety review: [result or not applicable]
 
-## Approval and delivery
+## Delivery and observation
 
-- Required reviewers/owner gate: [names or handles]
-- Approval status: [pending or links]
-- Delivery method: [merge, release, deploy, or handoff]
-- Rollback or recovery: [command, procedure, or not applicable]
-- Observation window: [signal and duration]
+- Delivery path: [merge, release, deploy, publication, or handoff]
+- Human decision: [target, effect, decision owner, status, and expiry—or none]
+- Recovery: [rollback or recovery procedure]
+- Observation: [signal, window, owner, and result]
 
-## Handoff
-
-If this PR cannot safely complete, use [handoff](handoff.md) and state the decision needed rather than leaving an implicit blocker.
+If this pull request cannot safely continue, use the [handoff template](handoff.md) and state the exact boundary, missing resource, or decision instead of leaving an implicit blocker.

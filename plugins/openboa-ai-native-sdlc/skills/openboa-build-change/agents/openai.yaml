@@ -1,4 +1,0 @@
-interface:
-  display_name: "OpenBoa Build Change"
-  short_description: "Build safely in an isolated Git worktree"
-  default_prompt: "Use $openboa-build-change to implement this linked task and preserve a clear handoff."

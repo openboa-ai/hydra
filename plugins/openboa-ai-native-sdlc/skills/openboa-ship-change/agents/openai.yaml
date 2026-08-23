@@ -1,4 +1,0 @@
-interface:
-  display_name: "OpenBoa Ship Change"
-  short_description: "Approve, merge, deploy, observe, and roll back"
-  default_prompt: "Use $openboa-ship-change to prepare and ship this reviewed pull request safely."

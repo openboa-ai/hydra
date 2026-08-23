@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBoa Deliver Work"
+  short_description: "Deliver authorized work and observe the outcome"
+  default_prompt: "Use $openboa-deliver-work to deliver this reviewed work within its authority and observe the result."

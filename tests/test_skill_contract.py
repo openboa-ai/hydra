@@ -8,18 +8,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "plugins" / "openboa-ai-native-sdlc" / "skills"
 EXPECTED = {
-    "openboa-plan-work": {
+    "openboa-delegate-work": {
+        "work lead",
+        "decision rights",
+        "resources",
+        "boundaries",
         "Codex Goal",
-        "explicitly asks",
-        "parent Issue",
-        "sub-issues",
-        "issue dependencies",
     },
-    "openboa-build-change": {"worktree", "dirty", "handoff", "untrusted"},
-    "openboa-review-change": {"outcome", "tests", "evals", "/review"},
-    "openboa-ship-change": {"required checks", "auto-merge", "human approval", "rollback"},
-    "openboa-improve-workflow": {"repeated failure", "test", "eval", "AGENTS.md"},
-    "openboa-adopt-sdlc": {"managed block", "local", "Codex GitHub connector", "malformed"},
+    "openboa-lead-work": {"worktree", "dirty", "handoff", "untrusted", "authority"},
+    "openboa-review-work": {"outcome", "tests", "evals", "/review", "leadership"},
+    "openboa-deliver-work": {"required checks", "auto-merge", "human decision", "recover"},
+    "openboa-improve-system": {"micromanagement", "regression", "AGENTS.md", "resources"},
+    "openboa-adopt-sdlc": {"managed block", "local", "Codex GitHub connector", "malformed", "work lead"},
 }
 
 

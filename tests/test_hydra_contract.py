@@ -14,11 +14,11 @@ VALIDATOR = ROOT / "scripts" / "validate_hydra.py"
 PLUGIN_NAME = "openboa-ai-native-sdlc"
 PLUGIN_ROOT = ROOT / "plugins" / PLUGIN_NAME
 EXPECTED_SKILLS = {
-    "openboa-plan-work",
-    "openboa-build-change",
-    "openboa-review-change",
-    "openboa-ship-change",
-    "openboa-improve-workflow",
+    "openboa-delegate-work",
+    "openboa-lead-work",
+    "openboa-review-work",
+    "openboa-deliver-work",
+    "openboa-improve-system",
     "openboa-adopt-sdlc",
 }
 
@@ -71,6 +71,38 @@ class HydraContractTests(unittest.TestCase):
             self.assertTrue((skills_root / name / "SKILL.md").is_file())
             self.assertTrue((skills_root / name / "agents" / "openai.yaml").is_file())
 
+    def test_doctrine_separates_stable_purpose_from_replaceable_methods(self) -> None:
+        doctrine = (PLUGIN_ROOT / "references" / "doctrine.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("organization member", doctrine)
+        self.assertIn("OpenBoa's accountable human is `SonSangjoon`", doctrine)
+        self.assertIn("Methods are replaceable", doctrine)
+        self.assertNotIn("**Contract:**", doctrine)
+
+    def test_assignments_inherit_accountability_and_record_changing_facts(self) -> None:
+        for name in ("goal-issue.md", "task-issue.md", "pull-request.md", "handoff.md"):
+            with self.subTest(name=name):
+                text = (PLUGIN_ROOT / "assets" / name).read_text(encoding="utf-8")
+                self.assertIn("Work lead", text)
+                self.assertIn("inherited", text)
+                self.assertNotIn("Accountable owner (human)", text)
+
+        goal = (PLUGIN_ROOT / "assets" / "goal-issue.md").read_text(encoding="utf-8")
+        for heading in ("Decision rights", "Resources", "Boundaries", "Acceptance evidence"):
+            self.assertIn(heading, goal)
+
+    def test_managed_guidance_enables_agent_leadership_without_micromanagement(self) -> None:
+        template = (PLUGIN_ROOT / "assets" / "repository-AGENTS.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("agents as team members", template)
+        self.assertIn("may challenge an incomplete assignment", template)
+        self.assertIn("Do not require step-by-step human approval", template)
+        self.assertIn("accountability is inherited", template)
+
     def test_custom_governance_schema_is_absent(self) -> None:
         self.assertFalse(list(PLUGIN_ROOT.rglob("openboa-governance.yml")))
         github_reference = (PLUGIN_ROOT / "references" / "github.md").read_text(encoding="utf-8")
@@ -120,10 +152,10 @@ class HydraContractTests(unittest.TestCase):
         self.assertIn("Authentication is not authority", github_reference)
         self.assertIn("`gh`", github_reference)
         self.assertNotIn("authority tuple", github_reference)
-        self.assertIn("require review from Code Owners", github_reference)
-        self.assertIn("owner to `/.github/CODEOWNERS` itself", github_reference)
-        self.assertIn("label is for routing and visibility", github_reference)
-        self.assertIn("does not grant approval", github_reference)
+        self.assertIn("Require review from Code Owners", github_reference)
+        self.assertIn("Own `/.github/CODEOWNERS` itself", github_reference)
+        self.assertIn("label routes attention", github_reference)
+        self.assertIn("does not grant authority", github_reference)
 
     def test_ci_publishes_the_new_check_and_keeps_a_safe_compatibility_check(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(

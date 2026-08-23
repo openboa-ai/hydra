@@ -12,11 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "scripts" / "validate_codex.py"
 SKILL_NAMES = (
     "openboa-adopt-sdlc",
-    "openboa-build-change",
-    "openboa-improve-workflow",
-    "openboa-plan-work",
-    "openboa-review-change",
-    "openboa-ship-change",
+    "openboa-delegate-work",
+    "openboa-deliver-work",
+    "openboa-improve-system",
+    "openboa-lead-work",
+    "openboa-review-work",
 )
 FAKE_VALIDATOR = """\
 from pathlib import Path

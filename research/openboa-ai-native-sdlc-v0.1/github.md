@@ -4,7 +4,7 @@ GitHub and Codex provide different parts of the working environment. Neither one
 
 | Need | Current surface | OpenBoa use | Limit |
 | --- | --- | --- | --- |
-| Purpose and responsibility | GitHub Issue | Record outcome, accountable owner, work lead, authority, resources, boundaries, and evidence | An assignee or account does not fully express an agent role |
+| Purpose and responsibility | GitHub Issue | Record outcome, work lead, authority, resources, boundaries, and evidence; inherit OpenBoa accountability from the operating model | An assignee or account does not fully express an agent role |
 | Meaningful decomposition | Sub-issues and dependencies | Split only work with separate responsibility, ordering, or review | Do not create a custom graph or an Issue for every edit |
 | Portfolio view | GitHub Projects and issue fields | Show status, priority, and selected resource signals across repositories | Organization fields are optional and may have visibility limits |
 | Working context | Codex task and repository | Let the work lead inspect, plan, execute, and maintain a coherent thread | A thread is not the organizational record or permanent identity |
