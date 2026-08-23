@@ -1,0 +1,20 @@
+{
+  "name": "openboa-hydra",
+  "interface": {
+    "displayName": "Openboa Hydra"
+  },
+  "plugins": [
+    {
+      "name": "openboa-operations",
+      "source": {
+        "source": "local",
+        "path": "./plugins/openboa-operations"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

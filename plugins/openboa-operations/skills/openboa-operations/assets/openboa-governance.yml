@@ -1,0 +1,36 @@
+schema: 1
+contract: "0.1.0"
+profile: public-standard
+
+# This profile is a portable baseline. A repository may strengthen it locally.
+human_gate:
+  owner: SonSangjoon
+  paths:
+    - .github/workflows/**
+    - .github/CODEOWNERS
+    - SECURITY.md
+    - AGENTS.md
+    - .agents/**
+    - .codex-plugin/**
+
+required_checks:
+  - openboa-governance
+
+environments:
+  major_change: openboa-major-change
+
+merge:
+  strategy: squash
+  auto_merge: true
+  delete_branch_on_merge: true
+
+labels:
+  - status:backlog
+  - status:ready
+  - status:in-progress
+  - status:in-review
+  - blocked
+  - delegate:codex
+  - risk:routine
+  - risk:human-gate
+  - governance:exception
