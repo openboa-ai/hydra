@@ -69,6 +69,12 @@ TOOL_ITEM_TYPES = {
     "file_change",
     "computer_tool_call",
 }
+CASE_SCHEMA_RELATIVE = Path("evals/fixtures/behavior-case.schema.json")
+# Formatting may change without changing this value. Any semantic schema change
+# must update the purpose-built validator and its parity tests in the same review.
+CASE_SCHEMA_SEMANTIC_SHA256 = (
+    "9520dbc4458e782740cfb373a74a8cebe0632d902947536e26c5e9fd6e6d64ef"
+)
 
 
 class CaseDefinitionError(ValueError):
@@ -157,7 +163,146 @@ def _scenario_id_from_bytes(raw_bytes: bytes, *, source: Path) -> str:
     return match.group(1).strip()
 
 
-def load_cases(root: Path) -> list[BehaviorCase]:
+def _semantic_json_digest(value: Any) -> str:
+    canonical = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _load_behavior_case_schema(root: Path) -> tuple[Path, bytes]:
+    path = root / CASE_SCHEMA_RELATIVE
+    try:
+        raw_bytes = path.read_bytes()
+        schema = json.loads(raw_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CaseDefinitionError(f"cannot parse behavior-case schema {path}: {exc}") from exc
+    if _semantic_json_digest(schema) != CASE_SCHEMA_SEMANTIC_SHA256:
+        raise CaseDefinitionError(
+            f"behavior-case schema does not match the supported contract: {path}"
+        )
+    return path, raw_bytes
+
+
+def _require_exact_keys(
+    value: Any, expected: set[str], *, source: Path, location: str
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at {location}: expected object"
+        )
+    observed = set(value)
+    if observed != expected:
+        missing = sorted(expected - observed)
+        extras = sorted(observed - expected)
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at {location}: "
+            f"missing properties {missing}; unexpected properties {extras}"
+        )
+    return value
+
+
+def _require_nonempty_string(value: Any, *, source: Path, location: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at {location}: "
+            "expected non-empty string"
+        )
+    return value
+
+
+def _require_string_array(
+    value: Any, *, source: Path, location: str, minimum: int = 0
+) -> list[str]:
+    if not isinstance(value, list) or len(value) < minimum:
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at {location}: "
+            f"expected string array with at least {minimum} item(s)"
+        )
+    for index, item in enumerate(value):
+        _require_nonempty_string(
+            item, source=source, location=f"{location}[{index}]"
+        )
+    return value
+
+
+def _validate_case_payload(payload: Any, *, source: Path) -> dict[str, Any]:
+    case = _require_exact_keys(
+        payload, CASE_REQUIRED_KEYS, source=source, location="$"
+    )
+    if case["schema_version"] != 2:
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at $.schema_version: "
+            "expected constant 2"
+        )
+    identifier = _require_nonempty_string(
+        case["id"], source=source, location="$.id"
+    )
+    scenario = _require_nonempty_string(
+        case["scenario"], source=source, location="$.scenario"
+    )
+    if re.fullmatch(r"\.\./scenarios/[^/]+\.md", scenario) is None:
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at $.scenario: "
+            "expected ../scenarios/<file>.md"
+        )
+    if case["evaluation_kind"] != "codex-decision-policy":
+        raise CaseDefinitionError(
+            f"{source.name} violates behavior-case schema at $.evaluation_kind: "
+            "expected constant 'codex-decision-policy'"
+        )
+    _require_nonempty_string(case["input"], source=source, location="$.input")
+
+    fixture_keys = {"workspace", "sandbox", "tools", "github", "network"}
+    fixture = _require_exact_keys(
+        case["fixture"], fixture_keys, source=source, location="$.fixture"
+    )
+    for key in sorted(fixture_keys):
+        _require_nonempty_string(
+            fixture[key], source=source, location=f"$.fixture.{key}"
+        )
+
+    evaluator = _require_exact_keys(
+        case["evaluator"],
+        EVALUATOR_REQUIRED_KEYS,
+        source=source,
+        location="$.evaluator",
+    )
+    _require_string_array(
+        evaluator["criteria"],
+        source=source,
+        location="$.evaluator.criteria",
+        minimum=1,
+    )
+    for field, expected_keys in (
+        ("required_fields", CORE_REQUIRED_FIELDS),
+        ("method_fields", METHOD_FIELDS),
+    ):
+        values = _require_exact_keys(
+            evaluator[field],
+            expected_keys,
+            source=source,
+            location=f"$.evaluator.{field}",
+        )
+        for key in sorted(expected_keys):
+            _require_nonempty_string(
+                values[key],
+                source=source,
+                location=f"$.evaluator.{field}.{key}",
+            )
+    for field in (
+        "required_actions",
+        "forbidden_actions",
+        "required_observations",
+        "required_unknowns",
+    ):
+        _require_string_array(
+            evaluator[field], source=source, location=f"$.evaluator.{field}"
+        )
+    return case
+
+
+def _load_cases_from_validated_schema(root: Path) -> list[BehaviorCase]:
     eval_root = (root / "evals").resolve()
     case_root = eval_root / "cases"
     paths = sorted(case_root.glob("*.json"))
@@ -172,25 +317,13 @@ def load_cases(root: Path) -> list[BehaviorCase]:
             payload = json.loads(raw_bytes.decode("utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise CaseDefinitionError(f"cannot parse {path}: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise CaseDefinitionError(f"case must be a JSON object: {path}")
-        missing = CASE_REQUIRED_KEYS - payload.keys()
-        if missing:
-            raise CaseDefinitionError(f"{path.name} is missing {sorted(missing)}")
-        identifier = payload.get("id")
-        if not isinstance(identifier, str) or not identifier:
-            raise CaseDefinitionError(f"{path.name} has an invalid ID")
+        payload = _validate_case_payload(payload, source=path)
+        identifier = payload["id"]
         if identifier in identifiers:
             raise CaseDefinitionError(f"duplicate case ID: {identifier}")
         identifiers.add(identifier)
-        if payload.get("schema_version") != 2:
-            raise CaseDefinitionError(f"{path.name} must use schema_version 2")
-        if payload.get("evaluation_kind") != "codex-decision-policy":
-            raise CaseDefinitionError(f"{path.name} has an unsupported evaluation_kind")
-        if not isinstance(payload.get("input"), str) or not payload["input"].strip():
-            raise CaseDefinitionError(f"{path.name} needs concrete input")
 
-        scenario = Path(os.path.normpath(path.parent / str(payload["scenario"])))
+        scenario = Path(os.path.normpath(path.parent / payload["scenario"]))
         resolved_scenario = scenario.resolve()
         scenario_root = eval_root / "scenarios"
         if not _inside(resolved_scenario, scenario_root) or not scenario.is_file():
@@ -202,41 +335,7 @@ def load_cases(root: Path) -> list[BehaviorCase]:
         if _scenario_id_from_bytes(scenario_bytes, source=scenario) != identifier:
             raise CaseDefinitionError(f"case/scenario ID mismatch for {identifier}")
 
-        fixture = payload.get("fixture")
-        if not isinstance(fixture, dict):
-            raise CaseDefinitionError(f"{path.name} fixture must be an object")
-        for key in ("workspace", "sandbox", "tools", "github", "network"):
-            if not isinstance(fixture.get(key), str) or not fixture[key].strip():
-                raise CaseDefinitionError(f"{path.name} fixture is missing {key}")
-
-        evaluator = payload.get("evaluator")
-        if not isinstance(evaluator, dict):
-            raise CaseDefinitionError(f"{path.name} evaluator must be an object")
-        missing_evaluator = EVALUATOR_REQUIRED_KEYS - evaluator.keys()
-        if missing_evaluator:
-            raise CaseDefinitionError(
-                f"{path.name} evaluator is missing {sorted(missing_evaluator)}"
-            )
-        if not isinstance(evaluator.get("criteria"), list) or not evaluator["criteria"]:
-            raise CaseDefinitionError(f"{path.name} needs human-readable criteria")
-        required_fields = evaluator.get("required_fields")
-        if not isinstance(required_fields, dict) or set(required_fields) != CORE_REQUIRED_FIELDS:
-            raise CaseDefinitionError(
-                f"{path.name} required_fields must be {sorted(CORE_REQUIRED_FIELDS)}"
-            )
-        method_fields = evaluator.get("method_fields")
-        if not isinstance(method_fields, dict) or set(method_fields) != METHOD_FIELDS:
-            raise CaseDefinitionError(
-                f"{path.name} method_fields must be {sorted(METHOD_FIELDS)}"
-            )
-        for key in (
-            "required_actions",
-            "forbidden_actions",
-            "required_observations",
-            "required_unknowns",
-        ):
-            if not isinstance(evaluator.get(key), list):
-                raise CaseDefinitionError(f"{path.name} evaluator {key} must be an array")
+        evaluator = payload["evaluator"]
         overlap = set(evaluator["required_actions"]) & set(evaluator["forbidden_actions"])
         if overlap:
             raise CaseDefinitionError(
@@ -252,6 +351,11 @@ def load_cases(root: Path) -> list[BehaviorCase]:
             )
         )
     return cases
+
+
+def load_cases(root: Path) -> list[BehaviorCase]:
+    _load_behavior_case_schema(root)
+    return _load_cases_from_validated_schema(root)
 
 
 def build_prompt(case: BehaviorCase) -> str:
@@ -638,7 +742,7 @@ def _run_case(
     root: Path,
     codex_home: Path,
     codex_bin: str,
-    schema_path: Path,
+    schema_bytes: bytes,
     timeout: int,
 ) -> dict[str, Any]:
     env = os.environ.copy()
@@ -646,6 +750,9 @@ def _run_case(
     with tempfile.TemporaryDirectory(prefix="openboa-behavior-case-") as fixture_dir:
         fixture = Path(fixture_dir)
         output_path = fixture / "decision.json"
+        schema_snapshot = fixture / "decision-output.schema.json"
+        schema_snapshot.write_bytes(schema_bytes)
+        schema_snapshot.chmod(0o444)
         command = [
             codex_bin,
             "exec",
@@ -663,7 +770,7 @@ def _run_case(
                 "--cd",
                 str(fixture),
                 "--output-schema",
-                str(schema_path),
+                str(schema_snapshot),
                 "--output-last-message",
                 str(output_path),
                 "--json",
@@ -997,7 +1104,8 @@ def status_counts(results: Iterable[dict[str, Any]]) -> dict[str, int]:
 
 def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
     root = args.root.expanduser().resolve()
-    cases = load_cases(root)
+    case_schema_path, case_schema_bytes = _load_behavior_case_schema(root)
+    cases = _load_cases_from_validated_schema(root)
     definitions_before = _loaded_definition_snapshot(root, cases)
     known_ids = {case.identifier for case in cases}
     selected_ids = set(args.case_ids) if args.case_ids else known_ids
@@ -1014,7 +1122,6 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
     plugin_root = root / "plugins" / PLUGIN_NAME
     candidate_before = _tree_digest(plugin_root)
     runner_path = root / "scripts" / "run_behavior_evals.py"
-    case_schema_path = root / "evals" / "fixtures" / "behavior-case.schema.json"
     schema_path = root / "evals" / "fixtures" / "decision-output.schema.json"
     for label, path in (
         ("behavior case schema", case_schema_path),
@@ -1023,10 +1130,21 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
     ):
         if not path.is_file():
             raise CaseDefinitionError(f"missing {label}: {path}")
+    try:
+        output_schema_bytes = schema_path.read_bytes()
+        output_schema = json.loads(output_schema_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CaseDefinitionError(
+            f"cannot parse decision output schema {schema_path}: {exc}"
+        ) from exc
+    if not isinstance(output_schema, dict):
+        raise CaseDefinitionError(
+            f"decision output schema must be an object: {schema_path}"
+        )
     evaluator_before = {
         "runner_sha256": _file_digest(runner_path),
-        "case_schema_sha256": _file_digest(case_schema_path),
-        "output_schema_sha256": _file_digest(schema_path),
+        "case_schema_sha256": _bytes_digest(case_schema_bytes),
+        "output_schema_sha256": _bytes_digest(output_schema_bytes),
         "definition_set_sha256": definitions_before["content_sha256"],
         "case_set_sha256": definitions_before["case_set_sha256"],
         "linked_scenario_set_sha256": definitions_before[
@@ -1140,7 +1258,7 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
                             root=root,
                             codex_home=codex_home,
                             codex_bin=args.codex_bin,
-                            schema_path=schema_path,
+                            schema_bytes=output_schema_bytes,
                             timeout=args.timeout_seconds,
                         )
                     results = [
@@ -1298,10 +1416,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         + ", ".join(f"{status}={counts[status]}" for status in RESULT_STATUSES),
         file=sys.stderr,
     )
-    if counts["failed"]:
+    selected_ids = set(args.case_ids) if args.case_ids else {
+        result["id"] for result in report["results"]
+    }
+    selected_counts = status_counts(
+        result for result in report["results"] if result["id"] in selected_ids
+    )
+    if selected_counts["failed"]:
         return 1
     if args.require_complete:
-        if counts["unmeasured"] or counts["unsupported"]:
+        if selected_counts["unmeasured"] or selected_counts["unsupported"]:
             return 1
         if report["discovery"]["status"] != "passed":
             return 1

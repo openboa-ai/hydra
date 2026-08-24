@@ -19,7 +19,8 @@
     },
     "id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "scenario": {
       "type": "string",
@@ -30,18 +31,19 @@
     },
     "input": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "fixture": {
       "type": "object",
       "additionalProperties": false,
       "required": ["workspace", "sandbox", "tools", "github", "network"],
       "properties": {
-        "workspace": {"type": "string", "minLength": 1},
-        "sandbox": {"type": "string", "minLength": 1},
-        "tools": {"type": "string", "minLength": 1},
-        "github": {"type": "string", "minLength": 1},
-        "network": {"type": "string", "minLength": 1}
+        "workspace": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "sandbox": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "tools": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "github": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "network": {"type": "string", "minLength": 1, "pattern": "\\S"}
       }
     },
     "evaluator": {
@@ -60,16 +62,16 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
+          "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
         },
         "required_fields": {
           "type": "object",
           "additionalProperties": false,
           "required": ["scenario_id", "skill", "human_gate"],
           "properties": {
-            "scenario_id": {"type": "string", "minLength": 1},
-            "skill": {"type": "string", "minLength": 1},
-            "human_gate": {"type": "string", "minLength": 1}
+            "scenario_id": {"type": "string", "minLength": 1, "pattern": "\\S"},
+            "skill": {"type": "string", "minLength": 1, "pattern": "\\S"},
+            "human_gate": {"type": "string", "minLength": 1, "pattern": "\\S"}
           }
         },
         "method_fields": {
@@ -77,8 +79,8 @@
           "additionalProperties": false,
           "required": ["playbook", "decision"],
           "properties": {
-            "playbook": {"type": "string", "minLength": 1},
-            "decision": {"type": "string", "minLength": 1}
+            "playbook": {"type": "string", "minLength": 1, "pattern": "\\S"},
+            "decision": {"type": "string", "minLength": 1, "pattern": "\\S"}
           }
         },
         "required_actions": {
@@ -99,7 +101,7 @@
   "$defs": {
     "stringArray": {
       "type": "array",
-      "items": {"type": "string", "minLength": 1}
+      "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
     }
   }
 }

@@ -20,7 +20,7 @@ LATEST_RESULT = (
     ROOT
     / "evals"
     / "results"
-    / "2026-08-24-codex-0.144.5-v2-direct-r2.json"
+    / "2026-08-24-codex-0.144.5-v2-direct-r5.json"
 )
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
@@ -180,6 +180,54 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertNotIn("uniqueItems", json.dumps(schema))
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
+        human_gate = schema["properties"]["human_gate"]
+        for value in human_gate["enum"]:
+            self.assertIn(f"{value}:", human_gate["description"])
+        self.assertIn(
+            "Material scenario facts",
+            schema["properties"]["observations"]["description"],
+        )
+
+    def test_run_case_uses_the_supplied_output_schema_snapshot(self) -> None:
+        case = next(item for item in self.cases if item.identifier == "routine-no-human")
+        evaluator = case.payload["evaluator"]
+        output = {
+            **evaluator["required_fields"],
+            **evaluator["method_fields"],
+            "skill_evidence": RUNNER.SKILL_EVIDENCE,
+            "actions": list(evaluator["required_actions"]),
+            "observations": list(evaluator["required_observations"]),
+            "unknowns": list(evaluator["required_unknowns"]),
+            "rationale": "Snapshot test.",
+        }
+        schema_bytes = (
+            ROOT / "evals" / "fixtures" / "decision-output.schema.json"
+        ).read_bytes()
+        observed: dict[str, object] = {}
+
+        def fake_command(command, **_kwargs):
+            schema_path = Path(command[command.index("--output-schema") + 1])
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            observed["schema_bytes"] = schema_path.read_bytes()
+            observed["schema_mode"] = schema_path.stat().st_mode & 0o777
+            output_path.write_text(json.dumps(output), encoding="utf-8")
+            return RUNNER.CommandResult(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            RUNNER, "_run_command", side_effect=fake_command
+        ):
+            result = RUNNER._run_case(
+                case,
+                root=ROOT,
+                codex_home=Path(temp_dir),
+                codex_bin="codex",
+                schema_bytes=schema_bytes,
+                timeout=30,
+            )
+
+        self.assertEqual("passed", result["status"])
+        self.assertEqual(schema_bytes, observed["schema_bytes"])
+        self.assertEqual(0o444, observed["schema_mode"])
 
     def test_case_schema_declares_uniform_core_and_method_fields(self) -> None:
         schema = json.loads(
@@ -198,6 +246,160 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             RUNNER.METHOD_FIELDS,
             set(evaluator["properties"]["method_fields"]["required"]),
         )
+        for object_schema in (
+            schema,
+            schema["properties"]["fixture"],
+            evaluator,
+            evaluator["properties"]["required_fields"],
+            evaluator["properties"]["method_fields"],
+        ):
+            self.assertFalse(object_schema["additionalProperties"])
+            self.assertEqual(
+                set(object_schema["required"]), set(object_schema["properties"])
+            )
+        self.assertEqual(
+            r"^\.\./scenarios/[^/]+\.md$",
+            schema["properties"]["scenario"]["pattern"],
+        )
+        for field in (
+            "required_actions",
+            "forbidden_actions",
+            "required_observations",
+            "required_unknowns",
+        ):
+            self.assertEqual(
+                "#/$defs/stringArray", evaluator["properties"][field]["$ref"]
+            )
+        self.assertEqual(
+            {"type": "string", "minLength": 1, "pattern": r"\S"},
+            schema["$defs"]["stringArray"]["items"],
+        )
+        self.assertEqual(
+            RUNNER.CASE_SCHEMA_SEMANTIC_SHA256,
+            RUNNER._semantic_json_digest(schema),
+        )
+
+    def test_load_cases_enforces_checked_in_schema(self) -> None:
+        mutations = {
+            "top-level additional property": lambda payload: payload.__setitem__(
+                "unexpected", True
+            ),
+            "fixture additional property": lambda payload: payload["fixture"].__setitem__(
+                "unexpected", True
+            ),
+            "evaluator additional property": lambda payload: payload[
+                "evaluator"
+            ].__setitem__("unexpected", True),
+            "non-string criterion": lambda payload: payload["evaluator"].__setitem__(
+                "criteria", [1]
+            ),
+            "empty criterion": lambda payload: payload["evaluator"].__setitem__(
+                "criteria", [""]
+            ),
+            "blank criterion": lambda payload: payload["evaluator"].__setitem__(
+                "criteria", ["   "]
+            ),
+            "non-string action": lambda payload: payload["evaluator"].__setitem__(
+                "required_actions", [1]
+            ),
+            "unhashable action": lambda payload: payload["evaluator"].__setitem__(
+                "required_actions", [{"not": "a string"}]
+            ),
+            "non-string required field": lambda payload: payload["evaluator"][
+                "required_fields"
+            ].__setitem__("skill", 1),
+            "empty required field": lambda payload: payload["evaluator"][
+                "required_fields"
+            ].__setitem__("skill", ""),
+            "empty method field": lambda payload: payload["evaluator"][
+                "method_fields"
+            ].__setitem__("playbook", ""),
+            "non-string scenario": lambda payload: payload.__setitem__(
+                "scenario", 1
+            ),
+            "scenario pattern violation": lambda payload: payload.__setitem__(
+                "scenario", "../scenarios/./01-routine-no-human.md"
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                for relative in (
+                    Path("evals/cases"),
+                    Path("evals/scenarios"),
+                    Path("evals/fixtures"),
+                ):
+                    shutil.copytree(ROOT / relative, root / relative)
+                case_path = root / "evals" / "cases" / "01-routine-no-human.json"
+                payload = json.loads(case_path.read_text(encoding="utf-8"))
+                mutate(payload)
+                case_path.write_text(
+                    json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+                )
+                with self.assertRaisesRegex(
+                    RUNNER.CaseDefinitionError, "violates behavior-case schema"
+                ):
+                    RUNNER.load_cases(root)
+
+    def test_load_cases_fails_closed_on_schema_semantic_drift(self) -> None:
+        mutations = {
+            "new constraint": lambda schema: schema["properties"]["id"].__setitem__(
+                "pattern", "^never-matches$"
+            ),
+            "unknown keyword": lambda schema: schema["properties"]["id"].__setitem__(
+                "maxLength", 100
+            ),
+            "invalid type": lambda schema: schema.__setitem__("type", ["object"]),
+            "lone surrogate": lambda schema: schema.__setitem__(
+                "title", chr(0xD800)
+            ),
+            "self reference": lambda schema: schema["$defs"].__setitem__(
+                "stringArray", {"$ref": "#/$defs/stringArray"}
+            ),
+            "mutual reference": lambda schema: schema["$defs"].update(
+                {
+                    "stringArray": {"$ref": "#/$defs/other"},
+                    "other": {"$ref": "#/$defs/stringArray"},
+                }
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                for relative in (
+                    Path("evals/cases"),
+                    Path("evals/scenarios"),
+                    Path("evals/fixtures"),
+                ):
+                    shutil.copytree(ROOT / relative, root / relative)
+                schema_path = root / "evals" / "fixtures" / "behavior-case.schema.json"
+                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                mutate(schema)
+                schema_path.write_text(
+                    json.dumps(schema, indent=2) + "\n", encoding="utf-8"
+                )
+
+                with self.assertRaisesRegex(
+                    RUNNER.CaseDefinitionError, "does not match the supported contract"
+                ):
+                    RUNNER.load_cases(root)
+
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(RUNNER_PATH),
+                        "--root",
+                        str(root),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(2, completed.returncode)
+                self.assertIn("Behavior eval error:", completed.stderr)
+                self.assertIn("does not match the supported contract", completed.stderr)
+                self.assertNotIn("Traceback", completed.stderr)
 
     def test_changed_candidate_invalidates_selected_run(self) -> None:
         results = [
@@ -275,7 +477,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         )
         self.assertEqual("unmeasured", discovery["status"])
 
-    def test_case_and_scenario_race_invalidates_the_loaded_evaluation(self) -> None:
+    def test_definition_and_schema_race_invalidates_the_loaded_evaluation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             for relative in (
@@ -294,15 +496,32 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             scenario_path = (
                 root / "evals" / "scenarios" / "01-routine-no-human.md"
             )
+            case_schema_path = (
+                root / "evals" / "fixtures" / "behavior-case.schema.json"
+            )
+            output_schema_path = (
+                root / "evals" / "fixtures" / "decision-output.schema.json"
+            )
             case_before = hashlib.sha256(case_path.read_bytes()).hexdigest()
             scenario_before = hashlib.sha256(scenario_path.read_bytes()).hexdigest()
+            case_schema_before = hashlib.sha256(
+                case_schema_path.read_bytes()
+            ).hexdigest()
+            output_schema_bytes = output_schema_path.read_bytes()
+            supplied_output_schemas = []
             mutated = False
 
             def fake_run_case(case, **_kwargs):
                 nonlocal mutated
+                supplied_output_schemas.append(_kwargs["schema_bytes"])
                 if not mutated:
                     case_path.write_bytes(case_path.read_bytes() + b" \n")
                     scenario_path.write_bytes(scenario_path.read_bytes() + b"\n")
+                    case_schema_path.write_bytes(
+                        case_schema_path.read_bytes() + b"\n"
+                    )
+                    output_schema_path.write_bytes(b"{}\n")
+                    output_schema_path.write_bytes(output_schema_bytes)
                     mutated = True
                 return {
                     "id": case.identifier,
@@ -375,6 +594,19 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             definitions["before_run"]["linked_scenario_set_sha256"],
             definitions["after_run"]["linked_scenario_set_sha256"],
         )
+        self.assertEqual(
+            case_schema_before,
+            report["evaluator"]["before_run"]["case_schema_sha256"],
+        )
+        self.assertNotEqual(
+            report["evaluator"]["before_run"]["case_schema_sha256"],
+            report["evaluator"]["after_run"]["case_schema_sha256"],
+        )
+        self.assertEqual([output_schema_bytes], supplied_output_schemas)
+        self.assertEqual(
+            report["evaluator"]["before_run"]["output_schema_sha256"],
+            report["evaluator"]["after_run"]["output_schema_sha256"],
+        )
         selected = next(
             result for result in report["results"] if result["id"] == "routine-no-human"
         )
@@ -401,6 +633,9 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 shutil.copytree(
                     ROOT / "evals" / "scenarios", root / "evals" / "scenarios"
                 )
+                shutil.copytree(
+                    ROOT / "evals" / "fixtures", root / "evals" / "fixtures"
+                )
                 cases = RUNNER.load_cases(root)
                 before = RUNNER._loaded_definition_snapshot(root, cases)
                 target = root / "evals" / "cases" / "01-routine-no-human.json"
@@ -422,6 +657,80 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             {"unmeasured": 1, "passed": 1, "failed": 1, "unsupported": 1},
             RUNNER.status_counts(results),
         )
+
+    def test_require_complete_counts_only_selected_cases(self) -> None:
+        results = [
+            {"id": "selected", "status": "passed"},
+            *(
+                {"id": f"unselected-{index}", "status": "unmeasured"}
+                for index in range(11)
+            ),
+        ]
+        report = {
+            "status_counts": RUNNER.status_counts(results),
+            "discovery": {"status": "passed"},
+            "results": results,
+        }
+        with (
+            mock.patch.object(RUNNER, "run_evaluations", return_value=report),
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(
+                0,
+                RUNNER.main(
+                    ["--case", "selected", "--codex", "--require-complete"]
+                ),
+            )
+
+    def test_require_complete_preserves_selected_and_discovery_failures(self) -> None:
+        cases = (
+            ("failed", "passed", False, 1),
+            ("unmeasured", "passed", True, 1),
+            ("unsupported", "passed", True, 1),
+            ("passed", "failed", True, 1),
+            ("passed", "unmeasured", True, 1),
+        )
+        for selected_status, discovery_status, require_complete, expected in cases:
+            with self.subTest(
+                selected_status=selected_status,
+                discovery_status=discovery_status,
+                require_complete=require_complete,
+            ):
+                results = [
+                    {"id": "selected", "status": selected_status},
+                    {"id": "unselected", "status": "unmeasured"},
+                ]
+                report = {
+                    "status_counts": RUNNER.status_counts(results),
+                    "discovery": {"status": discovery_status},
+                    "results": results,
+                }
+                argv = ["--case", "selected", "--codex"]
+                if require_complete:
+                    argv.append("--require-complete")
+                with (
+                    mock.patch.object(
+                        RUNNER, "run_evaluations", return_value=report
+                    ),
+                    mock.patch("builtins.print"),
+                ):
+                    self.assertEqual(expected, RUNNER.main(argv))
+
+    def test_require_complete_without_case_selection_checks_every_result(self) -> None:
+        results = [
+            {"id": "passed", "status": "passed"},
+            {"id": "not-measured", "status": "unmeasured"},
+        ]
+        report = {
+            "status_counts": RUNNER.status_counts(results),
+            "discovery": {"status": "passed"},
+            "results": results,
+        }
+        with (
+            mock.patch.object(RUNNER, "run_evaluations", return_value=report),
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(1, RUNNER.main(["--codex", "--require-complete"]))
 
     def test_discovery_requires_marker_and_a_no_plugin_negative_control(self) -> None:
         observed = {
@@ -650,7 +959,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
 
     def test_v2_result_is_attributable_and_core_complete(self) -> None:
         self.assertEqual(
-            "b9acc9a528b2f402dc728d9e6d4c59d8515e1e04fb2536fc1c7f865f46737f38",
+            "8d4a3334857a8bebfb624c9ac69d2cc25d6610d48b9a287872b45817085e1607",
             hashlib.sha256(LATEST_RESULT.read_bytes()).hexdigest(),
         )
         report = json.loads(LATEST_RESULT.read_text(encoding="utf-8"))

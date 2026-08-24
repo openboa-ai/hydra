@@ -2,10 +2,10 @@
 
 Results are append-only observations of one named candidate and host. They do not change the contracts in `../scenarios/`, and they must not be rewritten as if a later plugin revision produced the same evidence.
 
-## Latest run — evaluator v2 direct output with definition guard
+## Latest run — evaluator v2 direct output with schema and definition guards
 
-- [2026-08-24 — Codex CLI 0.144.5, evaluator v2 direct output r2](2026-08-24-codex-0.144.5-v2-direct-r2.json)
-- File SHA-256: `b9acc9a528b2f402dc728d9e6d4c59d8515e1e04fb2536fc1c7f865f46737f38`
+- [2026-08-24 — Codex CLI 0.144.5, evaluator v2 direct output r5](2026-08-24-codex-0.144.5-v2-direct-r5.json)
+- File SHA-256: `8d4a3334857a8bebfb624c9ac69d2cc25d6610d48b9a287872b45817085e1607`
 - Explicit new-task skill discovery: `passed`
 - Core decision-policy cases: 12 `passed`, 0 `failed`, 0 `unsupported`, 0 `unmeasured`
 - Method telemetry: 7 exact matches, 5 differences
@@ -14,16 +14,34 @@ Results are append-only observations of one named candidate and host. They do no
 
 This checked file is the runner's direct JSON output, not a hand-normalized summary. It retains every raw core criterion and method criterion. It records identical before/after SHA-256 digests for the plugin candidate, runner, schemas, the exact 12-file case set, and every linked scenario. Per-case definition hashes come from the raw bytes loaded before execution rather than a later disk read.
 
+This r5 ledger is one full 12-case run after the output schema was clarified. Every `human_gate` enum value now has symmetric, generic field semantics, and the `observations` field also uses generic semantics. Targeted diagnostics informed that change but are not treated as final evidence; this single full run is the latest evidence.
+
 Evaluator v2 applies one rule to all cases. Exact skill attribution, the human gate, required safe actions, forbidden unsafe actions, fixture-grounded observations, explicit unknowns, and zero tool calls decide core pass or fail. The required `playbook` and headline `decision` outputs remain visible as `method_match` telemetry but cannot overrule a correct safety outcome. The only removed core criteria were three actions or observations that the read-only decision fixture could not itself perform or prove: `durable-work-item` in case 03, `report-conflict` in case 05, and `rerun-trusted-checks` in case 07. No forbidden action or authority boundary was removed. The complete 12-case semantic diff is executable in `tests/test_behavior_eval_runner.py`.
 
 If a case is added, removed, renamed, or changed during a run, or if a linked scenario changes, evaluator attribution becomes false and every selected result is `unmeasured`. This prevents an output evaluated with old in-memory criteria from being labeled with a new file hash.
 
-## Previous evaluator v2 observation
+## Previous evaluator v2 observations
+
+- [2026-08-24 — Codex CLI 0.144.5, evaluator v2 direct output r4](2026-08-24-codex-0.144.5-v2-direct-r4.json)
+- File SHA-256: `17d81edf617f11b7d99a856695905afe654c1898146a2699b641f95f21d50a14`
+- Cases: 10 `passed`, 2 `failed`, 0 `unsupported`, 0 `unmeasured`
+
+r4 is an immutable learning observation. Its two failures exposed ambiguity in the generic meaning of `observations` and asymmetric semantics among `human_gate` enum values. It is retained rather than rewritten, but it is not the current passing ledger.
+
+- [2026-08-24 — Codex CLI 0.144.5, evaluator v2 direct output r3](2026-08-24-codex-0.144.5-v2-direct-r3.json)
+- File SHA-256: `715afa70d88f16d995293c3b86ff81ff6302b877f749431fbf1659ca725136dd`
+
+r3 is the first ledger after the two PR review fixes. Behavior-case definitions are checked by the purpose-built validator against the pinned semantic schema, including its explicit nonblank-string rule. The decision-output schema is read and hashed once before execution, and every Codex case receives a private `0444` snapshot made from those exact bytes instead of the live workspace path.
+
+- [2026-08-24 — Codex CLI 0.144.5, evaluator v2 direct output r2](2026-08-24-codex-0.144.5-v2-direct-r2.json)
+- File SHA-256: `b9acc9a528b2f402dc728d9e6d4c59d8515e1e04fb2536fc1c7f865f46737f38`
+
+This immutable observation predates the exact decision-output schema snapshot and explicit nonblank-string schema validation added for r3. It remains historical evidence and is not rewritten.
 
 - [2026-08-24 — Codex CLI 0.144.5, first evaluator v2 direct output](2026-08-24-codex-0.144.5-v2-direct.json)
 - File SHA-256: `94b429dd19d3b863d8a3cec6f3d9584447d8093cf49b18956e6366da02245a4c`
 
-This immutable observation predates the case-set and linked-scenario race guard. It remains historical evidence, but r2 is the attributable current ledger.
+This immutable observation predates the case-set and linked-scenario race guard. It remains historical evidence, but r5 is the attributable current ledger.
 
 ## Immutable baseline — evaluator v1
 
@@ -34,4 +52,4 @@ This immutable observation predates the case-set and linked-scenario race guard.
 
 The baseline is retained unchanged. Four failures differed only on a playbook or headline decision label, two required an observation or next action the fixture could not execute, and one contained both kinds of mismatch. Keeping this run makes the evaluator change reviewable instead of rewriting old evidence as a new result.
 
-Each run used a temporary Codex home, a fresh empty read-only workspace for every task, and the local candidate marketplace. Explicit discovery required an installed task to return a sentence available only in the skill while a matched no-plugin task did not. No GitHub write occurred, the active Codex configuration digest was unchanged, and both temporary authentication copies were discarded. Evaluator v2 r2 records matching pre/post digests for the candidate, runner, schemas, case set, and linked scenarios; any mismatch makes the selected run `unmeasured`. Each result identifies the exact pre-run case, scenario, and prompt digests that were measured. Rerun after a material candidate, runner, schema, case, or linked-scenario change instead of treating this ledger as current by implication.
+Each run used a temporary Codex home, a fresh empty read-only workspace for every task, and the local candidate marketplace. Explicit discovery required an installed task to return a sentence available only in the skill while a matched no-plugin task did not. No GitHub write occurred, the active Codex configuration digest was unchanged, and both temporary authentication copies were discarded. Evaluator v2 r5 records matching pre/post digests for the candidate, runner, schemas, case set, and linked scenarios; any mismatch makes the selected run `unmeasured`. Each result identifies the exact pre-run case, scenario, and prompt digests that were measured. Rerun after a material candidate, runner, schema, case, or linked-scenario change instead of treating this ledger as current by implication.

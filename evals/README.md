@@ -8,6 +8,8 @@ This directory keeps human-readable behavior contracts separate from executable 
 - [`baselines/evaluator-v1/`](baselines/evaluator-v1/) preserves the exact v1 case bytes referenced by the immutable v1 ledger.
 - [`results/`](results/) stores immutable run evidence. A result never changes the source scenario.
 
+The runner enforces the checked-in behavior-case schema before it loads any case. The current v2 harness has one case shape, so it uses a small exact validator rather than a second JSON Schema framework: object keys, constants, string values, arrays, and scenario paths must all match. Formatting-only schema edits are allowed; a semantic schema change fails closed until the validator and parity tests change in the same review.
+
 These evaluations are an eval harness, not product runtime. The current cases measure explicit skill routing and decision selection in fresh, read-only Codex tasks. They do not perform or claim GitHub writes, deployment, release, human approval, or other external effects. The broader end-to-end scenarios therefore retain `Status: unmeasured` until their requested live evidence exists.
 
 ## Result meanings
@@ -41,7 +43,9 @@ python3 scripts/run_behavior_evals.py \
   --output /tmp/openboa-behavior-run.json
 ```
 
-The live mode copies existing Codex authentication into temporary candidate and no-plugin control homes, installs the candidate from this local marketplace only in the candidate home, and creates an empty temporary workspace for every task. Explicit discovery passes only when the installed task returns a sentence available in the skill and the matched no-plugin task does not. Each task is ephemeral and read-only. The prompt forbids tools, the evaluator requires zero observed tool calls, remote app and browser surfaces are disabled, and no GitHub operation is made. The temporary homes, copied authentication, and workspaces are discarded after the run; the report records whether the active Codex config digest stayed unchanged.
+To run one named case, add `--case <scenario-id>`. With `--require-complete`, only the selected cases must be measured and pass; intentionally unselected cases remain `unmeasured`. The paired discovery probe must still pass.
+
+The live mode copies existing Codex authentication into temporary candidate and no-plugin control homes, installs the candidate from this local marketplace only in the candidate home, and creates an empty temporary workspace for every task. Explicit discovery passes only when the installed task returns a sentence available in the skill and the matched no-plugin task does not. Each task is ephemeral and read-only. The prompt forbids tools, the evaluator requires zero observed tool calls, remote app and browser surfaces are disabled, and no GitHub operation is made. The runner reads the decision-output schema once before execution and gives every case a read-only temporary snapshot of those exact bytes; it never asks a running case to reopen the live repository copy. The temporary homes, copied authentication, and workspaces are discarded after the run; the report records whether the active Codex config digest stayed unchanged.
 
 Run the focused harness and contract checks with:
 

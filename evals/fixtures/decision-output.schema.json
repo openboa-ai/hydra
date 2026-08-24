@@ -52,6 +52,7 @@
     },
     "human_gate": {
       "type": "string",
+      "description": "The human decision required before the proposed next safe action. Meanings: none: the safe next action can proceed without a human decision; one-product-decision: one product or value choice is required; wait-high-impact: a material effect must wait; governance-exception: weakening or bypassing an active control requires approval; not-applicable: no action can run because a required host capability is unsupported.",
       "enum": [
         "none",
         "one-product-decision",
@@ -104,6 +105,7 @@
     },
     "observations": {
       "type": "array",
+      "description": "Material scenario facts used to justify the decision. Include every boundary, target, check, or live-state fact relied on in the rationale.",
       "items": {
         "type": "string",
         "enum": [
