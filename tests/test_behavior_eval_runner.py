@@ -40,6 +40,12 @@ R8_RESULT = (
     / "results"
     / "2026-08-24-codex-0.144.5-v2-direct-r8.json"
 )
+R9_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-24-codex-0.144.5-v2-direct-r9.json"
+)
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
 
@@ -2348,6 +2354,44 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             "1a139a89a6fb93542477b50f54a789c91fe2d054690c35ffb0f52d85108677c8",
             report["evaluator"]["before_run"]["runner_sha256"],
         )
+
+    def test_r9_result_is_attributable_private_and_core_complete(self) -> None:
+        self._assert_current_attributable_result(
+            R9_RESULT,
+            "34efde393a2e065fe8ca57e505b7e702e8ff6be6c70f6047dce0878530a84e96",
+            "9ea2080c0f2f18459bd871a636a5f2826adfded6",
+        )
+        raw = R9_RESULT.read_text(encoding="utf-8")
+        report = json.loads(raw)
+        executable = report["host"]["codex_executable"]
+        self.assertEqual(
+            {"kind": "bare-name", "name": "codex"}, executable["request"]
+        )
+        self.assertEqual(
+            "repository-root-aware-path-search",
+            executable["resolution"]["method"],
+        )
+        self.assertEqual(
+            {"index": 0, "kind": "repository-relative"},
+            executable["resolution"]["matched_path_entry"],
+        )
+        self.assertEqual("external", executable["resolution"]["resolved_location"])
+        self.assertNotIn("resolved_repository_path", executable["resolution"])
+        identity = executable["identity"]
+        self.assertTrue(identity["unchanged_during_run"])
+        self.assertTrue(identity["attribution_complete"])
+        self.assertEqual(identity["before_run"], identity["after_run"])
+        self.assertEqual("observed", identity["before_run"]["status"])
+        self.assertEqual("regular-file", identity["before_run"]["file_type"])
+        self.assertTrue(identity["before_run"]["executable"])
+        self.assertRegex(identity["before_run"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            identity["before_run"],
+            report["evaluator"]["before_run"]["codex_executable_identity"],
+        )
+        self.assertNotIn(str(ROOT), raw)
+        self.assertNotIn(str(Path.home()), raw)
+        self.assertNotIn("/opt/homebrew/", raw)
 
 
 if __name__ == "__main__":
