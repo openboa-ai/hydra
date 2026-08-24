@@ -9,12 +9,13 @@ temporary Codex home and run each selected case in a new, read-only task.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import dataclasses
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
@@ -22,7 +23,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 
 PLUGIN_NAME = "openboa-ai-native-sdlc"
@@ -70,6 +71,22 @@ TOOL_ITEM_TYPES = {
     "computer_tool_call",
 }
 CASE_SCHEMA_RELATIVE = Path("evals/fixtures/behavior-case.schema.json")
+MARKETPLACE_MANIFEST_RELATIVE = Path(".agents/plugins/marketplace.json")
+PLUGIN_RELATIVE = Path("plugins") / PLUGIN_NAME
+PLUGIN_MANIFEST_RELATIVE = Path(".codex-plugin/plugin.json")
+PLUGIN_SKILLS_RELATIVE = Path("skills")
+PLUGIN_FORBIDDEN_RUNTIME_FIELDS = {"apps", "hooks", "mcpServers"}
+WINDOWS_RESERVED_BASENAMES = {
+    "AUX",
+    "CLOCK$",
+    "CON",
+    "CONIN$",
+    "CONOUT$",
+    "NUL",
+    "PRN",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
 # Formatting may change without changing this value. Any semantic schema change
 # must update the purpose-built validator and its parity tests in the same review.
 CASE_SCHEMA_SEMANTIC_SHA256 = (
@@ -92,6 +109,41 @@ class BehaviorCase:
     @property
     def identifier(self) -> str:
         return str(self.payload["id"])
+
+
+@dataclasses.dataclass(frozen=True)
+class PackageEntry:
+    path: str
+    executable: bool
+    raw_bytes: bytes
+    git_oid: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class CandidatePackage:
+    revision: str
+    plugin_tree_oid: str
+    marketplace_blob_oid: str
+    marketplace_bytes: bytes
+    marketplace_sha256: str
+    plugin_sha256: str
+    bundle_sha256: str
+    version: str
+    entries: tuple[PackageEntry, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class CandidateSnapshot:
+    root: Path
+    plugin_root: Path
+    package: CandidatePackage
+
+
+@dataclasses.dataclass(frozen=True)
+class InstalledCandidate:
+    root: Path
+    after_install_sha256: str
+    evidence: dict[str, Any]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -122,6 +174,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="scenario ID to execute; repeatable, defaults to all cases",
     )
     parser.add_argument("--codex-bin", default="codex", help="Codex CLI executable")
+    parser.add_argument(
+        "--candidate-revision",
+        default="HEAD",
+        help="Git revision whose marketplace and plugin bytes are installed",
+    )
     parser.add_argument(
         "--auth-source",
         type=Path,
@@ -654,6 +711,8 @@ def _current_definition_snapshot(root: Path, cases: Sequence[BehaviorCase]) -> d
 
 
 def _tree_digest(root: Path) -> str:
+    """Legacy source-tree digest retained for historical v1/v2 ledgers."""
+
     digest = hashlib.sha256()
     for path in sorted(root.rglob("*")):
         if ".git" in path.parts or "__pycache__" in path.parts:
@@ -667,6 +726,396 @@ def _tree_digest(root: Path) -> str:
         elif path.is_file():
             digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+def _git_bytes(root: Path, arguments: Sequence[str], *, timeout: int = 30) -> bytes:
+    env = os.environ.copy()
+    for key in tuple(env):
+        if key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            env.pop(key, None)
+    for key in (
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG_COUNT",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+    ):
+        env.pop(key, None)
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        completed = subprocess.run(
+            ["git", "--no-replace-objects", "-C", str(root), *arguments],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CaseDefinitionError(f"cannot read candidate Git objects: {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise CaseDefinitionError(
+            f"cannot read candidate Git objects: {detail or 'git command failed'}"
+        )
+    return completed.stdout
+
+
+def _portable_package_parts(path: str) -> tuple[str, ...]:
+    """Return a host-independent relative path or fail closed."""
+    if (
+        not path
+        or "\\" in path
+        or any(ord(character) < 32 or ord(character) == 127 for character in path)
+    ):
+        raise CaseDefinitionError(f"candidate package contains an unsafe path: {path!r}")
+    raw_parts = path.split("/")
+    portable = PurePosixPath(path)
+    if (
+        portable.is_absolute()
+        or any(part in {"", ".", ".."} for part in raw_parts)
+        or portable.as_posix() != path
+        or any(any(character in '<>:"|?*' for character in part) for part in raw_parts)
+        or any(part.endswith((" ", ".")) for part in raw_parts)
+        or any(
+            part.split(".", 1)[0].upper() in WINDOWS_RESERVED_BASENAMES
+            for part in raw_parts
+        )
+    ):
+        raise CaseDefinitionError(f"candidate package contains an unsafe path: {path!r}")
+    return tuple(portable.parts)
+
+
+def _package_digest(entries: Sequence[PackageEntry]) -> str:
+    """Fingerprint every packaged path, byte, type, and executable bit."""
+
+    digest = hashlib.sha256()
+    digest.update(b"openboa-behavior-candidate-package-v1\0")
+    for entry in sorted(entries, key=lambda item: item.path):
+        _portable_package_parts(entry.path)
+        try:
+            path_bytes = entry.path.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise CaseDefinitionError(
+                f"candidate contains a non-UTF-8-compatible path: {entry.path!r}"
+            ) from exc
+        mode = b"100755" if entry.executable else b"100644"
+        digest.update(len(path_bytes).to_bytes(8, "big"))
+        digest.update(path_bytes)
+        digest.update(len(mode).to_bytes(8, "big"))
+        digest.update(mode)
+        digest.update(len(entry.raw_bytes).to_bytes(8, "big"))
+        digest.update(entry.raw_bytes)
+    return digest.hexdigest()
+
+
+def _validate_marketplace_bytes(raw_bytes: bytes, *, source: Path) -> None:
+    try:
+        payload = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CaseDefinitionError(
+            f"cannot parse candidate marketplace manifest {source}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("name") != MARKETPLACE_NAME:
+        raise CaseDefinitionError(
+            f"candidate marketplace must be named {MARKETPLACE_NAME}: {source}"
+        )
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, list) or len(plugins) != 1:
+        raise CaseDefinitionError(
+            f"candidate marketplace must contain exactly one plugin: {source}"
+        )
+    plugin = plugins[0]
+    expected_path = f"./{PLUGIN_RELATIVE.as_posix()}"
+    if not isinstance(plugin, dict) or plugin.get("name") != PLUGIN_NAME:
+        raise CaseDefinitionError(
+            f"candidate marketplace must contain only {PLUGIN_NAME}: {source}"
+        )
+    if plugin.get("source") != {"source": "local", "path": expected_path}:
+        raise CaseDefinitionError(
+            f"candidate marketplace source must be local path {expected_path}: {source}"
+        )
+
+
+def _validate_candidate_plugin_contract(
+    payload: Any,
+    entries: Sequence[PackageEntry],
+) -> str:
+    """Bind this skills-only evaluation to its declared loading surface."""
+    if not isinstance(payload, dict) or payload.get("name") != PLUGIN_NAME:
+        raise CaseDefinitionError("candidate plugin identity is invalid")
+
+    version = payload.get("version")
+    if not isinstance(version, str) or re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?",
+        version,
+    ) is None:
+        raise CaseDefinitionError("candidate plugin version is invalid")
+    if payload.get("skills") != "./skills/":
+        raise CaseDefinitionError(
+            "candidate plugin skills path must be exactly ./skills/"
+        )
+    forbidden = sorted(PLUGIN_FORBIDDEN_RUNTIME_FIELDS.intersection(payload))
+    if forbidden:
+        raise CaseDefinitionError(
+            "candidate skills-only evaluation forbids runtime fields: "
+            + ", ".join(forbidden)
+        )
+
+    for entry in entries:
+        parts = _portable_package_parts(entry.path)
+        if entry.path == PLUGIN_MANIFEST_RELATIVE.as_posix():
+            continue
+        if parts[0] != PLUGIN_SKILLS_RELATIVE.as_posix():
+            raise CaseDefinitionError(
+                "candidate skills-only evaluation found an undeclared loading "
+                f"surface: {entry.path}"
+            )
+    return version
+
+
+def _git_candidate_package(root: Path, revision: str) -> CandidatePackage:
+    requested = revision.strip()
+    if not requested:
+        raise CaseDefinitionError("--candidate-revision must not be empty")
+    commit = _git_bytes(root, ["rev-parse", "--verify", f"{requested}^{{commit}}"])
+    try:
+        commit_sha = commit.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise CaseDefinitionError("candidate Git revision was not ASCII") from exc
+    if re.fullmatch(r"[0-9a-f]{40,64}", commit_sha) is None:
+        raise CaseDefinitionError(f"candidate Git revision is invalid: {commit_sha!r}")
+
+    listing = _git_bytes(
+        root,
+        [
+            "ls-tree",
+            "-rz",
+            "--full-tree",
+            commit_sha,
+            "--",
+            MARKETPLACE_MANIFEST_RELATIVE.as_posix(),
+            PLUGIN_RELATIVE.as_posix(),
+        ],
+    )
+    entries: list[PackageEntry] = []
+    observed_paths: set[str] = set()
+    marketplace_oid: str | None = None
+    plugin_prefix = f"{PLUGIN_RELATIVE.as_posix()}/"
+    for record in listing.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, object_type, raw_oid = metadata.split(b" ", 2)
+            path = raw_path.decode("utf-8")
+            oid = raw_oid.decode("ascii")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise CaseDefinitionError("candidate Git tree contains an invalid entry") from exc
+        if path in observed_paths:
+            raise CaseDefinitionError(f"candidate Git tree repeats path: {path}")
+        observed_paths.add(path)
+        if path != MARKETPLACE_MANIFEST_RELATIVE.as_posix() and not path.startswith(
+            plugin_prefix
+        ):
+            raise CaseDefinitionError(f"candidate Git tree escaped package scope: {path}")
+        if object_type != b"blob" or mode not in {b"100644", b"100755"}:
+            raise CaseDefinitionError(
+                f"candidate package permits regular files only: {path} ({mode.decode(errors='replace')})"
+            )
+        raw_bytes = _git_bytes(root, ["cat-file", "blob", oid])
+        entries.append(
+            PackageEntry(
+                path=path,
+                executable=mode == b"100755",
+                raw_bytes=raw_bytes,
+                git_oid=oid,
+            )
+        )
+        if path == MARKETPLACE_MANIFEST_RELATIVE.as_posix():
+            marketplace_oid = oid
+
+    by_path = {entry.path: entry for entry in entries}
+    marketplace = by_path.get(MARKETPLACE_MANIFEST_RELATIVE.as_posix())
+    if marketplace is None or marketplace_oid is None:
+        raise CaseDefinitionError(
+            f"candidate revision is missing {MARKETPLACE_MANIFEST_RELATIVE}"
+        )
+    plugin_entries = [
+        dataclasses.replace(entry, path=entry.path.removeprefix(plugin_prefix))
+        for entry in entries
+        if entry.path.startswith(plugin_prefix)
+    ]
+    if not plugin_entries or any(not entry.path for entry in plugin_entries):
+        raise CaseDefinitionError(
+            f"candidate revision is missing plugin tree {PLUGIN_RELATIVE}"
+        )
+    _validate_marketplace_bytes(
+        marketplace.raw_bytes,
+        source=root / MARKETPLACE_MANIFEST_RELATIVE,
+    )
+    plugin_manifest_name = PLUGIN_MANIFEST_RELATIVE.as_posix()
+    plugin_manifest = next(
+        (entry for entry in plugin_entries if entry.path == plugin_manifest_name),
+        None,
+    )
+    if plugin_manifest is None:
+        raise CaseDefinitionError(
+            f"candidate plugin is missing {plugin_manifest_name}"
+        )
+    try:
+        plugin_payload = json.loads(plugin_manifest.raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CaseDefinitionError("candidate plugin manifest is invalid") from exc
+    version = _validate_candidate_plugin_contract(plugin_payload, plugin_entries)
+
+    plugin_tree_oid = _git_bytes(
+        root, ["rev-parse", f"{commit_sha}:{PLUGIN_RELATIVE.as_posix()}"]
+    ).decode("ascii").strip()
+    if re.fullmatch(r"[0-9a-f]{40,64}", plugin_tree_oid) is None:
+        raise CaseDefinitionError("candidate plugin tree object is invalid")
+    return CandidatePackage(
+        revision=commit_sha,
+        plugin_tree_oid=plugin_tree_oid,
+        marketplace_blob_oid=marketplace_oid,
+        marketplace_bytes=marketplace.raw_bytes,
+        marketplace_sha256=_bytes_digest(marketplace.raw_bytes),
+        plugin_sha256=_package_digest(plugin_entries),
+        bundle_sha256=_package_digest(entries),
+        version=version,
+        entries=tuple(entries),
+    )
+
+
+def _filesystem_package_entries(root: Path) -> tuple[PackageEntry, ...]:
+    if root.is_symlink() or not root.is_dir():
+        raise CaseDefinitionError(f"candidate package root is not a regular directory: {root}")
+    entries: list[PackageEntry] = []
+    for path in sorted(root.rglob("*")):
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise CaseDefinitionError(f"cannot inspect candidate package path {path}: {exc}") from exc
+        if stat.S_ISLNK(info.st_mode):
+            raise CaseDefinitionError(f"candidate package contains a symlink: {path}")
+        if stat.S_ISDIR(info.st_mode):
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise CaseDefinitionError(f"candidate package contains a special file: {path}")
+        relative = path.relative_to(root).as_posix()
+        _portable_package_parts(relative)
+        try:
+            raw_bytes = path.read_bytes()
+        except OSError as exc:
+            raise CaseDefinitionError(f"cannot read candidate package path {path}: {exc}") from exc
+        entries.append(
+            PackageEntry(
+                path=relative,
+                executable=bool(info.st_mode & 0o111),
+                raw_bytes=raw_bytes,
+            )
+        )
+    return tuple(entries)
+
+
+def _filesystem_plugin_digest(root: Path) -> str:
+    return _package_digest(_filesystem_package_entries(root))
+
+
+def _make_tree_owner_writable(root: Path) -> None:
+    if not root.exists() or root.is_symlink():
+        return
+    try:
+        root.chmod(0o700)
+    except OSError:
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            continue
+        try:
+            path.chmod(0o700 if path.is_dir() else 0o600)
+        except OSError:
+            continue
+
+
+def _materialize_candidate_snapshot(
+    package: CandidatePackage, snapshot_root: Path
+) -> CandidateSnapshot:
+    if any(snapshot_root.iterdir()):
+        raise CaseDefinitionError(f"candidate snapshot directory is not empty: {snapshot_root}")
+    snapshot_root.chmod(0o700)
+    resolved_snapshot_root = snapshot_root.resolve(strict=True)
+    for entry in package.entries:
+        parts = _portable_package_parts(entry.path)
+        target = snapshot_root.joinpath(*parts)
+        try:
+            prospective_parent = target.parent.resolve(strict=False)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise CaseDefinitionError(
+                f"cannot resolve candidate snapshot path: {entry.path}"
+            ) from exc
+        if not _inside(prospective_parent, resolved_snapshot_root):
+            raise CaseDefinitionError(
+                f"candidate package escaped the private snapshot: {entry.path}"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            resolved_parent = target.parent.resolve(strict=True)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise CaseDefinitionError(
+                f"cannot resolve candidate snapshot path: {entry.path}"
+            ) from exc
+        if not _inside(resolved_parent, resolved_snapshot_root):
+            raise CaseDefinitionError(
+                f"candidate package escaped the private snapshot: {entry.path}"
+            )
+        try:
+            with target.open("xb") as handle:
+                handle.write(entry.raw_bytes)
+            target.chmod(0o500 if entry.executable else 0o400)
+        except OSError as exc:
+            raise CaseDefinitionError(f"cannot materialize candidate snapshot: {exc}") from exc
+
+    plugin_root = snapshot_root / PLUGIN_RELATIVE
+    observed_plugin = _filesystem_plugin_digest(plugin_root)
+    observed_marketplace = (snapshot_root / MARKETPLACE_MANIFEST_RELATIVE).read_bytes()
+    observed_bundle = _package_digest(_filesystem_package_entries(snapshot_root))
+    if (
+        observed_plugin != package.plugin_sha256
+        or observed_marketplace != package.marketplace_bytes
+        or observed_bundle != package.bundle_sha256
+    ):
+        raise CaseDefinitionError("materialized candidate snapshot did not match Git objects")
+    for path in sorted(
+        (item for item in snapshot_root.rglob("*") if item.is_dir()),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        path.chmod(0o500)
+    snapshot_root.chmod(0o500)
+    return CandidateSnapshot(
+        root=snapshot_root,
+        plugin_root=plugin_root,
+        package=package,
+    )
+
+
+@contextmanager
+def _candidate_snapshot(root: Path, revision: str) -> Iterator[CandidateSnapshot]:
+    package = _git_candidate_package(root, revision)
+    temporary = tempfile.TemporaryDirectory(prefix="openboa-candidate-snapshot-")
+    snapshot_root = Path(temporary.name)
+    try:
+        snapshot = _materialize_candidate_snapshot(package, snapshot_root)
+        yield snapshot
+    finally:
+        _make_tree_owner_writable(snapshot_root)
+        temporary.cleanup()
 
 
 def _codex_version(codex_bin: str, root: Path) -> str:
@@ -977,12 +1426,26 @@ def _evaluate_discovery(
 
 
 def _install_candidate(
-    *, root: Path, codex_home: Path, codex_bin: str, timeout: int
-) -> tuple[dict[str, Any] | None, str | None]:
+    *,
+    snapshot: CandidateSnapshot,
+    codex_home: Path,
+    codex_bin: str,
+    timeout: int,
+) -> tuple[InstalledCandidate | None, str | None]:
     env = os.environ.copy()
     env["CODEX_HOME"] = str(codex_home)
     commands = (
-        ("marketplace", [codex_bin, "plugin", "marketplace", "add", str(root), "--json"]),
+        (
+            "marketplace",
+            [
+                codex_bin,
+                "plugin",
+                "marketplace",
+                "add",
+                str(snapshot.root),
+                "--json",
+            ],
+        ),
         (
             "plugin",
             [codex_bin, "plugin", "add", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}", "--json"],
@@ -992,7 +1455,9 @@ def _install_candidate(
     observed: dict[str, Any] = {}
     for label, command in commands:
         try:
-            result = _run_command(command, cwd=root, env=env, timeout=timeout)
+            result = _run_command(
+                command, cwd=snapshot.root, env=env, timeout=timeout
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return None, f"Codex {label} command unavailable: {exc}"
         if result.returncode != 0:
@@ -1008,15 +1473,145 @@ def _install_candidate(
         for item in installed if isinstance(item, dict)
         and item.get("pluginId") == f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
     ] if isinstance(installed, list) else []
-    if len(matches) != 1 or not matches[0].get("enabled"):
+    if len(matches) != 1:
         return None, "isolated plugin list did not show one enabled candidate"
-    return {
+    marketplace_result = observed["marketplace"]
+    plugin_result = observed["plugin"]
+    if not isinstance(marketplace_result, dict) or (
+        marketplace_result.get("marketplaceName") != MARKETPLACE_NAME
+    ):
+        return None, "Codex marketplace result did not identify the candidate snapshot"
+    if not isinstance(plugin_result, dict) or any(
+        (
+            plugin_result.get("pluginId")
+            != f"{PLUGIN_NAME}@{MARKETPLACE_NAME}",
+            plugin_result.get("name") != PLUGIN_NAME,
+            plugin_result.get("marketplaceName") != MARKETPLACE_NAME,
+            plugin_result.get("version") != snapshot.package.version,
+        )
+    ):
+        return None, "Codex plugin result did not identify the snapshotted candidate"
+    match = matches[0]
+    listed_source = match.get("source")
+    listed_marketplace_source = match.get("marketplaceSource")
+    if (
+        match.get("name") != PLUGIN_NAME
+        or match.get("marketplaceName") != MARKETPLACE_NAME
+        or match.get("installed") is not True
+        or match.get("enabled") is not True
+        or match.get("version") != snapshot.package.version
+        or not isinstance(listed_source, dict)
+        or not isinstance(listed_source.get("path"), str)
+        or listed_source.get("source") != "local"
+        or not isinstance(listed_marketplace_source, dict)
+        or not isinstance(listed_marketplace_source.get("source"), str)
+        or listed_marketplace_source.get("sourceType") != "local"
+    ):
+        return None, "isolated plugin list did not confirm the candidate identity"
+
+    try:
+        reported_marketplace_root = Path(
+            str(marketplace_result.get("installedRoot", ""))
+        ).resolve(strict=True)
+        listed_plugin_root = Path(listed_source["path"]).resolve(strict=True)
+        listed_marketplace_root = Path(
+            listed_marketplace_source["source"]
+        ).resolve(strict=True)
+    except (KeyError, OSError, RuntimeError, ValueError) as exc:
+        return None, f"Codex install source evidence was incomplete: {exc}"
+    snapshot_root = snapshot.root.resolve(strict=True)
+    snapshot_plugin_root = snapshot.plugin_root.resolve(strict=True)
+    if (
+        reported_marketplace_root != snapshot_root
+        or listed_marketplace_root != snapshot_root
+        or listed_plugin_root != snapshot_plugin_root
+    ):
+        return None, "Codex install source did not remain bound to the private snapshot"
+
+    raw_installed_path = plugin_result.get("installedPath")
+    if not isinstance(raw_installed_path, str) or not raw_installed_path:
+        return None, "Codex plugin result omitted installedPath"
+    expected_relative = (
+        Path("plugins")
+        / "cache"
+        / MARKETPLACE_NAME
+        / PLUGIN_NAME
+        / snapshot.package.version
+    )
+    expected_installed_path = codex_home / expected_relative
+    reported_installed_path = Path(raw_installed_path)
+    if not reported_installed_path.is_absolute():
+        return None, "Codex installedPath was not the exact temporary cache path"
+    current = codex_home
+    for component in expected_relative.parts:
+        current = current / component
+        if current.is_symlink():
+            return None, "Codex installedPath contained a symlink component"
+    try:
+        home_root = codex_home.resolve(strict=True)
+        cache_root = (codex_home / "plugins" / "cache").resolve(strict=True)
+        installed_root = expected_installed_path.resolve(strict=True)
+        reported_installed_root = reported_installed_path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, f"Codex installedPath was not readable: {exc}"
+    allowed_reported_paths = {
+        os.path.normpath(str(expected_installed_path)),
+        os.path.normpath(str(installed_root)),
+    }
+    if (
+        os.path.normpath(raw_installed_path) not in allowed_reported_paths
+        or not _inside(cache_root, home_root)
+        or not _inside(installed_root, cache_root)
+        or installed_root != reported_installed_root
+        or not installed_root.is_dir()
+    ):
+        return None, "Codex installedPath escaped the temporary plugin cache"
+    try:
+        installed_sha256 = _filesystem_plugin_digest(installed_root)
+        snapshot_sha256 = _filesystem_plugin_digest(snapshot.plugin_root)
+    except CaseDefinitionError as exc:
+        return None, str(exc)
+    if (
+        snapshot_sha256 != snapshot.package.plugin_sha256
+        or installed_sha256 != snapshot.package.plugin_sha256
+    ):
+        return (
+            InstalledCandidate(
+                root=installed_root,
+                after_install_sha256=installed_sha256,
+                evidence={
+                    "marketplace": MARKETPLACE_NAME,
+                    "plugin": PLUGIN_NAME,
+                    "version": snapshot.package.version,
+                    "installed": True,
+                    "enabled": True,
+                    "source": "private-git-snapshot",
+                    "installed_content_sha256": installed_sha256,
+                    "snapshot_content_sha256": snapshot.package.plugin_sha256,
+                    "matches_snapshot": False,
+                },
+            ),
+            "installed candidate content did not match the private snapshot",
+        )
+
+    relative_installed_path = installed_root.relative_to(home_root).as_posix()
+    evidence = {
         "marketplace": MARKETPLACE_NAME,
         "plugin": PLUGIN_NAME,
-        "version": matches[0].get("version", "unknown"),
-        "installed": bool(matches[0].get("installed")),
-        "enabled": bool(matches[0].get("enabled")),
-    }, None
+        "version": snapshot.package.version,
+        "installed": True,
+        "enabled": True,
+        "source": "private-git-snapshot",
+        "installed_path": f"$TEMP_CODEX_HOME/{relative_installed_path}",
+        "installed_content_sha256": installed_sha256,
+        "snapshot_content_sha256": snapshot.package.plugin_sha256,
+        "matches_snapshot": True,
+    }
+    return InstalledCandidate(
+        root=installed_root,
+        after_install_sha256=installed_sha256,
+        evidence=evidence,
+    ), None
 
 
 def apply_candidate_attribution(
@@ -1024,13 +1619,11 @@ def apply_candidate_attribution(
     results: list[dict[str, Any]],
     discovery: dict[str, Any],
     selected_ids: set[str],
-    before_digest: str,
-    after_digest: str,
+    attributable: bool,
     execution_requested: bool,
 ) -> bool:
-    unchanged = before_digest == after_digest
-    if not execution_requested or unchanged:
-        return unchanged
+    if not execution_requested or attributable:
+        return attributable
     for result in results:
         if result["id"] not in selected_ids:
             continue
@@ -1040,7 +1633,7 @@ def apply_candidate_attribution(
         }
         result["status"] = "unmeasured"
         result["reason"] = (
-            "candidate content changed between pre-install and post-run digests"
+            "candidate snapshot or installed cache content was not attributable"
         )
         result["method_match"] = "unmeasured"
     discovery["evidence"]["candidate_attribution"] = {
@@ -1049,9 +1642,9 @@ def apply_candidate_attribution(
     discovery.update(
         status="unmeasured",
         explicit_invocation="unmeasured",
-        reason="candidate content changed during the discovery run",
+        reason="candidate snapshot or installed cache content was not attributable",
     )
-    return unchanged
+    return attributable
 
 
 def apply_evaluator_attribution(
@@ -1119,8 +1712,10 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
     run_id = args.run_id or started.strftime("%Y%m%dT%H%M%SZ")
     if re.fullmatch(r"[A-Za-z0-9._-]+", run_id) is None:
         raise CaseDefinitionError("--run-id may contain only letters, digits, dot, underscore, and hyphen")
-    plugin_root = root / "plugins" / PLUGIN_NAME
+    plugin_root = root / PLUGIN_RELATIVE
+    marketplace_path = root / MARKETPLACE_MANIFEST_RELATIVE
     candidate_before = _tree_digest(plugin_root)
+    marketplace_before = _file_digest(marketplace_path)
     runner_path = root / "scripts" / "run_behavior_evals.py"
     schema_path = root / "evals" / "fixtures" / "decision-output.schema.json"
     for label, path in (
@@ -1170,6 +1765,13 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         "reason": "Codex execution was not requested",
         "evidence": {},
     }
+    candidate_package: CandidatePackage | None = None
+    snapshot_after_sha256: str | None = None
+    snapshot_after_bundle_sha256: str | None = None
+    installed_candidate: InstalledCandidate | None = None
+    installed_after_sha256: str | None = None
+    temporary_paths: list[Path] = []
+    auth_copy_paths: list[Path] = []
 
     if args.codex:
         selected = [case for case in cases if case.identifier in selected_ids]
@@ -1204,67 +1806,92 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
                 tempfile.TemporaryDirectory(
                     prefix="openboa-discovery-control-home-"
                 ) as control_home_dir,
+                _candidate_snapshot(
+                    root, getattr(args, "candidate_revision", "HEAD")
+                ) as snapshot,
             ):
+                candidate_package = snapshot.package
                 codex_home = Path(home_dir)
                 control_home = Path(control_home_dir)
+                temporary_paths.extend((codex_home, control_home, snapshot.root))
                 auth_copy = codex_home / "auth.json"
                 shutil.copyfile(auth_source, auth_copy)
                 auth_copy.chmod(0o600)
                 control_auth_copy = control_home / "auth.json"
                 shutil.copyfile(auth_source, control_auth_copy)
                 control_auth_copy.chmod(0o600)
-                installed, install_error = _install_candidate(
-                    root=root,
-                    codex_home=codex_home,
-                    codex_bin=args.codex_bin,
-                    timeout=args.timeout_seconds,
-                )
-                if install_error:
-                    results = [
-                        _unsupported(case, install_error)
-                        if case.identifier in selected_ids
-                        else _unmeasured(case, "case was not selected")
-                        for case in cases
-                    ]
-                    discovery.update(
-                        status="unsupported",
-                        reason=install_error,
-                        evidence={"codex_cli": codex_version},
-                    )
-                else:
-                    candidate_probe = _run_discovery_probe(
-                        root=root,
+                auth_copy_paths.extend((auth_copy, control_auth_copy))
+                try:
+                    installed_candidate, install_error = _install_candidate(
+                        snapshot=snapshot,
                         codex_home=codex_home,
                         codex_bin=args.codex_bin,
                         timeout=args.timeout_seconds,
                     )
-                    negative_control = _run_discovery_probe(
-                        root=root,
-                        codex_home=control_home,
-                        codex_bin=args.codex_bin,
-                        timeout=args.timeout_seconds,
-                    )
-                    discovery = _evaluate_discovery(
-                        candidate_probe=candidate_probe,
-                        negative_control=negative_control,
-                        installed=installed,
-                        codex_version=codex_version,
-                    )
-                    by_id: dict[str, dict[str, Any]] = {}
-                    for case in selected:
-                        print(f"Running behavior case: {case.identifier}", file=sys.stderr)
-                        by_id[case.identifier] = _run_case(
-                            case,
+                    if install_error:
+                        results = [
+                            _unsupported(case, install_error)
+                            if case.identifier in selected_ids
+                            else _unmeasured(case, "case was not selected")
+                            for case in cases
+                        ]
+                        discovery.update(
+                            status="unsupported",
+                            reason=install_error,
+                            evidence={"codex_cli": codex_version},
+                        )
+                    else:
+                        assert installed_candidate is not None
+                        candidate_probe = _run_discovery_probe(
                             root=root,
                             codex_home=codex_home,
                             codex_bin=args.codex_bin,
-                            schema_bytes=output_schema_bytes,
                             timeout=args.timeout_seconds,
                         )
-                    results = [
-                        by_id.get(case.identifier, _unmeasured(case, "case was not selected"))
-                        for case in cases
-                    ]
+                        negative_control = _run_discovery_probe(
+                            root=root,
+                            codex_home=control_home,
+                            codex_bin=args.codex_bin,
+                            timeout=args.timeout_seconds,
+                        )
+                        discovery = _evaluate_discovery(
+                            candidate_probe=candidate_probe,
+                            negative_control=negative_control,
+                            installed=installed_candidate.evidence,
+                            codex_version=codex_version,
+                        )
+                        by_id: dict[str, dict[str, Any]] = {}
+                        for case in selected:
+                            print(
+                                f"Running behavior case: {case.identifier}",
+                                file=sys.stderr,
+                            )
+                            by_id[case.identifier] = _run_case(
+                                case,
+                                root=root,
+                                codex_home=codex_home,
+                                codex_bin=args.codex_bin,
+                                schema_bytes=output_schema_bytes,
+                                timeout=args.timeout_seconds,
+                            )
+                        results = [
+                            by_id.get(
+                                case.identifier,
+                                _unmeasured(case, "case was not selected"),
+                            )
+                            for case in cases
+                        ]
+                finally:
+                    snapshot_after_sha256 = _filesystem_plugin_digest(
+                        snapshot.plugin_root
+                    )
+                    snapshot_after_bundle_sha256 = _package_digest(
+                        _filesystem_package_entries(snapshot.root)
+                    )
+                    if installed_candidate is not None:
+                        installed_after_sha256 = _filesystem_plugin_digest(
+                            installed_candidate.root
+                        )
 
     for case, result in zip(cases, results, strict=True):
         result["evidence"].setdefault(
@@ -1284,12 +1911,32 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
     definitions_after = _current_definition_snapshot(root, cases)
     definitions_unchanged = definitions_before == definitions_after
     candidate_after = _tree_digest(plugin_root)
+    marketplace_after = _file_digest(marketplace_path)
+    if candidate_package is None:
+        candidate_integrity = (
+            candidate_before == candidate_after
+            and marketplace_before == marketplace_after
+        )
+        candidate_attribution_complete = False
+    else:
+        snapshot_integrity = (
+            snapshot_after_sha256 == candidate_package.plugin_sha256
+            and snapshot_after_bundle_sha256 == candidate_package.bundle_sha256
+        )
+        installed_integrity = installed_candidate is None or (
+            installed_candidate.after_install_sha256
+            == candidate_package.plugin_sha256
+            and installed_after_sha256 == candidate_package.plugin_sha256
+        )
+        candidate_integrity = snapshot_integrity and installed_integrity
+        candidate_attribution_complete = (
+            installed_candidate is not None and candidate_integrity
+        )
     candidate_unchanged = apply_candidate_attribution(
         results=results,
         discovery=discovery,
         selected_ids=selected_ids,
-        before_digest=candidate_before,
-        after_digest=candidate_after,
+        attributable=candidate_integrity,
         execution_requested=args.codex,
     )
     evaluator_after = {
@@ -1312,6 +1959,10 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     active_config_after = _file_digest(active_config)
+    temporary_artifacts_removed = bool(temporary_paths) and all(
+        not path.exists() for path in temporary_paths
+    )
+    auth_copy_retained = any(path.exists() for path in auth_copy_paths)
     finished = datetime.now(timezone.utc)
     report = {
         "schema_version": 2,
@@ -1322,12 +1973,99 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         "started_at": started.isoformat(),
         "finished_at": finished.isoformat(),
         "candidate": {
+            "attribution_version": 2,
             "plugin": PLUGIN_NAME,
             "marketplace": MARKETPLACE_NAME,
-            "content_sha256": candidate_before if candidate_unchanged else "unattributed",
-            "before_install_sha256": candidate_before,
-            "after_run_sha256": candidate_after,
+            "content_sha256": (
+                candidate_package.plugin_sha256
+                if candidate_package is not None and candidate_unchanged
+                else candidate_before
+                if candidate_package is None and candidate_unchanged
+                else "unattributed"
+            ),
+            "before_install_sha256": (
+                candidate_package.plugin_sha256
+                if candidate_package is not None
+                else candidate_before
+            ),
+            "after_run_sha256": (
+                snapshot_after_sha256
+                if candidate_package is not None and snapshot_after_sha256 is not None
+                else candidate_after
+            ),
             "unchanged_during_run": candidate_unchanged,
+            "attribution_complete": candidate_attribution_complete,
+            "source": {
+                "kind": "git-objects" if candidate_package is not None else "live-worktree",
+                "revision": (
+                    candidate_package.revision
+                    if candidate_package is not None
+                    else "not-resolved"
+                ),
+                "plugin_tree_oid": (
+                    candidate_package.plugin_tree_oid
+                    if candidate_package is not None
+                    else "not-resolved"
+                ),
+                "marketplace_blob_oid": (
+                    candidate_package.marketplace_blob_oid
+                    if candidate_package is not None
+                    else "not-resolved"
+                ),
+                "legacy_plugin_before_sha256": candidate_before,
+                "legacy_plugin_after_sha256": candidate_after,
+                "marketplace_before_sha256": marketplace_before,
+                "marketplace_after_sha256": marketplace_after,
+            },
+            "marketplace_manifest": {
+                "path": MARKETPLACE_MANIFEST_RELATIVE.as_posix(),
+                "source_path": f"./{PLUGIN_RELATIVE.as_posix()}",
+                "sha256": (
+                    candidate_package.marketplace_sha256
+                    if candidate_package is not None
+                    else marketplace_before
+                ),
+            },
+            "snapshot": {
+                "created": candidate_package is not None,
+                "source": "private-owner-only-git-snapshot",
+                "content_sha256": (
+                    candidate_package.plugin_sha256
+                    if candidate_package is not None
+                    else "not-created"
+                ),
+                "bundle_sha256": (
+                    candidate_package.bundle_sha256
+                    if candidate_package is not None
+                    else "not-created"
+                ),
+                "after_run_sha256": snapshot_after_sha256 or "not-created",
+                "after_run_bundle_sha256": (
+                    snapshot_after_bundle_sha256 or "not-created"
+                ),
+            },
+            "installed": {
+                "observed": installed_candidate is not None,
+                "verified": (
+                    installed_candidate is not None
+                    and candidate_package is not None
+                    and installed_candidate.after_install_sha256
+                    == candidate_package.plugin_sha256
+                ),
+                "after_install_sha256": (
+                    installed_candidate.after_install_sha256
+                    if installed_candidate is not None
+                    else "not-installed"
+                ),
+                "after_run_sha256": installed_after_sha256 or "not-installed",
+                "matches_snapshot": (
+                    installed_candidate is not None
+                    and candidate_package is not None
+                    and installed_candidate.after_install_sha256
+                    == candidate_package.plugin_sha256
+                    and installed_after_sha256 == candidate_package.plugin_sha256
+                ),
+            },
         },
         "definitions": {
             "version": 2,
@@ -1362,7 +2100,9 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
             "tools_allowed_by_case_prompt": "none" if args.codex else "not-run",
             "github_writes": "none",
             "active_config_unchanged": active_config_before == active_config_after,
-            "auth_copy_retained": False,
+            "temporary_artifacts_created": bool(temporary_paths),
+            "temporary_artifacts_removed": temporary_artifacts_removed,
+            "auth_copy_retained": auth_copy_retained,
         },
         "discovery": discovery,
         "status_counts": status_counts(results),

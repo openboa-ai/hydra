@@ -16,7 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = ROOT / "scripts" / "run_behavior_evals.py"
 RECORDED_RESULT = ROOT / "evals" / "results" / "2026-08-24-codex-0.144.5.json"
-LATEST_RESULT = (
+R5_RESULT = (
     ROOT
     / "evals"
     / "results"
@@ -401,6 +401,661 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 self.assertIn("does not match the supported contract", completed.stderr)
                 self.assertNotIn("Traceback", completed.stderr)
 
+    def test_candidate_snapshot_is_private_exact_and_removed(self) -> None:
+        package = RUNNER._git_candidate_package(ROOT, "HEAD")
+        snapshot_path = None
+        with RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot:
+            snapshot_path = snapshot.root
+            self.assertNotEqual(ROOT, snapshot.root)
+            self.assertEqual(0, snapshot.root.stat().st_mode & 0o077)
+            self.assertEqual(0, snapshot.root.stat().st_mode & 0o200)
+            self.assertEqual(package.revision, snapshot.package.revision)
+            self.assertEqual(package.plugin_tree_oid, snapshot.package.plugin_tree_oid)
+            self.assertEqual(
+                package.marketplace_blob_oid,
+                snapshot.package.marketplace_blob_oid,
+            )
+            self.assertEqual(
+                package.marketplace_bytes,
+                (snapshot.root / RUNNER.MARKETPLACE_MANIFEST_RELATIVE).read_bytes(),
+            )
+            self.assertEqual(
+                package.plugin_sha256,
+                RUNNER._filesystem_plugin_digest(snapshot.plugin_root),
+            )
+            self.assertFalse(any(snapshot.root.rglob("__pycache__")))
+            self.assertEqual(
+                {
+                    RUNNER.MARKETPLACE_MANIFEST_RELATIVE.parts[0],
+                    RUNNER.PLUGIN_RELATIVE.parts[0],
+                },
+                {path.name for path in snapshot.root.iterdir()},
+            )
+        self.assertIsNotNone(snapshot_path)
+        self.assertFalse(snapshot_path.exists())
+
+    def test_candidate_git_objects_ignore_local_replace_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = Path(temp_dir) / "repository"
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--quiet",
+                    "--no-hardlinks",
+                    str(ROOT),
+                    str(repository),
+                ],
+                check=True,
+            )
+            original = subprocess.check_output(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+            expected = RUNNER._git_candidate_package(repository, original)
+
+            skill = (
+                repository
+                / RUNNER.PLUGIN_RELATIVE
+                / "skills"
+                / RUNNER.PLUGIN_NAME
+                / "SKILL.md"
+            )
+            skill.write_bytes(skill.read_bytes() + b"\nreplacement payload\n")
+            subprocess.run(
+                ["git", "-C", str(repository), "add", str(skill)], check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.name=OpenBoa Test",
+                    "-c",
+                    "user.email=test@openboa.invalid",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "replacement candidate",
+                ],
+                check=True,
+            )
+            replacement = subprocess.check_output(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+            subprocess.run(
+                ["git", "-C", str(repository), "replace", original, replacement],
+                check=True,
+            )
+            replaced_tree = subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "rev-parse",
+                    f"{original}:{RUNNER.PLUGIN_RELATIVE.as_posix()}",
+                ],
+                text=True,
+            ).strip()
+            self.assertNotEqual(expected.plugin_tree_oid, replaced_tree)
+
+            observed = RUNNER._git_candidate_package(repository, original)
+            self.assertEqual(original, observed.revision)
+            self.assertEqual(expected.plugin_tree_oid, observed.plugin_tree_oid)
+            self.assertEqual(expected.plugin_sha256, observed.plugin_sha256)
+            self.assertEqual(expected.bundle_sha256, observed.bundle_sha256)
+
+    def test_candidate_marketplace_rejects_redirects_and_duplicates(self) -> None:
+        source = ROOT / RUNNER.MARKETPLACE_MANIFEST_RELATIVE
+        base = json.loads(source.read_text(encoding="utf-8"))
+        mutations = {
+            "parent traversal": lambda value: value["plugins"][0]["source"].__setitem__(
+                "path", "../alternate"
+            ),
+            "absolute path": lambda value: value["plugins"][0]["source"].__setitem__(
+                "path", "/tmp/alternate"
+            ),
+            "remote source": lambda value: value["plugins"][0].__setitem__(
+                "source", {"source": "git", "url": "https://example.invalid/plugin"}
+            ),
+            "duplicate plugin": lambda value: value["plugins"].append(
+                dict(value["plugins"][0])
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                payload = json.loads(json.dumps(base))
+                mutate(payload)
+                with self.assertRaises(RUNNER.CaseDefinitionError):
+                    RUNNER._validate_marketplace_bytes(
+                        json.dumps(payload).encode("utf-8"), source=source
+                    )
+
+    def test_candidate_plugin_contract_is_skills_only_and_contained(self) -> None:
+        manifest_path = ROOT / RUNNER.PLUGIN_RELATIVE / RUNNER.PLUGIN_MANIFEST_RELATIVE
+        base = json.loads(manifest_path.read_text(encoding="utf-8"))
+        package = RUNNER._git_candidate_package(ROOT, "HEAD")
+        entries = tuple(
+            RUNNER.PackageEntry(
+                path=entry.path.removeprefix(
+                    f"{RUNNER.PLUGIN_RELATIVE.as_posix()}/"
+                ),
+                executable=entry.executable,
+                raw_bytes=entry.raw_bytes,
+                git_oid=entry.git_oid,
+            )
+            for entry in package.entries
+            if entry.path.startswith(f"{RUNNER.PLUGIN_RELATIVE.as_posix()}/")
+        )
+
+        self.assertEqual(
+            base["version"],
+            RUNNER._validate_candidate_plugin_contract(base, entries),
+        )
+        mutations = {
+            "skills traversal": lambda value: value.__setitem__(
+                "skills", "../outside"
+            ),
+            "mcp server": lambda value: value.__setitem__(
+                "mcpServers", {"outside": {"command": "outside"}}
+            ),
+            "app": lambda value: value.__setitem__("apps", "./.app.json"),
+            "hook": lambda value: value.__setitem__("hooks", "./hooks.json"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                payload = json.loads(json.dumps(base))
+                mutate(payload)
+                with self.assertRaises(RUNNER.CaseDefinitionError):
+                    RUNNER._validate_candidate_plugin_contract(payload, entries)
+
+        undeclared = (
+            *entries,
+            RUNNER.PackageEntry(
+                path="agents/escape.md",
+                executable=False,
+                raw_bytes=b"outside declared skills root",
+            ),
+        )
+        with self.assertRaisesRegex(
+            RUNNER.CaseDefinitionError, "undeclared loading surface"
+        ):
+            RUNNER._validate_candidate_plugin_contract(base, undeclared)
+
+    def test_exact_candidate_digest_includes_extra_bytes_and_executable_bit(self) -> None:
+        with (
+            RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot,
+            tempfile.TemporaryDirectory() as temp_dir,
+        ):
+            plugin = Path(temp_dir) / "plugin"
+            shutil.copytree(snapshot.plugin_root, plugin)
+            RUNNER._make_tree_owner_writable(plugin)
+            baseline = RUNNER._filesystem_plugin_digest(plugin)
+
+            cache = plugin / "__pycache__"
+            cache.mkdir()
+            (cache / "payload.pyc").write_bytes(b"transient installed bytes")
+            self.assertNotEqual(baseline, RUNNER._filesystem_plugin_digest(plugin))
+            (cache / "payload.pyc").unlink()
+            cache.rmdir()
+
+            target = plugin / ".codex-plugin" / "plugin.json"
+            target.chmod(0o700)
+            self.assertNotEqual(baseline, RUNNER._filesystem_plugin_digest(plugin))
+            target.chmod(0o600)
+            self.assertEqual(baseline, RUNNER._filesystem_plugin_digest(plugin))
+
+            symlink = plugin / "outside-link"
+            symlink.symlink_to(target)
+            with self.assertRaisesRegex(
+                RUNNER.CaseDefinitionError, "contains a symlink"
+            ):
+                RUNNER._filesystem_plugin_digest(plugin)
+
+    def test_candidate_package_rejects_nonportable_materialization_paths(self) -> None:
+        unsafe_paths = (
+            "skills/../../escape",
+            "skills/x\\..\\..\\escape",
+            "skills/C:/escape",
+            "skills/control\nname",
+            "skills//duplicate-separator",
+            "skills/x/.. /.. /escape",
+            "skills/trailing./escape",
+            "skills/CON/payload",
+            "skills/lpt1.txt/payload",
+        )
+        for unsafe in unsafe_paths:
+            with self.subTest(path=repr(unsafe)):
+                entry = RUNNER.PackageEntry(
+                    path=unsafe,
+                    executable=False,
+                    raw_bytes=b"unsafe",
+                )
+                with self.assertRaisesRegex(
+                    RUNNER.CaseDefinitionError, "unsafe path"
+                ):
+                    RUNNER._package_digest((entry,))
+
+                package = RUNNER.CandidatePackage(
+                    revision="a" * 40,
+                    plugin_tree_oid="b" * 40,
+                    marketplace_blob_oid="c" * 40,
+                    marketplace_bytes=b"{}",
+                    marketplace_sha256="d" * 64,
+                    plugin_sha256="e" * 64,
+                    bundle_sha256="f" * 64,
+                    version="0.1.0",
+                    entries=(entry,),
+                )
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    with self.assertRaisesRegex(
+                        RUNNER.CaseDefinitionError, "unsafe path"
+                    ):
+                        RUNNER._materialize_candidate_snapshot(
+                            package, Path(temp_dir)
+                        )
+
+    def test_install_uses_snapshot_and_verifies_actual_cache_bytes(self) -> None:
+        for mutation, should_succeed in ((None, True), ("extra-byte", False)):
+            with (
+                self.subTest(mutation=mutation),
+                RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot,
+                tempfile.TemporaryDirectory() as home_dir,
+            ):
+                codex_home = Path(home_dir)
+                installed_root = (
+                    codex_home
+                    / "plugins"
+                    / "cache"
+                    / RUNNER.MARKETPLACE_NAME
+                    / RUNNER.PLUGIN_NAME
+                    / snapshot.package.version
+                )
+                observed_commands = []
+
+                def fake_command(command, **_kwargs):
+                    observed_commands.append(command)
+                    if command[1:4] == ["plugin", "marketplace", "add"]:
+                        return RUNNER.CommandResult(
+                            0,
+                            json.dumps(
+                                {
+                                    "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                    "installedRoot": str(snapshot.root),
+                                    "alreadyAdded": False,
+                                }
+                            ),
+                            "",
+                        )
+                    if command[1:3] == ["plugin", "add"]:
+                        installed_root.parent.mkdir(parents=True)
+                        shutil.copytree(snapshot.plugin_root, installed_root)
+                        if mutation == "extra-byte":
+                            installed_root.chmod(0o700)
+                            extra = installed_root / "__pycache__"
+                            extra.mkdir()
+                            (extra / "payload.pyc").write_bytes(b"wrong candidate")
+                        return RUNNER.CommandResult(
+                            0,
+                            json.dumps(
+                                {
+                                    "pluginId": (
+                                        f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}"
+                                    ),
+                                    "name": RUNNER.PLUGIN_NAME,
+                                    "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                    "version": snapshot.package.version,
+                                    "installedPath": str(installed_root),
+                                }
+                            ),
+                            "",
+                        )
+                    return RUNNER.CommandResult(
+                        0,
+                        json.dumps(
+                            {
+                                "installed": [
+                                    {
+                                        "pluginId": (
+                                            f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}"
+                                        ),
+                                        "name": RUNNER.PLUGIN_NAME,
+                                        "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                        "version": snapshot.package.version,
+                                        "installed": True,
+                                        "enabled": True,
+                                        "source": {
+                                            "source": "local",
+                                            "path": str(snapshot.plugin_root),
+                                        },
+                                        "marketplaceSource": {
+                                            "sourceType": "local",
+                                            "source": str(snapshot.root),
+                                        },
+                                    }
+                                ]
+                            }
+                        ),
+                        "",
+                    )
+
+                try:
+                    with mock.patch.object(
+                        RUNNER, "_run_command", side_effect=fake_command
+                    ):
+                        installed, error = RUNNER._install_candidate(
+                            snapshot=snapshot,
+                            codex_home=codex_home,
+                            codex_bin="codex",
+                            timeout=30,
+                        )
+                    self.assertEqual(str(snapshot.root), observed_commands[0][4])
+                    self.assertNotEqual(str(ROOT), observed_commands[0][4])
+                    if should_succeed:
+                        self.assertIsNone(error)
+                        self.assertIsNotNone(installed)
+                        self.assertEqual(
+                            snapshot.package.plugin_sha256,
+                            installed.after_install_sha256,
+                        )
+                        self.assertTrue(installed.evidence["matches_snapshot"])
+                    else:
+                        self.assertIsNotNone(installed)
+                        self.assertFalse(installed.evidence["matches_snapshot"])
+                        self.assertIn("did not match", error)
+                finally:
+                    RUNNER._make_tree_owner_writable(codex_home)
+
+    def test_install_rejects_an_installed_path_outside_temporary_home(self) -> None:
+        with (
+            RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot,
+            tempfile.TemporaryDirectory() as home_dir,
+        ):
+            codex_home = Path(home_dir)
+            cache = codex_home / "plugins" / "cache"
+            cache.mkdir(parents=True)
+            expected = (
+                cache
+                / RUNNER.MARKETPLACE_NAME
+                / RUNNER.PLUGIN_NAME
+                / snapshot.package.version
+            )
+            expected.parent.mkdir(parents=True)
+            shutil.copytree(snapshot.plugin_root, expected)
+
+            def fake_command(command, **_kwargs):
+                if command[1:4] == ["plugin", "marketplace", "add"]:
+                    payload = {
+                        "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                        "installedRoot": str(snapshot.root),
+                    }
+                elif command[1:3] == ["plugin", "add"]:
+                    payload = {
+                        "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                        "name": RUNNER.PLUGIN_NAME,
+                        "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                        "version": snapshot.package.version,
+                        "installedPath": str(snapshot.plugin_root),
+                    }
+                else:
+                    payload = {
+                        "installed": [
+                            {
+                                "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                                "name": RUNNER.PLUGIN_NAME,
+                                "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                "version": snapshot.package.version,
+                                "installed": True,
+                                "enabled": True,
+                                "source": {
+                                    "source": "local",
+                                    "path": str(snapshot.plugin_root),
+                                },
+                                "marketplaceSource": {
+                                    "sourceType": "local",
+                                    "source": str(snapshot.root),
+                                },
+                            }
+                        ]
+                    }
+                return RUNNER.CommandResult(0, json.dumps(payload), "")
+
+            with mock.patch.object(RUNNER, "_run_command", side_effect=fake_command):
+                installed, error = RUNNER._install_candidate(
+                    snapshot=snapshot,
+                    codex_home=codex_home,
+                    codex_bin="codex",
+                    timeout=30,
+                )
+        self.assertIsNone(installed)
+        self.assertIn("escaped", error)
+
+    def test_install_rejects_an_alias_to_the_expected_cache(self) -> None:
+        with (
+            RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot,
+            tempfile.TemporaryDirectory() as home_dir,
+            tempfile.TemporaryDirectory() as alias_dir,
+        ):
+            codex_home = Path(home_dir)
+            expected = (
+                codex_home
+                / "plugins"
+                / "cache"
+                / RUNNER.MARKETPLACE_NAME
+                / RUNNER.PLUGIN_NAME
+                / snapshot.package.version
+            )
+            expected.parent.mkdir(parents=True)
+            shutil.copytree(snapshot.plugin_root, expected)
+            alias = Path(alias_dir) / "installed-alias"
+            alias.symlink_to(expected, target_is_directory=True)
+
+            def fake_command(command, **_kwargs):
+                if command[1:4] == ["plugin", "marketplace", "add"]:
+                    payload = {
+                        "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                        "installedRoot": str(snapshot.root),
+                    }
+                elif command[1:3] == ["plugin", "add"]:
+                    payload = {
+                        "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                        "name": RUNNER.PLUGIN_NAME,
+                        "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                        "version": snapshot.package.version,
+                        "installedPath": str(alias),
+                    }
+                else:
+                    payload = {
+                        "installed": [
+                            {
+                                "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                                "name": RUNNER.PLUGIN_NAME,
+                                "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                "version": snapshot.package.version,
+                                "installed": True,
+                                "enabled": True,
+                                "source": {
+                                    "source": "local",
+                                    "path": str(snapshot.plugin_root),
+                                },
+                                "marketplaceSource": {
+                                    "sourceType": "local",
+                                    "source": str(snapshot.root),
+                                },
+                            }
+                        ]
+                    }
+                return RUNNER.CommandResult(0, json.dumps(payload), "")
+
+            with mock.patch.object(RUNNER, "_run_command", side_effect=fake_command):
+                installed, error = RUNNER._install_candidate(
+                    snapshot=snapshot,
+                    codex_home=codex_home,
+                    codex_bin="codex",
+                    timeout=30,
+                )
+        self.assertIsNone(installed)
+        self.assertIn("escaped", error)
+
+    def test_install_rejects_symlinked_cache_components(self) -> None:
+        for layout in ("external-cache", "internal-marketplace-parent"):
+            with (
+                self.subTest(layout=layout),
+                RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot,
+                tempfile.TemporaryDirectory() as home_dir,
+                tempfile.TemporaryDirectory() as external_dir,
+            ):
+                codex_home = Path(home_dir)
+                external = Path(external_dir)
+                plugins_root = codex_home / "plugins"
+                plugins_root.mkdir()
+                expected = (
+                    plugins_root
+                    / "cache"
+                    / RUNNER.MARKETPLACE_NAME
+                    / RUNNER.PLUGIN_NAME
+                    / snapshot.package.version
+                )
+                if layout == "external-cache":
+                    (plugins_root / "cache").symlink_to(
+                        external, target_is_directory=True
+                    )
+                    actual = (
+                        external
+                        / RUNNER.MARKETPLACE_NAME
+                        / RUNNER.PLUGIN_NAME
+                        / snapshot.package.version
+                    )
+                else:
+                    cache = plugins_root / "cache"
+                    cache.mkdir()
+                    alternate = cache / "alternate"
+                    alternate.mkdir()
+                    (cache / RUNNER.MARKETPLACE_NAME).symlink_to(
+                        alternate, target_is_directory=True
+                    )
+                    actual = (
+                        alternate / RUNNER.PLUGIN_NAME / snapshot.package.version
+                    )
+                actual.parent.mkdir(parents=True)
+                shutil.copytree(snapshot.plugin_root, actual)
+
+                def fake_command(command, **_kwargs):
+                    if command[1:4] == ["plugin", "marketplace", "add"]:
+                        payload = {
+                            "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                            "installedRoot": str(snapshot.root),
+                        }
+                    elif command[1:3] == ["plugin", "add"]:
+                        payload = {
+                            "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                            "name": RUNNER.PLUGIN_NAME,
+                            "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                            "version": snapshot.package.version,
+                            "installedPath": str(expected),
+                        }
+                    else:
+                        payload = {
+                            "installed": [
+                                {
+                                    "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                                    "name": RUNNER.PLUGIN_NAME,
+                                    "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                    "version": snapshot.package.version,
+                                    "installed": True,
+                                    "enabled": True,
+                                    "source": {
+                                        "source": "local",
+                                        "path": str(snapshot.plugin_root),
+                                    },
+                                    "marketplaceSource": {
+                                        "sourceType": "local",
+                                        "source": str(snapshot.root),
+                                    },
+                                }
+                            ]
+                        }
+                    return RUNNER.CommandResult(0, json.dumps(payload), "")
+
+                try:
+                    with mock.patch.object(
+                        RUNNER, "_run_command", side_effect=fake_command
+                    ):
+                        installed, error = RUNNER._install_candidate(
+                            snapshot=snapshot,
+                            codex_home=codex_home,
+                            codex_bin="codex",
+                            timeout=30,
+                        )
+                    self.assertIsNone(installed)
+                    self.assertIn("symlink component", error)
+                finally:
+                    RUNNER._make_tree_owner_writable(external)
+
+    def test_install_rejects_malformed_list_shapes_without_traceback(self) -> None:
+        malformed_sources = (
+            "malformed",
+            None,
+            [],
+            {"source": "local", "path": None},
+            {"source": "local", "path": "\0"},
+        )
+        for malformed in malformed_sources:
+            with (
+                self.subTest(malformed=repr(malformed)),
+                RUNNER._candidate_snapshot(ROOT, "HEAD") as snapshot,
+                tempfile.TemporaryDirectory() as home_dir,
+            ):
+                codex_home = Path(home_dir)
+
+                def fake_command(command, **_kwargs):
+                    if command[1:4] == ["plugin", "marketplace", "add"]:
+                        payload = {
+                            "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                            "installedRoot": str(snapshot.root),
+                        }
+                    elif command[1:3] == ["plugin", "add"]:
+                        payload = {
+                            "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                            "name": RUNNER.PLUGIN_NAME,
+                            "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                            "version": snapshot.package.version,
+                            "installedPath": str(codex_home / "unused"),
+                        }
+                    else:
+                        payload = {
+                            "installed": [
+                                {
+                                    "pluginId": f"{RUNNER.PLUGIN_NAME}@{RUNNER.MARKETPLACE_NAME}",
+                                    "name": RUNNER.PLUGIN_NAME,
+                                    "marketplaceName": RUNNER.MARKETPLACE_NAME,
+                                    "version": snapshot.package.version,
+                                    "installed": True,
+                                    "enabled": True,
+                                    "source": malformed,
+                                    "marketplaceSource": {
+                                        "sourceType": "local",
+                                        "source": str(snapshot.root),
+                                    },
+                                }
+                            ]
+                        }
+                    return RUNNER.CommandResult(0, json.dumps(payload), "")
+
+                with mock.patch.object(
+                    RUNNER, "_run_command", side_effect=fake_command
+                ):
+                    installed, error = RUNNER._install_candidate(
+                        snapshot=snapshot,
+                        codex_home=codex_home,
+                        codex_bin="codex",
+                        timeout=30,
+                    )
+                self.assertIsNone(installed)
+                self.assertIsInstance(error, str)
+
     def test_changed_candidate_invalidates_selected_run(self) -> None:
         results = [
             {
@@ -433,14 +1088,188 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             results=results,
             discovery=discovery,
             selected_ids={"selected"},
-            before_digest="a" * 64,
-            after_digest="b" * 64,
+            attributable=False,
             execution_requested=True,
         )
         self.assertFalse(unchanged)
         self.assertEqual("unmeasured", results[0]["status"])
         self.assertEqual("passed", results[0]["evidence"]["candidate_attribution"]["observed_status"])
         self.assertEqual("unmeasured", discovery["status"])
+
+    def test_installed_cache_change_invalidates_selected_run(self) -> None:
+        observed_marker = {
+            "status": "observed",
+            "reason": "probe returned",
+            "evidence": {"tool_calls": 0, "marker_match": True},
+        }
+        observed_control = {
+            "status": "observed",
+            "reason": "probe returned",
+            "evidence": {"tool_calls": 0, "marker_match": False},
+        }
+        installed_root: Path | None = None
+
+        def fake_install(*, snapshot, codex_home, **_kwargs):
+            nonlocal installed_root
+            installed_root = (
+                codex_home
+                / "plugins"
+                / "cache"
+                / RUNNER.MARKETPLACE_NAME
+                / RUNNER.PLUGIN_NAME
+                / snapshot.package.version
+            )
+            installed_root.parent.mkdir(parents=True)
+            shutil.copytree(snapshot.plugin_root, installed_root)
+            for directory in [
+                installed_root,
+                *(path for path in installed_root.rglob("*") if path.is_dir()),
+            ]:
+                directory.chmod(0o700)
+            digest = RUNNER._filesystem_plugin_digest(installed_root)
+            return (
+                RUNNER.InstalledCandidate(
+                    root=installed_root,
+                    after_install_sha256=digest,
+                    evidence={
+                        "plugin": RUNNER.PLUGIN_NAME,
+                        "enabled": True,
+                        "installed_content_sha256": digest,
+                    },
+                ),
+                None,
+            )
+
+        def fake_run_case(case, **_kwargs):
+            assert installed_root is not None
+            target = (
+                installed_root
+                / "skills"
+                / RUNNER.PLUGIN_NAME
+                / "SKILL.md"
+            )
+            target.chmod(0o600)
+            target.write_bytes(target.read_bytes() + b"\ncache tamper\n")
+            return {
+                "id": case.identifier,
+                "status": "passed",
+                "reason": "simulated attributable output",
+                "criteria": [],
+                "method_match": True,
+                "method_criteria": [],
+                "evidence": {"tool_calls": 0},
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth = Path(temp_dir) / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            args = argparse.Namespace(
+                root=ROOT,
+                codex=True,
+                case_ids=["routine-no-human"],
+                codex_bin="codex",
+                candidate_revision="HEAD",
+                auth_source=auth,
+                output=None,
+                run_id="installed-cache-race-test",
+                timeout_seconds=30,
+                require_complete=False,
+            )
+            with (
+                mock.patch.object(
+                    RUNNER, "_codex_version", return_value="codex-cli test"
+                ),
+                mock.patch.object(
+                    RUNNER, "_install_candidate", side_effect=fake_install
+                ),
+                mock.patch.object(
+                    RUNNER,
+                    "_run_discovery_probe",
+                    side_effect=[observed_marker, observed_control],
+                ),
+                mock.patch.object(RUNNER, "_run_case", side_effect=fake_run_case),
+            ):
+                report = RUNNER.run_evaluations(args)
+
+        selected = next(
+            result for result in report["results"] if result["id"] == "routine-no-human"
+        )
+        self.assertEqual("unmeasured", selected["status"])
+        self.assertEqual(
+            "passed",
+            selected["evidence"]["candidate_attribution"]["observed_status"],
+        )
+        self.assertEqual("unmeasured", report["discovery"]["status"])
+        self.assertFalse(report["candidate"]["attribution_complete"])
+        self.assertFalse(report["candidate"]["installed"]["matches_snapshot"])
+        self.assertTrue(report["isolation"]["temporary_artifacts_removed"])
+        self.assertFalse(report["isolation"]["auth_copy_retained"])
+
+    def test_install_mismatch_is_reported_as_unattributed_not_unchanged(self) -> None:
+        def fake_install(*, snapshot, codex_home, **_kwargs):
+            installed_root = (
+                codex_home
+                / "plugins"
+                / "cache"
+                / RUNNER.MARKETPLACE_NAME
+                / RUNNER.PLUGIN_NAME
+                / snapshot.package.version
+            )
+            installed_root.parent.mkdir(parents=True)
+            shutil.copytree(snapshot.plugin_root, installed_root)
+            installed_root.chmod(0o700)
+            extra = installed_root / "__pycache__"
+            extra.mkdir()
+            (extra / "payload.pyc").write_bytes(b"wrong installed candidate")
+            digest = RUNNER._filesystem_plugin_digest(installed_root)
+            return (
+                RUNNER.InstalledCandidate(
+                    root=installed_root,
+                    after_install_sha256=digest,
+                    evidence={"matches_snapshot": False},
+                ),
+                "installed candidate content did not match the private snapshot",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth = Path(temp_dir) / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            args = argparse.Namespace(
+                root=ROOT,
+                codex=True,
+                case_ids=["routine-no-human"],
+                codex_bin="codex",
+                candidate_revision="HEAD",
+                auth_source=auth,
+                output=None,
+                run_id="install-mismatch-test",
+                timeout_seconds=30,
+                require_complete=False,
+            )
+            with (
+                mock.patch.object(
+                    RUNNER, "_codex_version", return_value="codex-cli test"
+                ),
+                mock.patch.object(
+                    RUNNER, "_install_candidate", side_effect=fake_install
+                ),
+                mock.patch.object(RUNNER, "_run_discovery_probe") as discovery_probe,
+                mock.patch.object(RUNNER, "_run_case") as run_case,
+            ):
+                report = RUNNER.run_evaluations(args)
+
+        selected = next(
+            result for result in report["results"] if result["id"] == "routine-no-human"
+        )
+        self.assertEqual("unmeasured", selected["status"])
+        self.assertFalse(report["candidate"]["unchanged_during_run"])
+        self.assertFalse(report["candidate"]["attribution_complete"])
+        self.assertEqual("unattributed", report["candidate"]["content_sha256"])
+        self.assertTrue(report["candidate"]["installed"]["observed"])
+        self.assertFalse(report["candidate"]["installed"]["verified"])
+        self.assertFalse(report["candidate"]["installed"]["matches_snapshot"])
+        discovery_probe.assert_not_called()
+        run_case.assert_not_called()
 
     def test_changed_evaluator_invalidates_selected_run(self) -> None:
         results = [
@@ -554,15 +1383,28 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 timeout_seconds=30,
                 require_complete=False,
             )
+            candidate_snapshot = RUNNER._candidate_snapshot
             with (
                 mock.patch.object(
                     RUNNER, "_codex_version", return_value="codex-cli test"
                 ),
                 mock.patch.object(
                     RUNNER,
+                    "_candidate_snapshot",
+                    side_effect=lambda *_args, **_kwargs: candidate_snapshot(ROOT, "HEAD"),
+                ),
+                mock.patch.object(
+                    RUNNER,
                     "_install_candidate",
-                    return_value=(
-                        {"plugin": RUNNER.PLUGIN_NAME, "enabled": True},
+                    side_effect=lambda *, snapshot, **_kwargs: (
+                        RUNNER.InstalledCandidate(
+                            root=snapshot.plugin_root,
+                            after_install_sha256=snapshot.package.plugin_sha256,
+                            evidence={
+                                "plugin": RUNNER.PLUGIN_NAME,
+                                "enabled": True,
+                            },
+                        ),
                         None,
                     ),
                 ),
@@ -957,12 +1799,12 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                     self.assertEqual(expected, new[field], field)
                     self.assertEqual(removed, set(old[field]) - set(new[field]), field)
 
-    def test_v2_result_is_attributable_and_core_complete(self) -> None:
+    def test_r5_result_is_immutable_historical_evidence(self) -> None:
         self.assertEqual(
             "8d4a3334857a8bebfb624c9ac69d2cc25d6610d48b9a287872b45817085e1607",
-            hashlib.sha256(LATEST_RESULT.read_bytes()).hexdigest(),
+            hashlib.sha256(R5_RESULT.read_bytes()).hexdigest(),
         )
-        report = json.loads(LATEST_RESULT.read_text(encoding="utf-8"))
+        report = json.loads(R5_RESULT.read_text(encoding="utf-8"))
         self.assertEqual(2, report["schema_version"])
         self.assertEqual(2, report["evaluator_version"])
         self.assertEqual("direct-runner-output", report["result_format"])
@@ -991,7 +1833,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertTrue(evaluator["unchanged_during_run"])
         self.assertEqual(evaluator["before_run"], evaluator["after_run"])
         self.assertEqual(
-            RUNNER._file_digest(RUNNER_PATH),
+            "a157a6fd5b474e7aee7ff25fa22280eec4a28ffd823bbefe96acf3c35463dd97",
             evaluator["before_run"]["runner_sha256"],
         )
         self.assertEqual(
