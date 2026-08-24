@@ -1,0 +1,20 @@
+version: 1
+
+# Changes to these files change the control plane or the public contract.
+# The trusted check reports them as human-gate work; it does not infer
+# authority from the GitHub account that opened the pull request.
+protected_paths:
+  - AGENTS.md
+  - DOCTRINE.md
+  - OPERATING-MODEL.md
+  - AI-NATIVE-SDLC.md
+  - GOVERNANCE.md
+  - .agents/plugins/marketplace.json
+  - .github/openboa-governance.yml
+  - .github/workflows/**
+  - plugins/openboa-ai-native-sdlc/.codex-plugin/plugin.json
+  - plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/SKILL.md
+  - plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/agents/openai.yaml
+  - plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/scripts/**
+  - scripts/validate_hydra.py
+  - scripts/validate_governance.py

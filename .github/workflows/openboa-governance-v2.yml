@@ -1,0 +1,66 @@
+name: openboa-governance-v2
+
+# Bootstrap workflow for the future ruleset-required trusted check. Until the
+# live ruleset binds this file to the trusted source, the existing
+# `openboa-governance` job remains the required compatibility check.
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  governance:
+    name: openboa-governance-v2
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Record revisions
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          printf 'base_sha=%s\n' "$BASE_SHA"
+          printf 'head_sha=%s\n' "$HEAD_SHA"
+          printf 'event_sha=%s\n' "$EVENT_SHA"
+      - name: Check out trusted source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: openboa-ai/hydra
+          ref: main
+          path: trusted-source
+          fetch-depth: 1
+      - name: Check out candidate as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          fetch-depth: 1
+      - name: Validate trusted source
+        run: python3 trusted-source/scripts/validate_hydra.py trusted-source
+      - name: Validate candidate with trusted source
+        run: python3 trusted-source/scripts/validate_hydra.py candidate
+      - name: Run trusted governance checks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: |
+          if test ! -f trusted-source/scripts/validate_governance.py; then
+            echo 'trusted_source_ready=false'
+            echo 'governance_result=unmeasured'
+            echo 'The trusted validator is not on the selected source branch yet.'
+            exit 0
+          fi
+          python3 trusted-source/scripts/validate_governance.py \
+            --trusted-source trusted-source \
+            --candidate candidate \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA"

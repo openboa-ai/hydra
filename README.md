@@ -144,6 +144,8 @@ Keep public content free of secrets, private repository details, and undisclosed
 
 The current `openboa-governance` job is candidate-conformance and bootstrap evidence. It runs candidate-controlled repository validation with a read-only token, pinned actions, and no secrets, publication, or deployment authority. At the v0.1 review gate the active ruleset accepted this context from `Any source`; re-read the live rule and verify the producer in the pull-request merge box rather than describing this job as a trusted base-controlled policy check. Binding an expected source or introducing a base- or ruleset-controlled trusted workflow requires a separate post-merge canary, live readback, and explicit human approval; it is not part of this repository migration.
 
+This repository now also carries the staged trusted-check pieces: `.github/openboa-governance.yml` names control-plane paths, `scripts/validate_governance.py` inspects a candidate tree as data, and `.github/workflows/openboa-governance-v2.yml` checks out the trusted Hydra source separately from the candidate. The `openboa-governance-v2` workflow is bootstrap evidence only until a human-gated ruleset canary binds the source repository, branch, and workflow file. The existing `openboa-governance` context remains required during that transition; no live ruleset was changed by adding these files.
+
 Run the repository checks:
 
 ```text
