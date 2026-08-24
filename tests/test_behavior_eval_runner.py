@@ -28,6 +28,12 @@ R6_RESULT = (
     / "results"
     / "2026-08-24-codex-0.144.5-v2-direct-r6.json"
 )
+R7_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-24-codex-0.144.5-v2-direct-r7.json"
+)
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
 
@@ -1907,12 +1913,14 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             report["evaluator"]["before_run"]["runner_sha256"],
         )
 
-    def test_r6_result_is_immutable_historical_evidence(self) -> None:
+    def _assert_current_attributable_result(
+        self, result_path: Path, result_sha256: str, revision: str
+    ) -> None:
         self.assertEqual(
-            "0a6efc9c0844c1736549d450b2d05ebb0a9b16de1040421a7cb1233dc0891083",
-            hashlib.sha256(R6_RESULT.read_bytes()).hexdigest(),
+            result_sha256,
+            hashlib.sha256(result_path.read_bytes()).hexdigest(),
         )
-        report = json.loads(R6_RESULT.read_text(encoding="utf-8"))
+        report = json.loads(result_path.read_text(encoding="utf-8"))
         self.assertEqual(2, report["schema_version"])
         self.assertEqual(2, report["evaluator_version"])
         self.assertEqual("direct-runner-output", report["result_format"])
@@ -1927,10 +1935,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertTrue(candidate["attribution_complete"])
         source = candidate["source"]
         self.assertEqual("git-objects", source["kind"])
-        self.assertEqual(
-            "0e72f8e46724d4818acbb44ed9b6421611a9a368",
-            source["revision"],
-        )
+        self.assertEqual(revision, source["revision"])
         # Pull-request CI checks out a depth-one synthetic merge. Its current
         # plugin tree and marketplace blob must still equal the recorded
         # implementation revision even when that parent commit is unavailable.
@@ -1971,7 +1976,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertTrue(evaluator["unchanged_during_run"])
         self.assertEqual(evaluator["before_run"], evaluator["after_run"])
         self.assertEqual(
-            "19e385dba09150826439a831a460f235c1cd768f20e4604ddbb6701ee0c695fe",
+            RUNNER._file_digest(RUNNER_PATH),
             evaluator["before_run"]["runner_sha256"],
         )
         self.assertEqual(
@@ -2041,6 +2046,33 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                     definition["prompt_sha256"],
                 )
                 self.assertEqual("before-run", definition["snapshot"])
+
+    def test_r6_result_is_immutable_historical_evidence(self) -> None:
+        self.assertEqual(
+            "0a6efc9c0844c1736549d450b2d05ebb0a9b16de1040421a7cb1233dc0891083",
+            hashlib.sha256(R6_RESULT.read_bytes()).hexdigest(),
+        )
+        report = json.loads(R6_RESULT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual(
+            "0e72f8e46724d4818acbb44ed9b6421611a9a368",
+            report["candidate"]["source"]["revision"],
+        )
+        self.assertTrue(report["candidate"]["attribution_complete"])
+        self.assertEqual(
+            "19e385dba09150826439a831a460f235c1cd768f20e4604ddbb6701ee0c695fe",
+            report["evaluator"]["before_run"]["runner_sha256"],
+        )
+
+    def test_r7_result_is_attributable_and_core_complete(self) -> None:
+        self._assert_current_attributable_result(
+            R7_RESULT,
+            "d887115c6fb8a561d410a26e0e14ef219a9b7ff860c3e354d414793c2b08313c",
+            "d31d21496250e0325981f737a480604feaf15bcf",
+        )
 
 
 if __name__ == "__main__":
