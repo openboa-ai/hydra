@@ -34,6 +34,12 @@ R7_RESULT = (
     / "results"
     / "2026-08-24-codex-0.144.5-v2-direct-r7.json"
 )
+R8_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-24-codex-0.144.5-v2-direct-r8.json"
+)
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
 
@@ -2093,6 +2099,13 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertEqual(
             "f0d4f7bedcb52a801c5aa8343dfad2c42e342e329bb73637d8bf7e6e63fe8d2e",
             report["evaluator"]["before_run"]["runner_sha256"],
+        )
+
+    def test_r8_result_is_attributable_and_core_complete(self) -> None:
+        self._assert_current_attributable_result(
+            R8_RESULT,
+            "240650def695529056fd10ac82a2f6fcd607ac0a6231b7138526de4b9cd2ab83",
+            "6d206a9f9fdd68620ac501d0de695e6037746a27",
         )
 
 
