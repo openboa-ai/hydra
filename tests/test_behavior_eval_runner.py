@@ -460,7 +460,14 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 str((root.parent / "codex").resolve()),
                 RUNNER._stable_codex_bin("../codex", root),
             )
-            self.assertEqual("codex", RUNNER._stable_codex_bin("codex", root))
+            tool.chmod(0o755)
+            with mock.patch.dict("os.environ", {"PATH": "tools"}):
+                self.assertEqual(
+                    str(tool.resolve()),
+                    RUNNER._stable_codex_bin("codex", root),
+                )
+            with mock.patch.dict("os.environ", {"PATH": "missing"}):
+                self.assertEqual("codex", RUNNER._stable_codex_bin("codex", root))
 
     def test_run_stabilizes_relative_codex_bin_for_every_execution_stage(self) -> None:
         expected = str((ROOT / "tools" / "codex").resolve())
@@ -506,7 +513,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 root=ROOT,
                 codex=True,
                 case_ids=["routine-no-human"],
-                codex_bin="./tools/codex",
+                codex_bin="codex",
                 candidate_revision="HEAD",
                 auth_source=auth,
                 output=None,
@@ -515,6 +522,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 require_complete=False,
             )
             with (
+                mock.patch.object(RUNNER.shutil, "which", return_value=expected),
                 mock.patch.object(RUNNER, "_codex_version", side_effect=fake_version),
                 mock.patch.object(RUNNER, "_install_candidate", side_effect=fake_install),
                 mock.patch.object(
@@ -2067,11 +2075,24 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             report["evaluator"]["before_run"]["runner_sha256"],
         )
 
-    def test_r7_result_is_attributable_and_core_complete(self) -> None:
-        self._assert_current_attributable_result(
-            R7_RESULT,
+    def test_r7_result_is_immutable_historical_evidence(self) -> None:
+        self.assertEqual(
             "d887115c6fb8a561d410a26e0e14ef219a9b7ff860c3e354d414793c2b08313c",
+            hashlib.sha256(R7_RESULT.read_bytes()).hexdigest(),
+        )
+        report = json.loads(R7_RESULT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual(
             "d31d21496250e0325981f737a480604feaf15bcf",
+            report["candidate"]["source"]["revision"],
+        )
+        self.assertTrue(report["candidate"]["attribution_complete"])
+        self.assertEqual(
+            "f0d4f7bedcb52a801c5aa8343dfad2c42e342e329bb73637d8bf7e6e63fe8d2e",
+            report["evaluator"]["before_run"]["runner_sha256"],
         )
 
 

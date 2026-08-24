@@ -1119,18 +1119,32 @@ def _candidate_snapshot(root: Path, revision: str) -> Iterator[CandidateSnapshot
 
 
 def _stable_codex_bin(codex_bin: str, root: Path) -> str:
-    """Keep an explicit relative executable stable across harness cwd changes."""
+    """Keep the selected executable stable across harness cwd changes."""
     if not codex_bin:
         raise CaseDefinitionError("--codex-bin must not be empty")
     path = Path(codex_bin).expanduser()
     separators = tuple(
         separator for separator in (os.sep, os.altsep) if separator is not None
     )
-    if not path.is_absolute() and not path.drive and not any(
+    is_bare_name = not path.is_absolute() and not path.drive and not any(
         separator in codex_bin for separator in separators
-    ):
-        return codex_bin
+    )
     try:
+        if is_bare_name:
+            raw_path = os.environ.get("PATH", os.defpath)
+            root_aware_path = os.pathsep.join(
+                str(
+                    candidate.resolve(strict=False)
+                    if candidate.is_absolute()
+                    else (root / candidate).resolve(strict=False)
+                )
+                for item in raw_path.split(os.pathsep)
+                for candidate in (Path(item or os.curdir),)
+            )
+            resolved = shutil.which(codex_bin, path=root_aware_path)
+            if resolved is None:
+                return codex_bin
+            path = Path(resolved)
         return str((path if path.is_absolute() else root / path).resolve(strict=False))
     except (OSError, RuntimeError, ValueError) as exc:
         raise CaseDefinitionError(f"cannot resolve --codex-bin: {exc}") from exc
