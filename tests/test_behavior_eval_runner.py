@@ -22,6 +22,12 @@ R5_RESULT = (
     / "results"
     / "2026-08-24-codex-0.144.5-v2-direct-r5.json"
 )
+R6_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-24-codex-0.144.5-v2-direct-r6.json"
+)
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
 
@@ -1805,6 +1811,21 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             hashlib.sha256(R5_RESULT.read_bytes()).hexdigest(),
         )
         report = json.loads(R5_RESULT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual(
+            "a157a6fd5b474e7aee7ff25fa22280eec4a28ffd823bbefe96acf3c35463dd97",
+            report["evaluator"]["before_run"]["runner_sha256"],
+        )
+
+    def test_r6_result_is_attributable_and_core_complete(self) -> None:
+        self.assertEqual(
+            "0a6efc9c0844c1736549d450b2d05ebb0a9b16de1040421a7cb1233dc0891083",
+            hashlib.sha256(R6_RESULT.read_bytes()).hexdigest(),
+        )
+        report = json.loads(R6_RESULT.read_text(encoding="utf-8"))
         self.assertEqual(2, report["schema_version"])
         self.assertEqual(2, report["evaluator_version"])
         self.assertEqual("direct-runner-output", report["result_format"])
@@ -1812,15 +1833,41 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
             report["status_counts"],
         )
+
         candidate = report["candidate"]
+        self.assertEqual(2, candidate["attribution_version"])
         self.assertTrue(candidate["unchanged_during_run"])
+        self.assertTrue(candidate["attribution_complete"])
+        source = candidate["source"]
+        self.assertEqual("git-objects", source["kind"])
         self.assertEqual(
-            candidate["before_install_sha256"], candidate["after_run_sha256"]
+            "0e72f8e46724d4818acbb44ed9b6421611a9a368",
+            source["revision"],
         )
+        package = RUNNER._git_candidate_package(ROOT, source["revision"])
+        self.assertEqual(package.plugin_tree_oid, source["plugin_tree_oid"])
+        self.assertEqual(package.marketplace_blob_oid, source["marketplace_blob_oid"])
+        self.assertEqual(package.plugin_sha256, candidate["content_sha256"])
+        self.assertEqual(package.plugin_sha256, candidate["before_install_sha256"])
+        self.assertEqual(package.plugin_sha256, candidate["after_run_sha256"])
         self.assertEqual(
-            candidate["content_sha256"],
-            RUNNER._tree_digest(ROOT / "plugins" / RUNNER.PLUGIN_NAME),
+            package.marketplace_sha256,
+            candidate["marketplace_manifest"]["sha256"],
         )
+
+        snapshot = candidate["snapshot"]
+        self.assertTrue(snapshot["created"])
+        self.assertEqual(package.plugin_sha256, snapshot["content_sha256"])
+        self.assertEqual(package.plugin_sha256, snapshot["after_run_sha256"])
+        self.assertEqual(package.bundle_sha256, snapshot["bundle_sha256"])
+        self.assertEqual(package.bundle_sha256, snapshot["after_run_bundle_sha256"])
+        installed = candidate["installed"]
+        self.assertTrue(installed["observed"])
+        self.assertTrue(installed["verified"])
+        self.assertTrue(installed["matches_snapshot"])
+        self.assertEqual(package.plugin_sha256, installed["after_install_sha256"])
+        self.assertEqual(package.plugin_sha256, installed["after_run_sha256"])
+
         definitions = report["definitions"]
         self.assertTrue(definitions["unchanged_during_run"])
         self.assertEqual(definitions["before_run"], definitions["after_run"])
@@ -1829,11 +1876,12 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertEqual(
             expected_definitions["content_sha256"], definitions["content_sha256"]
         )
+
         evaluator = report["evaluator"]
         self.assertTrue(evaluator["unchanged_during_run"])
         self.assertEqual(evaluator["before_run"], evaluator["after_run"])
         self.assertEqual(
-            "a157a6fd5b474e7aee7ff25fa22280eec4a28ffd823bbefe96acf3c35463dd97",
+            RUNNER._file_digest(RUNNER_PATH),
             evaluator["before_run"]["runner_sha256"],
         )
         self.assertEqual(
@@ -1860,10 +1908,17 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             definitions["before_run"]["linked_scenario_set_sha256"],
             evaluator["before_run"]["linked_scenario_set_sha256"],
         )
+
+        self.assertEqual("passed", report["discovery"]["status"])
         self.assertEqual("passed", report["discovery"]["explicit_invocation"])
         self.assertEqual("unmeasured", report["discovery"]["implicit_invocation"])
         self.assertEqual("unmeasured", report["measurement"]["external_effects"])
         self.assertEqual("unknown", report["measurement"]["model_cost"])
+        isolation = report["isolation"]
+        self.assertTrue(isolation["active_config_unchanged"])
+        self.assertTrue(isolation["temporary_artifacts_created"])
+        self.assertTrue(isolation["temporary_artifacts_removed"])
+        self.assertFalse(isolation["auth_copy_retained"])
 
         cases = {case.identifier: case for case in self.cases}
         self.assertEqual(set(cases), {result["id"] for result in report["results"]})
@@ -1890,7 +1945,9 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                     definition["scenario_sha256"],
                 )
                 self.assertEqual(
-                    hashlib.sha256(RUNNER.build_prompt(case).encode("utf-8")).hexdigest(),
+                    hashlib.sha256(
+                        RUNNER.build_prompt(case).encode("utf-8")
+                    ).hexdigest(),
                     definition["prompt_sha256"],
                 )
                 self.assertEqual("before-run", definition["snapshot"])
