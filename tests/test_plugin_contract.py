@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+VALIDATOR = ROOT / "scripts" / "validate_hydra.py"
+PLUGIN_NAME = "openboa-ai-native-sdlc"
+
+
+class PluginContractTests(unittest.TestCase):
+    def run_validator(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(VALIDATOR), str(root)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def copy_fixture(self, parent: Path) -> Path:
+        fixture = parent / "hydra"
+        shutil.copytree(
+            ROOT,
+            fixture,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv"),
+        )
+        return fixture
+
+    def test_repository_contract_is_valid(self) -> None:
+        result = self.run_validator(ROOT)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_marketplace_and_manifest_share_one_identity(self) -> None:
+        marketplace = json.loads(
+            (ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (ROOT / "plugins" / PLUGIN_NAME / ".codex-plugin" / "plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual("openboa-hydra", marketplace["name"])
+        self.assertEqual([PLUGIN_NAME], [item["name"] for item in marketplace["plugins"]])
+        self.assertEqual(PLUGIN_NAME, manifest["name"])
+        self.assertEqual("./skills/", manifest["skills"])
+        for forbidden in ("hooks", "mcpServers", "apps"):
+            self.assertNotIn(forbidden, manifest)
+
+    def test_installed_skill_contains_canonical_research(self) -> None:
+        research = (
+            ROOT
+            / "plugins"
+            / PLUGIN_NAME
+            / "skills"
+            / PLUGIN_NAME
+            / "references"
+            / "research"
+        )
+        for name in ("README.md", "source-register.csv", "evidence-to-design.md"):
+            with self.subTest(name=name):
+                self.assertTrue((research / name).is_file())
+
+    def test_wrong_marketplace_name_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            path = fixture / ".agents" / "plugins" / "marketplace.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["name"] = "personal"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            result = self.run_validator(fixture)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("openboa-hydra", result.stdout)
+
+    def test_missing_canonical_reference_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            target = (
+                fixture
+                / "plugins"
+                / PLUGIN_NAME
+                / "skills"
+                / PLUGIN_NAME
+                / "references"
+                / "doctrine.md"
+            )
+            target.unlink()
+            result = self.run_validator(fixture)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("doctrine.md", result.stdout)
+
+    def test_required_check_name_remains_compatible(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn("name: openboa-governance", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertNotIn("pull_request_target", workflow)
+
+
+if __name__ == "__main__":
+    unittest.main()

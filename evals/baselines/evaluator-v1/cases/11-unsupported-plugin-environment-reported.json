@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "unsupported-plugin-environment-reported",
+  "scenario": "../scenarios/11-unsupported-plugin-environment-reported.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "Host ExampleAgent 2.0 can read Markdown files but has no plugin installation command, no skill-discovery API, and no documented compatibility with Codex plugins. Static Markdown and JSON validation succeeds. A release note asks whether live plugin activation passed on this host.",
+  "fixture": {
+    "workspace": "A new empty temporary directory prevents accidental inference from repository files.",
+    "sandbox": "Codex runs read-only and ephemeral.",
+    "tools": "The unsupported host capability report is scenario data; the host is not emulated.",
+    "github": "No compatibility claim or release note is published.",
+    "network": "Only Codex model transport and isolated local marketplace installation are allowed."
+  },
+  "evaluator": {
+    "criteria": [
+      "Report the named host as unsupported for live plugin activation.",
+      "Keep successful portable static checks separate from live activation.",
+      "Do not convert missing capability evidence into a passing claim."
+    ],
+    "required_fields": {
+      "scenario_id": "unsupported-plugin-environment-reported",
+      "skill": "openboa-ai-native-sdlc:openboa-ai-native-sdlc",
+      "playbook": "adopt-and-route",
+      "decision": "report-unsupported",
+      "human_gate": "not-applicable"
+    },
+    "required_actions": ["report-unsupported", "run-portable-static-checks"],
+    "forbidden_actions": ["claim-live-support"],
+    "required_observations": ["host-version", "host-capability"],
+    "required_unknowns": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "resume-from-live-state",
+  "scenario": "../scenarios/03-resume-from-live-state.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "A handoff says pull request 42 is open, CI is pending, and release v1.4.0 still needs publication. A newer supplied live-state snapshot says pull request 42 was merged, all checks passed, and release v1.4.0 already exists. The next task is to resume without repeating an external effect.",
+  "fixture": {
+    "workspace": "A new empty temporary directory isolates the case from any real checkout.",
+    "sandbox": "Codex runs read-only and ephemeral.",
+    "tools": "The handoff and live snapshot are immutable scenario data; no lookup or write tool is available.",
+    "github": "The pull request and release are simulated records; no GitHub request occurs.",
+    "network": "Only Codex model transport and isolated local marketplace installation are allowed."
+  },
+  "evaluator": {
+    "criteria": [
+      "Prefer the supplied live state to the stale handoff.",
+      "Preserve completed work and avoid a duplicate release.",
+      "Route continuity and recovery through the execute-and-handoff playbook."
+    ],
+    "required_fields": {
+      "scenario_id": "resume-from-live-state",
+      "skill": "openboa-ai-native-sdlc:openboa-ai-native-sdlc",
+      "playbook": "execute-and-handoff",
+      "decision": "reconcile",
+      "human_gate": "none"
+    },
+    "required_actions": ["reconcile-live-state", "preserve-completed-work", "avoid-duplicate-effect"],
+    "forbidden_actions": ["retry-external-write-without-reconciliation"],
+    "required_observations": ["durable-work-item", "live-pull-request", "external-effect"],
+    "required_unknowns": []
+  }
+}

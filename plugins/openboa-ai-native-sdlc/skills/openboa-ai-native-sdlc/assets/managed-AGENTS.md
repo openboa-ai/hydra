@@ -1,4 +1,4 @@
-# OpenBoa Hydra
+# OpenBoa repository
 
 <!-- openboa-ai-native-sdlc:managed:start contract=0.1.0 -->
 ## Immediate collaboration contract
@@ -17,9 +17,5 @@
 
 ## Repository-local instructions
 
-- Hydra is the public `openboa-hydra` marketplace and portable source for the `openboa-ai-native-sdlc` plugin. It is not a live dispatcher, custom runtime, or database of product work.
-- Canonical shared doctrine, operating guidance, and playbooks live inside `plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/`. Root documents are thin navigation pages only.
-- Keep all public material safe to publish and in English. Do not import discarded implementation branches or retired material.
-- Preserve the required GitHub Actions check name `openboa-governance` until a separately approved ruleset migration has been verified.
-- Before release, run the repository validator, full unit and behavior tests, the official Codex plugin and skill validators, and a temporary installation rehearsal.
-- Doctrine, authority, marketplace identity, the managed contract, and the exact public merge are strategic gates. Routine implementation and remediation within an approved change remain agent-led.
+- Record repository-specific commands, architecture facts, acceptance checks, and stricter controls below this heading.
+- Keep secrets, private data, and temporary execution artifacts out of committed instructions.
