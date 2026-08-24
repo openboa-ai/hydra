@@ -452,31 +452,61 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot_path)
         self.assertFalse(snapshot_path.exists())
 
-    def test_relative_codex_executable_is_stable_across_working_directories(self) -> None:
+    def test_codex_executable_resolution_is_root_aware_and_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             tool = root / "tools" / "codex"
             tool.parent.mkdir()
             tool.write_bytes(b"test executable")
+            tool.chmod(0o755)
+            explicit_relative = RUNNER._resolve_codex_executable(
+                "./tools/codex", root
+            )
             self.assertEqual(
                 str(tool.resolve()),
-                RUNNER._stable_codex_bin("./tools/codex", root),
+                explicit_relative.command,
+            )
+            self.assertEqual("relative-path", explicit_relative.request_kind)
+            self.assertEqual("inside-repository", explicit_relative.resolved_location)
+
+            explicit_absolute = RUNNER._resolve_codex_executable(str(tool), root)
+            self.assertEqual(str(tool.resolve()), explicit_absolute.command)
+            self.assertEqual("absolute-path", explicit_absolute.request_kind)
+
+            blocked = root / "blocked" / "codex"
+            blocked.parent.mkdir()
+            blocked.write_bytes(b"not executable")
+            selected = RUNNER._resolve_codex_executable(
+                "codex", root, path_env=f"blocked{RUNNER.os.pathsep}tools"
             )
             self.assertEqual(
-                str((root.parent / "codex").resolve()),
-                RUNNER._stable_codex_bin("../codex", root),
+                str(tool.resolve()),
+                selected.command,
             )
-            tool.chmod(0o755)
-            with mock.patch.dict("os.environ", {"PATH": "tools"}):
-                self.assertEqual(
-                    str(tool.resolve()),
-                    RUNNER._stable_codex_bin("codex", root),
-                )
-            with mock.patch.dict("os.environ", {"PATH": "missing"}):
-                self.assertEqual("codex", RUNNER._stable_codex_bin("codex", root))
+            self.assertEqual("bare-name", selected.request_kind)
+            self.assertEqual("codex", selected.request_name)
+            self.assertEqual("repository-root-aware-path-search", selected.resolution_method)
+            self.assertEqual(1, selected.matched_path_entry_index)
+            self.assertEqual("repository-relative", selected.matched_path_entry_kind)
 
-    def test_run_stabilizes_relative_codex_bin_for_every_execution_stage(self) -> None:
-        expected = str((ROOT / "tools" / "codex").resolve())
+            root_tool = root / "codex"
+            root_tool.write_bytes(b"root executable")
+            root_tool.chmod(0o755)
+            empty_entry = RUNNER._resolve_codex_executable(
+                "codex", root, path_env=""
+            )
+            self.assertEqual(str(root_tool.resolve()), empty_entry.command)
+            self.assertEqual(
+                "empty-as-repository-root", empty_entry.matched_path_entry_kind
+            )
+
+            missing = RUNNER._resolve_codex_executable(
+                "codex", root, path_env="missing"
+            )
+            self.assertIsNone(missing.command)
+            self.assertEqual("unresolved", missing.resolved_location)
+
+    def test_run_records_and_propagates_bare_codex_resolution(self) -> None:
         observed: list[tuple[str, str]] = []
         probe_count = 0
 
@@ -512,7 +542,17 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             observed.append(("case", codex_bin))
             return RUNNER._unmeasured(case, "test execution")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with (
+            tempfile.TemporaryDirectory(
+                dir=ROOT, prefix=".codex-provenance-test-"
+            ) as tool_dir,
+            tempfile.TemporaryDirectory() as temp_dir,
+        ):
+            tool = Path(tool_dir) / "codex"
+            tool.write_bytes(b"test executable")
+            tool.chmod(0o755)
+            expected = str(tool.resolve())
+            relative_entry = tool.parent.relative_to(ROOT).as_posix()
             auth = Path(temp_dir) / "auth.json"
             auth.write_text("{}\n", encoding="utf-8")
             args = argparse.Namespace(
@@ -528,7 +568,15 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 require_complete=False,
             )
             with (
-                mock.patch.object(RUNNER.shutil, "which", return_value=expected),
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "PATH": (
+                            f"{relative_entry}{RUNNER.os.pathsep}"
+                            f"{RUNNER.os.environ.get('PATH', RUNNER.os.defpath)}"
+                        )
+                    },
+                ),
                 mock.patch.object(RUNNER, "_codex_version", side_effect=fake_version),
                 mock.patch.object(RUNNER, "_install_candidate", side_effect=fake_install),
                 mock.patch.object(
@@ -536,7 +584,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 ),
                 mock.patch.object(RUNNER, "_run_case", side_effect=fake_case),
             ):
-                RUNNER.run_evaluations(args)
+                report = RUNNER.run_evaluations(args)
 
         self.assertEqual(
             ["version", "install", "discovery", "discovery", "case"],
@@ -546,6 +594,186 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             all(codex_bin == expected for _stage, codex_bin in observed),
             observed,
         )
+        executable = report["host"]["codex_executable"]
+        self.assertEqual(
+            {"kind": "bare-name", "name": "codex"}, executable["request"]
+        )
+        self.assertEqual(
+            "repository-root-aware-path-search",
+            executable["resolution"]["method"],
+        )
+        self.assertEqual(
+            {"index": 0, "kind": "repository-relative"},
+            executable["resolution"]["matched_path_entry"],
+        )
+        self.assertEqual(
+            "inside-repository", executable["resolution"]["resolved_location"]
+        )
+        self.assertNotIn("resolved_repository_path", executable["resolution"])
+        self.assertEqual("absolute-path", executable["resolution"]["stable_command_kind"])
+        self.assertTrue(executable["identity"]["attribution_complete"])
+        serialized = json.dumps(report)
+        self.assertNotIn(str(ROOT), serialized)
+        self.assertNotIn(str(Path.home()), serialized)
+        self.assertNotIn(expected, serialized)
+        self.assertNotIn(relative_entry, serialized)
+
+    def test_codex_launcher_identity_tracks_content_mode_and_disappearance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tool = root / "codex"
+            tool.write_bytes(b"first")
+            tool.chmod(0o755)
+            executable = RUNNER._resolve_codex_executable(str(tool), root)
+            first = RUNNER._codex_executable_identity(executable)
+            self.assertEqual("observed", first["status"])
+
+            tool.write_bytes(b"second")
+            second = RUNNER._codex_executable_identity(executable)
+            self.assertNotEqual(first, second)
+
+            tool.chmod(0o644)
+            non_executable = RUNNER._codex_executable_identity(executable)
+            self.assertEqual("unavailable", non_executable["status"])
+            self.assertFalse(non_executable["executable"])
+
+            tool.unlink()
+            missing = RUNNER._codex_executable_identity(executable)
+            self.assertEqual("missing", missing["file_type"])
+
+    def test_codex_version_accepts_only_a_bounded_public_value(self) -> None:
+        self.assertEqual(
+            "codex-cli 0.144.5",
+            RUNNER._safe_codex_version(b"codex-cli 0.144.5\n"),
+        )
+        self.assertEqual(
+            "unavailable",
+            RUNNER._safe_codex_version(
+                f"codex-cli {Path.home()}/private-codex\n".encode("utf-8")
+            ),
+        )
+        self.assertEqual("unavailable", RUNNER._safe_codex_version(b"\xff\n"))
+
+    def test_changed_codex_launcher_invalidates_selected_run(self) -> None:
+        selected = {
+            "id": "selected",
+            "status": "passed",
+            "method_match": True,
+            "evidence": {},
+        }
+        unselected = {
+            "id": "unselected",
+            "status": "passed",
+            "method_match": True,
+            "evidence": {},
+        }
+        discovery = {
+            "status": "passed",
+            "explicit_invocation": "passed",
+            "evidence": {},
+        }
+        before = {
+            "runner_sha256": "same",
+            "codex_executable_identity": {
+                "status": "observed",
+                "sha256": "before",
+            },
+        }
+        after = {
+            "runner_sha256": "same",
+            "codex_executable_identity": {
+                "status": "observed",
+                "sha256": "after",
+            },
+        }
+
+        self.assertFalse(
+            RUNNER.apply_evaluator_attribution(
+                results=[selected, unselected],
+                discovery=discovery,
+                selected_ids={"selected"},
+                before_digests=before,
+                after_digests=after,
+                execution_requested=True,
+            )
+        )
+        self.assertEqual("unmeasured", selected["status"])
+        self.assertEqual("passed", unselected["status"])
+        self.assertEqual("unmeasured", discovery["status"])
+
+    def test_launcher_removal_is_sanitized_and_invalidates_the_live_run(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(
+                dir=ROOT, prefix=".codex-removal-test-"
+            ) as tool_dir,
+            tempfile.TemporaryDirectory() as temp_dir,
+        ):
+            tool = Path(tool_dir) / "codex"
+            tool.write_bytes(b"test executable")
+            tool.chmod(0o755)
+            absolute_tool = str(tool.resolve())
+            relative_entry = tool.parent.relative_to(ROOT).as_posix()
+            auth = Path(temp_dir) / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+
+            def fake_install(*, snapshot, **_kwargs):
+                tool.unlink()
+                return (
+                    RUNNER.InstalledCandidate(
+                        root=snapshot.plugin_root,
+                        after_install_sha256=snapshot.package.plugin_sha256,
+                        evidence={"plugin": RUNNER.PLUGIN_NAME, "enabled": True},
+                    ),
+                    None,
+                )
+
+            args = argparse.Namespace(
+                root=ROOT,
+                codex=True,
+                case_ids=["routine-no-human"],
+                codex_bin="codex",
+                candidate_revision="HEAD",
+                auth_source=auth,
+                output=None,
+                run_id="removed-codex-launcher-test",
+                timeout_seconds=30,
+                require_complete=False,
+            )
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "PATH": (
+                            f"{relative_entry}{RUNNER.os.pathsep}"
+                            f"{RUNNER.os.environ.get('PATH', RUNNER.os.defpath)}"
+                        )
+                    },
+                ),
+                mock.patch.object(
+                    RUNNER, "_codex_version", return_value="codex-cli test"
+                ),
+                mock.patch.object(
+                    RUNNER, "_install_candidate", side_effect=fake_install
+                ),
+            ):
+                report = RUNNER.run_evaluations(args)
+
+        selected = next(
+            result
+            for result in report["results"]
+            if result["id"] == "routine-no-human"
+        )
+        self.assertEqual("unmeasured", selected["status"])
+        self.assertEqual("unmeasured", report["discovery"]["status"])
+        self.assertFalse(report["evaluator"]["unchanged_during_run"])
+        identity = report["host"]["codex_executable"]["identity"]
+        self.assertFalse(identity["attribution_complete"])
+        self.assertEqual("missing", identity["after_run"]["file_type"])
+        serialized = json.dumps(report)
+        self.assertNotIn(str(ROOT), serialized)
+        self.assertNotIn(str(Path.home()), serialized)
+        self.assertNotIn(absolute_tool, serialized)
+        self.assertNotIn(relative_entry, serialized)
 
     def test_candidate_git_objects_ignore_local_replace_refs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1280,7 +1508,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 root=ROOT,
                 codex=True,
                 case_ids=["routine-no-human"],
-                codex_bin="codex",
+                codex_bin=sys.executable,
                 candidate_revision="HEAD",
                 auth_source=auth,
                 output=None,
@@ -1351,7 +1579,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 root=ROOT,
                 codex=True,
                 case_ids=["routine-no-human"],
-                codex_bin="codex",
+                codex_bin=sys.executable,
                 candidate_revision="HEAD",
                 auth_source=auth,
                 output=None,
@@ -1489,7 +1717,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 root=root,
                 codex=True,
                 case_ids=["routine-no-human"],
-                codex_bin="codex",
+                codex_bin=sys.executable,
                 auth_source=auth,
                 output=None,
                 run_id="definition-race-test",
@@ -2101,11 +2329,24 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             report["evaluator"]["before_run"]["runner_sha256"],
         )
 
-    def test_r8_result_is_attributable_and_core_complete(self) -> None:
-        self._assert_current_attributable_result(
-            R8_RESULT,
+    def test_r8_result_is_immutable_historical_evidence(self) -> None:
+        self.assertEqual(
             "240650def695529056fd10ac82a2f6fcd607ac0a6231b7138526de4b9cd2ab83",
+            hashlib.sha256(R8_RESULT.read_bytes()).hexdigest(),
+        )
+        report = json.loads(R8_RESULT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual(
             "6d206a9f9fdd68620ac501d0de695e6037746a27",
+            report["candidate"]["source"]["revision"],
+        )
+        self.assertTrue(report["candidate"]["attribution_complete"])
+        self.assertEqual(
+            "1a139a89a6fb93542477b50f54a789c91fe2d054690c35ffb0f52d85108677c8",
+            report["evaluator"]["before_run"]["runner_sha256"],
         )
 
 

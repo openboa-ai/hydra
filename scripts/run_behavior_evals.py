@@ -153,6 +153,18 @@ class CommandResult:
     stderr: str
 
 
+@dataclasses.dataclass(frozen=True)
+class CodexExecutable:
+    command: str | None
+    request_kind: str
+    request_name: str | None
+    resolution_method: str
+    matched_path_entry_index: int | None
+    matched_path_entry_kind: str | None
+    resolved_location: str
+    resolved_basename: str | None
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -525,10 +537,17 @@ def _run_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         timeout=timeout,
     )
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _safe_os_failure(action: str, error: OSError) -> str:
+    suffix = f" (operating-system error {error.errno})" if error.errno else ""
+    return f"{action} failed{suffix}"
 
 
 def _parse_json_output(text: str, *, source: str) -> dict[str, Any]:
@@ -1118,10 +1137,31 @@ def _candidate_snapshot(root: Path, revision: str) -> Iterator[CandidateSnapshot
         temporary.cleanup()
 
 
-def _stable_codex_bin(codex_bin: str, root: Path) -> str:
-    """Keep the selected executable stable across harness cwd changes."""
+def _usable_executable(path: Path) -> Path | None:
+    try:
+        resolved = path.resolve(strict=True)
+        metadata = resolved.stat()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
+        return None
+    return resolved
+
+
+def _safe_executable_name(name: str) -> str:
+    return name if re.fullmatch(r"[A-Za-z0-9._+-]{1,128}", name) else "redacted"
+
+
+def _resolve_codex_executable(
+    codex_bin: str, root: Path, *, path_env: str | None = None
+) -> CodexExecutable:
+    """Select one absolute executable without publishing its host path."""
     if not codex_bin:
         raise CaseDefinitionError("--codex-bin must not be empty")
+    try:
+        root = root.expanduser().resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CaseDefinitionError(f"cannot resolve repository root: {exc}") from exc
     path = Path(codex_bin).expanduser()
     separators = tuple(
         separator for separator in (os.sep, os.altsep) if separator is not None
@@ -1131,23 +1171,127 @@ def _stable_codex_bin(codex_bin: str, root: Path) -> str:
     )
     try:
         if is_bare_name:
-            raw_path = os.environ.get("PATH", os.defpath)
-            root_aware_path = os.pathsep.join(
-                str(
+            raw_path = (
+                path_env
+                if path_env is not None
+                else os.environ.get("PATH", os.defpath)
+            )
+            for index, item in enumerate(raw_path.split(os.pathsep)):
+                candidate = Path(item or os.curdir)
+                if not item:
+                    entry_kind = "empty-as-repository-root"
+                elif candidate.is_absolute():
+                    entry_kind = "absolute"
+                else:
+                    entry_kind = "repository-relative"
+                search_root = (
                     candidate.resolve(strict=False)
                     if candidate.is_absolute()
                     else (root / candidate).resolve(strict=False)
                 )
-                for item in raw_path.split(os.pathsep)
-                for candidate in (Path(item or os.curdir),)
+                selected = shutil.which(codex_bin, path=str(search_root))
+                if selected is None:
+                    continue
+                resolved = _usable_executable(Path(selected))
+                if resolved is None:
+                    continue
+                location = "inside-repository" if _inside(resolved, root) else "external"
+                return CodexExecutable(
+                    command=str(resolved),
+                    request_kind="bare-name",
+                    request_name=_safe_executable_name(codex_bin),
+                    resolution_method="repository-root-aware-path-search",
+                    matched_path_entry_index=index,
+                    matched_path_entry_kind=entry_kind,
+                    resolved_location=location,
+                    resolved_basename=_safe_executable_name(resolved.name),
+                )
+            return CodexExecutable(
+                command=None,
+                request_kind="bare-name",
+                request_name=_safe_executable_name(codex_bin),
+                resolution_method="repository-root-aware-path-search",
+                matched_path_entry_index=None,
+                matched_path_entry_kind=None,
+                resolved_location="unresolved",
+                resolved_basename=None,
             )
-            resolved = shutil.which(codex_bin, path=root_aware_path)
-            if resolved is None:
-                return codex_bin
-            path = Path(resolved)
-        return str((path if path.is_absolute() else root / path).resolve(strict=False))
+
+        request_kind = "absolute-path" if path.is_absolute() or path.drive else "relative-path"
+        candidate = path if path.is_absolute() else root / path
+        resolved = _usable_executable(candidate)
+        if resolved is None:
+            return CodexExecutable(
+                command=None,
+                request_kind=request_kind,
+                request_name=None,
+                resolution_method="explicit-path",
+                matched_path_entry_index=None,
+                matched_path_entry_kind=None,
+                resolved_location="unresolved",
+                resolved_basename=None,
+            )
+        location = "inside-repository" if _inside(resolved, root) else "external"
+        return CodexExecutable(
+            command=str(resolved),
+            request_kind=request_kind,
+            request_name=None,
+            resolution_method="explicit-path",
+            matched_path_entry_index=None,
+            matched_path_entry_kind=None,
+            resolved_location=location,
+            resolved_basename=_safe_executable_name(resolved.name),
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         raise CaseDefinitionError(f"cannot resolve --codex-bin: {exc}") from exc
+
+
+def _codex_executable_identity(executable: CodexExecutable) -> dict[str, Any]:
+    if executable.command is None:
+        return {
+            "status": "unavailable",
+            "file_type": "unavailable",
+            "executable": False,
+            "mode": "unavailable",
+            "sha256": "unavailable",
+        }
+    path = Path(executable.command)
+    try:
+        metadata = path.stat()
+    except (OSError, RuntimeError, ValueError):
+        return {
+            "status": "unavailable",
+            "file_type": "missing",
+            "executable": False,
+            "mode": "unavailable",
+            "sha256": "unavailable",
+        }
+    is_regular = stat.S_ISREG(metadata.st_mode)
+    is_executable = is_regular and os.access(path, os.X_OK)
+    try:
+        content_sha256 = _file_digest(path) if is_executable else "unavailable"
+    except (OSError, RuntimeError, ValueError):
+        return {
+            "status": "unavailable",
+            "file_type": "unreadable",
+            "executable": False,
+            "mode": "unavailable",
+            "sha256": "unavailable",
+        }
+    return {
+        "status": "observed" if is_executable else "unavailable",
+        "file_type": "regular-file" if is_regular else "not-regular-file",
+        "executable": is_executable,
+        "mode": format(stat.S_IMODE(metadata.st_mode), "04o"),
+        "sha256": content_sha256,
+    }
+
+
+def _safe_codex_version(raw_output: bytes) -> str:
+    output = raw_output.decode("utf-8", errors="replace").strip()
+    if re.fullmatch(r"codex-cli [0-9A-Za-z][0-9A-Za-z.+-]{0,63}", output):
+        return output
+    return "unavailable"
 
 
 def _codex_version(codex_bin: str, root: Path) -> str:
@@ -1158,13 +1302,16 @@ def _codex_version(codex_bin: str, root: Path) -> str:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             check=False,
             timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unavailable"
-    return completed.stdout.strip() if completed.returncode == 0 else "unavailable"
+    return (
+        _safe_codex_version(completed.stdout)
+        if completed.returncode == 0
+        else "unavailable"
+    )
 
 
 def _default_auth_source() -> Path:
@@ -1269,7 +1416,7 @@ def _run_case(
         except OSError as exc:
             return _unmeasured(
                 case,
-                f"Codex task could not start: {exc}",
+                _safe_os_failure("Codex task start", exc),
                 {"execution_started": False, "decision_record": "missing"},
             )
 
@@ -1312,7 +1459,13 @@ def _run_case(
             output = _parse_json_output(
                 output_path.read_text(encoding="utf-8"), source=f"case {case.identifier}"
             )
-        except (OSError, RuntimeError) as exc:
+        except OSError as exc:
+            return _unmeasured(
+                case,
+                _safe_os_failure("Codex decision record read", exc),
+                base_evidence,
+            )
+        except RuntimeError as exc:
             return _unmeasured(case, str(exc), base_evidence)
 
         status, criteria, method = evaluate_output(
@@ -1367,11 +1520,17 @@ def _run_discovery_probe(
         )
         try:
             completed = _run_command(command, cwd=root, env=env, timeout=timeout)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired:
             return {
                 "status": "unmeasured",
-                "reason": f"discovery probe could not complete: {exc}",
-                "evidence": {"execution_started": not isinstance(exc, OSError)},
+                "reason": "discovery probe exceeded the harness timeout",
+                "evidence": {"execution_started": True},
+            }
+        except OSError as exc:
+            return {
+                "status": "unmeasured",
+                "reason": _safe_os_failure("discovery probe start", exc),
+                "evidence": {"execution_started": False},
             }
 
         events = _parse_events(completed.stdout)
@@ -1490,8 +1649,10 @@ def _install_candidate(
             result = _run_command(
                 command, cwd=snapshot.root, env=env, timeout=timeout
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return None, f"Codex {label} command unavailable: {exc}"
+        except subprocess.TimeoutExpired:
+            return None, f"Codex {label} command exceeded the harness timeout"
+        except OSError as exc:
+            return None, _safe_os_failure(f"Codex {label} command start", exc)
         if result.returncode != 0:
             return None, f"Codex {label} command failed in the isolated home"
         try:
@@ -1549,8 +1710,8 @@ def _install_candidate(
         listed_marketplace_root = Path(
             listed_marketplace_source["source"]
         ).resolve(strict=True)
-    except (KeyError, OSError, RuntimeError, ValueError) as exc:
-        return None, f"Codex install source evidence was incomplete: {exc}"
+    except (KeyError, OSError, RuntimeError, ValueError):
+        return None, "Codex install source evidence was incomplete"
     snapshot_root = snapshot.root.resolve(strict=True)
     snapshot_plugin_root = snapshot.plugin_root.resolve(strict=True)
     if (
@@ -1584,8 +1745,8 @@ def _install_candidate(
         cache_root = (codex_home / "plugins" / "cache").resolve(strict=True)
         installed_root = expected_installed_path.resolve(strict=True)
         reported_installed_root = reported_installed_path.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        return None, f"Codex installedPath was not readable: {exc}"
+    except (OSError, RuntimeError, ValueError):
+        return None, "Codex installedPath was not readable"
     allowed_reported_paths = {
         os.path.normpath(str(expected_installed_path)),
         os.path.normpath(str(installed_root)),
@@ -1601,8 +1762,8 @@ def _install_candidate(
     try:
         installed_sha256 = _filesystem_plugin_digest(installed_root)
         snapshot_sha256 = _filesystem_plugin_digest(snapshot.plugin_root)
-    except CaseDefinitionError as exc:
-        return None, str(exc)
+    except CaseDefinitionError:
+        return None, "installed candidate content could not be verified"
     if (
         snapshot_sha256 != snapshot.package.plugin_sha256
         or installed_sha256 != snapshot.package.plugin_sha256
@@ -1684,8 +1845,8 @@ def apply_evaluator_attribution(
     results: list[dict[str, Any]],
     discovery: dict[str, Any],
     selected_ids: set[str],
-    before_digests: dict[str, str],
-    after_digests: dict[str, str],
+    before_digests: dict[str, Any],
+    after_digests: dict[str, Any],
     execution_requested: bool,
 ) -> bool:
     unchanged = before_digests == after_digests
@@ -1700,7 +1861,8 @@ def apply_evaluator_attribution(
         }
         result["status"] = "unmeasured"
         result["reason"] = (
-            "runner, evaluator schema, case set, or linked scenario changed during the run"
+            "runner, evaluator schema, case set, linked scenario, or Codex launcher "
+            "changed during the run"
         )
         result["method_match"] = "unmeasured"
     discovery["evidence"]["evaluator_attribution"] = {
@@ -1710,8 +1872,8 @@ def apply_evaluator_attribution(
         status="unmeasured",
         explicit_invocation="unmeasured",
         reason=(
-            "runner, evaluator schema, case set, or linked scenario changed during "
-            "the discovery run"
+            "runner, evaluator schema, case set, linked scenario, or Codex launcher "
+            "changed during the discovery run"
         ),
     )
     return unchanged
@@ -1768,6 +1930,8 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         raise CaseDefinitionError(
             f"decision output schema must be an object: {schema_path}"
         )
+    codex_executable = _resolve_codex_executable(args.codex_bin, root)
+    codex_executable_before = _codex_executable_identity(codex_executable)
     evaluator_before = {
         "runner_sha256": _file_digest(runner_path),
         "case_schema_sha256": _bytes_digest(case_schema_bytes),
@@ -1777,10 +1941,16 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         "linked_scenario_set_sha256": definitions_before[
             "linked_scenario_set_sha256"
         ],
+        "codex_executable_identity": codex_executable_before,
     }
 
-    codex_bin = _stable_codex_bin(args.codex_bin, root)
-    codex_version = _codex_version(codex_bin, root)
+    codex_bin = codex_executable.command
+    codex_version = (
+        _codex_version(codex_bin, root)
+        if codex_bin is not None
+        and codex_executable_before["status"] == "observed"
+        else "unavailable"
+    )
     active_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
     active_config = active_home / "config.toml"
     active_config_before = _file_digest(active_config)
@@ -1834,6 +2004,7 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
                 evidence={"codex_cli": codex_version},
             )
         else:
+            assert codex_bin is not None
             with (
                 tempfile.TemporaryDirectory(prefix="openboa-behavior-home-") as home_dir,
                 tempfile.TemporaryDirectory(
@@ -1972,6 +2143,7 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         attributable=candidate_integrity,
         execution_requested=args.codex,
     )
+    codex_executable_after = _codex_executable_identity(codex_executable)
     evaluator_after = {
         "runner_sha256": _file_digest(runner_path),
         "case_schema_sha256": _file_digest(case_schema_path),
@@ -1981,6 +2153,7 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         "linked_scenario_set_sha256": definitions_after[
             "linked_scenario_set_sha256"
         ],
+        "codex_executable_identity": codex_executable_after,
     }
     evaluator_unchanged = apply_evaluator_attribution(
         results=results,
@@ -2122,6 +2295,50 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         },
         "host": {
             "codex_cli": codex_version,
+            "codex_executable": {
+                "request": {
+                    "kind": codex_executable.request_kind,
+                    **(
+                        {"name": codex_executable.request_name}
+                        if codex_executable.request_name is not None
+                        else {}
+                    ),
+                },
+                "resolution": {
+                    "method": codex_executable.resolution_method,
+                    "status": (
+                        "resolved"
+                        if codex_executable.command is not None
+                        else "unresolved"
+                    ),
+                    "matched_path_entry": (
+                        {
+                            "index": codex_executable.matched_path_entry_index,
+                            "kind": codex_executable.matched_path_entry_kind,
+                        }
+                        if codex_executable.matched_path_entry_index is not None
+                        else None
+                    ),
+                    "resolved_location": codex_executable.resolved_location,
+                    "resolved_basename": codex_executable.resolved_basename,
+                    "stable_command_kind": (
+                        "absolute-path"
+                        if codex_executable.command is not None
+                        else "unavailable"
+                    ),
+                },
+                "identity": {
+                    "before_run": codex_executable_before,
+                    "after_run": codex_executable_after,
+                    "unchanged_during_run": (
+                        codex_executable_before == codex_executable_after
+                    ),
+                    "attribution_complete": (
+                        codex_executable_before["status"] == "observed"
+                        and codex_executable_before == codex_executable_after
+                    ),
+                },
+            },
             "operating_system": platform.system(),
             "architecture": platform.machine(),
             "python": platform.python_version(),
