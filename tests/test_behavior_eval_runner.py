@@ -1844,7 +1844,10 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             "0e72f8e46724d4818acbb44ed9b6421611a9a368",
             source["revision"],
         )
-        package = RUNNER._git_candidate_package(ROOT, source["revision"])
+        # Pull-request CI checks out a depth-one synthetic merge. Its current
+        # plugin tree and marketplace blob must still equal the recorded
+        # implementation revision even when that parent commit is unavailable.
+        package = RUNNER._git_candidate_package(ROOT, "HEAD")
         self.assertEqual(package.plugin_tree_oid, source["plugin_tree_oid"])
         self.assertEqual(package.marketplace_blob_oid, source["marketplace_blob_oid"])
         self.assertEqual(package.plugin_sha256, candidate["content_sha256"])
