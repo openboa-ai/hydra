@@ -1118,6 +1118,24 @@ def _candidate_snapshot(root: Path, revision: str) -> Iterator[CandidateSnapshot
         temporary.cleanup()
 
 
+def _stable_codex_bin(codex_bin: str, root: Path) -> str:
+    """Keep an explicit relative executable stable across harness cwd changes."""
+    if not codex_bin:
+        raise CaseDefinitionError("--codex-bin must not be empty")
+    path = Path(codex_bin).expanduser()
+    separators = tuple(
+        separator for separator in (os.sep, os.altsep) if separator is not None
+    )
+    if not path.is_absolute() and not path.drive and not any(
+        separator in codex_bin for separator in separators
+    ):
+        return codex_bin
+    try:
+        return str((path if path.is_absolute() else root / path).resolve(strict=False))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CaseDefinitionError(f"cannot resolve --codex-bin: {exc}") from exc
+
+
 def _codex_version(codex_bin: str, root: Path) -> str:
     try:
         completed = subprocess.run(
@@ -1747,7 +1765,8 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
         ],
     }
 
-    codex_version = _codex_version(args.codex_bin, root)
+    codex_bin = _stable_codex_bin(args.codex_bin, root)
+    codex_version = _codex_version(codex_bin, root)
     active_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
     active_config = active_home / "config.toml"
     active_config_before = _file_digest(active_config)
@@ -1825,7 +1844,7 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
                     installed_candidate, install_error = _install_candidate(
                         snapshot=snapshot,
                         codex_home=codex_home,
-                        codex_bin=args.codex_bin,
+                        codex_bin=codex_bin,
                         timeout=args.timeout_seconds,
                     )
                     if install_error:
@@ -1845,13 +1864,13 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
                         candidate_probe = _run_discovery_probe(
                             root=root,
                             codex_home=codex_home,
-                            codex_bin=args.codex_bin,
+                            codex_bin=codex_bin,
                             timeout=args.timeout_seconds,
                         )
                         negative_control = _run_discovery_probe(
                             root=root,
                             codex_home=control_home,
-                            codex_bin=args.codex_bin,
+                            codex_bin=codex_bin,
                             timeout=args.timeout_seconds,
                         )
                         discovery = _evaluate_discovery(
@@ -1870,7 +1889,7 @@ def run_evaluations(args: argparse.Namespace) -> dict[str, Any]:
                                 case,
                                 root=root,
                                 codex_home=codex_home,
-                                codex_bin=args.codex_bin,
+                                codex_bin=codex_bin,
                                 schema_bytes=output_schema_bytes,
                                 timeout=args.timeout_seconds,
                             )

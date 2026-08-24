@@ -440,6 +440,93 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot_path)
         self.assertFalse(snapshot_path.exists())
 
+    def test_relative_codex_executable_is_stable_across_working_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tool = root / "tools" / "codex"
+            tool.parent.mkdir()
+            tool.write_bytes(b"test executable")
+            self.assertEqual(
+                str(tool.resolve()),
+                RUNNER._stable_codex_bin("./tools/codex", root),
+            )
+            self.assertEqual(
+                str((root.parent / "codex").resolve()),
+                RUNNER._stable_codex_bin("../codex", root),
+            )
+            self.assertEqual("codex", RUNNER._stable_codex_bin("codex", root))
+
+    def test_run_stabilizes_relative_codex_bin_for_every_execution_stage(self) -> None:
+        expected = str((ROOT / "tools" / "codex").resolve())
+        observed: list[tuple[str, str]] = []
+        probe_count = 0
+
+        def fake_version(codex_bin, _root):
+            observed.append(("version", codex_bin))
+            return "codex-cli test"
+
+        def fake_install(*, snapshot, codex_bin, **_kwargs):
+            observed.append(("install", codex_bin))
+            return (
+                RUNNER.InstalledCandidate(
+                    root=snapshot.plugin_root,
+                    after_install_sha256=snapshot.package.plugin_sha256,
+                    evidence={"plugin": RUNNER.PLUGIN_NAME, "enabled": True},
+                ),
+                None,
+            )
+
+        def fake_probe(*, codex_bin, **_kwargs):
+            nonlocal probe_count
+            observed.append(("discovery", codex_bin))
+            probe_count += 1
+            return {
+                "status": "observed",
+                "reason": "test probe",
+                "evidence": {
+                    "tool_calls": 0,
+                    "marker_match": probe_count == 1,
+                },
+            }
+
+        def fake_case(case, *, codex_bin, **_kwargs):
+            observed.append(("case", codex_bin))
+            return RUNNER._unmeasured(case, "test execution")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth = Path(temp_dir) / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            args = argparse.Namespace(
+                root=ROOT,
+                codex=True,
+                case_ids=["routine-no-human"],
+                codex_bin="./tools/codex",
+                candidate_revision="HEAD",
+                auth_source=auth,
+                output=None,
+                run_id="relative-codex-bin-test",
+                timeout_seconds=30,
+                require_complete=False,
+            )
+            with (
+                mock.patch.object(RUNNER, "_codex_version", side_effect=fake_version),
+                mock.patch.object(RUNNER, "_install_candidate", side_effect=fake_install),
+                mock.patch.object(
+                    RUNNER, "_run_discovery_probe", side_effect=fake_probe
+                ),
+                mock.patch.object(RUNNER, "_run_case", side_effect=fake_case),
+            ):
+                RUNNER.run_evaluations(args)
+
+        self.assertEqual(
+            ["version", "install", "discovery", "discovery", "case"],
+            [stage for stage, _codex_bin in observed],
+        )
+        self.assertTrue(
+            all(codex_bin == expected for _stage, codex_bin in observed),
+            observed,
+        )
+
     def test_candidate_git_objects_ignore_local_replace_refs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repository = Path(temp_dir) / "repository"
@@ -1820,7 +1907,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             report["evaluator"]["before_run"]["runner_sha256"],
         )
 
-    def test_r6_result_is_attributable_and_core_complete(self) -> None:
+    def test_r6_result_is_immutable_historical_evidence(self) -> None:
         self.assertEqual(
             "0a6efc9c0844c1736549d450b2d05ebb0a9b16de1040421a7cb1233dc0891083",
             hashlib.sha256(R6_RESULT.read_bytes()).hexdigest(),
@@ -1884,7 +1971,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertTrue(evaluator["unchanged_during_run"])
         self.assertEqual(evaluator["before_run"], evaluator["after_run"])
         self.assertEqual(
-            RUNNER._file_digest(RUNNER_PATH),
+            "19e385dba09150826439a831a460f235c1cd768f20e4604ddbb6701ee0c695fe",
             evaluator["before_run"]["runner_sha256"],
         )
         self.assertEqual(
