@@ -113,6 +113,9 @@ def validate(root: Path) -> list[str]:
         skill_root / "agents" / "openai.yaml",
         assets_root / "managed-AGENTS.md",
         skill_root / "scripts" / "sync_agents.py",
+        root / ".github" / "openboa-governance.yml",
+        root / ".github" / "workflows" / "openboa-governance-v2.yml",
+        root / "scripts" / "validate_governance.py",
         root / "evals" / "README.md",
         root / "research" / "openboa-ai-native-sdlc-v0.1" / "README.md",
         root / "research" / "openboa-ai-native-sdlc-v0.1" / "evidence-to-design.md",
@@ -150,6 +153,7 @@ def validate(root: Path) -> list[str]:
             validate_managed_agents(path, errors)
 
     validate_workflow(root / ".github" / "workflows" / "validate.yml", errors)
+    validate_governance_config(root / ".github" / "openboa-governance.yml", errors)
     validate_research(root, errors)
     validate_scenarios(root, errors)
     validate_markdown(root, errors)
@@ -637,6 +641,29 @@ def validate_workflow(path: Path, errors: list[str]) -> None:
             )
     if any("pull_request_target" in content for _, _, content in active_lines):
         errors.append("validation workflow must not use pull_request_target")
+
+
+def validate_governance_config(path: Path, errors: list[str]) -> None:
+    if not is_regular_file(path):
+        errors.append("missing .github/openboa-governance.yml")
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(f"unable to read governance config: {exc}")
+        return
+    if len(re.findall(r"(?m)^version:\s*1\s*$", text)) != 1:
+        errors.append("governance config must declare exactly `version: 1`")
+    if len(re.findall(r"(?m)^protected_paths:\s*$", text)) != 1:
+        errors.append("governance config must contain exactly one protected_paths list")
+    for protected in (
+        "AGENTS.md",
+        ".github/openboa-governance.yml",
+        ".github/workflows/**",
+        "scripts/validate_governance.py",
+    ):
+        if not re.search(rf"(?m)^  - {re.escape(protected)}\s*$", text):
+            errors.append(f"governance config must protect `{protected}`")
 
 
 def validate_research(root: Path, errors: list[str]) -> None:
