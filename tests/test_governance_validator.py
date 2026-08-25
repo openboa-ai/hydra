@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -70,12 +71,36 @@ class GovernanceValidatorTests(unittest.TestCase):
             workflow = trusted / ".github" / "workflows" / "openboa-governance-v2.yml"
             text = workflow.read_text(encoding="utf-8")
             text = text.replace("contents: read", "contents: write")
-            text = text.replace("  pull_request:\n", "  pull_request_target:\n")
+            text = text.replace("  push:\n", "  pull_request_target:\n", 1)
             workflow.write_text(text, encoding="utf-8")
             result = self.audit(trusted, base, candidate)
         self.assertFalse(result.ok)
         self.assertTrue(any("contents" in error for error in result.errors))
         self.assertTrue(any("pull_request_target" in error for error in result.errors))
+
+    def test_trusted_workflow_is_post_merge_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            workflow = trusted / ".github" / "workflows" / "openboa-governance-v2.yml"
+            text = workflow.read_text(encoding="utf-8").replace(
+                "  push:\n", "  pull_request:\n", 1
+            )
+            workflow.write_text(text, encoding="utf-8")
+            result = self.audit(trusted, base, candidate)
+        self.assertFalse(result.ok)
+        self.assertTrue(
+            any("trusted workflow must trigger on push" in error for error in result.errors)
+        )
+        self.assertTrue(
+            any("must not run before" in error for error in result.errors)
+        )
+
+    def test_trusted_workflow_fails_closed_without_validator_fallback(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "openboa-governance-v2.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("test -f trusted-source/scripts/validate_governance.py", workflow)
+        self.assertNotIn("governance_result=unmeasured", workflow)
 
     def test_trusted_workflow_rejects_another_write_permission(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -219,6 +244,61 @@ class GovernanceValidatorTests(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertEqual("high", result.risk_lane)
         self.assertIn("nested/AGENTS.md", result.protected_changes)
+
+    def test_ignored_scoped_agents_change_is_high_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            nested = candidate / "nested" / "__pycache__"
+            nested.mkdir(parents=True)
+            (nested / "AGENTS.md").write_text(
+                "ignored-directory instructions\n", encoding="utf-8"
+            )
+            result = self.audit(trusted, base, candidate)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual("high", result.risk_lane)
+        self.assertIn("nested/__pycache__/AGENTS.md", result.protected_changes)
+
+    def test_tracked_ignored_scoped_agents_change_is_high_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            nested = candidate / "nested" / "__pycache__"
+            nested.mkdir(parents=True)
+            instruction = nested / "AGENTS.md"
+            instruction.write_text(
+                "tracked ignored-directory instructions\n", encoding="utf-8"
+            )
+            subprocess.run(["git", "-C", str(candidate), "init", "-q"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(candidate),
+                    "add",
+                    "-f",
+                    "--",
+                    "nested/__pycache__/AGENTS.md",
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(candidate),
+                    "-c",
+                    "user.name=governance-test",
+                    "-c",
+                    "user.email=governance-test@example.invalid",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                check=True,
+            )
+            result = self.audit(trusted, base, candidate)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual("high", result.risk_lane)
+        self.assertIn("nested/__pycache__/AGENTS.md", result.protected_changes)
 
     def test_protected_executable_bit_change_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

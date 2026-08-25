@@ -222,10 +222,14 @@ def validate_trusted_workflow(path: Path) -> list[str]:
     errors: list[str] = []
     structure_errors, _, step_blocks = _workflow_structure(text)
     errors.extend(structure_errors)
-    if not re.search(r"(?m)^  pull_request:\s*$", text):
-        errors.append("trusted workflow must trigger on pull_request")
-    if not re.search(r"(?m)^  merge_group:\s*$", text):
-        errors.append("trusted workflow must trigger on merge_group")
+    if not re.search(r"(?m)^  push:\s*$", text):
+        errors.append("trusted workflow must trigger on push")
+    if not re.search(r"(?m)^    branches:\s*\[main\]\s*$", text):
+        errors.append("trusted workflow push trigger must be limited to main")
+    if re.search(r"(?m)^  (pull_request|merge_group):\s*$", text):
+        errors.append(
+            "trusted workflow must not run before the trusted validator lands on main"
+        )
     if "pull_request_target" in text:
         errors.append("trusted workflow must not use pull_request_target")
     if _mapping_key_lines(text, "if"):
@@ -467,7 +471,65 @@ def snapshot(root: Path) -> dict[str, tuple[object, ...]]:
             if set(path.relative_to(root).parts) & IGNORED_PARTS:
                 continue
             result[path.relative_to(root).as_posix()] = file_state(path)
+    for relative in tracked_ignored_instruction_paths(root):
+        result[relative] = file_state(root / relative)
     return result
+
+
+def tracked_ignored_instruction_paths(root: Path) -> tuple[str, ...]:
+    """Keep tracked scoped instructions visible even below ignored directories."""
+
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--",
+                "AGENTS.md",
+                "**/AGENTS.md",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return fallback_ignored_instruction_paths(root)
+
+    paths: list[str] = []
+    for raw in completed.stdout.split(b"\0"):
+        if not raw:
+            continue
+        relative = raw.decode("utf-8", errors="surrogateescape")
+        relative_path = Path(relative)
+        if relative_path.name != "AGENTS.md":
+            continue
+        if not set(relative_path.parts) & IGNORED_PARTS:
+            continue
+        path = root / relative_path
+        if path.exists() or path.is_symlink():
+            paths.append(relative_path.as_posix())
+    return tuple(sorted(set(paths)))
+
+
+def fallback_ignored_instruction_paths(root: Path) -> tuple[str, ...]:
+    """Conservatively find instruction files when a fixture has no Git index."""
+
+    paths: list[str] = []
+    for current, directory_names, file_names in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        current_path = Path(current)
+        relative = current_path.relative_to(root)
+        if ".git" in relative.parts:
+            directory_names[:] = []
+            file_names[:] = []
+            continue
+        if set(relative.parts) & IGNORED_PARTS and "AGENTS.md" in file_names:
+            paths.append((relative / "AGENTS.md").as_posix())
+    return tuple(sorted(set(paths)))
 
 
 def file_state(path: Path) -> tuple[object, ...]:
