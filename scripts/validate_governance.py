@@ -38,6 +38,7 @@ class AuditResult:
     changed_paths: tuple[str, ...]
     protected_changes: tuple[str, ...]
     trusted_source_revision: str
+    base_revision: str
     candidate_revision: str
 
     @property
@@ -52,6 +53,7 @@ class AuditResult:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trusted-source", type=Path, required=True)
+    parser.add_argument("--base", type=Path)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--base-sha", default="unknown")
     parser.add_argument("--head-sha", default="unknown")
@@ -59,11 +61,13 @@ def main(argv: list[str] | None = None) -> int:
 
     result = audit(
         trusted_source=args.trusted_source,
+        base=args.base,
         candidate=args.candidate,
         base_sha=args.base_sha,
         head_sha=args.head_sha,
     )
     print(f"trusted_source_revision={result.trusted_source_revision}")
+    print(f"base_revision={result.base_revision}")
     print(f"candidate_revision={result.candidate_revision}")
     print(f"base_sha={args.base_sha}")
     print(f"head_sha={args.head_sha}")
@@ -84,15 +88,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def audit(
-    *, trusted_source: Path, candidate: Path, base_sha: str, head_sha: str
+    *,
+    trusted_source: Path,
+    candidate: Path,
+    base_sha: str,
+    head_sha: str,
+    base: Path | None = None,
 ) -> AuditResult:
-    del base_sha, head_sha  # The workflow records these; file checks stay deterministic.
     errors: list[str] = []
     trusted_source = trusted_source.resolve()
+    base = (trusted_source if base is None else base).resolve()
     candidate = candidate.resolve()
 
     if not trusted_source.is_dir():
         errors.append("trusted source is not a directory")
+    if not base.is_dir():
+        errors.append("base is not a directory")
     if not candidate.is_dir():
         errors.append("candidate is not a directory")
 
@@ -106,14 +117,14 @@ def audit(
 
     changed_paths: tuple[str, ...] = ()
     protected_changes: tuple[str, ...] = ()
-    trusted_snapshot = snapshot(trusted_source) if trusted_source.is_dir() else {}
+    base_snapshot = snapshot(base) if base.is_dir() else {}
     candidate_snapshot = snapshot(candidate) if candidate.is_dir() else {}
-    if trusted_source.is_dir() and candidate.is_dir():
+    if base.is_dir() and candidate.is_dir():
         changed_paths = tuple(
             sorted(
                 path
-                for path in set(trusted_snapshot) | set(candidate_snapshot)
-                if trusted_snapshot.get(path) != candidate_snapshot.get(path)
+                for path in set(base_snapshot) | set(candidate_snapshot)
+                if base_snapshot.get(path) != candidate_snapshot.get(path)
             )
         )
         protected_changes = tuple(
@@ -121,12 +132,23 @@ def audit(
         )
         errors.extend(validate_candidate_protected_files(candidate, protected_changes))
 
+    trusted_source_revision = git_revision(trusted_source)
+    base_revision = git_revision(base)
+    candidate_revision = git_revision(candidate)
+    errors.extend(
+        validate_recorded_revision("base", base_sha, base_revision)
+    )
+    errors.extend(
+        validate_recorded_revision("candidate", head_sha, candidate_revision)
+    )
+
     return AuditResult(
         errors=tuple(errors),
         changed_paths=changed_paths,
         protected_changes=protected_changes,
-        trusted_source_revision=git_revision(trusted_source),
-        candidate_revision=git_revision(candidate),
+        trusted_source_revision=trusted_source_revision,
+        base_revision=base_revision,
+        candidate_revision=candidate_revision,
     )
 
 
@@ -196,6 +218,14 @@ def validate_trusted_workflow(path: Path) -> list[str]:
         errors.append("trusted workflow must trigger on merge_group")
     if "pull_request_target" in text:
         errors.append("trusted workflow must not use pull_request_target")
+    permission_keys = _mapping_key_lines(text, "permissions")
+    top_level_permissions = [
+        (indent, content) for indent, content in permission_keys if indent == 0
+    ]
+    if len(top_level_permissions) != 1 or any(
+        indent != 0 for indent, _ in permission_keys
+    ):
+        errors.append("trusted workflow must not define job-level permissions")
     permissions = _top_level_mapping_children(text, "permissions")
     if permissions != [(2, "contents: read")]:
         errors.append("trusted workflow permissions must grant only contents: read")
@@ -207,23 +237,29 @@ def validate_trusted_workflow(path: Path) -> list[str]:
     if timeout_count != 1:
         errors.append("trusted workflow must declare one positive timeout-minutes value")
 
-    action_references = re.findall(r"(?m)^\s*uses:\s*([^\s#]+)", text)
+    action_references = _action_references(text)
     checkout_references = [
         reference
         for reference in action_references
         if reference.startswith("actions/checkout@")
     ]
-    if len(checkout_references) != 2:
-        errors.append("trusted workflow must use checkout exactly twice for trusted and candidate trees")
+    if len(checkout_references) != 3:
+        errors.append(
+            "trusted workflow must use checkout exactly three times for trusted, base, and candidate trees"
+        )
     for reference in action_references:
         if not SHA_REFERENCE.fullmatch(reference):
             errors.append(f"trusted workflow action must use a full commit SHA: {reference}")
-    if "path: trusted-source" not in text or "path: candidate" not in text:
-        errors.append("trusted workflow must keep trusted and candidate checkouts separate")
+    if any(f"path: {path}" not in text for path in ("trusted-source", "base", "candidate")):
+        errors.append(
+            "trusted workflow must keep trusted, base, and candidate checkouts separate"
+        )
     if "python3 trusted-source/scripts/validate_hydra.py candidate" not in text:
         errors.append("trusted workflow must run the trusted Hydra validator over candidate data")
     if "python3 trusted-source/scripts/validate_governance.py" not in text:
         errors.append("trusted workflow must run the trusted governance validator")
+    if "--base base" not in text:
+        errors.append("trusted workflow must compare the candidate with the recorded base checkout")
     if "repository: openboa-ai/hydra" not in text:
         errors.append("trusted workflow must pin its trusted source repository")
     if not re.search(r"(?m)^\s+ref:\s*main\s*$", text):
@@ -234,10 +270,10 @@ def validate_trusted_workflow(path: Path) -> list[str]:
 def _top_level_mapping_children(text: str, key: str) -> list[tuple[int, str]]:
     """Return the active two-space children of one top-level YAML mapping."""
 
-    lines = text.splitlines()
+    lines = _active_yaml_lines(text)
     start: int | None = None
-    for index, raw in enumerate(lines):
-        if re.fullmatch(rf"{re.escape(key)}:\s*(?:#.*)?", raw):
+    for index, (indent, content) in enumerate(lines):
+        if indent == 0 and _mapping_key_matches(content, key):
             if start is not None:
                 return []
             start = index
@@ -245,14 +281,58 @@ def _top_level_mapping_children(text: str, key: str) -> list[tuple[int, str]]:
         return []
 
     children: list[tuple[int, str]] = []
-    for raw in lines[start + 1 :]:
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        indent = len(raw) - len(raw.lstrip(" "))
+    for indent, content in lines[start + 1 :]:
         if indent == 0:
             break
-        children.append((indent, raw.strip()))
+        children.append((indent, content))
     return children
+
+
+def _mapping_key_matches(content: str, key: str) -> bool:
+    quoted_key = rf'(?:{re.escape(key)}|"{re.escape(key)}"|\'{re.escape(key)}\')'
+    return re.match(rf"^{quoted_key}\s*:", content) is not None
+
+
+def _active_yaml_lines(text: str) -> list[tuple[int, str]]:
+    """Return non-comment YAML lines, excluding block-scalar contents."""
+
+    active: list[tuple[int, str]] = []
+    block_indent: int | None = None
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if block_indent is not None:
+            if indent > block_indent:
+                continue
+            block_indent = None
+        active.append((indent, stripped))
+        if re.search(r":\s*[|>][-+]?\d*\s*(?:#.*)?$", stripped):
+            block_indent = indent
+    return active
+
+
+def _mapping_key_lines(text: str, key: str) -> list[tuple[int, str]]:
+    return [
+        (indent, content)
+        for indent, content in _active_yaml_lines(text)
+        if _mapping_key_matches(content, key)
+    ]
+
+
+def _action_references(text: str) -> list[str]:
+    """Extract active uses mappings, including quoted YAML keys."""
+
+    pattern = re.compile(
+        r"^(?:-\s*)?(?:uses|\"uses\"|'uses')\s*:\s*([^\s#]+)"
+    )
+    references: list[str] = []
+    for _, content in _active_yaml_lines(text):
+        match = pattern.match(content)
+        if match:
+            references.append(match.group(1).strip("'\""))
+    return references
 
 
 def validate_candidate_protected_files(
@@ -320,7 +400,20 @@ def file_state(path: Path) -> tuple[object, ...]:
                 digest.update(chunk)
     except OSError as exc:
         return ("unreadable", type(exc).__name__)
-    return ("file", total, digest.hexdigest())
+    executable_bits = info.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return ("file", total, executable_bits, digest.hexdigest())
+
+
+def validate_recorded_revision(label: str, expected: str, observed: str) -> list[str]:
+    """Fail closed when a full event SHA does not match its checkout."""
+
+    if not re.fullmatch(r"[0-9a-f]{40}", expected):
+        return []
+    if observed != expected:
+        return [
+            f"{label} checkout revision mismatch: expected {expected}, observed {observed}"
+        ]
+    return []
 
 
 def matches_any(path: str, patterns: tuple[str, ...]) -> bool:

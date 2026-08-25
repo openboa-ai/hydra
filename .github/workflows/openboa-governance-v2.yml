@@ -3,6 +3,8 @@ name: openboa-governance-v2
 # Bootstrap workflow for the future ruleset-required trusted check. Until the
 # live ruleset binds this file to the trusted source, the existing
 # `openboa-governance` job remains the required compatibility check.
+# The validator uses the event-recorded base and head revisions for its risk
+# comparison; the moving trusted `main` checkout is used only as validator code.
 
 on:
   pull_request:
@@ -37,6 +39,13 @@ jobs:
           ref: main
           path: trusted-source
           fetch-depth: 1
+      - name: Check out recorded base as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          path: base
+          fetch-depth: 1
       - name: Check out candidate as data
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -61,6 +70,7 @@ jobs:
           fi
           python3 trusted-source/scripts/validate_governance.py \
             --trusted-source trusted-source \
+            --base base \
             --candidate candidate \
             --base-sha "$BASE_SHA" \
             --head-sha "$HEAD_SHA"
