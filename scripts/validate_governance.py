@@ -25,11 +25,21 @@ MAX_HASH_BYTES = 32 * 1024 * 1024
 IGNORED_PARTS = {".git", "__pycache__", ".venv"}
 REQUIRED_PROTECTED_PATHS = {
     "AGENTS.md",
+    "**/AGENTS.md",
     ".github/openboa-governance.yml",
     ".github/workflows/**",
     "scripts/validate_governance.py",
 }
 SHA_REFERENCE = re.compile(r"^[^\s#]+@[0-9a-f]{40}$")
+REQUIRED_WORKFLOW_STEPS = (
+    "Record revisions",
+    "Check out trusted source",
+    "Check out recorded base as data",
+    "Check out candidate as data",
+    "Validate trusted source",
+    "Validate candidate with trusted source",
+    "Run trusted governance checks",
+)
 
 
 @dataclass(frozen=True)
@@ -177,7 +187,7 @@ def load_config(path: Path) -> tuple[tuple[str, ...], list[str]]:
             in_paths = True
             continue
         if in_paths and raw.startswith("  - "):
-            value = raw[4:].strip()
+            value = raw[4:].strip().strip("'\"")
             if not value or value.startswith("#"):
                 errors.append("governance config contains an empty protected path")
             else:
@@ -210,14 +220,18 @@ def validate_trusted_workflow(path: Path) -> list[str]:
         return [f"unable to read trusted workflow: {exc}"]
 
     errors: list[str] = []
-    if len(re.findall(r"(?m)^\s+name:\s*openboa-governance-v2\s*$", text)) != 1:
-        errors.append("trusted workflow must contain exactly one openboa-governance-v2 job")
+    structure_errors, _, step_blocks = _workflow_structure(text)
+    errors.extend(structure_errors)
     if not re.search(r"(?m)^  pull_request:\s*$", text):
         errors.append("trusted workflow must trigger on pull_request")
     if not re.search(r"(?m)^  merge_group:\s*$", text):
         errors.append("trusted workflow must trigger on merge_group")
     if "pull_request_target" in text:
         errors.append("trusted workflow must not use pull_request_target")
+    if _mapping_key_lines(text, "if"):
+        errors.append(
+            "trusted workflow must not condition the governance job or validation steps"
+        )
     permission_keys = _mapping_key_lines(text, "permissions")
     top_level_permissions = [
         (indent, content) for indent, content in permission_keys if indent == 0
@@ -254,11 +268,15 @@ def validate_trusted_workflow(path: Path) -> list[str]:
         errors.append(
             "trusted workflow must keep trusted, base, and candidate checkouts separate"
         )
-    if "python3 trusted-source/scripts/validate_hydra.py candidate" not in text:
+    candidate_validation_step = step_blocks.get(
+        "Validate candidate with trusted source", ""
+    )
+    if "python3 trusted-source/scripts/validate_hydra.py candidate" not in candidate_validation_step:
         errors.append("trusted workflow must run the trusted Hydra validator over candidate data")
-    if "python3 trusted-source/scripts/validate_governance.py" not in text:
+    governance_step = step_blocks.get("Run trusted governance checks", "")
+    if "python3 trusted-source/scripts/validate_governance.py" not in governance_step:
         errors.append("trusted workflow must run the trusted governance validator")
-    if "--base base" not in text:
+    if "--base base" not in governance_step:
         errors.append("trusted workflow must compare the candidate with the recorded base checkout")
     if "repository: openboa-ai/hydra" not in text:
         errors.append("trusted workflow must pin its trusted source repository")
@@ -286,6 +304,78 @@ def _top_level_mapping_children(text: str, key: str) -> list[tuple[int, str]]:
             break
         children.append((indent, content))
     return children
+
+
+def _workflow_structure(
+    text: str,
+) -> tuple[list[str], str, dict[str, str]]:
+    """Validate the trusted job shape and return its named step bodies."""
+
+    errors: list[str] = []
+    active = _active_yaml_lines(text)
+    jobs = [
+        index
+        for index, (indent, content) in enumerate(active)
+        if indent == 0 and _mapping_key_matches(content, "jobs")
+    ]
+    if len(jobs) != 1:
+        return ["trusted workflow must contain exactly one jobs mapping"], "", {}
+
+    jobs_start = jobs[0]
+    jobs_end = next(
+        (
+            index
+            for index, (indent, _) in enumerate(active[jobs_start + 1 :], jobs_start + 1)
+            if indent == 0
+        ),
+        len(active),
+    )
+    governance_jobs = [
+        index
+        for index, (indent, content) in enumerate(active[jobs_start + 1 : jobs_end], jobs_start + 1)
+        if indent == 2 and _mapping_key_matches(content, "governance")
+    ]
+    if len(governance_jobs) != 1:
+        return ["trusted workflow must contain exactly one governance job"], "", {}
+
+    raw_lines = text.splitlines()
+    job_header = re.compile(r"^  governance:\s*(?:#.*)?$")
+    job_starts = [index for index, raw in enumerate(raw_lines) if job_header.fullmatch(raw)]
+    if len(job_starts) != 1:
+        return ["trusted workflow governance job must have a structural mapping"], "", {}
+    job_start = job_starts[0]
+    job_end = len(raw_lines)
+    for index in range(job_start + 1, len(raw_lines)):
+        raw = raw_lines[index]
+        if raw.strip() and not raw.lstrip().startswith("#"):
+            indent = len(raw) - len(raw.lstrip(" "))
+            if indent <= 2:
+                job_end = index
+                break
+    job_block = "\n".join(raw_lines[job_start:job_end])
+    if len(
+        re.findall(r"(?m)^    name:\s*openboa-governance-v2\s*$", job_block)
+    ) != 1:
+        errors.append("trusted workflow must contain exactly one openboa-governance-v2 job")
+
+    step_blocks: dict[str, str] = {}
+    step_header = re.compile(r"^      -\s+name:\s*(.+?)\s*$")
+    current_name: str | None = None
+    current_start: int | None = None
+    for index in range(job_start + 1, job_end):
+        match = step_header.fullmatch(raw_lines[index])
+        if match:
+            if current_name is not None and current_start is not None:
+                step_blocks[current_name] = "\n".join(raw_lines[current_start:index])
+            current_name = match.group(1).strip().strip("'\"")
+            current_start = index
+    if current_name is not None and current_start is not None:
+        step_blocks[current_name] = "\n".join(raw_lines[current_start:job_end])
+
+    for step_name in REQUIRED_WORKFLOW_STEPS:
+        if step_name not in step_blocks:
+            errors.append(f"trusted workflow is missing required step: {step_name}")
+    return errors, job_block, step_blocks
 
 
 def _mapping_key_matches(content: str, key: str) -> bool:
@@ -322,16 +412,19 @@ def _mapping_key_lines(text: str, key: str) -> list[tuple[int, str]]:
 
 
 def _action_references(text: str) -> list[str]:
-    """Extract active uses mappings, including quoted YAML keys."""
+    """Extract active uses mappings, including quoted and flow-style keys."""
 
     pattern = re.compile(
-        r"^(?:-\s*)?(?:uses|\"uses\"|'uses')\s*:\s*([^\s#]+)"
+        r"(?:^|[,{]\s*)(?:uses|\"uses\"|'uses')\s*:\s*"
+        r"(?P<value>\"[^\"]*\"|'[^']*'|[^,\s}#]+)"
     )
     references: list[str] = []
     for _, content in _active_yaml_lines(text):
-        match = pattern.match(content)
-        if match:
-            references.append(match.group(1).strip("'\""))
+        normalized = content
+        if normalized.startswith("-"):
+            normalized = normalized[1:].lstrip()
+        for match in pattern.finditer(normalized):
+            references.append(match.group("value").strip("'\""))
     return references
 
 

@@ -168,6 +168,58 @@ class GovernanceValidatorTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any("full commit SHA" in error for error in result.errors))
 
+    def test_trusted_workflow_rejects_conditional_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            workflow = trusted / ".github" / "workflows" / "openboa-governance-v2.yml"
+            text = workflow.read_text(encoding="utf-8").replace(
+                "    runs-on: ubuntu-latest\n",
+                "    runs-on: ubuntu-latest\n    if: false\n",
+                1,
+            )
+            workflow.write_text(text, encoding="utf-8")
+            result = self.audit(trusted, base, candidate)
+        self.assertFalse(result.ok)
+        self.assertTrue(any("condition" in error for error in result.errors))
+
+    def test_trusted_workflow_rejects_conditional_required_step(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            workflow = trusted / ".github" / "workflows" / "openboa-governance-v2.yml"
+            text = workflow.read_text(encoding="utf-8").replace(
+                "      - name: Run trusted governance checks\n",
+                "      - name: Run trusted governance checks\n        if: false\n",
+                1,
+            )
+            workflow.write_text(text, encoding="utf-8")
+            result = self.audit(trusted, base, candidate)
+        self.assertFalse(result.ok)
+        self.assertTrue(any("condition" in error for error in result.errors))
+
+    def test_trusted_workflow_rejects_flow_style_action_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            workflow = trusted / ".github" / "workflows" / "openboa-governance-v2.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8")
+                + "\n      - {uses: owner/action@main}\n",
+                encoding="utf-8",
+            )
+            result = self.audit(trusted, base, candidate)
+        self.assertFalse(result.ok)
+        self.assertTrue(any("full commit SHA" in error for error in result.errors))
+
+    def test_scoped_agents_change_is_high_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trusted, base, candidate = self.copy_fixture(Path(temp_dir))
+            nested = candidate / "nested"
+            nested.mkdir()
+            (nested / "AGENTS.md").write_text("local instructions\n", encoding="utf-8")
+            result = self.audit(trusted, base, candidate)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual("high", result.risk_lane)
+        self.assertIn("nested/AGENTS.md", result.protected_changes)
+
     def test_protected_executable_bit_change_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             trusted, base, candidate = self.copy_fixture(Path(temp_dir))

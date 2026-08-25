@@ -5,6 +5,7 @@ version: 1
 # authority from the GitHub account that opened the pull request.
 protected_paths:
   - AGENTS.md
+  - "**/AGENTS.md"
   - DOCTRINE.md
   - OPERATING-MODEL.md
   - AI-NATIVE-SDLC.md
