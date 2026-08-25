@@ -4,19 +4,19 @@ Results are append-only observations of one named candidate and host. They do no
 
 ## Latest run — exact candidate and bounded launcher attribution
 
-- [2026-08-25 — Codex CLI 0.144.5, evaluator v2 direct output r10](2026-08-25-codex-0.144.5-v2-direct-r10.json)
-- File SHA-256: `f73290490710d0e6b7bd71d2404e2dff7f9f4db309d8daf4fc0e3c9aa5255945`
+- [2026-08-25 — Codex CLI 0.144.5, evaluator v2 direct output r13](2026-08-25-codex-0.144.5-v2-direct-r13.json)
+- File SHA-256: `527cfa939a50c6becafc33855845974bef726b06bca62e04f1dedbdefcc11ff5`
 - Explicit new-task skill discovery: `passed`
 - Core decision-policy cases: 12 `passed`, 0 `failed`, 0 `unsupported`, 0 `unmeasured`
 - Method telemetry: 7 exact matches, 5 differences
 - Implicit skill discovery: `unmeasured`
 - External GitHub, deployment, release, and human-decision effects: `unmeasured`
 
-This checked file is the runner's direct JSON output, not a hand-normalized summary. It measures implementation commit `0cdd1bbb58755883333382ba2f3d007a23730573` and records its plugin tree `a9bc688404184acbd6eddeefca2ad690b237c1ff` and marketplace blob `51f899c284d96d7bb7daac4d6e8f062002e57cda`. The runner read those immutable Git objects with replacement refs disabled, installed only their private snapshot, and observed the same exact package fingerprint before installation, in the installed Codex cache, and after all tasks.
+This checked file is the runner's direct JSON output, not a hand-normalized summary. It measures implementation commit `00187ca23cc207994af739b341d398bb6fbcbb90` and records its plugin tree `212ddb7bb36200b08c68e3b6ab024b2678215b60` and marketplace blob `51f899c284d96d7bb7daac4d6e8f062002e57cda`. The runner read those immutable Git objects with replacement refs disabled, installed only their private snapshot, and observed the same exact package fingerprint before installation, in the installed Codex cache, and after all tasks.
 
-r10 was launched with the bare name `codex`. The ledger records the selected entry's index and kind, identical before/after launcher file type, executable mode, and SHA-256, and the stable absolute command reused for version detection, snapshot installation, both discovery probes, and every case. It does not record the raw `PATH`, home directory, repository root, or resolved launcher path. This is bounded evidence of the runner-selected launcher file's observed stability. It is not attestation of dynamic dependencies, child process images, or an adversarial same-user swap-and-restore race.
+r13 was launched with the bare name `codex`. The ledger records the selected entry's index and kind, identical before/after launcher file type, executable mode, and SHA-256, and the stable absolute command reused for version detection, snapshot installation, both discovery probes, and every case. It does not record the raw `PATH`, home directory, repository root, or resolved launcher path. This is bounded evidence of the runner-selected launcher file's observed stability. It is not attestation of dynamic dependencies, child process images, or an adversarial same-user swap-and-restore race.
 
-The later evidence-only commit adds this ledger, documentation, and assertions; it does not change the measured plugin tree or marketplace blob.
+The r11 and r12 retries are retained append-only observations for the same implementation commit; each had one model-output criterion miss (11/12) and is not relabeled as passing. r13 is the current complete run. The evidence-only commit adds these ledgers, documentation, and assertions; it does not change the measured plugin tree or marketplace blob.
 
 The candidate package fingerprint covers tracked regular-file paths, bytes, and executable bits. The snapshot accepts only the exact skills directory, rejects MCP, app, hook, symlink, submodule, special-file, nonportable-path, and marketplace redirection surfaces, and verifies the exact temporary installed-cache path. The ledger also records identical before/after hashes for the runner, both schemas, the exact 12-file case set, and every linked scenario. Per-case definition hashes come from the raw bytes loaded before execution rather than a later disk read.
 
@@ -27,7 +27,15 @@ If a case is added, removed, renamed, or changed during a run, or if a linked sc
 - [2026-08-24 — Codex CLI 0.144.5, evaluator v2 direct output r9](2026-08-24-codex-0.144.5-v2-direct-r9.json)
 - File SHA-256: `34efde393a2e065fe8ca57e505b7e702e8ff6be6c70f6047dce0878530a84e96`
 
-r9 remains immutable evidence for implementation commit `9ea2080c0f2f18459bd871a636a5f2826adfded6`, before the governance documentation change altered the plugin tree. It is retained as historical evidence rather than relabeled as r10.
+r9 remains immutable evidence for implementation commit `9ea2080c0f2f18459bd871a636a5f2826adfded6`, before the governance documentation change altered the plugin tree. It is retained as historical evidence rather than relabeled as r10, r11, r12, or r13.
+
+- [2026-08-25 — Codex CLI 0.144.5, evaluator v2 direct output r11](2026-08-25-codex-0.144.5-v2-direct-r11.json)
+- File SHA-256: `bc241c4f28ca70094ea6102df160d1c9092a10852888f61c9d9371d3d22b61ab`
+- Core decision-policy cases: 11 `passed`, 1 `failed`, 0 `unsupported`, 0 `unmeasured`
+
+- [2026-08-25 — Codex CLI 0.144.5, evaluator v2 direct output r12](2026-08-25-codex-0.144.5-v2-direct-r12.json)
+- File SHA-256: `4d6a59e12ff5ed98a5d271dffc19c13e5dc93cf648042f339132ae12a3266105`
+- Core decision-policy cases: 11 `passed`, 1 `failed`, 0 `unsupported`, 0 `unmeasured`
 
 ## Previous evaluator v2 observations
 
@@ -70,7 +78,7 @@ This immutable observation predates the exact decision-output schema snapshot an
 - [2026-08-24 — Codex CLI 0.144.5, first evaluator v2 direct output](2026-08-24-codex-0.144.5-v2-direct.json)
 - File SHA-256: `94b429dd19d3b863d8a3cec6f3d9584447d8093cf49b18956e6366da02245a4c`
 
-This immutable observation predates the case-set and linked-scenario race guard. It remains historical evidence; r10 is the attributable current ledger.
+This immutable observation predates the case-set and linked-scenario race guard. It remains historical evidence; r13 is the attributable current ledger.
 
 ## Immutable baseline — evaluator v1
 
@@ -81,4 +89,4 @@ This immutable observation predates the case-set and linked-scenario race guard.
 
 The baseline is retained unchanged. Four failures differed only on a playbook or headline decision label, two required an observation or next action the fixture could not execute, and one contained both kinds of mismatch. Keeping this run makes the evaluator change reviewable instead of rewriting old evidence as a new result.
 
-Each run used a temporary Codex home and a fresh empty read-only workspace for every task. Explicit discovery required an installed task to return a sentence available only in the skill while a matched no-plugin task did not. In r10 the private Git snapshot, both temporary homes, and both authentication copies were observed removed; no GitHub write occurred and the active Codex configuration digest was unchanged. Any candidate snapshot, installed cache, runner, schema, case-set, linked-scenario, or observed launcher-file mismatch makes the selected run `unmeasured`. Each result identifies the exact pre-run case, scenario, and prompt digests that were measured. Rerun after a material candidate, runner, schema, case, linked-scenario, or selected launcher change instead of treating this ledger as current by implication.
+Each run used a temporary Codex home and a fresh empty read-only workspace for every task. Explicit discovery required an installed task to return a sentence available only in the skill while a matched no-plugin task did not. In r13 the private Git snapshot, both temporary homes, and both authentication copies were observed removed; no GitHub write occurred and the active Codex configuration digest was unchanged. Any candidate snapshot, installed cache, runner, schema, case-set, linked-scenario, or observed launcher-file mismatch makes the selected run `unmeasured`. Each result identifies the exact pre-run case, scenario, and prompt digests that were measured. Rerun after a material candidate, runner, schema, case, linked-scenario, or selected launcher change instead of treating this ledger as current by implication.

@@ -52,6 +52,24 @@ R10_RESULT = (
     / "results"
     / "2026-08-25-codex-0.144.5-v2-direct-r10.json"
 )
+R11_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-25-codex-0.144.5-v2-direct-r11.json"
+)
+R12_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-25-codex-0.144.5-v2-direct-r12.json"
+)
+R13_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-25-codex-0.144.5-v2-direct-r13.json"
+)
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
 
@@ -2376,13 +2394,49 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             report["candidate"]["source"]["revision"],
         )
 
-    def test_r10_result_is_attributable_private_and_core_complete(self) -> None:
-        self._assert_current_attributable_result(
-            R10_RESULT,
+    def test_r10_result_is_immutable_historical_evidence(self) -> None:
+        self.assertEqual(
             "f73290490710d0e6b7bd71d2404e2dff7f9f4db309d8daf4fc0e3c9aa5255945",
-            "0cdd1bbb58755883333382ba2f3d007a23730573",
+            hashlib.sha256(R10_RESULT.read_bytes()).hexdigest(),
         )
-        raw = R10_RESULT.read_text(encoding="utf-8")
+        report = json.loads(R10_RESULT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual(
+            "0cdd1bbb58755883333382ba2f3d007a23730573",
+            report["candidate"]["source"]["revision"],
+        )
+
+    def test_r11_and_r12_results_are_immutable_retry_observations(self) -> None:
+        expected = {
+            R11_RESULT: (
+                "bc241c4f28ca70094ea6102df160d1c9092a10852888f61c9d9371d3d22b61ab",
+                {"unmeasured": 0, "passed": 11, "failed": 1, "unsupported": 0},
+            ),
+            R12_RESULT: (
+                "4d6a59e12ff5ed98a5d271dffc19c13e5dc93cf648042f339132ae12a3266105",
+                {"unmeasured": 0, "passed": 11, "failed": 1, "unsupported": 0},
+            ),
+        }
+        for path, (digest, counts) in expected.items():
+            with self.subTest(path=path.name):
+                self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
+                report = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(counts, report["status_counts"])
+                self.assertEqual(
+                    "00187ca23cc207994af739b341d398bb6fbcbb90",
+                    report["candidate"]["source"]["revision"],
+                )
+
+    def test_r13_result_is_attributable_private_and_core_complete(self) -> None:
+        self._assert_current_attributable_result(
+            R13_RESULT,
+            "527cfa939a50c6becafc33855845974bef726b06bca62e04f1dedbdefcc11ff5",
+            "00187ca23cc207994af739b341d398bb6fbcbb90",
+        )
+        raw = R13_RESULT.read_text(encoding="utf-8")
         report = json.loads(raw)
         executable = report["host"]["codex_executable"]
         self.assertEqual(
