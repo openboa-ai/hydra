@@ -130,6 +130,22 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
     return sections
 
 
+def section_failures(
+    rendered: str, outcome_value: str, evidence_value: str, unknown_value: str,
+) -> list[str]:
+    sections = markdown_sections(rendered)
+    failures: list[str] = []
+    if set(sections) != set(EXPECTED_SECTIONS):
+        failures.append("section-separation")
+    if outcome_value not in sections.get("Outcome", set()):
+        failures.append("outcome-preservation")
+    if evidence_value not in sections.get("Evidence", set()):
+        failures.append("evidence-preservation")
+    if unknown_value not in sections.get("Unknowns", set()):
+        failures.append("unknown-preservation")
+    return failures
+
+
 def read_bounded_output(path: Path) -> str:
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
@@ -176,15 +192,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failures.append("success-path")
             else:
                 rendered = read_bounded_output(output)
-                sections = markdown_sections(rendered)
-                if set(sections) != set(EXPECTED_SECTIONS):
-                    failures.append("section-separation")
-                if outcome_value not in sections.get("Outcome", set()):
-                    failures.append("outcome-preservation")
-                if evidence_value not in sections.get("Evidence", set()):
-                    failures.append("evidence-preservation")
-                if unknown_value not in sections.get("Unknowns", set()):
-                    failures.append("unknown-preservation")
+                failures.extend(section_failures(
+                    rendered, outcome_value, evidence_value, unknown_value,
+                ))
                 original_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
                 output.unlink()
@@ -199,8 +209,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     probe_text = read_bounded_output(output)
                     probe_digest = hashlib.sha256(probe_text.encode("utf-8")).hexdigest()
-                    probe_unknowns = markdown_sections(probe_text).get("Unknowns", set())
-                    if probe_unknown_value not in probe_unknowns or probe_digest == original_digest:
+                    failures.extend(
+                        f"probe-{failure}"
+                        for failure in section_failures(
+                            probe_text, outcome_value, evidence_value, probe_unknown_value,
+                        )
+                    )
+                    if probe_digest == original_digest:
                         failures.append("input-influence")
 
             malformed = temp / "malformed.jsonl"

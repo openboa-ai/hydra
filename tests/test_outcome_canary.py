@@ -275,6 +275,46 @@ target.write_text(
         self.assertGreater(json.loads(completed.stdout)["failures"], 0)
 
     @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
+    def test_trusted_blackbox_revalidates_every_probe_value(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    values = [json.loads(line) for line in source.read_text().splitlines()]
+except json.JSONDecodeError:
+    raise SystemExit(2)
+by_kind = {item["kind"]: item["value"] for item in values}
+marker = Path("first-run-complete")
+if marker.exists():
+    target.write_text("# Unknowns\\n- " + by_kind.get("unknown", ""))
+else:
+    target.write_text("\\n".join([
+        "# Outcome", f"- {by_kind.get('outcome', '')}",
+        "# Evidence", f"- {by_kind.get('evidence', '')}",
+        "# Unknowns", f"- {by_kind.get('unknown', '')}",
+    ]))
+    marker.write_text("complete")
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        failed = json.loads(completed.stdout)["failed_checks"]
+        self.assertIn("probe-section-separation", failed)
+        self.assertIn("probe-outcome-preservation", failed)
+        self.assertIn("probe-evidence-preservation", failed)
+
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_rejects_symlinked_candidate_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
