@@ -109,6 +109,8 @@ only its corresponding generated value, preventing values from being copied
 into every section. Nested list items are included in that mapping and values
 inside Markdown HTML comments are ignored as non-rendered content. Bullet-like
 lines indented as Markdown code are rejected rather than counted as list items.
+Raw HTML block tags invalidate the section structure, so preformatted HTML
+cannot disguise headings and bullets as rendered handoff evidence.
 It never imports candidate
 modules, so candidate test code cannot modify its counters. The evaluator
 requires the connector-observed exact-head job containing both the candidate

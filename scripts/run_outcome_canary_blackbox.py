@@ -24,6 +24,7 @@ MAX_CHILD_FILE_BYTES = 65_536
 MAX_CHILD_MEMORY_BYTES = 536_870_912
 MAX_CHILD_FDS = 64
 EXPECTED_SECTIONS = ("Outcome", "Evidence", "Unknowns")
+INVALID_MARKDOWN = "\0invalid-markdown"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -137,6 +138,9 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
                     fence = None
             continue
         visible_line, html_comment = outside_html_comments(raw_line, html_comment)
+        if re.match(r"\s*</?[A-Za-z][A-Za-z0-9-]*(?:\s|/?>|$)", visible_line):
+            sections.setdefault(INVALID_MARKDOWN, set()).add(visible_line.strip())
+            continue
         fence_line = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", visible_line)
         if fence_line is not None:
             marker, remainder = fence_line.groups()
