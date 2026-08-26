@@ -48,9 +48,18 @@ Repository visibility and live Issue, pull-request, check, and review state must
 be collected independently through the Codex GitHub connector rather than copied
 from candidate output.
 
+After the candidate Codex process has ended, the trusted control plane creates
+an ephemeral HMAC key outside both repositories, collects the evidence itself,
+and signs the canonical record with
+`scripts/attest_outcome_canary.py`. The candidate task must not receive the key or
+write the record. The control plane verifies the signed record in the same
+bounded run, retains the sanitized result, and destroys the ephemeral key and
+private working record. Never commit the key, signed private record, or detailed
+private logs to Hydra.
+
 Record all six acceptance criteria separately. Each criterion must point to its
 own attributable evidence: `command:<id>` for a locally observed passing
-command, `artifact:<relative-path>` for inspected output, `check:<name>` for a
+command, `artifact-sha256:<digest>` for inspected output, `check:<name>` for a
 passing check on the exact pull-request head, or
 `pull-request:<exact-private-pr-url>` for the pull-request explanation. The
 evaluator rejects missing criteria, invented command or check references,
@@ -60,7 +69,13 @@ writes, and runs beyond the fixed time or review-loop budget.
 Evaluate a collected record without network or GitHub writes:
 
 ```bash
-python3 scripts/evaluate_outcome_canary.py /path/to/canary-run.json
+python3 scripts/attest_outcome_canary.py \
+  /path/to/unsigned-canary-run.json \
+  --key-file /trusted/path/canary.key \
+  --output /trusted/path/signed-canary-run.json
+python3 scripts/evaluate_outcome_canary.py \
+  /trusted/path/signed-canary-run.json \
+  --attestation-key-file /trusted/path/canary.key
 ```
 
 The evaluator reports `accepted`, reasons, and the measured collaboration

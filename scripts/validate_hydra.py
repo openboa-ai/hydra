@@ -136,6 +136,7 @@ def validate(root: Path) -> list[str]:
         root / "scripts" / "evaluate_readiness.py",
         root / "scripts" / "collect_readiness.py",
         root / "scripts" / "evaluate_outcome_canary.py",
+        root / "scripts" / "attest_outcome_canary.py",
         root / ".github" / "workflows" / "openboa-ready-shadow.yml",
         root / ".github" / "openboa-governance.yml",
         root / ".github" / "workflows" / "openboa-governance-v2.yml",

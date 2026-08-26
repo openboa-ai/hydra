@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import math
 from pathlib import Path
 import re
+import stat
 import sys
 from typing import Any, Sequence
 
@@ -26,11 +30,16 @@ ACCEPTANCE_SOURCES = {
 }
 ACCEPTANCE_REFERENCES = {
     "artifact-command": "command:documented-command",
-    "separates-sections": "artifact:",
+    "separates-sections": "artifact-sha256:",
     "malformed-input": "command:malformed-input",
     "tests-coverage": "command:coverage",
     "ci-current-head": "check:",
     "pr-explanation": "pull-request:",
+}
+COMMAND_OBSERVATIONS = {
+    "documented-command": {"documented-command-produced-markdown"},
+    "malformed-input": {"nonzero-exit", "no-traceback", "no-output"},
+    "coverage": {"success-path", "malformed-input", "unknown-preservation"},
 }
 MAX_ELAPSED_MINUTES = 45
 MAX_REVIEW_FIX_ROUNDS = 3
@@ -51,12 +60,72 @@ def _exact_keys(
         reasons.append(f"invalid-{label}-fields")
 
 
-def evaluate(record: dict[str, Any]) -> dict[str, Any]:
+def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bool:
+    if not isinstance(argv, list) or not argv or not isinstance(argv[0], str):
+        return False
+    executable = Path(argv[0]).name
+    if executable not in {"python", "python3"}:
+        return False
+    if command_id == "documented-command":
+        return (
+            exit_code == 0
+            and any(arg.endswith(".jsonl") for arg in argv)
+            and any(arg.endswith(".md") for arg in argv)
+        )
+    if command_id == "malformed-input":
+        return (
+            isinstance(exit_code, int)
+            and not isinstance(exit_code, bool)
+            and exit_code != 0
+            and any(arg.endswith(".jsonl") for arg in argv)
+        )
+    if command_id == "coverage":
+        return exit_code == 0 and "-m" in argv and "unittest" in argv
+    return False
+
+
+def canonical_record(record: dict[str, Any]) -> bytes:
+    unsigned = {key: value for key, value in record.items() if key != "attestation"}
+    return json.dumps(
+        unsigned, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def create_attestation(record: dict[str, Any], key: bytes) -> dict[str, str]:
+    if len(key) < 32:
+        raise ValueError("attestation key must contain at least 32 bytes")
+    return {
+        "algorithm": "hmac-sha256",
+        "key_id": hashlib.sha256(key).hexdigest()[:16],
+        "signature": hmac.new(key, canonical_record(record), hashlib.sha256).hexdigest(),
+    }
+
+
+def _attestation_is_valid(record: dict[str, Any], key: bytes | None) -> bool:
+    attestation = _mapping(record.get("attestation"))
+    if key is None or len(key) < 32:
+        return False
+    try:
+        expected = create_attestation(record, key)
+    except (TypeError, ValueError):
+        return False
+    return (
+        set(attestation) == {"algorithm", "key_id", "signature"}
+        and attestation.get("algorithm") == expected["algorithm"]
+        and attestation.get("key_id") == expected["key_id"]
+        and isinstance(attestation.get("signature"), str)
+        and hmac.compare_digest(attestation["signature"], expected["signature"])
+    )
+
+
+def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> dict[str, Any]:
     reasons: list[str] = []
     _exact_keys(record, {
-        "schema_version", "run_id", "scenario_id", "collector", "candidate",
+        "schema_version", "run_id", "scenario_id", "attestation", "collector", "candidate",
         "target", "outcome", "authority", "collaboration", "observation", "unknowns",
     }, "record", reasons)
+    if not _attestation_is_valid(record, attestation_key):
+        reasons.append("invalid-control-plane-attestation")
     if record.get("schema_version") != SCHEMA_VERSION:
         reasons.append("schema-version-mismatch")
     if record.get("scenario_id") != SCENARIO_ID:
@@ -104,7 +173,7 @@ def evaluate(record: dict[str, Any]) -> dict[str, Any]:
 
     outcome = _mapping(record.get("outcome"))
     _exact_keys(outcome, {
-        "issue_url", "pr_url", "pr_head_sha", "artifact_created",
+        "issue_url", "pr_url", "pr_head_sha", "artifact_created", "artifact_evidence",
         "acceptance_results", "acceptance_commands", "checks", "review",
     }, "outcome", reasons)
     head = outcome.get("pr_head_sha")
@@ -122,6 +191,23 @@ def evaluate(record: dict[str, Any]) -> dict[str, Any]:
     if outcome.get("artifact_created") is not True:
         reasons.append("artifact-not-created")
 
+    artifact = _mapping(outcome.get("artifact_evidence"))
+    _exact_keys(artifact, {"path", "sha256", "head_sha", "sections"}, "artifact-evidence", reasons)
+    artifact_path = artifact.get("path")
+    artifact_digest = artifact.get("sha256")
+    if (
+        not isinstance(artifact_path, str)
+        or not artifact_path
+        or artifact_path.startswith("/")
+        or ".." in Path(artifact_path).parts
+        or not isinstance(artifact_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", artifact_digest) is None
+        or artifact.get("head_sha") != head
+        or set(_list(artifact.get("sections"))) != {"Outcome", "Evidence", "Unknowns"}
+        or len(_list(artifact.get("sections"))) != 3
+    ):
+        reasons.append("artifact-evidence-not-proven")
+
     commands = _list(outcome.get("acceptance_commands"))
     command_ids: set[str] = set()
     if not commands:
@@ -130,15 +216,34 @@ def evaluate(record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item, dict):
             reasons.append("invalid-acceptance-command-fields")
             continue
-        _exact_keys(item, {"id", "command", "status"}, "acceptance-command", reasons)
+        _exact_keys(item, {
+            "id", "argv", "exit_code", "stdout_sha256", "stderr_sha256",
+            "head_sha", "observations", "status",
+        }, "acceptance-command", reasons)
         command_id = item.get("id")
         if not isinstance(command_id, str) or not command_id.strip() or command_id in command_ids:
             reasons.append("invalid-or-duplicate-command-id")
         else:
             command_ids.add(command_id)
+        argv = item.get("argv")
+        observations = item.get("observations")
+        digests_valid = all(
+            isinstance(item.get(key), str)
+            and re.fullmatch(r"[0-9a-f]{64}", item[key]) is not None
+            for key in ("stdout_sha256", "stderr_sha256")
+        )
         if (
-            not isinstance(item.get("command"), str)
-            or not item["command"].strip()
+            not isinstance(argv, list)
+            or not argv
+            or any(not isinstance(arg, str) or not arg for arg in argv)
+            or not isinstance(item.get("exit_code"), int)
+            or isinstance(item.get("exit_code"), bool)
+            or not _command_matches_criterion(command_id, argv, item.get("exit_code"))
+            or item.get("head_sha") != head
+            or not isinstance(observations, list)
+            or set(observations) != COMMAND_OBSERVATIONS.get(command_id)
+            or len(observations) != len(set(observations))
+            or not digests_valid
             or item.get("status") != "passed"
         ):
             reasons.append("acceptance-command-not-passed")
@@ -195,9 +300,8 @@ def evaluate(record: dict[str, Any]) -> dict[str, Any]:
         if expected_reference.startswith("command:"):
             if reference != expected_reference or reference.removeprefix("command:") not in command_ids:
                 reasons.append(f"acceptance-evidence-not-bound:{criterion_id}")
-        elif expected_reference == "artifact:":
-            artifact_path = reference.removeprefix("artifact:") if reference.startswith("artifact:") else ""
-            if not artifact_path or artifact_path.startswith("/") or ".." in Path(artifact_path).parts:
+        elif expected_reference == "artifact-sha256:":
+            if reference != f"artifact-sha256:{artifact_digest}":
                 reasons.append(f"acceptance-evidence-not-bound:{criterion_id}")
         elif expected_reference == "check:":
             check_name = reference.removeprefix("check:") if reference.startswith("check:") else ""
@@ -267,7 +371,10 @@ def evaluate(record: dict[str, Any]) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
     elapsed = collaboration.get("elapsed_minutes")
     if (
-        not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or elapsed < 0
+        not isinstance(elapsed, (int, float))
+        or isinstance(elapsed, bool)
+        or not math.isfinite(elapsed)
+        or elapsed < 0
     ):
         metrics["elapsed_minutes"] = "unknown"
         reasons.append("invalid-elapsed-minutes")
@@ -328,6 +435,7 @@ def evaluate(record: dict[str, Any]) -> dict[str, Any]:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record", type=Path)
+    parser.add_argument("--attestation-key-file", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
 
@@ -335,14 +443,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        payload = json.loads(args.record.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = json.loads(
+            args.record.read_text(encoding="utf-8"),
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-standard JSON constant: {value}")
+            ),
+        )
+        key_mode = stat.S_IMODE(args.attestation_key_file.stat().st_mode)
+        if key_mode & 0o077:
+            raise ValueError("attestation key must not be accessible by group or others")
+        attestation_key = args.attestation_key_file.read_bytes()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         print(f"cannot read outcome canary record: {exc}", file=sys.stderr)
         return 2
     if not isinstance(payload, dict):
         print("outcome canary record must be a JSON object", file=sys.stderr)
         return 2
-    result = evaluate(payload)
+    result = evaluate(payload, attestation_key)
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output is not None:
         try:
