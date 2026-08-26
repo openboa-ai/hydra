@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import secrets
 import signal
 import stat
 import subprocess
@@ -161,10 +162,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             temp = Path(directory)
             source = temp / "events.jsonl"
             output = temp / "handoff.md"
+            outcome_value = f"outcome-{secrets.token_hex(16)}"
+            evidence_value = f"evidence-{secrets.token_hex(16)}"
+            unknown_value = f"unknown-{secrets.token_hex(16)}"
+            probe_unknown_value = f"unknown-{secrets.token_hex(16)}"
             write_jsonl(source, [
-                {"kind": "outcome", "value": "cli-completed"},
-                {"kind": "evidence", "value": "tests-passed"},
-                {"kind": "unknown", "value": "deployment-status-unknown"},
+                {"kind": "outcome", "value": outcome_value},
+                {"kind": "evidence", "value": evidence_value},
+                {"kind": "unknown", "value": unknown_value},
             ])
             success = run_candidate(root, entrypoint, source, output)
             if success.returncode != 0:
@@ -174,19 +179,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sections = markdown_sections(rendered)
                 if set(sections) != set(EXPECTED_SECTIONS):
                     failures.append("section-separation")
-                if "cli-completed" not in sections.get("Outcome", set()):
+                if outcome_value not in sections.get("Outcome", set()):
                     failures.append("outcome-preservation")
-                if "tests-passed" not in sections.get("Evidence", set()):
+                if evidence_value not in sections.get("Evidence", set()):
                     failures.append("evidence-preservation")
-                if "deployment-status-unknown" not in sections.get("Unknowns", set()):
+                if unknown_value not in sections.get("Unknowns", set()):
                     failures.append("unknown-preservation")
                 original_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
                 output.unlink()
                 write_jsonl(source, [
-                    {"kind": "outcome", "value": "cli-completed"},
-                    {"kind": "evidence", "value": "tests-passed"},
-                    {"kind": "unknown", "value": "ownership-unknown"},
+                    {"kind": "outcome", "value": outcome_value},
+                    {"kind": "evidence", "value": evidence_value},
+                    {"kind": "unknown", "value": probe_unknown_value},
                 ])
                 probe = run_candidate(root, entrypoint, source, output)
                 if probe.returncode != 0:
@@ -195,7 +200,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     probe_text = read_bounded_output(output)
                     probe_digest = hashlib.sha256(probe_text.encode("utf-8")).hexdigest()
                     probe_unknowns = markdown_sections(probe_text).get("Unknowns", set())
-                    if "ownership-unknown" not in probe_unknowns or probe_digest == original_digest:
+                    if probe_unknown_value not in probe_unknowns or probe_digest == original_digest:
                         failures.append("input-influence")
 
             malformed = temp / "malformed.jsonl"

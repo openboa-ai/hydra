@@ -239,6 +239,42 @@ target.write_text("# Outcome\\n- not-cli-completed-value\\n\\n# Evidence\\n- not
         self.assertIn("evidence-preservation", failed)
 
     @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
+    def test_trusted_blackbox_rejects_public_fixture_special_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    values = [json.loads(line) for line in source.read_text().splitlines()]
+except json.JSONDecodeError:
+    raise SystemExit(2)
+triples = {(item.get("kind"), item.get("value")) for item in values}
+base = {("outcome", "cli-completed"), ("evidence", "tests-passed")}
+old_unknown = ("unknown", "deployment-status-unknown")
+probe_unknown = ("unknown", "ownership-unknown")
+if not (base <= triples and (old_unknown in triples or probe_unknown in triples)):
+    raise SystemExit(2)
+unknown = probe_unknown[1] if probe_unknown in triples else old_unknown[1]
+target.write_text(
+    "# Outcome\\n- cli-completed\\n# Evidence\\n- tests-passed\\n# Unknowns\\n- " + unknown
+)
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        self.assertGreater(json.loads(completed.stdout)["failures"], 0)
+
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_rejects_symlinked_candidate_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -98,9 +98,11 @@ rejected. A passing check name alone is not evidence that tests ran.
 Release acceptance comes from that exact-revision composite action on the same
 exact-head GitHub Actions check. The action runs
 `scripts/run_outcome_canary_blackbox.py` only on an ephemeral non-root Linux
-GitHub runner with a 512-MiB address-space cap. The harness invokes the candidate CLI as a child against three fixed
-synthetic behaviors: valid sectioned output, malformed-input rejection, and a
-changed unknown value that must change the output. It never imports candidate
+GitHub runner with a 512-MiB address-space cap. The harness invokes the
+candidate CLI as a child against three synthetic behaviors: valid sectioned
+output, malformed-input rejection, and a changed unknown value that must change
+the output. Success-path values are unpredictable per run, so a candidate
+cannot pass by recognizing only the public fixture strings. It never imports candidate
 modules, so candidate test code cannot modify its counters. The evaluator
 requires the connector-observed exact-head job containing both the candidate
 coverage command and the exact-revision trusted action to pass.
