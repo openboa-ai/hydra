@@ -53,7 +53,7 @@ python3 <installed-skill>/scripts/run_headless.py \
   --job outcome-health
 ```
 
-The runner uses ephemeral `codex exec`, approval `never`, read-only sandbox by default, hooks disabled, an exclusive job lock, a bounded timeout, JSONL events, and a separate final message. It refuses full-access modes.
+The runner uses ephemeral `codex exec`, approval `never`, read-only sandbox by default, hooks disabled, an exclusive job lock, a worktree-wide lock for every workspace-writing job, a bounded process-group timeout, JSONL events, and a separate final message. It refuses full-access modes.
 
 Use the templates under `assets/automations/` with Codex scheduled tasks, GitHub events, or a reviewed local scheduler. The launchd and cron files are inert examples; installation never loads them or changes a crontab.
 
@@ -111,7 +111,7 @@ codex plugin remove openboa-ai-native-sdlc@openboa-hydra
 
 Begin a new task and confirm the legacy skill and restored instructions are active. Retain the failed evidence and backup; do not retry until the failed assumption has changed.
 
-### Roll back after removing the old plugin
+### Roll back a 0.2.0 public cutover
 
 Stop further installation and product-repository adoption when the public marketplace cannot install the declared version, a new task cannot discover the skill or managed instructions, a required validator or check fails, an authority or security boundary is weakened, or the canary shows unsafe core behavior.
 
@@ -123,32 +123,34 @@ ROLLBACK_WORKTREE=/absolute/path/to/hydra-openboa-ai-native-sdlc-rollback
 git fetch origin
 test "$(git cat-file -t "$PUBLIC_MERGE_SHA")" = commit
 git merge-base --is-ancestor "$PUBLIC_MERGE_SHA" origin/main
-git worktree add -b revert/openboa-ai-native-sdlc-v0.1 "$ROLLBACK_WORKTREE" origin/main
+git worktree add -b revert/openboa-ai-native-sdlc-v0.2 "$ROLLBACK_WORKTREE" origin/main
 git -C "$ROLLBACK_WORKTREE" revert --no-edit "$PUBLIC_MERGE_SHA"
 git -C "$ROLLBACK_WORKTREE" push -u origin HEAD
 ```
 
-Open one pull request from `revert/openboa-ai-native-sdlc-v0.1`, wait for `openboa-governance`, review the exact revert head, and wait for the human merge gate. After the revert is merged and the marketplace again advertises the legacy identity, recover an installation that migrated from `openboa-operations` in this order:
+Open one pull request from `revert/openboa-ai-native-sdlc-v0.2`, wait for `openboa-governance`, review the exact revert head, and wait for the human merge gate. The revert restores the already-published `openboa-ai-native-sdlc` 0.1 package and marketplace entry; it does not restore or reinstall `openboa-operations`.
+
+After the revert is merged, recover a canary installation by reinstalling the same plugin identity from the reverted marketplace:
+
+```text
+codex plugin marketplace upgrade openboa-hydra
+codex plugin remove openboa-ai-native-sdlc@openboa-hydra
+codex plugin add openboa-ai-native-sdlc@openboa-hydra
+```
+
+Confirm the installed manifest advertises 0.1.x, start a new task, and verify that the 0.1 skill is discovered. If the 0.2 managed block was adopted, restore only its managed section from the preserved pre-upgrade backup:
 
 ```bash
-codex plugin marketplace upgrade openboa-hydra
-codex plugin add openboa-operations@openboa-hydra
 test -f "$AGENTS_BACKUP"
 test -f "$AGENTS_TARGET"
 test ! -L "$AGENTS_TARGET"
 ```
 
-Use the backup as the source for a reviewed managed-block-only edit. Preserve the target's current repository-local section exactly, inspect the diff, and run the repository's instruction and governance checks. If the marker pair is missing, mixed, duplicated, or overlaps the local section, stop and keep both plugins installed until the file can be repaired safely. Only after that succeeds:
+Use the backup as the source for a reviewed managed-block-only edit. Preserve the target's current repository-local section exactly, inspect the diff, and run the repository's instruction and governance checks. If the marker pair is missing, mixed, duplicated, or overlaps the local section, stop and repair it explicitly; never replace the whole file. Start another new task and confirm the 0.1 managed contract is active. Keep the backup until rollback observation is complete.
 
-```bash
-codex plugin remove openboa-ai-native-sdlc@openboa-hydra
-```
+For a fresh-install canary with no managed `AGENTS.md` block, reinstall the reverted `openboa-ai-native-sdlc`, confirm 0.1 discovery, and do not invent or restore a backup that did not exist.
 
-Start a new task, confirm the legacy skill and restored managed block are active, then start another new task and confirm the new identity is absent. Keep the backup until the rollback observation is complete.
-
-For a fresh-install canary that had no legacy plugin or managed block, upgrade the reverted marketplace, remove `openboa-ai-native-sdlc`, and start a new task to confirm it is absent. Do not invent a legacy installation or restore an `AGENTS.md` backup that did not exist.
-
-Never silently replace a plugin payload that has already been published as `0.1.0`. A forward fix or later reintroduction must increment the plugin version, beginning with `0.1.1`, keep the marketplace entry pointed at the corrected package, and repeat install, migration, new-task, and rollback checks before another public merge.
+Never silently replace a plugin payload that has already been published as `0.2.0`. A forward fix must use a version greater than 0.2.0, keep the marketplace entry pointed at the corrected package, and repeat install, managed-block migration, new-task, scheduler, timeout, concurrency, and rollback checks before another public merge.
 
 ## Package map
 
@@ -172,6 +174,8 @@ Keep public content free of secrets, private repository details, and undisclosed
 The current `openboa-governance` job is candidate-conformance and bootstrap evidence. It runs candidate-controlled repository validation with a read-only token, pinned actions, and no secrets, publication, or deployment authority. At the v0.1 review gate the active ruleset accepted this context from `Any source`; re-read the live rule and verify the producer in the pull-request merge box rather than describing this job as a trusted base-controlled policy check. Binding an expected source or introducing a base- or ruleset-controlled trusted workflow requires a separate post-merge canary, live readback, and explicit human approval; it is not part of this repository migration.
 
 This repository now also carries the staged trusted-check pieces: `.github/openboa-governance.yml` names control-plane paths, `scripts/validate_governance.py` inspects a candidate tree as data, and `.github/workflows/openboa-governance-v2.yml` checks out the trusted Hydra source, the recorded base revision, and the candidate separately. The candidate risk lane is calculated from the event's base and head checkouts, not from a moving `main` branch. The `openboa-governance-v2` workflow is a post-merge bootstrap run on `main` (with manual dispatch available); it fails closed if the trusted validator is missing and is not a pull-request gate until a human-gated ruleset canary binds the source repository, branch, and workflow file. The existing `openboa-governance` context remains required during that transition; no live ruleset was changed by adding these files.
+
+The `openboa-ready-shadow` evaluator therefore treats the current candidate-controlled `openboa-governance` result only as compatibility evidence. It stays `not ready` until a separate `openboa-governance-v2` result carries a verified source binding for `openboa-ai/hydra:.github/workflows/openboa-governance-v2.yml@refs/heads/main`. The read-only collector cannot infer that binding from the generic `github-actions` producer slug and deliberately records it as unknown.
 
 Run the repository checks:
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import datetime as dt
 import fcntl
 import hashlib
@@ -11,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 from typing import IO, Sequence
@@ -71,18 +73,42 @@ def git(project: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def require_isolated_clean_worktree(project: Path) -> None:
+def isolated_worktree_git_dir(project: Path) -> Path:
     top = Path(git(project, "rev-parse", "--show-toplevel")).resolve()
     if top != project:
         raise ValueError("workspace-write project must be the Git worktree root")
-    if git(project, "status", "--porcelain"):
-        raise ValueError("workspace-write project must be clean")
     git_dir = Path(git(project, "rev-parse", "--git-dir"))
     common_dir = Path(git(project, "rev-parse", "--git-common-dir"))
     git_dir = (project / git_dir).resolve() if not git_dir.is_absolute() else git_dir.resolve()
     common_dir = (project / common_dir).resolve() if not common_dir.is_absolute() else common_dir.resolve()
     if git_dir == common_dir:
         raise ValueError("workspace-write requires an isolated Git worktree")
+    return git_dir
+
+
+def acquire_lock(handle: IO[str], message: str) -> bool:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(message, file=sys.stderr)
+        return False
+    return True
+
+
+def terminate_process_group(process: subprocess.Popen[str]) -> tuple[str, int]:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        _, stderr = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        _, stderr = process.communicate()
+    return stderr or "", 124
 
 
 def timestamp() -> str:
@@ -107,9 +133,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.prompt.stat().st_size > 262144:
         print("prompt file exceeds 256 KiB", file=sys.stderr)
         return 2
+    project_git_dir: Path | None = None
     if args.sandbox == "workspace-write":
         try:
-            require_isolated_clean_worktree(args.project)
+            project_git_dir = isolated_worktree_git_dir(args.project)
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -119,18 +146,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("state directory must be private and must not be a symlink", file=sys.stderr)
         return 2
     lock_path = state_dir / f"{args.job}.lock"
-    with lock_path.open("a+", encoding="utf-8") as lock:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print(f"job is already running: {args.job}", file=sys.stderr)
+    with ExitStack() as stack:
+        job_lock = stack.enter_context(lock_path.open("a+", encoding="utf-8"))
+        if not acquire_lock(job_lock, f"job is already running: {args.job}"):
             return 3
 
+        if project_git_dir is not None:
+            project_lock_path = project_git_dir / "openboa-workspace-write.lock"
+            project_lock = stack.enter_context(project_lock_path.open("a+", encoding="utf-8"))
+            if not acquire_lock(
+                project_lock,
+                f"workspace-write project is already running: {args.project}",
+            ):
+                return 3
+            try:
+                if git(args.project, "status", "--porcelain"):
+                    raise ValueError("workspace-write project must be clean")
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+
         run_id = f"{args.job}-{timestamp()}-{os.getpid()}"
-        lock.seek(0)
-        lock.truncate()
-        lock.write(json.dumps({"pid": os.getpid(), "run_id": run_id}) + "\n")
-        lock.flush()
+        job_lock.seek(0)
+        job_lock.truncate()
+        job_lock.write(json.dumps({"pid": os.getpid(), "run_id": run_id}) + "\n")
+        job_lock.flush()
         event_path = state_dir / f"{run_id}.jsonl"
         final_path = state_dir / f"{run_id}.final.md"
         prompt_text = args.prompt.read_text(encoding="utf-8")
@@ -150,14 +190,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             try:
                 process = subprocess.Popen(
                     command, stdin=subprocess.PIPE, stdout=events, stderr=subprocess.PIPE,
-                    text=True, cwd=args.project,
+                    text=True, cwd=args.project, start_new_session=True,
                 )
                 _, stderr = process.communicate(prompt_text, timeout=args.timeout)
                 returncode = process.returncode
             except subprocess.TimeoutExpired:
-                process.kill()
-                _, stderr = process.communicate()
-                returncode = 124
+                stderr, returncode = terminate_process_group(process)
             except OSError as exc:
                 stderr = str(exc)
                 returncode = 127

@@ -14,7 +14,12 @@ from typing import Any, Sequence
 POLICY_VERSION = 1
 EXPECTED_BASE = "main"
 EXPECTED_REVIEWER = "chatgpt-codex-connector"
-REQUIRED_CHECKS = ("openboa-governance",)
+COMPATIBILITY_CHECKS = ("openboa-governance",)
+TRUSTED_CHECKS = {
+    "openboa-governance-v2": (
+        "openboa-ai/hydra:.github/workflows/openboa-governance-v2.yml@refs/heads/main"
+    ),
+}
 SUCCESS = "SUCCESS"
 
 
@@ -30,7 +35,7 @@ def evaluate(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     checks = snapshot.get("checks")
     checks = checks if isinstance(checks, list) else []
-    for required in REQUIRED_CHECKS:
+    for required in COMPATIBILITY_CHECKS:
         matches = [item for item in checks if isinstance(item, dict) and item.get("name") == required]
         if not matches:
             reasons.append(f"missing-check:{required}")
@@ -42,6 +47,20 @@ def evaluate(snapshot: dict[str, Any]) -> dict[str, Any]:
             for item in matches
         ):
             reasons.append(f"unsuccessful-check:{required}")
+
+    for required, source_binding in TRUSTED_CHECKS.items():
+        matches = [item for item in checks if isinstance(item, dict) and item.get("name") == required]
+        if not matches:
+            reasons.append(f"missing-trusted-check:{required}")
+            continue
+        if not any(
+            item.get("status") == "COMPLETED"
+            and item.get("conclusion") == SUCCESS
+            and item.get("producer") == "github-actions"
+            and item.get("source_binding") == source_binding
+            for item in matches
+        ):
+            reasons.append(f"untrusted-or-unsuccessful-check:{required}")
 
     reviews = snapshot.get("reviews")
     reviews = reviews if isinstance(reviews, list) else []

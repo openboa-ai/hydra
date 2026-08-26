@@ -120,6 +120,14 @@ class PluginContractTests(unittest.TestCase):
         for forbidden in ("hooks", "mcpServers", "apps"):
             self.assertNotIn(forbidden, manifest)
 
+    def test_v02_rollback_restores_same_plugin_identity(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        rollback = readme.split("### Roll back a 0.2.0 public cutover", 1)[1].split("## Package map", 1)[0]
+        self.assertIn("codex plugin add openboa-ai-native-sdlc@openboa-hydra", rollback)
+        legacy_add = "codex plugin add " + "openboa-" + "operations@openboa-hydra"
+        self.assertNotIn(legacy_add, rollback)
+        self.assertIn("version greater than 0.2.0", rollback)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ name: openboa-ready-shadow
 
 # Read-only readiness information. This workflow is intentionally not a required
 # check and does not merge, comment, resolve threads, or execute candidate code.
+# It fails closed until a verified trusted workflow source binding is observable.
 
 on:
   workflow_run:

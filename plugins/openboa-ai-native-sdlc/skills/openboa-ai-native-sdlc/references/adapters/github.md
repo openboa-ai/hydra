@@ -15,9 +15,9 @@ Use the Codex GitHub connector by default. Use local `git` for the data plane. A
 
 ## Review readiness
 
-A ready claim is tied to the exact pull-request head. It requires the declared checks to succeed, a qualifying independent review on that head, no unresolved blocking conversation, and no policy mismatch. `skipped`, `neutral`, missing, stale, or unknown is not success.
+A ready claim is tied to the exact pull-request head. It requires the declared checks to succeed, a qualifying independent review on that head, no unresolved blocking conversation, and no policy mismatch. A GitHub App producer slug alone does not prove which workflow source produced a check. Required policy evidence must carry a verified repository, workflow path, and trusted ref or ruleset binding. `skipped`, `neutral`, missing, stale, unbound, or unknown is not success.
 
-A shadow readiness workflow reports the state but is not automatically a merge gate. Making it required, binding its expected source, or granting it write permissions is a separate repository-policy decision.
+A shadow readiness workflow reports the state but is not automatically a merge gate. It must remain `not ready` while trusted source binding is unavailable. Making it required, binding its expected source, or granting it write permissions is a separate repository-policy decision.
 
 ## Safe Actions design
 

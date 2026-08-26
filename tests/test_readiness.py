@@ -24,7 +24,14 @@ def ready_snapshot(head: str = "a" * 40) -> dict:
     return {
         "policy_version": 1, "pull_request": 8, "state": "OPEN", "is_draft": False,
         "mergeable": True, "base_ref": "main", "head_sha": head, "unresolved_threads": 0,
-        "checks": [{"name": "openboa-governance", "status": "COMPLETED", "conclusion": "SUCCESS", "producer": "github-actions"}],
+        "checks": [
+            {"name": "openboa-governance", "status": "COMPLETED", "conclusion": "SUCCESS", "producer": "github-actions", "source_binding": None},
+            {
+                "name": "openboa-governance-v2", "status": "COMPLETED", "conclusion": "SUCCESS",
+                "producer": "github-actions",
+                "source_binding": "openboa-ai/hydra:.github/workflows/openboa-governance-v2.yml@refs/heads/main",
+            },
+        ],
         "reviews": [{"actor": "chatgpt-codex-connector", "state": "COMMENTED", "commit_sha": head}],
     }
 
@@ -53,6 +60,14 @@ class ReadinessTests(unittest.TestCase):
         snapshot["checks"][0]["producer"] = "commit-status"
         self.assertIn("unsuccessful-check:openboa-governance", EVALUATOR.evaluate(snapshot)["reasons"])
 
+    def test_github_actions_slug_cannot_impersonate_trusted_workflow_source(self) -> None:
+        snapshot = ready_snapshot()
+        snapshot["checks"][1]["source_binding"] = None
+        self.assertIn(
+            "untrusted-or-unsuccessful-check:openboa-governance-v2",
+            EVALUATOR.evaluate(snapshot)["reasons"],
+        )
+
     def test_unresolved_draft_closed_and_unmergeable_fail(self) -> None:
         snapshot = ready_snapshot()
         snapshot.update({"unresolved_threads": 1, "is_draft": True, "state": "CLOSED", "mergeable": False})
@@ -70,7 +85,12 @@ class ReadinessTests(unittest.TestCase):
             "reviews":{"nodes":[{"state":"COMMENTED","author":{"login":"chatgpt-codex-connector"},"commit":{"oid":head}}],"pageInfo":{"hasPreviousPage":False}},
             "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"name":"openboa-governance","status":"COMPLETED","conclusion":"SUCCESS","app":{"slug":"github-actions"}}],"pageInfo":{"hasNextPage":False}}}}}]}
         }}}}
-        self.assertEqual(ready_snapshot(head), COLLECTOR.normalize(payload, 8))
+        collected = COLLECTOR.normalize(payload, 8)
+        self.assertEqual(head, collected["head_sha"])
+        self.assertIsNone(collected["checks"][0]["source_binding"])
+        decision = EVALUATOR.evaluate(collected)
+        self.assertFalse(decision["ready"])
+        self.assertIn("missing-trusted-check:openboa-governance-v2", decision["reasons"])
 
 
 if __name__ == "__main__":

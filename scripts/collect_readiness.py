@@ -73,12 +73,15 @@ def normalize(payload: dict[str, Any], number: int) -> dict[str, Any]:
             checks.append({
                 "name": item.get("name"), "status": item.get("status"),
                 "conclusion": item.get("conclusion"), "producer": (item.get("app") or {}).get("slug"),
+                # A GitHub App slug does not prove which workflow source produced
+                # a check. A later ruleset/source readback must populate this.
+                "source_binding": None,
             })
         else:
             checks.append({
                 "name": item.get("context"), "status": "COMPLETED",
                 "conclusion": "SUCCESS" if item.get("state") == "SUCCESS" else item.get("state"),
-                "producer": "commit-status",
+                "producer": "commit-status", "source_binding": None,
             })
     return {
         "policy_version": 1,
