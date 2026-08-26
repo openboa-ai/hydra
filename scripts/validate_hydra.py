@@ -169,15 +169,17 @@ def validate(root: Path) -> list[str]:
         errors.append(f"unsafe or missing automation directory: {display(root, automation_root)}")
         automation_paths = []
     else:
+        automation_paths = []
         try:
-            automation_paths = sorted(automation_root.iterdir())
+            for index, path in enumerate(automation_root.iterdir()):
+                if index >= 100:
+                    errors.append("automation templates exceed the bounded 100-entry limit")
+                    break
+                automation_paths.append(path)
         except OSError as exc:
             errors.append(f"unable to list automation templates: {exc}")
             automation_paths = []
-    if len(automation_paths) > 100:
-        errors.append("automation templates exceed the bounded 100-entry limit")
-        automation_paths = automation_paths[:100]
-    for path in automation_paths:
+    for path in sorted(automation_paths):
         if path.suffix != ".md" or path == automation_readme:
             continue
         text = read_bounded_text(path, root, errors, "automation template", 131072)
