@@ -135,6 +135,20 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual("1", environment["GIT_NO_LAZY_FETCH"])
         self.assertEqual("/usr/bin/git", run.call_args.args[0][0])
 
+    def test_inherited_git_trace_does_not_write(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "git-trace"
+            environment = dict(os.environ)
+            environment["GIT_TRACE"] = str(trace)
+            environment["GIT_TRACE2_EVENT"] = str(trace)
+
+            subprocess.run(
+                [sys.executable, str(DOCTOR), str(ROOT), "--json"],
+                text=True, capture_output=True, check=True, env=environment,
+            )
+
+            self.assertFalse(trace.exists())
+
     def test_oversized_agents_file_is_not_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory) / "repo"

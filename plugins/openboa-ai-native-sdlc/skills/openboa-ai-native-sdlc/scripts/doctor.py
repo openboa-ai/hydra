@@ -30,13 +30,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run_git(cwd: Path, *args: str) -> tuple[int, str]:
-    environment = os.environ.copy()
-    for name in tuple(environment):
-        if name.startswith("GIT_CONFIG_"):
-            environment.pop(name)
-    environment["GIT_OPTIONAL_LOCKS"] = "0"
-    environment["GIT_NO_LAZY_FETCH"] = "1"
-    environment["PATH"] = TRUSTED_PATH
+    environment = {
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "LC_ALL": "C",
+        "PATH": TRUSTED_PATH,
+    }
     git = shutil.which("git", path=TRUSTED_PATH)
     if git is None:
         return 127, ""
