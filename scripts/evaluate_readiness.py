@@ -84,7 +84,15 @@ def evaluate(snapshot: dict[str, Any]) -> dict[str, Any]:
             reasons.append("invalid-review-submitted-at")
             continue
         ordered_reviews.append((observed_at, item))
-    latest_review = max(ordered_reviews, key=lambda value: value[0])[1] if ordered_reviews else None
+    latest_review = None
+    if ordered_reviews:
+        latest_at = max(value[0] for value in ordered_reviews)
+        latest_candidates = [item for observed_at, item in ordered_reviews if observed_at == latest_at]
+        latest_states = {item.get("state") for item in latest_candidates}
+        if len(latest_states) != 1:
+            reasons.append("ambiguous-latest-codex-review")
+        else:
+            latest_review = latest_candidates[0]
     if latest_review is not None and latest_review.get("state") == "CHANGES_REQUESTED":
         reasons.append("changes-requested-by-codex")
     if latest_review is None or latest_review.get("state") not in ("COMMENTED", "APPROVED"):

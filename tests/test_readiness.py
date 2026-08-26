@@ -82,6 +82,26 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(decision["ready"])
         self.assertNotIn("changes-requested-by-codex", decision["reasons"])
 
+    def test_conflicting_reviews_at_same_timestamp_fail_closed_in_any_order(self) -> None:
+        snapshot = ready_snapshot()
+        tied = [
+            {
+                "actor": "chatgpt-codex-connector", "state": "APPROVED",
+                "commit_sha": snapshot["head_sha"], "submitted_at": "2026-08-26T00:01:00Z",
+            },
+            {
+                "actor": "chatgpt-codex-connector", "state": "CHANGES_REQUESTED",
+                "commit_sha": snapshot["head_sha"], "submitted_at": "2026-08-26T00:01:00Z",
+            },
+        ]
+        for reviews in (tied, list(reversed(tied))):
+            with self.subTest(states=[item["state"] for item in reviews]):
+                snapshot["reviews"] = reviews
+                decision = EVALUATOR.evaluate(snapshot)
+                self.assertFalse(decision["ready"])
+                self.assertIn("ambiguous-latest-codex-review", decision["reasons"])
+                self.assertIn("missing-exact-head-codex-review", decision["reasons"])
+
     def test_untrusted_commit_status_cannot_impersonate_required_check(self) -> None:
         snapshot = ready_snapshot()
         snapshot["checks"][0]["producer"] = "commit-status"
