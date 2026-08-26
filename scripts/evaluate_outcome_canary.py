@@ -43,6 +43,8 @@ COMMAND_OBSERVATIONS = {
 }
 MAX_ELAPSED_MINUTES = 45
 MAX_REVIEW_FIX_ROUNDS = 3
+MAX_RECORD_BYTES = 1_048_576
+MAX_KEY_BYTES = 4_096
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -58,6 +60,19 @@ def _exact_keys(
 ) -> None:
     if set(value) != expected:
         reasons.append(f"invalid-{label}-fields")
+
+
+def read_bounded_regular_file(path: Path, maximum_bytes: int, label: str) -> bytes:
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{label} must be a regular file")
+    if metadata.st_size > maximum_bytes:
+        raise ValueError(f"{label} exceeds {maximum_bytes} bytes")
+    with path.open("rb") as handle:
+        payload = handle.read(maximum_bytes + 1)
+    if len(payload) > maximum_bytes:
+        raise ValueError(f"{label} exceeds {maximum_bytes} bytes")
+    return payload
 
 
 def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bool:
@@ -254,8 +269,9 @@ def evaluate(
             or not _command_matches_criterion(command_id, argv, item.get("exit_code"))
             or item.get("head_sha") != head
             or not isinstance(observations, list)
-            or set(observations) != COMMAND_OBSERVATIONS.get(command_id)
+            or any(not isinstance(observation, str) for observation in observations)
             or len(observations) != len(set(observations))
+            or set(observations) != COMMAND_OBSERVATIONS.get(command_id)
             or not digests_valid
             or item.get("status") != "passed"
         ):
@@ -456,16 +472,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        record_bytes = read_bounded_regular_file(args.record, MAX_RECORD_BYTES, "record")
         payload = json.loads(
-            args.record.read_text(encoding="utf-8"),
+            record_bytes.decode("utf-8"),
             parse_constant=lambda value: (_ for _ in ()).throw(
                 ValueError(f"non-standard JSON constant: {value}")
             ),
         )
-        key_mode = stat.S_IMODE(args.attestation_key_file.stat().st_mode)
+        key_mode = stat.S_IMODE(args.attestation_key_file.lstat().st_mode)
         if key_mode & 0o077:
             raise ValueError("attestation key must not be accessible by group or others")
-        attestation_key = args.attestation_key_file.read_bytes()
+        attestation_key = read_bounded_regular_file(
+            args.attestation_key_file, MAX_KEY_BYTES, "attestation key",
+        )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         print(f"cannot read outcome canary record: {exc}", file=sys.stderr)
         return 2

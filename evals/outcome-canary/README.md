@@ -81,7 +81,8 @@ python3 scripts/evaluate_outcome_canary.py \
 
 The evaluator reports `accepted`, reasons, and the measured collaboration
 metrics. Missing evidence stays `unmeasured` or becomes an explicit rejection;
-it never becomes a pass.
+it never becomes a pass. Both attestation and evaluation reject non-regular or
+larger-than-1-MiB records before parsing.
 
 ## Release use
 

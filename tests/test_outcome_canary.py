@@ -211,6 +211,17 @@ class OutcomeCanaryTests(unittest.TestCase):
         )["reasons"]
         self.assertIn("artifact-evidence-not-proven", reasons)
 
+    def test_unhashable_command_observation_is_rejected_without_exception(self) -> None:
+        record = accepted_record()
+        record["outcome"]["acceptance_commands"][0]["observations"] = [
+            {"claim": "documented-command-produced-markdown"},
+        ]
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("acceptance-command-not-passed", reasons)
+
     def test_stale_or_failed_integration_evidence_is_rejected(self) -> None:
         record = accepted_record()
         record["outcome"]["checks"][0]["head_sha"] = "c" * 40
@@ -370,6 +381,24 @@ class OutcomeCanaryTests(unittest.TestCase):
         self.assertEqual(0, attested.returncode, attested.stderr)
         self.assertEqual(0, evaluated.returncode, evaluated.stdout + evaluated.stderr)
         self.assertIn('"accepted": true', evaluated.stdout)
+
+    def test_oversized_record_is_rejected_before_json_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "oversized.json"
+            key = Path(directory) / "canary.key"
+            source.write_bytes(b"{" + b" " * EVALUATOR.MAX_RECORD_BYTES + b"}")
+            key.write_bytes(ATTESTATION_KEY)
+            key.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable, str(SCRIPT), str(source),
+                    "--attestation-key-file", str(key),
+                    "--expected-hydra-revision", EXPECTED_HYDRA_REVISION,
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(2, completed.returncode)
+        self.assertIn("record exceeds", completed.stderr)
 
 
 if __name__ == "__main__":

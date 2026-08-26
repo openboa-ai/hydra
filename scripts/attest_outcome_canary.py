@@ -36,14 +36,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        mode = stat.S_IMODE(args.key_file.stat().st_mode)
+        evaluator = _load_evaluator()
+        mode = stat.S_IMODE(args.key_file.lstat().st_mode)
         if mode & 0o077:
             raise ValueError("attestation key must not be accessible by group or others")
-        key = args.key_file.read_bytes()
+        key = evaluator.read_bounded_regular_file(
+            args.key_file, evaluator.MAX_KEY_BYTES, "attestation key",
+        )
         if len(key) < 32:
             raise ValueError("attestation key must contain at least 32 bytes")
+        record_bytes = evaluator.read_bounded_regular_file(
+            args.record, evaluator.MAX_RECORD_BYTES, "record",
+        )
         payload = json.loads(
-            args.record.read_text(encoding="utf-8"),
+            record_bytes.decode("utf-8"),
             parse_constant=lambda value: (_ for _ in ()).throw(
                 ValueError(f"non-standard JSON constant: {value}")
             ),
@@ -52,7 +58,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("outcome canary record must be a JSON object")
         if "attestation" in payload:
             raise ValueError("input record must not already contain an attestation")
-        evaluator = _load_evaluator()
         payload["attestation"] = evaluator.create_attestation(payload, key)
         args.output.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n",
