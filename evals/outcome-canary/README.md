@@ -80,15 +80,18 @@ job ID, and complete workflow content. The evaluator recomputes the workflow
 digest, requires the named job to run the exact locally observed coverage argv,
 and binds the run URL and both heads. The canary workflow is deliberately
 minimal: pull-request trigger, read-only contents permission, Ubuntu runner,
-`actions/checkout@v4` with `persist-credentials: false`, and the exact isolated coverage command
+`actions/checkout@v4` with `persist-credentials: false`, the exact-revision
+trusted black-box action, and then the exact isolated coverage command
 defined by `COVERAGE_ARGV` in the evaluator. It starts Python with `-I`, imports
 standard-library unittest before adding the checkout to the discovery path, and
 then runs `tests`. This prevents a candidate `unittest.py` from shadowing the
 standard library. This candidate-authored suite remains a CI signal, not trusted
 release accounting: test modules can still mutate their own in-process runner.
-The third and final step must use
+The second step must use
 `openboa-ai/hydra/actions/outcome-canary@<exact-candidate-sha>` with fixed
-candidate root `.` and entrypoint `handoff.py`. Extra defaults, shells,
+candidate root `.` and entrypoint `handoff.py`, before any candidate-authored
+test can mutate GitHub runner environment-command state. The action itself uses
+the fixed `/bin/bash` and `/usr/bin/python3 -I` paths. Extra defaults, shells,
 conditions, environments, containers, steps, or continue-on-error behavior are
 rejected. A passing check name alone is not evidence that tests ran.
 
@@ -111,8 +114,9 @@ do not provide the required ephemeral runner and resource boundary.
 Candidate Markdown outputs are opened without following links, validated as
 regular files, and read under the same 64-KiB cap. Expected values must appear
 as exact bullet values inside their corresponding sections; substrings do not
-qualify. One document-wide scan preserves fence state, so headings or bullets
-inside fenced code never count.
+qualify. One document-wide scan preserves the opening fence character and
+length, so only a valid same-character closing fence of at least that length
+ends it; headings or bullets inside fenced code never count.
 
 Evaluate a collected record without network or GitHub writes:
 

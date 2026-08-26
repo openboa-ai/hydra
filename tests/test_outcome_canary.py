@@ -46,11 +46,11 @@ def accepted_record() -> dict:
         "permissions": {"contents": "read"},
         "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": [
             {"uses": "actions/checkout@v4", "with": {"persist-credentials": "false"}},
-            {"run": shlex.join(coverage_argv)},
             {
                 "uses": f"openboa-ai/hydra/actions/outcome-canary@{'a' * 40}",
                 "with": {"candidate-root": ".", "entrypoint": "handoff.py"},
             },
+            {"run": shlex.join(coverage_argv)},
         ]}},
     }, separators=(",", ":"))
     evidence_references = {
@@ -322,6 +322,40 @@ target.write_text("\\n".join([
         self.assertGreater(json.loads(completed.stdout)["failures"], 0)
 
     @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
+    def test_trusted_blackbox_requires_matching_fence_length(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    values = [json.loads(line) for line in source.read_text().splitlines()]
+except json.JSONDecodeError:
+    raise SystemExit(2)
+by_kind = {item["kind"]: item["value"] for item in values}
+target.write_text("\\n".join([
+    "````markdown", "```",
+    "# Outcome", f"- {by_kind.get('outcome', '')}",
+    "# Evidence", f"- {by_kind.get('evidence', '')}",
+    "# Unknowns", f"- {by_kind.get('unknown', '')}",
+    "````",
+]))
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        self.assertGreater(json.loads(completed.stdout)["failures"], 0)
+
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_bounds_candidate_console_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -431,7 +465,7 @@ target.write_text("\\n".join([
         coverage["argv"] = ["python3", "-I", "-c", "pass"]
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
-        workflow["jobs"]["test"]["steps"][1]["run"] = "python3 -I -c pass"
+        workflow["jobs"]["test"]["steps"][2]["run"] = "python3 -I -c pass"
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()
@@ -450,7 +484,7 @@ target.write_text("\\n".join([
         coverage["argv"][0] = "./python3"
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
-        workflow["jobs"]["test"]["steps"][1]["run"] = shlex.join(coverage["argv"])
+        workflow["jobs"]["test"]["steps"][2]["run"] = shlex.join(coverage["argv"])
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()
@@ -469,7 +503,7 @@ target.write_text("\\n".join([
         coverage["argv"] = ["python3", "-m", "unittest", "discover"]
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
-        workflow["jobs"]["test"]["steps"][1]["run"] = "python3 -m unittest discover"
+        workflow["jobs"]["test"]["steps"][2]["run"] = "python3 -m unittest discover"
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()
@@ -631,9 +665,25 @@ target.write_text("\\n".join([
         record = accepted_record()
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
-        workflow["jobs"]["test"]["steps"][2]["uses"] = (
+        workflow["jobs"]["test"]["steps"][1]["uses"] = (
             f"openboa-ai/hydra/actions/outcome-canary@{'0' * 40}"
         )
+        check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
+        check["workflow_sha256"] = hashlib.sha256(
+            check["workflow_content"].encode()
+        ).hexdigest()
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("check-not-passed-on-current-head", reasons)
+
+    def test_ci_workflow_runs_trusted_action_before_candidate_tests(self) -> None:
+        record = accepted_record()
+        check = record["outcome"]["checks"][0]
+        workflow = json.loads(check["workflow_content"])
+        steps = workflow["jobs"]["test"]["steps"]
+        steps[1], steps[2] = steps[2], steps[1]
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()

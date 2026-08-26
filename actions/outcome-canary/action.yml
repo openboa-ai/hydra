@@ -11,11 +11,11 @@ runs:
   using: composite
   steps:
     - name: Run trusted black-box verifier
-      shell: bash
+      shell: /bin/bash --noprofile --norc -e -o pipefail {0}
       env:
         OPENBOA_CANDIDATE_ROOT: ${{ inputs.candidate-root }}
         OPENBOA_ENTRYPOINT: ${{ inputs.entrypoint }}
       run: >-
-        python3 "$GITHUB_ACTION_PATH/../../scripts/run_outcome_canary_blackbox.py"
+        /usr/bin/python3 -I "$GITHUB_ACTION_PATH/../../scripts/run_outcome_canary_blackbox.py"
         --candidate-root "$OPENBOA_CANDIDATE_ROOT"
         --entrypoint "$OPENBOA_ENTRYPOINT"

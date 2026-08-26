@@ -191,11 +191,11 @@ def workflow_runs_coverage(
                 "runs-on": "ubuntu-latest",
                 "steps": [
                     {"uses": "actions/checkout@v4", "with": {"persist-credentials": "false"}},
-                    {"run": expected},
                     {
                         "uses": f"openboa-ai/hydra/actions/outcome-canary@{hydra_revision}",
                         "with": {"candidate-root": ".", "entrypoint": "handoff.py"},
                     },
+                    {"run": expected},
                 ],
             },
         },

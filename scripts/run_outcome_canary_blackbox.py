@@ -100,14 +100,19 @@ def write_jsonl(path: Path, values: list[dict[str, str]]) -> None:
 def markdown_sections(rendered: str) -> dict[str, set[str]]:
     sections: dict[str, set[str]] = {}
     current: str | None = None
-    fence: str | None = None
+    fence: tuple[str, int] | None = None
     for raw_line in rendered.splitlines():
-        line = raw_line.strip()
-        if line.startswith(("```", "~~~")):
-            marker = line[:3]
+        fence_line = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", raw_line)
+        if fence_line is not None:
+            marker, remainder = fence_line.groups()
             if fence is None:
-                fence = marker
-            elif marker == fence:
+                if marker[0] == "~" or "`" not in remainder:
+                    fence = (marker[0], len(marker))
+            elif (
+                marker[0] == fence[0]
+                and len(marker) >= fence[1]
+                and not remainder.strip()
+            ):
                 fence = None
             continue
         if fence is not None:
