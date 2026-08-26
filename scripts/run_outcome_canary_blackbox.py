@@ -138,7 +138,7 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
                     fence = None
             continue
         visible_line, html_comment = outside_html_comments(raw_line, html_comment)
-        if re.match(r"\s*</?[A-Za-z][A-Za-z0-9-]*(?:\s|/?>|$)", visible_line):
+        if visible_line.lstrip().startswith("<"):
             sections.setdefault(INVALID_MARKDOWN, set()).add(visible_line.strip())
             continue
         fence_line = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", visible_line)
