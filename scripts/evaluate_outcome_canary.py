@@ -138,7 +138,7 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
             and any(arg.endswith(".jsonl") for arg in argv)
         )
     if command_id == "coverage":
-        return exit_code == 0 and "-m" in argv and "unittest" in argv
+        return exit_code == 0 and argv[1:] == ["-m", "unittest", "discover"]
     return False
 
 
@@ -167,6 +167,8 @@ def workflow_runs_coverage(
         or not isinstance(coverage_argv, list)
         or not coverage_argv
         or any(not isinstance(arg, str) or not arg for arg in coverage_argv)
+        or Path(coverage_argv[0]).name not in {"python", "python3"}
+        or coverage_argv[1:] != ["-m", "unittest", "discover"]
     ):
         return False
     try:
