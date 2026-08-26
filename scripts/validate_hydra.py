@@ -180,7 +180,15 @@ def validate(root: Path) -> list[str]:
             errors.append(f"unable to list automation templates: {exc}")
             automation_paths = []
     for path in sorted(automation_paths):
-        if path.suffix != ".md" or path == automation_readme:
+        if path == automation_readme:
+            continue
+        if is_safe_directory(path):
+            errors.append(
+                f"automation directory must be flat; nested directory found: {display(root, path)}"
+            )
+            continue
+        if path.suffix != ".md":
+            errors.append(f"unexpected automation entry: {display(root, path)}")
             continue
         text = read_bounded_text(path, root, errors, "automation template", 131072)
         if text is None:

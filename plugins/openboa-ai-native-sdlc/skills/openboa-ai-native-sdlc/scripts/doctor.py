@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 from typing import Any, Sequence
@@ -14,6 +15,7 @@ from typing import Any, Sequence
 
 CONTRACT = "0.2.0"
 MARKER = f"<!-- openboa-ai-native-sdlc:managed:start contract={CONTRACT} -->"
+MAX_AGENTS_BYTES = 131072
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -62,6 +64,37 @@ def nearest_agents(start: Path) -> Path | None:
     return None
 
 
+def read_agents_bounded(path: Path) -> str | None:
+    """Read one regular instruction file without following links or allocating without bound."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_AGENTS_BYTES:
+            return None
+        chunks = bytearray()
+        while len(chunks) <= MAX_AGENTS_BYTES:
+            chunk = os.read(descriptor, min(65536, MAX_AGENTS_BYTES + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+        payload = bytes(chunks)
+        if len(payload) > MAX_AGENTS_BYTES:
+            return None
+        return payload.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    finally:
+        os.close(descriptor)
+
+
 def inspect(path: Path) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
     result: dict[str, Any] = {
@@ -93,9 +126,8 @@ def inspect(path: Path) -> dict[str, Any]:
     agents = nearest_agents(resolved)
     if agents is not None:
         result["agents"] = "available"
-        try:
-            text = agents.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        text = read_agents_bounded(agents)
+        if text is None:
             result["managed_contract"] = "unreadable"
         else:
             result["managed_contract"] = "current" if MARKER in text else "absent-or-drifted"

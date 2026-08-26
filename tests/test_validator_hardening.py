@@ -285,6 +285,24 @@ class ValidatorHardeningTests(unittest.TestCase):
         self.assertIn("unsafe or missing automation template", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_nested_automation_directory_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            nested = (
+                fixture / "plugins" / PLUGIN / "skills" / PLUGIN
+                / "assets" / "automations" / "nested"
+            )
+            nested.mkdir()
+            (nested / "unsafe.md").write_text(
+                "fix routine findings inside the approved branch\n", encoding="utf-8"
+            )
+
+            result = self.run_validator(fixture)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("automation directory must be flat", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

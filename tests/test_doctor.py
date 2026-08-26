@@ -70,6 +70,22 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual("available", payload["git"])
             self.assertFalse(marker.exists())
 
+    def test_oversized_agents_file_is_not_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repo"
+            repository.mkdir()
+            agents = repository / "AGENTS.md"
+            agents.write_bytes(b"x" * 131073)
+
+            result = subprocess.run(
+                [sys.executable, str(DOCTOR), str(repository), "--json"],
+                text=True, capture_output=True, check=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual("available", payload["agents"])
+        self.assertEqual("unreadable", payload["managed_contract"])
+
 
 if __name__ == "__main__":
     unittest.main()
