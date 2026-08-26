@@ -98,35 +98,61 @@ def write_jsonl(path: Path, values: list[dict[str, str]]) -> None:
     )
 
 
+def outside_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
+    visible: list[str] = []
+    cursor = 0
+    while cursor < len(line):
+        if in_comment:
+            end = line.find("-->", cursor)
+            if end < 0:
+                return "".join(visible), True
+            cursor = end + 3
+            in_comment = False
+            continue
+        start = line.find("<!--", cursor)
+        if start < 0:
+            visible.append(line[cursor:])
+            break
+        visible.append(line[cursor:start])
+        cursor = start + 4
+        in_comment = True
+    return "".join(visible), in_comment
+
+
 def markdown_sections(rendered: str) -> dict[str, set[str]]:
     sections: dict[str, set[str]] = {}
     current: str | None = None
     fence: tuple[str, int] | None = None
+    html_comment = False
     for raw_line in rendered.splitlines():
-        fence_line = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", raw_line)
+        if fence is not None:
+            closing = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", raw_line)
+            if closing is not None:
+                marker, remainder = closing.groups()
+                if (
+                    marker[0] == fence[0]
+                    and len(marker) >= fence[1]
+                    and not remainder.strip()
+                ):
+                    fence = None
+            continue
+        visible_line, html_comment = outside_html_comments(raw_line, html_comment)
+        fence_line = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", visible_line)
         if fence_line is not None:
             marker, remainder = fence_line.groups()
-            if fence is None:
-                if marker[0] == "~" or "`" not in remainder:
-                    fence = (marker[0], len(marker))
-            elif (
-                marker[0] == fence[0]
-                and len(marker) >= fence[1]
-                and not remainder.strip()
-            ):
-                fence = None
+            if marker[0] == "~" or "`" not in remainder:
+                fence = (marker[0], len(marker))
             continue
-        if fence is not None:
-            continue
-        heading = re.fullmatch(r"#{1,6}\s+(.+?)\s*", raw_line)
+        heading = re.fullmatch(r"#{1,6}\s+(.+?)\s*", visible_line)
         if heading:
             title = heading.group(1)
             current = title if title in EXPECTED_SECTIONS else None
             if current is not None:
                 sections.setdefault(current, set())
             continue
-        if current is not None and raw_line.startswith(("- ", "* ")):
-            sections[current].add(raw_line[2:].strip())
+        list_item = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", visible_line)
+        if current is not None and list_item is not None:
+            sections[current].add(list_item.group(1))
     return sections
 
 

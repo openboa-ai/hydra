@@ -349,6 +349,74 @@ target.write_text("\\n".join([
         self.assertIn("probe-section-value-separation", failed)
 
     @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
+    def test_trusted_blackbox_counts_nested_values_in_section_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    by_kind = {item["kind"]: item["value"] for item in map(json.loads, source.read_text().splitlines())}
+except (KeyError, json.JSONDecodeError):
+    raise SystemExit(2)
+values = [by_kind["outcome"], by_kind["evidence"], by_kind["unknown"]]
+lines = []
+for index, title in enumerate(("Outcome", "Evidence", "Unknowns")):
+    lines.extend([f"# {title}", f"- {values[index]}"])
+    lines.extend(f"  - {value}" for offset, value in enumerate(values) if offset != index)
+target.write_text("\\n".join(lines))
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        self.assertIn(
+            "section-value-separation", json.loads(completed.stdout)["failed_checks"],
+        )
+
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
+    def test_trusted_blackbox_ignores_values_inside_html_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    by_kind = {item["kind"]: item["value"] for item in map(json.loads, source.read_text().splitlines())}
+except (KeyError, json.JSONDecodeError):
+    raise SystemExit(2)
+target.write_text("\\n".join([
+    "# Outcome", "<!--", f"- {by_kind['outcome']}", "-->",
+    "# Evidence", "<!--", f"- {by_kind['evidence']}", "-->",
+    "# Unknowns", "<!--", f"- {by_kind['unknown']}", "-->",
+]))
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        failed = json.loads(completed.stdout)["failed_checks"]
+        self.assertIn("outcome-preservation", failed)
+        self.assertIn("evidence-preservation", failed)
+        self.assertIn("unknown-preservation", failed)
+
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_rejects_symlinked_candidate_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
