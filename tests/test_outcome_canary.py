@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -229,7 +230,7 @@ try:
 except json.JSONDecodeError:
     raise SystemExit(2)
 unknowns = [item["value"] for item in values if item.get("kind") == "unknown"]
-target.write_text("# Outcome\\n\\n# Evidence\\n\\n# Unknowns\\n" + "\\n".join(unknowns))
+target.write_text("# Outcome\\n- not-cli-completed-value\\n\\n# Evidence\\n- not-tests-passed-value\\n\\n# Unknowns\\n" + "\\n".join(f"- not-{value}-value" for value in unknowns))
 """,
                 encoding="utf-8",
             )
@@ -244,6 +245,37 @@ target.write_text("# Outcome\\n\\n# Evidence\\n\\n# Unknowns\\n" + "\\n".join(un
         failed = json.loads(completed.stdout)["failed_checks"]
         self.assertIn("outcome-preservation", failed)
         self.assertIn("evidence-preservation", failed)
+
+    def test_trusted_blackbox_rejects_symlinked_candidate_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "large.md").write_text(
+                "# Outcome\n- cli-completed\n# Evidence\n- tests-passed\n# Unknowns\n- deployment-status-unknown\n"
+                + ("x" * 100_000),
+                encoding="utf-8",
+            )
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    [json.loads(line) for line in source.read_text().splitlines()]
+except json.JSONDecodeError:
+    raise SystemExit(2)
+target.symlink_to(Path(__file__).with_name("large.md"))
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("OSError", json.loads(completed.stdout)["failed_checks"])
 
     def test_trusted_blackbox_bounds_candidate_console_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -263,6 +295,53 @@ target.write_text("# Outcome\\n\\n# Evidence\\n\\n# Unknowns\\n" + "\\n".join(un
         self.assertEqual(1, completed.returncode)
         self.assertLess(len(completed.stdout), 10_000)
         self.assertGreater(json.loads(completed.stdout)["failures"], 0)
+
+    def test_trusted_blackbox_prevents_detached_descendants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "detached-marker"
+            (root / "handoff.py").write_text(
+                """import json
+import os
+import sys
+import time
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    child = os.fork()
+except OSError:
+    child = -1
+if child == 0:
+    os.setsid()
+    time.sleep(0.2)
+    Path("detached-marker").write_text("escaped")
+    os._exit(0)
+sections = {"outcome": [], "evidence": [], "unknown": []}
+try:
+    for line in source.read_text().splitlines():
+        item = json.loads(line)
+        sections[item["kind"]].append(item["value"])
+except (KeyError, json.JSONDecodeError):
+    raise SystemExit(2)
+target.write_text("\\n".join([
+    "# Outcome", *[f"- {value}" for value in sections["outcome"]],
+    "# Evidence", *[f"- {value}" for value in sections["evidence"]],
+    "# Unknowns", *[f"- {value}" for value in sections["unknown"]],
+]))
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+            time.sleep(0.3)
+            escaped = marker.exists()
+        self.assertEqual(0, completed.returncode, completed.stdout)
+        self.assertFalse(escaped)
 
     def test_complete_current_head_evidence_is_accepted(self) -> None:
         result = EVALUATOR.evaluate(

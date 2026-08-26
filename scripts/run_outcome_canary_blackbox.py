@@ -99,10 +99,43 @@ def markdown_section(rendered: str, title: str) -> str | None:
     return match.group(1) if match else None
 
 
+def markdown_values(section: str | None) -> set[str]:
+    if section is None:
+        return set()
+    values: set[str] = set()
+    for raw_line in section.splitlines():
+        line = raw_line.strip()
+        if line.startswith(("- ", "* ")):
+            values.add(line[2:].strip())
+    return values
+
+
+def read_bounded_output(path: Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("candidate output must be a regular file")
+        if metadata.st_size > MAX_CHILD_FILE_BYTES:
+            raise ValueError("candidate output exceeds byte limit")
+        with os.fdopen(descriptor, "rb", closefd=True) as handle:
+            descriptor = -1
+            payload = handle.read(MAX_CHILD_FILE_BYTES + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(payload) > MAX_CHILD_FILE_BYTES:
+        raise ValueError("candidate output exceeds byte limit")
+    return payload.decode("utf-8")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     failures: list[str] = []
     try:
+        if os.geteuid() == 0:
+            raise ValueError("trusted black-box harness refuses root execution")
         root = args.candidate_root.resolve(strict=True)
         entrypoint = regular_entrypoint(root, args.entrypoint)
         with tempfile.TemporaryDirectory(prefix="openboa-canary-blackbox-") as directory:
@@ -115,21 +148,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {"kind": "unknown", "value": "deployment-status-unknown"},
             ])
             success = run_candidate(root, entrypoint, source, output)
-            if success.returncode != 0 or not output.is_file():
+            if success.returncode != 0:
                 failures.append("success-path")
             else:
-                rendered = output.read_text(encoding="utf-8")
+                rendered = read_bounded_output(output)
                 sections = {
                     section: markdown_section(rendered, section)
                     for section in EXPECTED_SECTIONS
                 }
                 if any(content is None for content in sections.values()):
                     failures.append("section-separation")
-                if "cli-completed" not in (sections["Outcome"] or ""):
+                if "cli-completed" not in markdown_values(sections["Outcome"]):
                     failures.append("outcome-preservation")
-                if "tests-passed" not in (sections["Evidence"] or ""):
+                if "tests-passed" not in markdown_values(sections["Evidence"]):
                     failures.append("evidence-preservation")
-                if "deployment-status-unknown" not in (sections["Unknowns"] or ""):
+                if "deployment-status-unknown" not in markdown_values(sections["Unknowns"]):
                     failures.append("unknown-preservation")
                 original_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
@@ -140,12 +173,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     {"kind": "unknown", "value": "ownership-unknown"},
                 ])
                 probe = run_candidate(root, entrypoint, source, output)
-                if probe.returncode != 0 or not output.is_file():
+                if probe.returncode != 0:
                     failures.append("input-influence")
                 else:
-                    probe_text = output.read_text(encoding="utf-8")
+                    probe_text = read_bounded_output(output)
                     probe_digest = hashlib.sha256(probe_text.encode("utf-8")).hexdigest()
-                    probe_unknowns = markdown_section(probe_text, "Unknowns") or ""
+                    probe_unknowns = markdown_values(markdown_section(probe_text, "Unknowns"))
                     if "ownership-unknown" not in probe_unknowns or probe_digest == original_digest:
                         failures.append("input-influence")
 

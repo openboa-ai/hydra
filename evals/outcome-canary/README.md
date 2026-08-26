@@ -104,6 +104,11 @@ limits before exec. In particular `RLIMIT_NPROC=1` prevents the
 candidate from creating a detached descendant, and the harness terminates the
 child session on timeout. This is a fixed release-canary verifier, not a
 generic unattended workspace runner.
+The harness refuses to run as root because root bypasses `RLIMIT_NPROC`.
+Candidate Markdown outputs are opened without following links, validated as
+regular files, and read under the same 64-KiB cap. Expected values must appear
+as exact bullet values inside their corresponding sections; substrings do not
+qualify.
 
 Evaluate a collected record without network or GitHub writes:
 
