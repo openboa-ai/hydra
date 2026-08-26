@@ -104,7 +104,9 @@ output, malformed-input rejection, and a changed unknown value that must change
 the output. Success-path values are unpredictable per run, so a candidate
 cannot pass by recognizing only the public fixture strings. Both successful
 runs must preserve all three sections and every expected value; the influence
-probe cannot discard unchanged values. It never imports candidate
+probe cannot discard unchanged values. Each section's bullet set must equal
+only its corresponding generated value, preventing values from being copied
+into every section. It never imports candidate
 modules, so candidate test code cannot modify its counters. The evaluator
 requires the connector-observed exact-head job containing both the candidate
 coverage command and the exact-revision trusted action to pass.

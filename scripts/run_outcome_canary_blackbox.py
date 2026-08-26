@@ -143,6 +143,13 @@ def section_failures(
         failures.append("evidence-preservation")
     if unknown_value not in sections.get("Unknowns", set()):
         failures.append("unknown-preservation")
+    expected = {
+        "Outcome": {outcome_value},
+        "Evidence": {evidence_value},
+        "Unknowns": {unknown_value},
+    }
+    if any(sections.get(title, set()) != values for title, values in expected.items()):
+        failures.append("section-value-separation")
     return failures
 
 
