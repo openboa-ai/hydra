@@ -2,7 +2,7 @@
 
 An agent member is an operational role, not a particular model process, prompt window, or Codex session. The role can continue across tools and environments only when the work state, authority, effects, and evidence remain durable and another capable agent or human can reconstruct the next safe action.
 
-Continuity is a replaceable operating method. It does not require a custom agent runtime. In v0.1, use GitHub, versioned repository state, Codex tasks, and concise handoffs.
+Continuity is a replaceable operating method. It does not require a custom agent runtime. In v0.2, use GitHub, versioned repository state, Codex tasks, bounded wakeups, and concise handoffs.
 
 ## Put state on durable surfaces
 

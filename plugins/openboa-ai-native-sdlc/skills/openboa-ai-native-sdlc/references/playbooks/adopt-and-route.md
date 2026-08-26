@@ -39,10 +39,11 @@ For an existing `openboa-operations@openboa-hydra` installation:
 2. Upgrade the `openboa-hydra` marketplace.
 3. Install `openboa-ai-native-sdlc@openboa-hydra` without removing the old plugin.
 4. Start a new Codex task and confirm this skill is available.
-5. Run the managed `AGENTS.md` migration in check mode, then write mode. Record and inspect the reported recovery file.
-6. Verify the diff, repository checks, managed block, local instructions, and another new task.
-7. Remove `openboa-operations@openboa-hydra` only after every prior step passes.
-8. Restart Codex or begin another new task and verify the old skill is gone.
+5. Open `/hooks`, review the exact packaged `SessionStart` and `PostCompact` commands, and trust them only if they resolve through `PLUGIN_ROOT` to the read-only doctor. Record `skipped` separately from skill discovery.
+6. Run the managed `AGENTS.md` migration in check mode, then write mode. Record and inspect the reported recovery file.
+7. Verify the diff, repository checks, managed block, local instructions, doctor output, and another new task.
+8. Remove `openboa-operations@openboa-hydra` only after every prior step passes.
+9. Restart Codex or begin another new task and verify the old skill is gone.
 
 Rehearse this sequence in a temporary Codex home before changing an active installation. If any step fails, keep the old plugin and stop. To abort or roll back, use the external backup or retained recovery file as the source for a reviewed managed-block-only edit; preserve the target's current repository-local section byte for byte. Never restore the whole file over newer local instructions. Refuse mixed, missing, duplicate, or overlapping markers rather than guessing. Do not delete plugin cache directories by hand.
 

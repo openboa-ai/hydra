@@ -12,9 +12,9 @@ REFERENCES = SKILL / "references"
 class PolicyInvariantTests(unittest.TestCase):
     def test_foundation_separates_human_agent_and_system(self) -> None:
         doctrine = (REFERENCES / "doctrine.md").read_text(encoding="utf-8")
-        self.assertIn("Humans own purpose and final accountability", doctrine)
-        self.assertIn("Agents lead delegated work toward outcomes", doctrine)
-        self.assertIn("Systems enforce authority and safety boundaries", doctrine)
+        self.assertIn("Humans are accountable for purpose and consequences", doctrine)
+        self.assertIn("Agents are responsible for leading delegated outcomes", doctrine)
+        self.assertIn("Systems make authority, evidence, and recovery trustworthy", doctrine)
         self.assertIn("methods replaceable", doctrine)
         self.assertIn("not a claim that an agent is a legal or moral person", doctrine)
 
@@ -103,7 +103,7 @@ class PolicyInvariantTests(unittest.TestCase):
             self.assertIn(term, evaluation)
         self.assertIn("unknown is not zero", evaluation)
 
-    def test_one_core_skill_routes_five_replaceable_playbooks(self) -> None:
+    def test_one_core_skill_routes_six_replaceable_playbooks(self) -> None:
         skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("a public commitment or release", skill_text)
         self.assertIn("an exact merge when the repository declares it a gate", skill_text)
@@ -112,7 +112,7 @@ class PolicyInvariantTests(unittest.TestCase):
         skill_dirs = sorted(path for path in (SKILL.parent).iterdir() if path.is_dir())
         self.assertEqual([SKILL], skill_dirs)
         playbooks = sorted((REFERENCES / "playbooks").glob("*.md"))
-        self.assertEqual(5, len(playbooks))
+        self.assertEqual(6, len(playbooks))
         for path in playbooks:
             self.assertIn("replaceable method", path.read_text(encoding="utf-8"))
 

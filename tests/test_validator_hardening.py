@@ -130,7 +130,7 @@ class ValidatorHardeningTests(unittest.TestCase):
             agents = fixture / "AGENTS.md"
             agents.write_text(
                 "# Example\n\n```markdown\n"
-                "<!-- openboa-ai-native-sdlc:managed:start contract=0.1.0 -->\n"
+                "<!-- openboa-ai-native-sdlc:managed:start contract=0.2.0 -->\n"
                 "## Immediate execution contract\n\n- Example only.\n"
                 "<!-- openboa-ai-native-sdlc:managed:end -->\n"
                 "## Workspace-local instructions\n\n- Example only.\n```\n",

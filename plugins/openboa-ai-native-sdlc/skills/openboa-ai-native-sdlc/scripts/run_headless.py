@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""Run one bounded Codex job with an attributable local evidence record."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from typing import IO, Sequence
+
+
+JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def absolute_dir(value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError("must be an absolute path")
+    if path.is_symlink():
+        raise argparse.ArgumentTypeError("must not be a symlink")
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        raise argparse.ArgumentTypeError("must be an existing directory")
+    return resolved
+
+
+def absolute_file(value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError("must be an absolute path")
+    if path.is_symlink():
+        raise argparse.ArgumentTypeError("must not be a symlink")
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise argparse.ArgumentTypeError("must be a regular file")
+    return resolved
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project", required=True, type=absolute_dir)
+    parser.add_argument("--prompt", required=True, type=absolute_file)
+    parser.add_argument("--state-dir", required=True, type=Path)
+    parser.add_argument("--job", required=True)
+    parser.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="read-only")
+    parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--codex-bin", default="codex")
+    args = parser.parse_args(argv)
+    if not JOB_RE.fullmatch(args.job):
+        parser.error("--job must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    if not args.state_dir.is_absolute():
+        parser.error("--state-dir must be an absolute path")
+    if not 1 <= args.timeout <= 86400:
+        parser.error("--timeout must be between 1 and 86400 seconds")
+    return args
+
+
+def git(project: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=project, text=True, capture_output=True, timeout=5, check=False
+    )
+    if result.returncode != 0:
+        raise ValueError(f"git {' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def require_isolated_clean_worktree(project: Path) -> None:
+    top = Path(git(project, "rev-parse", "--show-toplevel")).resolve()
+    if top != project:
+        raise ValueError("workspace-write project must be the Git worktree root")
+    if git(project, "status", "--porcelain"):
+        raise ValueError("workspace-write project must be clean")
+    git_dir = Path(git(project, "rev-parse", "--git-dir"))
+    common_dir = Path(git(project, "rev-parse", "--git-common-dir"))
+    git_dir = (project / git_dir).resolve() if not git_dir.is_absolute() else git_dir.resolve()
+    common_dir = (project / common_dir).resolve() if not common_dir.is_absolute() else common_dir.resolve()
+    if git_dir == common_dir:
+        raise ValueError("workspace-write requires an isolated Git worktree")
+
+
+def timestamp() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def write_record(handle: IO[str], payload: dict[str, object]) -> None:
+    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    handle.flush()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    state_dir = args.state_dir.resolve()
+    try:
+        state_dir.relative_to(args.project)
+    except ValueError:
+        pass
+    else:
+        print("state directory must be outside the project", file=sys.stderr)
+        return 2
+    if args.prompt.stat().st_size > 262144:
+        print("prompt file exceeds 256 KiB", file=sys.stderr)
+        return 2
+    if args.sandbox == "workspace-write":
+        try:
+            require_isolated_clean_worktree(args.project)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if state_dir.is_symlink() or state_dir.stat().st_mode & 0o077:
+        print("state directory must be private and must not be a symlink", file=sys.stderr)
+        return 2
+    lock_path = state_dir / f"{args.job}.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(f"job is already running: {args.job}", file=sys.stderr)
+            return 3
+
+        run_id = f"{args.job}-{timestamp()}-{os.getpid()}"
+        lock.seek(0)
+        lock.truncate()
+        lock.write(json.dumps({"pid": os.getpid(), "run_id": run_id}) + "\n")
+        lock.flush()
+        event_path = state_dir / f"{run_id}.jsonl"
+        final_path = state_dir / f"{run_id}.final.md"
+        prompt_text = args.prompt.read_text(encoding="utf-8")
+        command = [
+            args.codex_bin, "exec", "--ephemeral", "--json",
+            "--ignore-user-config", "--disable", "hooks",
+            "--sandbox", args.sandbox, "-C", str(args.project),
+            "-c", 'approval_policy="never"',
+            "--output-last-message", str(final_path), "-",
+        ]
+        with event_path.open("x", encoding="utf-8") as events:
+            write_record(events, {
+                "openboa_event": "run.started", "run_id": run_id,
+                "project": str(args.project), "sandbox": args.sandbox,
+                "timeout_seconds": args.timeout,
+            })
+            try:
+                process = subprocess.Popen(
+                    command, stdin=subprocess.PIPE, stdout=events, stderr=subprocess.PIPE,
+                    text=True, cwd=args.project,
+                )
+                _, stderr = process.communicate(prompt_text, timeout=args.timeout)
+                returncode = process.returncode
+            except subprocess.TimeoutExpired:
+                process.kill()
+                _, stderr = process.communicate()
+                returncode = 124
+            except OSError as exc:
+                stderr = str(exc)
+                returncode = 127
+            write_record(events, {
+                "openboa_event": "run.completed", "run_id": run_id,
+                "returncode": returncode,
+                "stderr_bytes": len(stderr.encode("utf-8", errors="replace")),
+                "stderr_sha256": hashlib.sha256(stderr.encode("utf-8", errors="replace")).hexdigest(),
+                "final_message": str(final_path) if final_path.exists() else None,
+            })
+        print(json.dumps({"run_id": run_id, "events": str(event_path), "final": str(final_path)}))
+        return returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

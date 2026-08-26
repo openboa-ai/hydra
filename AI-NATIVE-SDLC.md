@@ -5,6 +5,8 @@ This page is a discovery route, not a second source of policy. The canonical lif
 - [Lifecycle](plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/references/lifecycle.md)
 - [Work graphs](plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/references/work-graphs.md)
 - [Continuity and recovery](plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/references/continuity-and-recovery.md)
+- [Capability map](plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/references/capability-map.md)
+- [Automate and monitor](plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/references/playbooks/automate-and-monitor.md)
 
 Read the lifecycle with the foundations and controls that give it meaning:
 

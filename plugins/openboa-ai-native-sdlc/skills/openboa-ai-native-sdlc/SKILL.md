@@ -4,7 +4,7 @@ description: Use when shaping, planning, executing, reviewing, shipping, recover
 license: Apache-2.0
 metadata:
   publisher: openboa-ai
-  contract: "0.1.0"
+  contract: "0.2.0"
 ---
 
 # OpenBoa AI-Native SDLC
@@ -20,11 +20,12 @@ An agent is not merely a code generator or a step that waits for approval. Insid
 ## Start here
 
 1. Read the nearest `AGENTS.md`, including any workspace instructions discovered by Codex.
-2. Restate the outcome, current state, repository, and acceptance evidence. Do not ask for a named human owner when final accountability is already established by the organization.
-3. Choose the smallest relevant playbook below. Load only the references needed for the decision.
-4. Continue routine, reversible work without pausing for ceremonial approval. Stop at the exact boundary that needs a human decision.
-5. Verify against the real environment, not the model's confidence or a successful command alone.
-6. Leave durable state in GitHub and the repository so another task, model, or machine can resume from facts.
+2. Read the [capability map](references/capability-map.md) when tool choice, automation, long-running work, or environment support matters. Treat unavailable capabilities as `unknown`, not present.
+3. Restate the outcome, current state, repository, and acceptance evidence. Do not ask for a named human owner when final accountability is already established by the organization.
+4. Choose the smallest relevant playbook below. Load only the references needed for the decision.
+5. Continue routine, reversible work without pausing for ceremonial approval. Stop at the exact boundary that needs a human decision.
+6. Verify against the real environment, not the model's confidence or a successful command alone.
+7. Leave durable state in GitHub and the repository so another task, model, or machine can resume from facts.
 
 ## Choose a playbook
 
@@ -33,6 +34,7 @@ An agent is not merely a code generator or a step that waits for approval. Insid
 - Implementation, long-running work, parallel agents, recovery, or handoff: read [execute and hand off](references/playbooks/execute-and-handoff.md).
 - Review, verification, pull request, merge preparation, release, or rollback: read [review and ship](references/playbooks/review-and-ship.md).
 - Runtime observation, metrics, incident learning, evals, or workflow improvement: read [observe and improve](references/playbooks/observe-and-improve.md).
+- Repeated checks, scheduled follow-up, headless execution, or automation design: read [automate and monitor](references/playbooks/automate-and-monitor.md).
 
 Playbooks are replaceable methods. They may change as Codex, GitHub, models, and engineering practice improve. They must continue to serve the doctrine and operating model.
 
@@ -45,9 +47,11 @@ Playbooks are replaceable methods. They may change as Codex, GitHub, models, and
 - Permission, approval, external effects, or exceptions: [authority and approvals](references/authority-and-approvals.md)
 - Resume, retry, checkpoints, or partial effects: [continuity and recovery](references/continuity-and-recovery.md)
 - Codex tasks, local Git, Issues, pull requests, Actions, rulesets, or releases: [Codex and GitHub](references/codex-and-github.md)
+- Available execution, control-plane, automation, and observation capabilities: [capability map](references/capability-map.md)
+- Product-specific adapters: [Codex](references/adapters/codex.md), [GitHub](references/adapters/github.md), [scheduled tasks](references/adapters/scheduled-tasks.md), and [headless or CI](references/adapters/headless-and-ci.md)
 - Tests, evals, metrics, observation, or improving the system: [evaluation and learning](references/evaluation-and-learning.md)
 - Research claims and their limits: [research basis](references/research-basis.md)
-- Deliberate exclusions from v0.1: [non-goals](references/non-goals.md)
+- Deliberate exclusions from v0.2: [non-goals](references/non-goals.md)
 
 ## Default operating behavior
 

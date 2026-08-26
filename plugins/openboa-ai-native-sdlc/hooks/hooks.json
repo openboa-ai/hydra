@@ -1,0 +1,32 @@
+{
+  "description": "Read-only OpenBoa lifecycle diagnostics at session start and after compaction.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py\" --hook",
+            "timeout": 5,
+            "statusMessage": "Checking OpenBoa work context",
+            "additionalContextLimit": 2000
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py\" --hook",
+            "timeout": 5,
+            "statusMessage": "Rechecking OpenBoa work context"
+          }
+        ]
+      }
+    ]
+  }
+}

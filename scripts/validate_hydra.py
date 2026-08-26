@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 
-CONTRACT_VERSION = "0.1.0"
+CONTRACT_VERSION = "0.2.0"
 PLUGIN_NAME = "openboa-ai-native-sdlc"
 MARKETPLACE_NAME = "openboa-hydra"
 MANAGED_START = f"<!-- {PLUGIN_NAME}:managed:start contract={CONTRACT_VERSION} -->"
@@ -37,6 +37,7 @@ REQUIRED_REFERENCES = (
     "evaluation-and-learning.md",
     "research-basis.md",
     "non-goals.md",
+    "capability-map.md",
 )
 REQUIRED_PLAYBOOKS = (
     "adopt-and-route.md",
@@ -44,6 +45,7 @@ REQUIRED_PLAYBOOKS = (
     "execute-and-handoff.md",
     "review-and-ship.md",
     "observe-and-improve.md",
+    "automate-and-monitor.md",
 )
 REQUIRED_TEMPLATES = (
     "issue.md",
@@ -51,6 +53,20 @@ REQUIRED_TEMPLATES = (
     "handoff.md",
     "exception.md",
     "observation-review.md",
+)
+REQUIRED_ADAPTERS = (
+    "codex.md",
+    "github.md",
+    "scheduled-tasks.md",
+    "headless-and-ci.md",
+)
+REQUIRED_AUTOMATIONS = (
+    "pr-convergence.md",
+    "outcome-health.md",
+    "release-observation.md",
+    "dependency-security.md",
+    "docs-drift.md",
+    "incident-follow-up.md",
 )
 REQUIRED_RESEARCH_COLUMNS = (
     "source_id",
@@ -113,6 +129,12 @@ def validate(root: Path) -> list[str]:
         skill_root / "agents" / "openai.yaml",
         assets_root / "managed-AGENTS.md",
         skill_root / "scripts" / "sync_agents.py",
+        skill_root / "scripts" / "doctor.py",
+        skill_root / "scripts" / "run_headless.py",
+        plugin_root / "hooks" / "hooks.json",
+        root / "scripts" / "evaluate_readiness.py",
+        root / "scripts" / "collect_readiness.py",
+        root / ".github" / "workflows" / "openboa-ready-shadow.yml",
         root / ".github" / "openboa-governance.yml",
         root / ".github" / "workflows" / "openboa-governance-v2.yml",
         root / "scripts" / "validate_governance.py",
@@ -144,9 +166,17 @@ def validate(root: Path) -> list[str]:
     for name in REQUIRED_PLAYBOOKS:
         if not is_regular_file(references_root / "playbooks" / name):
             errors.append(f"missing playbook: references/playbooks/{name}")
+    for name in REQUIRED_ADAPTERS:
+        if not is_regular_file(references_root / "adapters" / name):
+            errors.append(f"missing adapter: references/adapters/{name}")
     for name in REQUIRED_TEMPLATES:
         if not is_regular_file(assets_root / "templates" / name):
             errors.append(f"missing template: assets/templates/{name}")
+    for name in REQUIRED_AUTOMATIONS:
+        if not is_regular_file(assets_root / "automations" / name):
+            errors.append(f"missing automation template: assets/automations/{name}")
+
+    validate_hooks(plugin_root / "hooks" / "hooks.json", errors)
 
     for path in (root / "AGENTS.md", assets_root / "managed-AGENTS.md"):
         if is_regular_file(path):
@@ -356,7 +386,7 @@ def validate_manifest(payload: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"plugin manifest is missing {key}")
     for forbidden in ("hooks", "mcpServers", "apps"):
         if forbidden in payload:
-            errors.append(f"v0.1 plugin must not declare {forbidden}")
+            errors.append(f"plugin manifest must not declare {forbidden}; use supported default discovery")
     interface = payload.get("interface")
     if isinstance(interface, dict):
         for key in ("displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "defaultPrompt"):
@@ -397,6 +427,35 @@ def validate_skill(skill_root: Path, errors: list[str]) -> None:
         return
     if "$openboa-ai-native-sdlc" not in openai_text:
         errors.append("openai.yaml default_prompt must name $openboa-ai-native-sdlc")
+
+
+def validate_hooks(path: Path, errors: list[str]) -> None:
+    payload = load_json(path, errors)
+    if payload is None:
+        return
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict) or set(hooks) != {"SessionStart", "PostCompact"}:
+        errors.append("plugin hooks must contain only SessionStart and PostCompact")
+        return
+    expected = {"SessionStart": "startup|resume|compact", "PostCompact": "manual|auto"}
+    for event, matcher in expected.items():
+        groups = hooks.get(event)
+        if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
+            errors.append(f"plugin hook {event} must contain one matcher group")
+            continue
+        group = groups[0]
+        if group.get("matcher") != matcher:
+            errors.append(f"plugin hook {event} matcher must be {matcher}")
+        handlers = group.get("hooks")
+        if not isinstance(handlers, list) or len(handlers) != 1 or not isinstance(handlers[0], dict):
+            errors.append(f"plugin hook {event} must contain one handler")
+            continue
+        handler = handlers[0]
+        if handler.get("type") != "command" or handler.get("timeout") != 5:
+            errors.append(f"plugin hook {event} must be a five-second command hook")
+        command = handler.get("command")
+        if not isinstance(command, str) or "${PLUGIN_ROOT}" not in command or "doctor.py\" --hook" not in command:
+            errors.append(f"plugin hook {event} must run packaged doctor.py through PLUGIN_ROOT")
 
 
 def validate_managed_agents(path: Path, errors: list[str]) -> None:
@@ -699,8 +758,8 @@ def validate_research(root: Path, errors: list[str]) -> None:
 
 def validate_scenarios(root: Path, errors: list[str]) -> None:
     paths = sorted((root / "evals" / "scenarios").glob("*.md"))
-    if len(paths) != 12:
-        errors.append(f"expected 12 behavioral scenarios, found {len(paths)}")
+    if len(paths) != 21:
+        errors.append(f"expected 21 behavioral scenarios, found {len(paths)}")
     identifiers: list[str] = []
     for path in paths:
         if not is_regular_file(path):

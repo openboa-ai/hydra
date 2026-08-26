@@ -91,9 +91,9 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.cases = RUNNER.load_cases(ROOT)
 
-    def test_exactly_twelve_cases_link_to_unique_scenarios(self) -> None:
-        self.assertEqual(12, len(self.cases))
-        self.assertEqual(12, len({case.identifier for case in self.cases}))
+    def test_exactly_twenty_one_cases_link_to_unique_scenarios(self) -> None:
+        self.assertEqual(21, len(self.cases))
+        self.assertEqual(21, len({case.identifier for case in self.cases}))
         for case in self.cases:
             with self.subTest(case=case.identifier):
                 scenario = (case.path.parent / case.payload["scenario"]).resolve()
@@ -1973,7 +1973,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         )
         self.assertEqual("failed", contaminated["status"])
 
-    def test_definition_only_run_is_twelve_unmeasured_with_attribution(self) -> None:
+    def test_definition_only_run_is_twenty_one_unmeasured_with_attribution(self) -> None:
         args = argparse.Namespace(
             root=ROOT,
             codex=False,
@@ -1987,7 +1987,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         )
         report = RUNNER.run_evaluations(args)
         self.assertEqual(
-            {"unmeasured": 12, "passed": 0, "failed": 0, "unsupported": 0},
+            {"unmeasured": 21, "passed": 0, "failed": 0, "unsupported": 0},
             report["status_counts"],
         )
         self.assertEqual("unmeasured", report["discovery"]["status"])
@@ -2021,7 +2021,7 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             )
             report = RUNNER.run_evaluations(args)
         self.assertEqual(
-            {"unmeasured": 0, "passed": 0, "failed": 0, "unsupported": 12},
+            {"unmeasured": 0, "passed": 0, "failed": 0, "unsupported": 21},
             report["status_counts"],
         )
         self.assertEqual("unsupported", report["discovery"]["status"])
@@ -2047,17 +2047,15 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             )
             self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
             report = json.loads(output.read_text(encoding="utf-8"))
-        self.assertEqual(12, report["status_counts"]["unmeasured"])
+        self.assertEqual(21, report["status_counts"]["unmeasured"])
         self.assertEqual("none", report["isolation"]["github_writes"])
 
     def test_recorded_result_is_complete_and_keeps_unknowns_explicit(self) -> None:
         report = json.loads(RECORDED_RESULT.read_text(encoding="utf-8"))
         results = report["results"]
         self.assertEqual(12, len(results))
-        self.assertEqual(
-            {case.identifier for case in self.cases},
-            {result["id"] for result in results},
-        )
+        baseline_ids = {json.loads(path.read_text(encoding="utf-8"))["id"] for path in V1_BASELINE.glob("*.json")}
+        self.assertEqual(baseline_ids, {result["id"] for result in results})
         self.assertEqual(report["status_counts"], RUNNER.status_counts(results))
         self.assertEqual("passed", report["discovery"]["explicit_invocation"])
         self.assertEqual("unmeasured", report["discovery"]["implicit_invocation"])
@@ -2130,9 +2128,10 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                 for path in sorted(V1_BASELINE.glob("*.json"))
             )
         }
-        self.assertEqual(set(baseline), set(current))
+        self.assertTrue(set(baseline).issubset(current))
+        self.assertEqual(9, len(set(current) - set(baseline)))
 
-        for identifier in sorted(current):
+        for identifier in sorted(baseline):
             with self.subTest(case=identifier):
                 v1 = baseline[identifier]
                 v2 = current[identifier]
@@ -2430,14 +2429,21 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
                     report["candidate"]["source"]["revision"],
                 )
 
-    def test_r13_result_is_attributable_private_and_core_complete(self) -> None:
-        self._assert_current_attributable_result(
-            R13_RESULT,
+    def test_r13_result_is_immutable_historical_evidence(self) -> None:
+        self.assertEqual(
             "527cfa939a50c6becafc33855845974bef726b06bca62e04f1dedbdefcc11ff5",
-            "00187ca23cc207994af739b341d398bb6fbcbb90",
+            hashlib.sha256(R13_RESULT.read_bytes()).hexdigest(),
         )
         raw = R13_RESULT.read_text(encoding="utf-8")
         report = json.loads(raw)
+        self.assertEqual(
+            {"unmeasured": 0, "passed": 12, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual(
+            "00187ca23cc207994af739b341d398bb6fbcbb90",
+            report["candidate"]["source"]["revision"],
+        )
         executable = report["host"]["codex_executable"]
         self.assertEqual(
             {"kind": "bare-name", "name": "codex"}, executable["request"]

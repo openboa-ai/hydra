@@ -8,9 +8,31 @@ This document describes the current lifecycle method. The doctrine explains why 
 
 Use this as a connected learning loop, not as a one-way sequence of stage gates:
 
-`Purpose and principles → Outcome → Explore and design → Plan the work graph → Execute ↔ Verify ↔ Recover → Review and integrate → Release and observe → Learn and improve`
+`Purpose and principles → Outcome → Explore and design → Plan the work graph → Execute ↔ Verify ↔ Recover → Review and integrate → Release → Observe → Learn and improve`
 
 Later evidence can send the work back to any earlier point. A failed test can change the implementation, an implementation discovery can change the plan, and production observation can change the original understanding of the outcome. The plan is the best current hypothesis, not a promise that reality must follow.
+
+## State, wakeup, evidence, and invalidation
+
+The lifecycle is operational only when another task or automation can tell what to do next. Every durable outcome therefore records four things:
+
+- **state** — shaping, planned, in progress, blocked, in review, ready to release, observing, or done;
+- **wakeup** — the event or time that makes another evaluation useful;
+- **evidence** — the exact revision, environment, test, review, deployment, or observation supporting the state; and
+- **invalidation** — the change that makes that evidence stale.
+
+| Current state | Normal wakeup | Required evidence to advance | Evidence invalidated by |
+| --- | --- | --- | --- |
+| Shaping | research result or human direction | observable outcome and decision boundary | changed purpose or product direction |
+| Planned | dependency ready or execution starts | work graph, capability, authority, acceptance, rollback | changed outcome, repository, or authority |
+| In progress | commit, test, tool result, or recovery event | implementation evidence tied to current state | changed base, failed assumption, external drift |
+| Blocked | named dependency, permission, or decision changes | live readback showing the blocker cleared | a different blocker or changed target |
+| In review | new check, review, comment, or head commit | passing declared checks and independent exact-head review | any new head or changed policy |
+| Ready to release | exact human gate or delivery event | current artifact, rollback, and gate evidence | new head, failed check, expired approval |
+| Observing | signal, incident, or observation-window end | delivered revision plus qualified real-world evidence | new deployment, environment, or metric definition |
+| Done | regression or new evidence | durable acceptance and required observation | evidence that the outcome no longer holds |
+
+Automations may move routine work when the transition rule and evidence are explicit. They do not invent purpose, authorize themselves, or convert missing evidence into a pass.
 
 ### 1. Set purpose and principles
 
@@ -43,6 +65,8 @@ Use one agent when the work is tightly coupled or coordination would cost more t
 The agent work lead makes progress inside the approved scope and authority, using repository instructions and the actual environment as constraints. Verification runs throughout execution rather than after all changes are complete. A failing check is new information: inspect it, update the hypothesis, and recover from a known state.
 
 Prefer small internal checkpoints and meaningful integration units. Small internal steps do not require small Issues or pull requests. Preserve unrelated work, isolate concurrent writers, and reconcile external effects before retrying an uncertain action. See [Continuity and recovery](continuity-and-recovery.md).
+
+Use event-driven follow-up when possible. A new commit, completed check, review, deployment, alert, or scheduled observation is a reason to wake. Poll only when the platform exposes no event and use a bounded interval, timeout, and expiry.
 
 ### 6. Review and integrate
 

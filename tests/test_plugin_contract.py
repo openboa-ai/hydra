@@ -101,6 +101,25 @@ class PluginContractTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertNotIn("pull_request_target", workflow)
 
+    def test_shadow_readiness_is_read_only_and_not_a_gate(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "openboa-ready-shadow.yml").read_text(encoding="utf-8")
+        self.assertIn("contents: read", workflow)
+        self.assertIn("pull-requests: read", workflow)
+        self.assertIn("checks: read", workflow)
+        self.assertIn("ref: main", workflow)
+        self.assertNotIn("pull_request_target", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+        self.assertNotIn("gh pr merge", workflow)
+
+    def test_manifest_declares_v02_automation_without_runtime_fields(self) -> None:
+        manifest = json.loads((ROOT / "plugins" / PLUGIN_NAME / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual("0.2.0", manifest["version"])
+        self.assertIn("Automation", manifest["interface"]["capabilities"])
+        self.assertTrue((ROOT / "plugins" / PLUGIN_NAME / "hooks" / "hooks.json").is_file())
+        for forbidden in ("hooks", "mcpServers", "apps"):
+            self.assertNotIn(forbidden, manifest)
+
 
 if __name__ == "__main__":
     unittest.main()

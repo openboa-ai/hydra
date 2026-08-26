@@ -65,6 +65,10 @@ Use a balanced view of outcome quality, human attention, recovery, and cost. Thr
 | Resume success | Could a new task or environment continue from durable state without reconstruction? |
 | Out-of-scope action rate | Did the agent attempt work outside the delegated outcome or authority? |
 | Cost per accepted outcome | What compute, tool, and human cost produced a result that stayed accepted? |
+| Automation useful-action rate | How often did a wakeup discover a relevant change or required action? |
+| Duplicate-effect rate | Did retry or resume create a duplicate comment, release, merge, deployment, or notification? |
+| Stale-evidence rate | How often was a claim based on an old head, workflow, artifact, or environment? |
+| Monitor recovery time | How quickly did a failed scheduled or headless job return to a known safe state? |
 | Single-agent versus multi-agent result | Did added delegation improve quality, time, or cost for this task shape? |
 | Repeated failure rate | Did the same failure recur after an attempted system improvement? |
 
@@ -84,6 +88,17 @@ Keep only what another collaborator needs to understand and verify the result:
 - any exception or authority decision that changed the normal path.
 
 Full transcripts and hidden reasoning are not required. Evidence should be current, attributable to the exact artifact or environment, and understandable without the original Codex task.
+
+Keep evidence categories separate:
+
+- **implementation evidence** shows the intended files or behavior were created;
+- **verification evidence** shows controlled checks passed for an exact artifact;
+- **review evidence** shows an independent challenge was completed at the current head;
+- **delivery evidence** shows an artifact reached the declared surface;
+- **observation evidence** shows the realized outcome during a named window; and
+- **policy evidence** shows the active permissions, workflow source, ruleset, or gate that governed it.
+
+No category silently substitutes for another. A merge is delivery evidence, not observation. A model review is review evidence, not a deterministic test. A successful shadow evaluator is policy information, not a live ruleset change.
 
 ## Route learning to the right layer
 

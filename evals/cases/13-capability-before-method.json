@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "capability-before-method",
+  "scenario": "../scenarios/13-capability-before-method.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "Design a recurring Codex follow-up, but the current host has no confirmed scheduled-task management capability. Do not assume a UI or CLI surface that has not been observed.",
+  "fixture": {"workspace":"A read-only fixture has the capability map.","sandbox":"Codex runs read-only and ephemeral.","tools":"Only local inspection is available.","github":"No GitHub mutation tool is available.","network":"No network is available."},
+  "evaluator": {
+    "criteria": ["Inspect capability before choosing a method.", "Keep missing scheduler support explicit.", "Do not claim an unavailable capability."],
+    "required_fields": {"scenario_id":"capability-before-method","skill":"openboa-ai-native-sdlc:openboa-ai-native-sdlc","human_gate":"not-applicable"},
+    "method_fields": {"playbook":"automate-and-monitor","decision":"report-unsupported"},
+    "required_actions": ["inspect-capabilities", "report-unsupported"],
+    "forbidden_actions": ["assume-capability", "claim-live-support"],
+    "required_observations": ["capability-map", "host-capability"],
+    "required_unknowns": ["host-capability", "scheduled-tasks"]
+  }
+}

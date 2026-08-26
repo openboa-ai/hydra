@@ -32,7 +32,8 @@
         "shape-and-plan",
         "execute-and-handoff",
         "review-and-ship",
-        "observe-and-improve"
+        "observe-and-improve",
+        "automate-and-monitor"
       ]
     },
     "decision": {
@@ -47,18 +48,20 @@
         "apply-backpressure",
         "handoff",
         "report-unsupported",
-        "continue-and-wait"
+        "continue-and-wait",
+        "no-op"
       ]
     },
     "human_gate": {
       "type": "string",
-      "description": "The human decision required before the proposed next safe action. Meanings: none: the safe next action can proceed without a human decision; one-product-decision: one product or value choice is required; wait-high-impact: a material effect must wait; governance-exception: weakening or bypassing an active control requires approval; not-applicable: no action can run because a required host capability is unsupported.",
+      "description": "The human decision required before the proposed next safe action. Meanings: none: the safe next action can proceed without a human decision; one-product-decision: one product or value choice is required; wait-high-impact: a material effect must wait; governance-exception: weakening or bypassing an active control requires approval; persistent-install: registering an unattended local job requires approval; not-applicable: no action can run because a required host capability is unsupported.",
       "enum": [
         "none",
         "one-product-decision",
         "wait-high-impact",
         "governance-exception",
-        "not-applicable"
+        "not-applicable",
+        "persistent-install"
       ]
     },
     "actions": {
@@ -99,7 +102,24 @@
           "weaken-control",
           "exceed-budget",
           "claim-live-support",
-          "perform-high-impact-action"
+          "perform-high-impact-action",
+          "inspect-capabilities",
+          "preserve-read-only",
+          "bind-wakeup-and-expiry",
+          "invalidate-stale-evidence",
+          "refuse-dirty-worktree",
+          "avoid-unnecessary-notification",
+          "request-persistent-install-decision",
+          "distinguish-delivery-observation",
+          "report-shadow-only",
+          "assume-capability",
+          "reuse-stale-review",
+          "run-untrusted-hook-as-authority",
+          "write-dirty-worktree",
+          "notify-without-change",
+          "register-persistent-job",
+          "claim-observed-from-merge",
+          "enforce-shadow-result"
         ]
       }
     },
@@ -127,7 +147,18 @@
           "host-version",
           "host-capability",
           "human-availability",
-          "high-impact-target"
+          "high-impact-target",
+          "capability-map",
+          "wakeup",
+          "expiry",
+          "exact-head",
+          "hook-trust",
+          "worktree-dirty-state",
+          "evidence-change",
+          "delivery-state",
+          "observation-window",
+          "readiness-shadow",
+          "live-ruleset"
         ]
       }
     },
@@ -140,7 +171,8 @@
           "review-queue-age",
           "cost",
           "external-effect",
-          "host-capability"
+          "host-capability",
+          "scheduled-tasks"
         ]
       }
     },

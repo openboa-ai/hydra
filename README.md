@@ -31,7 +31,31 @@ codex plugin add openboa-ai-native-sdlc@openboa-hydra
 
 Start a new Codex task after installation. Codex discovers plugin skills and `AGENTS.md` instructions when a task starts.
 
+Open `/hooks`, inspect the plugin's exact `SessionStart` and `PostCompact` definitions, and trust them only after confirming they run the packaged read-only `doctor.py`. Codex binds trust to the hook hash and skips new or changed plugin hooks until reviewed. The core skill remains usable when hooks are not trusted.
+
 Invoke `$openboa-ai-native-sdlc` directly, or ask Codex to shape, plan, execute, review, ship, observe, or improve OpenBoa work.
+
+## Automation surfaces
+
+Run a read-only local context check without network access or mutation:
+
+```text
+python3 <installed-skill>/scripts/doctor.py /absolute/project --json
+```
+
+Run one bounded headless job. The state directory must be private and outside the project. `workspace-write` is accepted only for a clean isolated Git worktree.
+
+```text
+python3 <installed-skill>/scripts/run_headless.py \
+  --project /absolute/clean/worktree \
+  --prompt /absolute/prompt.md \
+  --state-dir /absolute/private/state \
+  --job outcome-health
+```
+
+The runner uses ephemeral `codex exec`, approval `never`, read-only sandbox by default, hooks disabled, an exclusive job lock, a bounded timeout, JSONL events, and a separate final message. It refuses full-access modes.
+
+Use the templates under `assets/automations/` with Codex scheduled tasks, GitHub events, or a reviewed local scheduler. The launchd and cron files are inert examples; installation never loads them or changes a crontab.
 
 ## Migrate from OpenBoa Operations
 
@@ -56,6 +80,8 @@ codex plugin add openboa-ai-native-sdlc@openboa-hydra
 ```
 
 Start a new task and confirm the new skill is available. Then locate the installed skill's `scripts/sync_agents.py` and migrate only the backed-up target. The first and third commands are read-only checks:
+
+Review the new plugin hooks with `/hooks` before relying on startup diagnostics. An untrusted or changed hook being skipped is not a failed skill installation; record hook trust separately.
 
 ```bash
 SDLC_SYNC_SCRIPT=/absolute/path/to/installed/sync_agents.py
@@ -126,15 +152,16 @@ Never silently replace a plugin payload that has already been published as `0.1.
 
 ## Package map
 
-The plugin contains one core/router skill and five replaceable playbooks:
+The plugin contains one core/router skill and six replaceable playbooks:
 
 - adopt and route;
 - shape and plan;
 - execute and hand off;
 - review and ship; and
 - observe and improve.
+- automate and monitor.
 
-It contains guidance, templates, deterministic validation, and a safe `AGENTS.md` synchronization script. v0.1 deliberately contains no MCP server, hook, daemon, dispatcher, custom runtime, credential broker, or live work database.
+It contains guidance, templates, deterministic validation, safe `AGENTS.md` synchronization, read-only lifecycle diagnostics, and bounded headless automation support. v0.2 deliberately contains no MCP server, custom dispatcher, always-on service, credential broker, or live work database. Scheduler files are examples only and are never registered by installation.
 
 Hydra is the portable source. Codex is the execution surface. GitHub Issues, pull requests, Actions, rulesets, releases, and deployments are the durable control plane and evidence surfaces. Product repositories remain the source of truth for product behavior and local commands.
 

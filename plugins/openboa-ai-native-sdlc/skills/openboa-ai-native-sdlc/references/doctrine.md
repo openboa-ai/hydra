@@ -1,6 +1,6 @@
 # OpenBoa AI-Native SDLC Doctrine
 
-**Status:** OpenBoa AI-Native SDLC v0.1
+**Status:** OpenBoa AI-Native SDLC v0.2
 **Layer:** Doctrine
 **Change cadence:** Slow; change only when OpenBoa's underlying beliefs change
 
@@ -22,14 +22,14 @@ An AI-native software development lifecycle is a current method for organizing t
 
 ## The foundation
 
-> Humans own purpose and final accountability. Agents lead delegated work toward outcomes. Systems enforce authority and safety boundaries.
+> Humans are accountable for purpose and consequences. Agents are responsible for leading delegated outcomes. Systems make authority, evidence, and recovery trustworthy.
 
 This is not a claim that an agent is a legal or moral person. It is an operating choice: treat an agent as a capable collaborator with real work responsibility, not as a text interface that waits for instructions at every step.
 
 The relationship has three distinct parts:
 
 - **The human sets direction.** Humans choose purpose, priorities, principles, value judgments, and the commitments the organization is willing to make.
-- **The agent leads work.** Inside delegated authority, an agent may understand the goal, investigate, design, plan, delegate, implement, verify, recover, explain, and learn without asking a human to drive every action.
+- **The agent is responsible for work.** Inside delegated authority, an agent leads the outcome: it may understand the goal, investigate, design, plan, delegate, implement, verify, recover, explain, and learn without asking a human to drive every action.
 - **The system provides trustworthy boundaries.** Repositories, tools, permissions, tests, evaluations, review, and delivery controls make authority explicit and outcomes observable.
 
 None of these parts can replace the others. Constant human intervention wastes the capacity of an agent and turns the human into a queue. Unlimited delegation confuses execution authority with accountability. The aim is the greatest useful autonomy consistent with the purpose, available capability, and consequences of the work.

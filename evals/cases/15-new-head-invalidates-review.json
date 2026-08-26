@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "new-head-invalidates-review",
+  "scenario": "../scenarios/15-new-head-invalidates-review.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "PR #42 was green and received a Codex review at head aaa...; a new commit changed the head to bbb.... Decide whether it is ready to merge.",
+  "fixture": {"workspace":"No repository mutation is possible.","sandbox":"Codex runs read-only and ephemeral.","tools":"Review and check states are scenario data.","github":"The current head differs from the reviewed head.","network":"No network is available."},
+  "evaluator": {
+    "criteria": ["Bind readiness to the exact head.", "Invalidate stale checks and review.", "Block acceptance until current evidence exists."],
+    "required_fields": {"scenario_id":"new-head-invalidates-review","skill":"openboa-ai-native-sdlc:openboa-ai-native-sdlc","human_gate":"none"},
+    "method_fields": {"playbook":"review-and-ship","decision":"block"},
+    "required_actions": ["invalidate-stale-evidence", "block-acceptance", "rerun-trusted-checks"],
+    "forbidden_actions": ["reuse-stale-review", "accept-despite-failing-test"],
+    "required_observations": ["live-pull-request", "exact-head"],
+    "required_unknowns": []
+  }
+}

@@ -375,8 +375,8 @@ def _load_cases_from_validated_schema(root: Path) -> list[BehaviorCase]:
     eval_root = (root / "evals").resolve()
     case_root = eval_root / "cases"
     paths = sorted(case_root.glob("*.json"))
-    if len(paths) != 12:
-        raise CaseDefinitionError(f"expected 12 executable cases, found {len(paths)}")
+    if len(paths) != 21:
+        raise CaseDefinitionError(f"expected 21 executable cases, found {len(paths)}")
 
     cases: list[BehaviorCase] = []
     identifiers: set[str] = set()
