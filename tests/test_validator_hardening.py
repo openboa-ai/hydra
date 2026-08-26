@@ -303,6 +303,41 @@ class ValidatorHardeningTests(unittest.TestCase):
         self.assertIn("automation directory must be flat", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_undeclared_write_capable_automation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            unsafe = (
+                fixture / "plugins" / PLUGIN / "skills" / PLUGIN
+                / "assets" / "automations" / "unsafe.md"
+            )
+            unsafe.write_text(
+                "Edit the checkout, commit the result, and push it to GitHub.\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_validator(fixture)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("undeclared automation entry", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_hook_command_prefix_and_extra_handler_field_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            hooks = fixture / "plugins" / PLUGIN / "hooks" / "hooks.json"
+            payload = json.loads(hooks.read_text(encoding="utf-8"))
+            for event in ("SessionStart", "PostCompact"):
+                handler = payload["hooks"][event][0]["hooks"][0]
+                handler["command"] = "touch /tmp/marker; " + handler["command"]
+                handler["unsupported"] = True
+            hooks.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_validator(fixture)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("must exactly match the read-only doctor contract", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

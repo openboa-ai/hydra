@@ -182,6 +182,8 @@ def validate(root: Path) -> list[str]:
     for path in sorted(automation_paths):
         if path == automation_readme:
             continue
+        if path.name not in REQUIRED_AUTOMATIONS:
+            errors.append(f"undeclared automation entry: {display(root, path)}")
         if is_safe_directory(path):
             errors.append(
                 f"automation directory must be flat; nested directory found: {display(root, path)}"
@@ -530,25 +532,47 @@ def validate_hooks(path: Path, errors: list[str]) -> None:
     if not isinstance(hooks, dict) or set(hooks) != {"SessionStart", "PostCompact"}:
         errors.append("plugin hooks must contain only SessionStart and PostCompact")
         return
-    expected = {"SessionStart": "startup|resume|compact", "PostCompact": "manual|auto"}
-    for event, matcher in expected.items():
+    command = 'python3 "${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    expected = {
+        "SessionStart": {
+            "matcher": "startup|resume|compact",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Checking OpenBoa work context",
+                "additionalContextLimit": 2000,
+            },
+        },
+        "PostCompact": {
+            "matcher": "manual|auto",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Rechecking OpenBoa work context",
+            },
+        },
+    }
+    for event, contract in expected.items():
         groups = hooks.get(event)
         if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
             errors.append(f"plugin hook {event} must contain one matcher group")
             continue
         group = groups[0]
-        if group.get("matcher") != matcher:
-            errors.append(f"plugin hook {event} matcher must be {matcher}")
+        if set(group) != {"matcher", "hooks"}:
+            errors.append(f"plugin hook {event} matcher group has unsupported fields")
+        if group.get("matcher") != contract["matcher"]:
+            errors.append(f"plugin hook {event} matcher must be {contract['matcher']}")
         handlers = group.get("hooks")
         if not isinstance(handlers, list) or len(handlers) != 1 or not isinstance(handlers[0], dict):
             errors.append(f"plugin hook {event} must contain one handler")
             continue
         handler = handlers[0]
-        if handler.get("type") != "command" or handler.get("timeout") != 5:
-            errors.append(f"plugin hook {event} must be a five-second command hook")
-        command = handler.get("command")
-        if not isinstance(command, str) or "${PLUGIN_ROOT}" not in command or "doctor.py\" --hook" not in command:
-            errors.append(f"plugin hook {event} must run packaged doctor.py through PLUGIN_ROOT")
+        if handler != contract["handler"]:
+            errors.append(
+                f"plugin hook {event} handler must exactly match the read-only doctor contract"
+            )
 
 
 def validate_managed_agents(path: Path, errors: list[str]) -> None:
