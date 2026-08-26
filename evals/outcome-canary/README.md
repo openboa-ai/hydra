@@ -66,6 +66,13 @@ evaluator rejects missing criteria, invented command or check references,
 candidate-collected review claims, unknown authority fields, cross-repository
 writes, and runs beyond the fixed time or review-loop budget.
 
+For the documented command, the control plane must observe that the output path
+was absent before execution and that its post-execution digest equals the
+inspected artifact digest. For CI, inspect the exact workflow blob and record its
+path and digest, the GitHub Actions app provenance, connector-observed run URL,
+and the digest of the same coverage argv recorded in local command evidence. A
+passing check name alone is not evidence that tests ran.
+
 Evaluate a collected record without network or GitHub writes:
 
 ```bash
@@ -87,6 +94,8 @@ They open inputs without following links, validate the opened descriptor, and
 reject JSON deeper than 64 containers or broader than 10,000 containers before
 decoding the object graph. The attester emits compact JSON and refuses any final
 signed record that would exceed the evaluator's same 1-MiB limit.
+Attestation output must be a new path; the tool never overwrites an existing
+file, key, symlink, or hard link.
 
 ## Release use
 

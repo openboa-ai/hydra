@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 from typing import Sequence
 
@@ -30,6 +32,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--key-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)
+
+
+def write_new_private_file(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("attested output must be a regular file")
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -66,7 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError(
                 f"attested record exceeds {evaluator.MAX_RECORD_BYTES} bytes"
             )
-        args.output.write_bytes(rendered)
+        write_new_private_file(args.output, rendered)
     except (
         OSError, OverflowError, RecursionError, UnicodeDecodeError,
         json.JSONDecodeError, RuntimeError, ValueError,

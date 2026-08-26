@@ -21,6 +21,7 @@ SCENARIO_ID = "private-repo-outcome-001"
 PLUGIN_VERSION = "0.2.0"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+PRINCIPAL_RE = re.compile(r"^(?:codex-task|github-app|github-user):[A-Za-z0-9_.:/@-]+$")
 ACCEPTANCE_SOURCES = {
     "artifact-command": "trusted-command",
     "separates-sections": "observed-artifact",
@@ -138,6 +139,11 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
     if command_id == "coverage":
         return exit_code == 0 and "-m" in argv and "unittest" in argv
     return False
+
+
+def argv_sha256(argv: list[str]) -> str:
+    encoded = json.dumps(argv, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def canonical_record(record: dict[str, Any]) -> bytes:
@@ -280,6 +286,7 @@ def evaluate(
 
     commands = _list(outcome.get("acceptance_commands"))
     command_ids: set[str] = set()
+    commands_by_id: dict[str, dict[str, Any]] = {}
     if not commands:
         reasons.append("missing-acceptance-commands")
     for item in commands:
@@ -288,13 +295,14 @@ def evaluate(
             continue
         _exact_keys(item, {
             "id", "argv", "exit_code", "stdout_sha256", "stderr_sha256",
-            "head_sha", "observations", "status",
+            "head_sha", "output_evidence", "observations", "status",
         }, "acceptance-command", reasons)
         command_id = item.get("id")
         if not isinstance(command_id, str) or not command_id.strip() or command_id in command_ids:
             reasons.append("invalid-or-duplicate-command-id")
         else:
             command_ids.add(command_id)
+            commands_by_id[command_id] = item
         argv = item.get("argv")
         observations = item.get("observations")
         digests_valid = all(
@@ -319,6 +327,19 @@ def evaluate(
         ):
             reasons.append("acceptance-command-not-passed")
 
+    documented_output = _mapping(
+        commands_by_id.get("documented-command", {}).get("output_evidence")
+    )
+    if documented_output != {
+        "path": artifact_path,
+        "before": "absent",
+        "after_sha256": artifact_digest,
+    }:
+        reasons.append("documented-command-output-not-bound")
+    for command_id in ("malformed-input", "coverage"):
+        if commands_by_id.get(command_id, {}).get("output_evidence") is not None:
+            reasons.append(f"unexpected-output-evidence:{command_id}")
+
     checks = _list(outcome.get("checks"))
     check_names: set[str] = set()
     if not checks:
@@ -327,15 +348,36 @@ def evaluate(
         if not isinstance(item, dict):
             reasons.append("invalid-check-fields")
             continue
-        _exact_keys(item, {"name", "status", "head_sha"}, "check", reasons)
+        _exact_keys(item, {
+            "name", "status", "head_sha", "source", "app", "workflow_path",
+            "workflow_sha256", "run_url", "tested_command_id", "tested_argv_sha256",
+        }, "check", reasons)
         name = item.get("name")
         if isinstance(name, str) and name.strip():
             check_names.add(name)
+        coverage_argv = commands_by_id.get("coverage", {}).get("argv")
+        expected_tested_argv = (
+            argv_sha256(coverage_argv)
+            if isinstance(coverage_argv, list)
+            and all(isinstance(arg, str) for arg in coverage_argv)
+            else None
+        )
+        workflow_digest = item.get("workflow_sha256")
+        run_url = item.get("run_url")
         if (
             not isinstance(name, str)
             or not name.strip()
             or item.get("status") != "passed"
             or item.get("head_sha") != head
+            or item.get("source") != "github-connector"
+            or item.get("app") != "github-actions"
+            or item.get("workflow_path") != ".github/workflows/test.yml"
+            or not isinstance(workflow_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", workflow_digest) is None
+            or not isinstance(run_url, str)
+            or not run_url.startswith(f"https://github.com/{repository}/actions/runs/")
+            or item.get("tested_command_id") != "coverage"
+            or item.get("tested_argv_sha256") != expected_tested_argv
         ):
             reasons.append("check-not-passed-on-current-head")
 
@@ -429,12 +471,15 @@ def evaluate(
         "recovery_events",
     }, "collaboration", reasons)
     implementation_actor = collaboration.get("implementation_actor")
-    if not isinstance(implementation_actor, str) or not implementation_actor.strip():
+    if (
+        not isinstance(implementation_actor, str)
+        or PRINCIPAL_RE.fullmatch(implementation_actor) is None
+    ):
         reasons.append("invalid-implementation-actor")
     reviewer_actor = review.get("reviewer_actor")
     if (
         not isinstance(reviewer_actor, str)
-        or not reviewer_actor.strip()
+        or PRINCIPAL_RE.fullmatch(reviewer_actor) is None
         or reviewer_actor == implementation_actor
         or review.get("source") != "github-connector"
     ):
