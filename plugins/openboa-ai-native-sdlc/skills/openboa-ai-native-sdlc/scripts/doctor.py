@@ -35,6 +35,7 @@ def run_git(cwd: Path, *args: str) -> tuple[int, str]:
         if name.startswith("GIT_CONFIG_"):
             environment.pop(name)
     environment["GIT_OPTIONAL_LOCKS"] = "0"
+    environment["GIT_NO_LAZY_FETCH"] = "1"
     environment["PATH"] = TRUSTED_PATH
     git = shutil.which("git", path=TRUSTED_PATH)
     if git is None:

@@ -80,7 +80,7 @@ PLUGIN_FORBIDDEN_RUNTIME_FIELDS = {"apps", "hooks", "mcpServers"}
 BUNDLED_HOOKS_PATH = "hooks/hooks.json"
 BUNDLED_DOCTOR_PATH = "skills/openboa-ai-native-sdlc/scripts/doctor.py"
 BUNDLED_DOCTOR_SHA256 = (
-    "fc275578bc2048571992b39e74156b65c341da5c390a7793091d9f4e424be0ba"
+    "5f3f54d22a485f0b7b193124d9812b4db9f671b6afff7f35064db63d8a0e468a"
 )
 WINDOWS_RESERVED_BASENAMES = {
     "AUX",

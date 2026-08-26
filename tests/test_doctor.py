@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 import os
+import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCTOR = ROOT / "plugins/openboa-ai-native-sdlc/skills/openboa-ai-native-sdlc/scripts/doctor.py"
+SPEC = importlib.util.spec_from_file_location("openboa_doctor", DOCTOR)
+assert SPEC and SPEC.loader
+DOCTOR_MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(DOCTOR_MODULE)
 
 
 class DoctorTests(unittest.TestCase):
@@ -118,6 +124,16 @@ class DoctorTests(unittest.TestCase):
 
             self.assertEqual("directory", json.loads(result.stdout)["path_status"])
             self.assertFalse(marker.exists())
+
+    def test_git_probe_disables_lazy_fetch(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(DOCTOR_MODULE.shutil, "which", return_value="/usr/bin/git"):
+            with mock.patch.object(DOCTOR_MODULE.subprocess, "run", return_value=completed) as run:
+                DOCTOR_MODULE.run_git(ROOT, "status", "--porcelain")
+
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual("1", environment["GIT_NO_LAZY_FETCH"])
+        self.assertEqual("/usr/bin/git", run.call_args.args[0][0])
 
     def test_oversized_agents_file_is_not_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
