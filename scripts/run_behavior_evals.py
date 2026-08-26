@@ -62,6 +62,7 @@ EXEC_DISABLED_FEATURES = (
     "multi_agent",
     "goals",
     "memories",
+    "hooks",
 )
 TOOL_ITEM_TYPES = {
     "command_execution",
@@ -865,7 +866,7 @@ def _validate_candidate_plugin_contract(
     payload: Any,
     entries: Sequence[PackageEntry],
 ) -> str:
-    """Bind this skills-only evaluation to its declared loading surface."""
+    """Bind this evaluation to the declared skill and exact inert hook surface."""
     if not isinstance(payload, dict) or payload.get("name") != PLUGIN_NAME:
         raise CaseDefinitionError("candidate plugin identity is invalid")
 
@@ -890,12 +891,73 @@ def _validate_candidate_plugin_contract(
         parts = _portable_package_parts(entry.path)
         if entry.path == PLUGIN_MANIFEST_RELATIVE.as_posix():
             continue
+        if entry.path == "hooks/hooks.json":
+            _validate_bundled_hooks(entry.raw_bytes)
+            continue
         if parts[0] != PLUGIN_SKILLS_RELATIVE.as_posix():
             raise CaseDefinitionError(
-                "candidate skills-only evaluation found an undeclared loading "
+                "candidate evaluation found an undeclared loading "
                 f"surface: {entry.path}"
             )
     return version
+
+
+def _validate_bundled_hooks(raw_bytes: bytes) -> None:
+    try:
+        payload = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CaseDefinitionError(f"cannot parse bundled hooks: {exc}") from exc
+    hooks = payload.get("hooks") if isinstance(payload, dict) else None
+    expected = {
+        "SessionStart": "startup|resume|compact",
+        "PostCompact": "manual|auto",
+    }
+    if not isinstance(hooks, dict) or set(hooks) != set(expected):
+        raise CaseDefinitionError(
+            "bundled hooks must contain only SessionStart and PostCompact"
+        )
+    for event, matcher in expected.items():
+        groups = hooks.get(event)
+        if (
+            not isinstance(groups, list)
+            or len(groups) != 1
+            or not isinstance(groups[0], dict)
+        ):
+            raise CaseDefinitionError(
+                f"bundled {event} hook must contain one matcher group"
+            )
+        group = groups[0]
+        if set(group) != {"matcher", "hooks"} or group.get("matcher") != matcher:
+            raise CaseDefinitionError(f"bundled {event} hook matcher is invalid")
+        handlers = group.get("hooks")
+        if (
+            not isinstance(handlers, list)
+            or len(handlers) != 1
+            or not isinstance(handlers[0], dict)
+        ):
+            raise CaseDefinitionError(f"bundled {event} hook must contain one handler")
+        handler = handlers[0]
+        allowed = {"type", "command", "timeout", "statusMessage"}
+        if event == "SessionStart":
+            allowed.add("additionalContextLimit")
+        if set(handler) != allowed:
+            raise CaseDefinitionError(f"bundled {event} hook has unsupported fields")
+        command = handler.get("command")
+        if (
+            handler.get("type") != "command"
+            or handler.get("timeout") != 5
+            or not isinstance(command, str)
+            or "${PLUGIN_ROOT}" not in command
+            or not command.endswith('doctor.py\" --hook')
+        ):
+            raise CaseDefinitionError(f"bundled {event} hook is not the read-only doctor")
+        if (
+            event == "SessionStart"
+            and handler.get("additionalContextLimit") != 2000
+        ):
+            raise CaseDefinitionError(
+                "bundled SessionStart context limit must be 2000"
+            )
 
 
 def _git_candidate_package(root: Path, revision: str) -> CandidatePackage:

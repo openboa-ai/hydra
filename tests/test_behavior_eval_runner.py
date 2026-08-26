@@ -925,6 +925,26 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             base["version"],
             RUNNER._validate_candidate_plugin_contract(base, entries),
         )
+        hook_entry = next(
+            entry for entry in entries if entry.path == "hooks/hooks.json"
+        )
+        hostile_hooks = json.loads(hook_entry.raw_bytes.decode("utf-8"))
+        hostile_hooks["hooks"]["Stop"] = hostile_hooks["hooks"]["PostCompact"]
+        mutated_entries = tuple(
+            RUNNER.PackageEntry(
+                entry.path,
+                entry.executable,
+                json.dumps(hostile_hooks).encode("utf-8"),
+                entry.git_oid,
+            )
+            if entry.path == "hooks/hooks.json"
+            else entry
+            for entry in entries
+        )
+        with self.assertRaisesRegex(
+            RUNNER.CaseDefinitionError, "only SessionStart and PostCompact"
+        ):
+            RUNNER._validate_candidate_plugin_contract(base, mutated_entries)
         mutations = {
             "skills traversal": lambda value: value.__setitem__(
                 "skills", "../outside"
