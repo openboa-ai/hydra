@@ -26,9 +26,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run_git(cwd: Path, *args: str) -> tuple[int, str]:
+    environment = os.environ.copy()
+    for name in tuple(environment):
+        if name.startswith("GIT_CONFIG_"):
+            environment.pop(name)
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
     try:
         result = subprocess.run(
-            ["git", *args], cwd=cwd, text=True, capture_output=True, timeout=2, check=False
+            [
+                "git", "--no-optional-locks",
+                "-c", "core.fsmonitor=false",
+                "-c", "core.hooksPath=/dev/null",
+                *args,
+            ],
+            cwd=cwd,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 127, ""

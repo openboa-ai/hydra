@@ -267,6 +267,24 @@ class ValidatorHardeningTests(unittest.TestCase):
                     or "unable to read scenario" in result.stdout
                 )
 
+    def test_automation_symlink_is_rejected_without_reading_referent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            payload = Path(temp_dir) / "invalid-bytes"
+            payload.write_bytes(b"\xff\xfe\x00")
+            automation = (
+                fixture / "plugins" / PLUGIN / "skills" / PLUGIN
+                / "assets" / "automations" / "extra.md"
+            )
+            automation.symlink_to(payload)
+
+            result = self.run_validator(fixture)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("must not contain symlinks", result.stdout)
+        self.assertIn("unsafe or missing automation template", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

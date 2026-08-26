@@ -154,8 +154,10 @@ def validate(root: Path) -> list[str]:
 
     automation_root = assets_root / "automations"
     automation_readme = automation_root / "README.md"
-    if is_regular_file(automation_readme):
-        automation_contract = automation_readme.read_text(encoding="utf-8")
+    automation_contract = read_bounded_text(
+        automation_readme, root, errors, "automation template", 131072
+    )
+    if automation_contract is not None:
         for required in (
             "read-only monitor prompts",
             "must not edit a checkout or write to GitHub",
@@ -163,8 +165,24 @@ def validate(root: Path) -> list[str]:
         ):
             if required not in automation_contract:
                 errors.append(f"automation templates are missing v0.2 read-only contract: {required}")
-    for path in automation_root.glob("*.md"):
-        text = path.read_text(encoding="utf-8")
+    if not is_safe_directory(automation_root):
+        errors.append(f"unsafe or missing automation directory: {display(root, automation_root)}")
+        automation_paths = []
+    else:
+        try:
+            automation_paths = sorted(automation_root.iterdir())
+        except OSError as exc:
+            errors.append(f"unable to list automation templates: {exc}")
+            automation_paths = []
+    if len(automation_paths) > 100:
+        errors.append("automation templates exceed the bounded 100-entry limit")
+        automation_paths = automation_paths[:100]
+    for path in automation_paths:
+        if path.suffix != ".md" or path == automation_readme:
+            continue
+        text = read_bounded_text(path, root, errors, "automation template", 131072)
+        if text is None:
+            continue
         for forbidden in (
             "fix routine findings inside the approved branch",
             "open or update one durable private or public work item",
@@ -235,6 +253,43 @@ def is_regular_file(path: Path) -> bool:
     except OSError:
         return False
     return stat.S_ISREG(info.st_mode)
+
+
+def is_safe_directory(path: Path) -> bool:
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError:
+            return False
+        if stat.S_ISLNK(info.st_mode):
+            return False
+    return stat.S_ISDIR(info.st_mode)
+
+
+def read_bounded_text(
+    path: Path,
+    root: Path,
+    errors: list[str],
+    label: str,
+    maximum_bytes: int,
+) -> str | None:
+    shown = display(root, path)
+    if not is_regular_file(path):
+        errors.append(f"unsafe or missing {label}: {shown}")
+        return None
+    try:
+        if path.lstat().st_size > maximum_bytes:
+            errors.append(f"{label} exceeds {maximum_bytes} bytes: {shown}")
+            return None
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        errors.append(f"{label} is not UTF-8: {shown}")
+    except OSError as exc:
+        errors.append(f"unable to read {label} {shown}: {exc}")
+    return None
 
 
 def markdown_fenced_ranges(text: str) -> list[tuple[int, int]]:

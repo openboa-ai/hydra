@@ -42,6 +42,34 @@ class DoctorTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(DOCTOR), str(missing), "--json"], text=True, capture_output=True, check=True)
         self.assertEqual("unavailable", json.loads(result.stdout)["path_status"])
 
+    def test_repository_fsmonitor_command_is_not_executed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            repository = base / "repo"
+            repository.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+            marker = base / "fsmonitor-ran"
+            monitor = base / "fsmonitor"
+            monitor.write_text(
+                "#!/usr/bin/env python3\n"
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text('unsafe', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            monitor.chmod(0o700)
+            subprocess.run(
+                ["git", "config", "core.fsmonitor", str(monitor)], cwd=repository, check=True
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(DOCTOR), str(repository), "--json"],
+                text=True, capture_output=True, check=True,
+            )
+
+            payload = json.loads(result.stdout)
+            self.assertEqual("available", payload["git"])
+            self.assertFalse(marker.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
