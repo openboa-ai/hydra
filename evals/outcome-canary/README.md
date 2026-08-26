@@ -85,7 +85,8 @@ defined by `COVERAGE_ARGV` in the evaluator. It starts Python with `-I`, imports
 standard-library unittest before adding the checkout to the discovery path, and
 then runs `tests`. This prevents a candidate `unittest.py` from shadowing the
 standard library. The trusted local observation must also show that unittest ran
-at least three tests with zero failures and zero errors. Extra defaults, shells,
+at least three tests with zero failures, errors, skips, expected failures, or
+unexpected successes. Extra defaults, shells,
 conditions, environments, containers, steps, or continue-on-error behavior are
 rejected. A passing check name alone is not evidence that tests ran.
 

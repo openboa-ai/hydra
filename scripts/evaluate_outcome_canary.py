@@ -424,7 +424,10 @@ def evaluate(
             reasons.append(f"unexpected-test-evidence:{command_id}")
     coverage_tests = _mapping(commands_by_id.get("coverage", {}).get("test_evidence"))
     if (
-        set(coverage_tests) != {"framework", "tests_run", "failures", "errors", "skipped"}
+        set(coverage_tests) != {
+            "framework", "tests_run", "failures", "errors", "skipped",
+            "expected_failures", "unexpected_successes",
+        }
         or coverage_tests.get("framework") != "stdlib-unittest"
         or type(coverage_tests.get("tests_run")) is not int
         or coverage_tests.get("tests_run", 0) < 3
@@ -434,6 +437,10 @@ def evaluate(
         or coverage_tests.get("errors") != 0
         or type(coverage_tests.get("skipped")) is not int
         or coverage_tests.get("skipped") != 0
+        or type(coverage_tests.get("expected_failures")) is not int
+        or coverage_tests.get("expected_failures") != 0
+        or type(coverage_tests.get("unexpected_successes")) is not int
+        or coverage_tests.get("unexpected_successes") != 0
     ):
         reasons.append("coverage-tests-not-proven")
 

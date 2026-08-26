@@ -116,6 +116,7 @@ def accepted_record() -> dict:
                     "test_evidence": {
                         "framework": "stdlib-unittest", "tests_run": 3,
                         "failures": 0, "errors": 0, "skipped": 0,
+                        "expected_failures": 0, "unexpected_successes": 0,
                     },
                     "head_sha": head, "observations": ["success-path", "malformed-input", "unknown-preservation"], "status": "passed",
                 },
@@ -272,6 +273,16 @@ class OutcomeCanaryTests(unittest.TestCase):
         record = accepted_record()
         evidence = record["outcome"]["acceptance_commands"][2]["test_evidence"]
         evidence.update({"failures": False, "errors": False, "skipped": 3})
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("coverage-tests-not-proven", reasons)
+
+    def test_coverage_command_rejects_expected_failures(self) -> None:
+        record = accepted_record()
+        evidence = record["outcome"]["acceptance_commands"][2]["test_evidence"]
+        evidence["expected_failures"] = 3
         resign(record)
         reasons = EVALUATOR.evaluate(
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
