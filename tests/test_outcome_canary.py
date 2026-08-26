@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -399,6 +400,42 @@ class OutcomeCanaryTests(unittest.TestCase):
             )
         self.assertEqual(2, completed.returncode)
         self.assertIn("record exceeds", completed.stderr)
+
+    def test_deeply_nested_record_is_rejected_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "nested.json"
+            key = Path(directory) / "canary.key"
+            source.write_text("[" * 2_000 + "]" * 2_000, encoding="utf-8")
+            key.write_bytes(ATTESTATION_KEY)
+            key.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable, str(SCRIPT), str(source),
+                    "--attestation-key-file", str(key),
+                    "--expected-hydra-revision", EXPECTED_HYDRA_REVISION,
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(2, completed.returncode)
+        self.assertIn("JSON nesting exceeds", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_special_record_files_are_rejected_without_following_or_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            regular = Path(directory) / "regular.json"
+            symlink = Path(directory) / "linked.json"
+            fifo = Path(directory) / "record.fifo"
+            regular.write_text("{}", encoding="utf-8")
+            symlink.symlink_to(regular)
+            os.mkfifo(fifo)
+            with self.assertRaises(OSError):
+                EVALUATOR.read_bounded_regular_file(
+                    symlink, EVALUATOR.MAX_RECORD_BYTES, "record",
+                )
+            with self.assertRaises(ValueError):
+                EVALUATOR.read_bounded_regular_file(
+                    fifo, EVALUATOR.MAX_RECORD_BYTES, "record",
+                )
 
 
 if __name__ == "__main__":

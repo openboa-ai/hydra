@@ -83,6 +83,9 @@ The evaluator reports `accepted`, reasons, and the measured collaboration
 metrics. Missing evidence stays `unmeasured` or becomes an explicit rejection;
 it never becomes a pass. Both attestation and evaluation reject non-regular or
 larger-than-1-MiB records before parsing.
+They open inputs without following links, validate the opened descriptor, and
+reject JSON deeper than 64 containers or broader than 10,000 containers before
+decoding the object graph.
 
 ## Release use
 

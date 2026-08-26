@@ -7,7 +7,6 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
-import stat
 import sys
 from typing import Sequence
 
@@ -37,17 +36,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         evaluator = _load_evaluator()
-        mode = stat.S_IMODE(args.key_file.lstat().st_mode)
-        if mode & 0o077:
-            raise ValueError("attestation key must not be accessible by group or others")
         key = evaluator.read_bounded_regular_file(
-            args.key_file, evaluator.MAX_KEY_BYTES, "attestation key",
+            args.key_file, evaluator.MAX_KEY_BYTES, "attestation key", require_private=True,
         )
         if len(key) < 32:
             raise ValueError("attestation key must contain at least 32 bytes")
         record_bytes = evaluator.read_bounded_regular_file(
             args.record, evaluator.MAX_RECORD_BYTES, "record",
         )
+        evaluator.validate_json_structure(record_bytes)
         payload = json.loads(
             record_bytes.decode("utf-8"),
             parse_constant=lambda value: (_ for _ in ()).throw(
@@ -63,7 +60,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError, ValueError) as exc:
+    except (
+        OSError, OverflowError, RecursionError, UnicodeDecodeError,
+        json.JSONDecodeError, RuntimeError, ValueError,
+    ) as exc:
         print(f"cannot attest outcome canary record: {exc}", file=sys.stderr)
         return 2
     return 0

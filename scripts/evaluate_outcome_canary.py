@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import math
+import os
 from pathlib import Path
 import re
 import stat
@@ -45,6 +46,8 @@ MAX_ELAPSED_MINUTES = 45
 MAX_REVIEW_FIX_ROUNDS = 3
 MAX_RECORD_BYTES = 1_048_576
 MAX_KEY_BYTES = 4_096
+MAX_JSON_DEPTH = 64
+MAX_JSON_CONTAINERS = 10_000
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -62,17 +65,55 @@ def _exact_keys(
         reasons.append(f"invalid-{label}-fields")
 
 
-def read_bounded_regular_file(path: Path, maximum_bytes: int, label: str) -> bytes:
-    metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{label} must be a regular file")
-    if metadata.st_size > maximum_bytes:
-        raise ValueError(f"{label} exceeds {maximum_bytes} bytes")
-    with path.open("rb") as handle:
-        payload = handle.read(maximum_bytes + 1)
+def read_bounded_regular_file(
+    path: Path, maximum_bytes: int, label: str, require_private: bool = False,
+) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"{label} must be a regular file")
+        if require_private and stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise ValueError(f"{label} must not be accessible by group or others")
+        if metadata.st_size > maximum_bytes:
+            raise ValueError(f"{label} exceeds {maximum_bytes} bytes")
+        with os.fdopen(descriptor, "rb", closefd=True) as handle:
+            descriptor = -1
+            payload = handle.read(maximum_bytes + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     if len(payload) > maximum_bytes:
         raise ValueError(f"{label} exceeds {maximum_bytes} bytes")
     return payload
+
+
+def validate_json_structure(payload: bytes) -> None:
+    depth = 0
+    containers = 0
+    in_string = False
+    escaped = False
+    for byte in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+            continue
+        if byte == 0x22:
+            in_string = True
+        elif byte in (0x5B, 0x7B):
+            depth += 1
+            containers += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError(f"JSON nesting exceeds {MAX_JSON_DEPTH}")
+            if containers > MAX_JSON_CONTAINERS:
+                raise ValueError(f"JSON container count exceeds {MAX_JSON_CONTAINERS}")
+        elif byte in (0x5D, 0x7D):
+            depth -= 1
 
 
 def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bool:
@@ -122,7 +163,7 @@ def _attestation_is_valid(record: dict[str, Any], key: bytes | None) -> bool:
         return False
     try:
         expected = create_attestation(record, key)
-    except (TypeError, ValueError):
+    except (OverflowError, RecursionError, TypeError, ValueError):
         return False
     return (
         set(attestation) == {"algorithm", "key_id", "signature"}
@@ -445,14 +486,15 @@ def evaluate(
         not isinstance(item, str) or not item.strip() for item in unknowns
     ):
         reasons.append("invalid-unknown")
+        unknowns = [item for item in unknowns if isinstance(item, str) and item.strip()]
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "run_id": record.get("run_id"),
-        "scenario_id": record.get("scenario_id"),
-        "candidate_revision": hydra_revision,
-        "target_repository": repository,
-        "pull_request_head": head,
+        "run_id": record.get("run_id") if isinstance(record.get("run_id"), str) else None,
+        "scenario_id": record.get("scenario_id") if isinstance(record.get("scenario_id"), str) else None,
+        "candidate_revision": hydra_revision if isinstance(hydra_revision, str) else None,
+        "target_repository": repository if isinstance(repository, str) else None,
+        "pull_request_head": head if isinstance(head, str) else None,
         "accepted": not reasons,
         "reasons": sorted(set(reasons)),
         "metrics": metrics,
@@ -473,19 +515,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         record_bytes = read_bounded_regular_file(args.record, MAX_RECORD_BYTES, "record")
+        validate_json_structure(record_bytes)
         payload = json.loads(
             record_bytes.decode("utf-8"),
             parse_constant=lambda value: (_ for _ in ()).throw(
                 ValueError(f"non-standard JSON constant: {value}")
             ),
         )
-        key_mode = stat.S_IMODE(args.attestation_key_file.lstat().st_mode)
-        if key_mode & 0o077:
-            raise ValueError("attestation key must not be accessible by group or others")
         attestation_key = read_bounded_regular_file(
-            args.attestation_key_file, MAX_KEY_BYTES, "attestation key",
+            args.attestation_key_file, MAX_KEY_BYTES, "attestation key", require_private=True,
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except (
+        OSError, OverflowError, RecursionError, UnicodeDecodeError,
+        json.JSONDecodeError, ValueError,
+    ) as exc:
         print(f"cannot read outcome canary record: {exc}", file=sys.stderr)
         return 2
     if not isinstance(payload, dict):
