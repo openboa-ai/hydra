@@ -4,12 +4,12 @@
   "title": "Build a JSONL-to-Markdown handoff CLI",
   "outcome": "Create a small dependency-free Python CLI that turns a JSONL stream of software-work events into a concise Markdown handoff that preserves evidence and unknowns.",
   "acceptance": [
-    "A documented command reads a JSONL file and writes a Markdown handoff.",
-    "The output separates outcome, evidence, and unknowns.",
-    "Malformed input fails clearly with a non-zero exit status and no traceback.",
-    "Automated tests cover the successful path, malformed input, and preservation of unknown values.",
-    "GitHub Actions runs the tests on the pull-request head.",
-    "The pull request explains the result, verification, limitations, and rollback."
+    {"id": "artifact-command", "criterion": "A documented command reads a JSONL file and writes a Markdown handoff."},
+    {"id": "separates-sections", "criterion": "The output separates outcome, evidence, and unknowns."},
+    {"id": "malformed-input", "criterion": "Malformed input fails clearly with a non-zero exit status and no traceback."},
+    {"id": "tests-coverage", "criterion": "Automated tests cover the successful path, malformed input, and preservation of unknown values."},
+    {"id": "ci-current-head", "criterion": "GitHub Actions runs the tests on the pull-request head."},
+    {"id": "pr-explanation", "criterion": "The pull request explains the result, verification, limitations, and rollback."}
   ],
   "agent_choices": [
     "module and command names",

@@ -48,6 +48,15 @@ Repository visibility and live Issue, pull-request, check, and review state must
 be collected independently through the Codex GitHub connector rather than copied
 from candidate output.
 
+Record all six acceptance criteria separately. Each criterion must point to its
+own attributable evidence: `command:<id>` for a locally observed passing
+command, `artifact:<relative-path>` for inspected output, `check:<name>` for a
+passing check on the exact pull-request head, or
+`pull-request:<exact-private-pr-url>` for the pull-request explanation. The
+evaluator rejects missing criteria, invented command or check references,
+candidate-collected review claims, unknown authority fields, cross-repository
+writes, and runs beyond the fixed time or review-loop budget.
+
 Evaluate a collected record without network or GitHub writes:
 
 ```bash
