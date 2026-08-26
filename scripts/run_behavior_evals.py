@@ -77,6 +77,11 @@ PLUGIN_RELATIVE = Path("plugins") / PLUGIN_NAME
 PLUGIN_MANIFEST_RELATIVE = Path(".codex-plugin/plugin.json")
 PLUGIN_SKILLS_RELATIVE = Path("skills")
 PLUGIN_FORBIDDEN_RUNTIME_FIELDS = {"apps", "hooks", "mcpServers"}
+BUNDLED_HOOKS_PATH = "hooks/hooks.json"
+BUNDLED_DOCTOR_PATH = "skills/openboa-ai-native-sdlc/scripts/doctor.py"
+BUNDLED_DOCTOR_SHA256 = (
+    "dea26ce061157d568d5b263e00e682134b2a0909282bb4c2d62faaf357042eb8"
+)
 WINDOWS_RESERVED_BASENAMES = {
     "AUX",
     "CLOCK$",
@@ -887,12 +892,24 @@ def _validate_candidate_plugin_contract(
             + ", ".join(forbidden)
         )
 
+    by_path = {entry.path: entry for entry in entries}
+    hooks_entry = by_path.get(BUNDLED_HOOKS_PATH)
+    if hooks_entry is None:
+        raise CaseDefinitionError("candidate package is missing required bundled hooks")
+    doctor_entry = by_path.get(BUNDLED_DOCTOR_PATH)
+    if doctor_entry is None:
+        raise CaseDefinitionError("candidate package is missing required automatic doctor")
+    _validate_bundled_hooks(hooks_entry.raw_bytes)
+    if hashlib.sha256(doctor_entry.raw_bytes).hexdigest() != BUNDLED_DOCTOR_SHA256:
+        raise CaseDefinitionError(
+            "candidate automatic doctor does not match the trusted 0.2.0 artifact"
+        )
+
     for entry in entries:
         parts = _portable_package_parts(entry.path)
         if entry.path == PLUGIN_MANIFEST_RELATIVE.as_posix():
             continue
-        if entry.path == "hooks/hooks.json":
-            _validate_bundled_hooks(entry.raw_bytes)
+        if entry.path == BUNDLED_HOOKS_PATH:
             continue
         if parts[0] != PLUGIN_SKILLS_RELATIVE.as_posix():
             raise CaseDefinitionError(

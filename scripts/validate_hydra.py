@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import stat
@@ -19,6 +20,7 @@ MARKETPLACE_NAME = "openboa-hydra"
 MANAGED_START = f"<!-- {PLUGIN_NAME}:managed:start contract={CONTRACT_VERSION} -->"
 MANAGED_END = f"<!-- {PLUGIN_NAME}:managed:end -->"
 LEGACY_ACTIVE_IDENTITIES = ("openboa-operations", "openboa operations")
+DOCTOR_SHA256 = "dea26ce061157d568d5b263e00e682134b2a0909282bb4c2d62faaf357042eb8"
 
 ROOT_ROUTERS = (
     "DOCTRINE.md",
@@ -235,6 +237,14 @@ def validate(root: Path) -> list[str]:
             errors.append(f"missing automation template: assets/automations/{name}")
 
     validate_hooks(plugin_root / "hooks" / "hooks.json", errors)
+    validate_file_sha256(
+        skill_root / "scripts" / "doctor.py",
+        root,
+        errors,
+        "automatic doctor",
+        DOCTOR_SHA256,
+        131072,
+    )
 
     for path in (root / "AGENTS.md", assets_root / "managed-AGENTS.md"):
         if is_regular_file(path):
@@ -302,6 +312,30 @@ def read_bounded_text(
     except OSError as exc:
         errors.append(f"unable to read {label} {shown}: {exc}")
     return None
+
+
+def validate_file_sha256(
+    path: Path,
+    root: Path,
+    errors: list[str],
+    label: str,
+    expected: str,
+    maximum_bytes: int,
+) -> None:
+    shown = display(root, path)
+    if not is_regular_file(path):
+        errors.append(f"unsafe or missing {label}: {shown}")
+        return
+    try:
+        if path.lstat().st_size > maximum_bytes:
+            errors.append(f"{label} exceeds {maximum_bytes} bytes: {shown}")
+            return
+        observed = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        errors.append(f"unable to read {label} {shown}: {exc}")
+        return
+    if observed != expected:
+        errors.append(f"{label} does not match the trusted 0.2.0 artifact: {shown}")
 
 
 def markdown_fenced_ranges(text: str) -> list[tuple[int, int]]:

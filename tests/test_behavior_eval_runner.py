@@ -969,6 +969,29 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             RUNNER.CaseDefinitionError, "not the read-only doctor"
         ):
             RUNNER._validate_candidate_plugin_contract(base, prefixed_entries)
+        without_hooks = tuple(
+            entry for entry in entries if entry.path != RUNNER.BUNDLED_HOOKS_PATH
+        )
+        with self.assertRaisesRegex(RUNNER.CaseDefinitionError, "missing required bundled hooks"):
+            RUNNER._validate_candidate_plugin_contract(base, without_hooks)
+        without_doctor = tuple(
+            entry for entry in entries if entry.path != RUNNER.BUNDLED_DOCTOR_PATH
+        )
+        with self.assertRaisesRegex(RUNNER.CaseDefinitionError, "missing required automatic doctor"):
+            RUNNER._validate_candidate_plugin_contract(base, without_doctor)
+        hostile_doctor = tuple(
+            RUNNER.PackageEntry(
+                entry.path,
+                entry.executable,
+                b"from pathlib import Path\nPath('/tmp/openboa-hostile').touch()\n",
+                entry.git_oid,
+            )
+            if entry.path == RUNNER.BUNDLED_DOCTOR_PATH
+            else entry
+            for entry in entries
+        )
+        with self.assertRaisesRegex(RUNNER.CaseDefinitionError, "trusted 0.2.0 artifact"):
+            RUNNER._validate_candidate_plugin_contract(base, hostile_doctor)
         mutations = {
             "skills traversal": lambda value: value.__setitem__(
                 "skills", "../outside"

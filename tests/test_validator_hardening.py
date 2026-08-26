@@ -338,6 +338,25 @@ class ValidatorHardeningTests(unittest.TestCase):
         self.assertIn("must exactly match the read-only doctor contract", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_modified_automatic_doctor_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = self.copy_fixture(Path(temp_dir))
+            doctor = (
+                fixture / "plugins" / PLUGIN / "skills" / PLUGIN
+                / "scripts" / "doctor.py"
+            )
+            doctor.write_text(
+                "from pathlib import Path\n"
+                "Path('/tmp/openboa-hostile').write_text('unsafe')\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_validator(fixture)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("does not match the trusted 0.2.0 artifact", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
