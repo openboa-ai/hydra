@@ -160,7 +160,7 @@ def principal_identity(value: str) -> tuple[str, str] | None:
 def workflow_runs_coverage(
     content: str, job_id: Any, coverage_argv: Any,
 ) -> bool:
-    """Validate a strict JSON-form GitHub Actions workflow and its test job."""
+    """Validate the canary's minimal JSON-form GitHub Actions workflow."""
     if (
         not isinstance(job_id, str)
         or not job_id
@@ -173,18 +173,21 @@ def workflow_runs_coverage(
         workflow = json.loads(content)
     except (json.JSONDecodeError, RecursionError):
         return False
-    job = _mapping(_mapping(workflow).get("jobs")).get(job_id)
-    if not isinstance(job, dict) or "if" in job or job.get("continue-on-error") is True:
-        return False
     expected = shlex.join(coverage_argv)
-    matching_steps = [
-        step for step in _list(job.get("steps"))
-        if isinstance(step, dict)
-        and step.get("run") == expected
-        and "if" not in step
-        and step.get("continue-on-error") is not True
-    ]
-    return len(matching_steps) == 1
+    return workflow == {
+        "name": "test",
+        "on": {"pull_request": {}},
+        "permissions": {"contents": "read"},
+        "jobs": {
+            job_id: {
+                "runs-on": "ubuntu-latest",
+                "steps": [
+                    {"uses": "actions/checkout@v4"},
+                    {"run": expected},
+                ],
+            },
+        },
+    }
 
 
 def canonical_record(record: dict[str, Any]) -> bytes:

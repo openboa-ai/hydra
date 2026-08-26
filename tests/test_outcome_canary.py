@@ -36,6 +36,7 @@ def accepted_record() -> dict:
     workflow_content = json.dumps({
         "name": "test",
         "on": {"pull_request": {}},
+        "permissions": {"contents": "read"},
         "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": [
             {"uses": "actions/checkout@v4"},
             {"run": "python3 -m unittest discover"},
@@ -318,6 +319,21 @@ class OutcomeCanaryTests(unittest.TestCase):
             "run_head_sha": "c" * 40,
             "run_url": "https://github.com/openboa-ai/openboa-ai-native-sdlc-canary/actions/runs/999",
         })
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("check-not-passed-on-current-head", reasons)
+
+    def test_ci_workflow_rejects_shell_override(self) -> None:
+        record = accepted_record()
+        check = record["outcome"]["checks"][0]
+        workflow = json.loads(check["workflow_content"])
+        workflow["jobs"]["test"]["defaults"] = {"run": {"shell": "true {0}"}}
+        check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
+        check["workflow_sha256"] = hashlib.sha256(
+            check["workflow_content"].encode()
+        ).hexdigest()
         resign(record)
         reasons = EVALUATOR.evaluate(
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,

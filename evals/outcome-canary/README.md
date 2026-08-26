@@ -78,8 +78,11 @@ the offline evaluator can hash and inspect it without a YAML dependency. Record
 the connector-observed numeric run ID, event, exact head SHA, workflow head SHA,
 job ID, and complete workflow content. The evaluator recomputes the workflow
 digest, requires the named job to run the exact locally observed coverage argv,
-and binds the run URL and both heads. A passing check name alone is not evidence
-that tests ran.
+and binds the run URL and both heads. The canary workflow is deliberately
+minimal: pull-request trigger, read-only contents permission, Ubuntu runner,
+`actions/checkout@v4`, and the exact coverage command. Extra defaults, shells,
+conditions, environments, containers, steps, or continue-on-error behavior are
+rejected. A passing check name alone is not evidence that tests ran.
 
 Evaluate a collected record without network or GitHub writes:
 
