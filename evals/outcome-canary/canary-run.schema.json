@@ -168,7 +168,7 @@
       "type": "array", "minItems": 1,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "argv", "exit_code", "stdout_sha256", "stderr_sha256", "head_sha", "input_evidence", "output_evidence", "observations", "status"],
+        "required": ["id", "argv", "exit_code", "stdout_sha256", "stderr_sha256", "head_sha", "input_evidence", "output_evidence", "test_evidence", "observations", "status"],
         "properties": {
           "id": {"type": "string", "minLength": 1},
           "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
@@ -202,6 +202,22 @@
                   "path": {"type": "string", "minLength": 1},
                   "before": {"const": "absent"},
                   "after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                }
+              }
+            ]
+          },
+          "test_evidence": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["framework", "tests_run", "failures", "errors", "skipped"],
+                "properties": {
+                  "framework": {"const": "stdlib-unittest"},
+                  "tests_run": {"type": "integer", "minimum": 3},
+                  "failures": {"const": 0},
+                  "errors": {"const": 0},
+                  "skipped": {"type": "integer", "minimum": 0}
                 }
               }
             ]

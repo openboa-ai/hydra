@@ -80,7 +80,12 @@ job ID, and complete workflow content. The evaluator recomputes the workflow
 digest, requires the named job to run the exact locally observed coverage argv,
 and binds the run URL and both heads. The canary workflow is deliberately
 minimal: pull-request trigger, read-only contents permission, Ubuntu runner,
-`actions/checkout@v4`, and the exact coverage command. Extra defaults, shells,
+`actions/checkout@v4`, and the exact isolated coverage command
+defined by `COVERAGE_ARGV` in the evaluator. It starts Python with `-I`, imports
+standard-library unittest before adding the checkout to the discovery path, and
+then runs `tests`. This prevents a candidate `unittest.py` from shadowing the
+standard library. The trusted local observation must also show that unittest ran
+at least three tests with zero failures and zero errors. Extra defaults, shells,
 conditions, environments, containers, steps, or continue-on-error behavior are
 rejected. A passing check name alone is not evidence that tests ran.
 

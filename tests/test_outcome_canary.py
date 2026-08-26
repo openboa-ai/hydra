@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -32,14 +33,14 @@ def accepted_record() -> dict:
     pr_url = "https://github.com/openboa-ai/openboa-ai-native-sdlc-canary/pull/1"
     documented_argv = ["python3", "handoff.py", "events.jsonl", "handoff.md"]
     malformed_argv = ["python3", "handoff.py", "malformed.jsonl", "bad.md"]
-    coverage_argv = ["python3", "-m", "unittest", "discover"]
+    coverage_argv = list(EVALUATOR.COVERAGE_ARGV)
     workflow_content = json.dumps({
         "name": "test",
         "on": {"pull_request": {}},
         "permissions": {"contents": "read"},
         "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": [
             {"uses": "actions/checkout@v4"},
-            {"run": "python3 -m unittest discover"},
+            {"run": shlex.join(coverage_argv)},
         ]}},
     }, separators=(",", ":"))
     evidence_references = {
@@ -96,6 +97,7 @@ def accepted_record() -> dict:
                         "probe_argv_sha256": EVALUATOR.argv_sha256(documented_argv),
                     },
                     "output_evidence": {"path": "handoff.md", "before": "absent", "after_sha256": "d" * 64},
+                    "test_evidence": None,
                     "head_sha": head, "observations": ["documented-command-produced-markdown"], "status": "passed",
                 },
                 {
@@ -103,6 +105,7 @@ def accepted_record() -> dict:
                     "exit_code": 2, "stdout_sha256": "3" * 64, "stderr_sha256": "4" * 64,
                     "input_evidence": None,
                     "output_evidence": None,
+                    "test_evidence": None,
                     "head_sha": head, "observations": ["nonzero-exit", "no-traceback", "no-output"], "status": "passed",
                 },
                 {
@@ -110,6 +113,10 @@ def accepted_record() -> dict:
                     "exit_code": 0, "stdout_sha256": "5" * 64, "stderr_sha256": "6" * 64,
                     "input_evidence": None,
                     "output_evidence": None,
+                    "test_evidence": {
+                        "framework": "stdlib-unittest", "tests_run": 3,
+                        "failures": 0, "errors": 0, "skipped": 0,
+                    },
                     "head_sha": head, "observations": ["success-path", "malformed-input", "unknown-preservation"], "status": "passed",
                 },
             ],
@@ -195,13 +202,13 @@ class OutcomeCanaryTests(unittest.TestCase):
         )["reasons"]
         self.assertIn("acceptance-command-not-passed", reasons)
 
-    def test_coverage_command_rejects_preceding_python_execution_mode(self) -> None:
+    def test_coverage_command_rejects_alternate_python_program(self) -> None:
         record = accepted_record()
         coverage = record["outcome"]["acceptance_commands"][2]
-        coverage["argv"] = ["python3", "-c", "pass", "-m", "unittest"]
+        coverage["argv"] = ["python3", "-I", "-c", "pass"]
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
-        workflow["jobs"]["test"]["steps"][1]["run"] = "python3 -c pass -m unittest"
+        workflow["jobs"]["test"]["steps"][1]["run"] = "python3 -I -c pass"
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()
@@ -220,7 +227,7 @@ class OutcomeCanaryTests(unittest.TestCase):
         coverage["argv"][0] = "./python3"
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
-        workflow["jobs"]["test"]["steps"][1]["run"] = "./python3 -m unittest discover"
+        workflow["jobs"]["test"]["steps"][1]["run"] = shlex.join(coverage["argv"])
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()
@@ -232,6 +239,34 @@ class OutcomeCanaryTests(unittest.TestCase):
         )["reasons"]
         self.assertIn("acceptance-command-not-passed", reasons)
         self.assertIn("check-not-passed-on-current-head", reasons)
+
+    def test_coverage_command_requires_isolated_stdlib_unittest(self) -> None:
+        record = accepted_record()
+        coverage = record["outcome"]["acceptance_commands"][2]
+        coverage["argv"] = ["python3", "-m", "unittest", "discover"]
+        check = record["outcome"]["checks"][0]
+        workflow = json.loads(check["workflow_content"])
+        workflow["jobs"]["test"]["steps"][1]["run"] = "python3 -m unittest discover"
+        check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
+        check["workflow_sha256"] = hashlib.sha256(
+            check["workflow_content"].encode()
+        ).hexdigest()
+        check["tested_argv_sha256"] = EVALUATOR.argv_sha256(coverage["argv"])
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("acceptance-command-not-passed", reasons)
+        self.assertIn("check-not-passed-on-current-head", reasons)
+
+    def test_coverage_command_requires_three_observed_tests(self) -> None:
+        record = accepted_record()
+        record["outcome"]["acceptance_commands"][2]["test_evidence"]["tests_run"] = 0
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("coverage-tests-not-proven", reasons)
 
     def test_documented_command_must_create_the_inspected_artifact(self) -> None:
         record = accepted_record()

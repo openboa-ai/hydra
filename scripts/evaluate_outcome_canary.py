@@ -44,6 +44,12 @@ COMMAND_OBSERVATIONS = {
     "malformed-input": {"nonzero-exit", "no-traceback", "no-output"},
     "coverage": {"success-path", "malformed-input", "unknown-preservation"},
 }
+COVERAGE_PROGRAM = (
+    "import sys,unittest; sys.path.insert(0,'.'); "
+    "result=unittest.TextTestRunner().run(unittest.defaultTestLoader.discover('tests')); "
+    "raise SystemExit(not result.wasSuccessful())"
+)
+COVERAGE_ARGV = ["python3", "-I", "-c", COVERAGE_PROGRAM]
 MAX_ELAPSED_MINUTES = 45
 MAX_REVIEW_FIX_ROUNDS = 3
 MAX_RECORD_BYTES = 1_048_576
@@ -137,7 +143,7 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
             and any(arg.endswith(".jsonl") for arg in argv)
         )
     if command_id == "coverage":
-        return exit_code == 0 and argv[1:] == ["-m", "unittest", "discover"]
+        return exit_code == 0 and argv == COVERAGE_ARGV
     return False
 
 
@@ -166,7 +172,7 @@ def workflow_runs_coverage(
         or not isinstance(coverage_argv, list)
         or not coverage_argv
         or any(not isinstance(arg, str) or not arg for arg in coverage_argv)
-        or coverage_argv != ["python3", "-m", "unittest", "discover"]
+        or coverage_argv != COVERAGE_ARGV
     ):
         return False
     try:
@@ -339,7 +345,8 @@ def evaluate(
             continue
         _exact_keys(item, {
             "id", "argv", "exit_code", "stdout_sha256", "stderr_sha256",
-            "head_sha", "input_evidence", "output_evidence", "observations", "status",
+            "head_sha", "input_evidence", "output_evidence", "test_evidence",
+            "observations", "status",
         }, "acceptance-command", reasons)
         command_id = item.get("id")
         if not isinstance(command_id, str) or not command_id.strip() or command_id in command_ids:
@@ -412,6 +419,21 @@ def evaluate(
             reasons.append(f"unexpected-input-evidence:{command_id}")
         if commands_by_id.get(command_id, {}).get("output_evidence") is not None:
             reasons.append(f"unexpected-output-evidence:{command_id}")
+    for command_id in ("documented-command", "malformed-input"):
+        if commands_by_id.get(command_id, {}).get("test_evidence") is not None:
+            reasons.append(f"unexpected-test-evidence:{command_id}")
+    coverage_tests = _mapping(commands_by_id.get("coverage", {}).get("test_evidence"))
+    if (
+        set(coverage_tests) != {"framework", "tests_run", "failures", "errors", "skipped"}
+        or coverage_tests.get("framework") != "stdlib-unittest"
+        or type(coverage_tests.get("tests_run")) is not int
+        or coverage_tests.get("tests_run", 0) < 3
+        or coverage_tests.get("failures") != 0
+        or coverage_tests.get("errors") != 0
+        or type(coverage_tests.get("skipped")) is not int
+        or coverage_tests.get("skipped", -1) < 0
+    ):
+        reasons.append("coverage-tests-not-proven")
 
     checks = _list(outcome.get("checks"))
     check_names: set[str] = set()
