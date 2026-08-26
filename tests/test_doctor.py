@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -91,6 +92,31 @@ class DoctorTests(unittest.TestCase):
                 text=True, capture_output=True, check=True, env=environment,
             )
 
+            self.assertFalse(marker.exists())
+
+    def test_isolated_hook_does_not_import_sibling_module(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            scripts = base / "scripts"
+            scripts.mkdir()
+            doctor = scripts / "doctor.py"
+            shutil.copy2(DOCTOR, doctor)
+            marker = base / "hostile-import-ran"
+            (scripts / "argparse.py").write_text(
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text('unsafe', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "/usr/bin/env", "-i", "PATH=/usr/bin:/bin:/usr/local/bin",
+                    "python3", "-I", str(doctor), str(base), "--json",
+                ],
+                text=True, capture_output=True, check=True,
+            )
+
+            self.assertEqual("directory", json.loads(result.stdout)["path_status"])
             self.assertFalse(marker.exists())
 
     def test_oversized_agents_file_is_not_read(self) -> None:

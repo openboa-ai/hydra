@@ -926,7 +926,7 @@ def _validate_bundled_hooks(raw_bytes: bytes) -> None:
         raise CaseDefinitionError(f"cannot parse bundled hooks: {exc}") from exc
     hooks = payload.get("hooks") if isinstance(payload, dict) else None
     command = (
-        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 '
+        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -I '
         '"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
     )
     expected = {

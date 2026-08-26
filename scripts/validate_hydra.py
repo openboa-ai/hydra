@@ -567,7 +567,7 @@ def validate_hooks(path: Path, errors: list[str]) -> None:
         errors.append("plugin hooks must contain only SessionStart and PostCompact")
         return
     command = (
-        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 '
+        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -I '
         '"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
     )
     expected = {

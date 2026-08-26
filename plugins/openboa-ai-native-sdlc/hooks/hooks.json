@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 \"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py\" --hook",
+            "command": "/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -I \"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py\" --hook",
             "timeout": 5,
             "statusMessage": "Checking OpenBoa work context",
             "additionalContextLimit": 2000
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 \"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py\" --hook",
+            "command": "/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -I \"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py\" --hook",
             "timeout": 5,
             "statusMessage": "Rechecking OpenBoa work context"
           }
