@@ -70,6 +70,12 @@ R13_RESULT = (
     / "results"
     / "2026-08-25-codex-0.144.5-v2-direct-r13.json"
 )
+R14_RESULT = (
+    ROOT
+    / "evals"
+    / "results"
+    / "2026-08-26-codex-0.144.5-v2-v02-r14.json"
+)
 V1_BASELINE = ROOT / "evals" / "baselines" / "evaluator-v1" / "cases"
 
 
@@ -2497,6 +2503,22 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
         self.assertNotIn(str(ROOT), raw)
         self.assertNotIn(str(Path.home()), raw)
         self.assertNotIn("/opt/homebrew/", raw)
+
+    def test_r14_result_preserves_network_unavailable_attempt(self) -> None:
+        self.assertEqual(
+            "35a093c7dfb20f8f851a1b4e011a2ea1a557b92ae513793c089e156aa0a2ead2",
+            hashlib.sha256(R14_RESULT.read_bytes()).hexdigest(),
+        )
+        report = json.loads(R14_RESULT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"unmeasured": 21, "passed": 0, "failed": 0, "unsupported": 0},
+            report["status_counts"],
+        )
+        self.assertEqual("unmeasured", report["discovery"]["status"])
+        self.assertTrue(report["candidate"]["attribution_complete"])
+        self.assertTrue(
+            report["discovery"]["evidence"]["installation"]["matches_snapshot"]
+        )
 
 
 if __name__ == "__main__":

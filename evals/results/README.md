@@ -2,7 +2,18 @@
 
 Results are append-only observations of one named candidate and host. They do not change the contracts in `../scenarios/`, and they must not be rewritten as if a later plugin revision produced the same evidence.
 
-## Latest run — exact candidate and bounded launcher attribution
+## Latest v0.2 attempt — network-unavailable, installation attributed
+
+- [2026-08-26 — Codex CLI 0.144.5, evaluator v2, v0.2 r14](2026-08-26-codex-0.144.5-v2-v02-r14.json)
+- File SHA-256: `35a093c7dfb20f8f851a1b4e011a2ea1a557b92ae513793c089e156aa0a2ead2`
+- Candidate revision: `3f9ea03e57abe02089e9ebe3ac707c75958f5c43`
+- Package installation and installed-cache fingerprint: `passed`
+- Paired skill discovery: `unmeasured`
+- Core decision-policy cases: 0 `passed`, 0 `failed`, 0 `unsupported`, 21 `unmeasured`
+
+r14 is an immutable failed-attempt observation. The temporary marketplace installed and enabled `0.2.0`, and the installed bytes matched the private Git snapshot. Model transport to the Codex response endpoint was unavailable in the sandbox, so both discovery probes produced no attributable answer and every case failed closed as `unmeasured`. It is not behavioral acceptance evidence and must not be relabeled after a later retry.
+
+## Latest complete v0.1 run — exact candidate and bounded launcher attribution
 
 - [2026-08-25 — Codex CLI 0.144.5, evaluator v2 direct output r13](2026-08-25-codex-0.144.5-v2-direct-r13.json)
 - File SHA-256: `527cfa939a50c6becafc33855845974bef726b06bca62e04f1dedbdefcc11ff5`
