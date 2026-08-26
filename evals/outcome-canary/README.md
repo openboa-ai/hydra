@@ -111,6 +111,8 @@ inside Markdown HTML comments are ignored as non-rendered content. Bullet-like
 lines indented as Markdown code are rejected rather than counted as list items.
 Raw HTML block tags invalidate the section structure, so preformatted HTML
 cannot disguise headings and bullets as rendered handoff evidence.
+Malformed-input rejection requires no directory entry at the output path;
+dangling symlinks count as output and fail the check.
 It never imports candidate
 modules, so candidate test code cannot modify its counters. The evaluator
 requires the connector-observed exact-head job containing both the candidate

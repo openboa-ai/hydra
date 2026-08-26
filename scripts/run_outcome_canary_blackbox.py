@@ -265,7 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rejected = run_candidate(root, entrypoint, malformed, malformed_output)
             if (
                 rejected.returncode == 0
-                or malformed_output.exists()
+                or os.path.lexists(malformed_output)
                 or "traceback" in (rejected.stdout + rejected.stderr).casefold()
             ):
                 failures.append("malformed-input")
