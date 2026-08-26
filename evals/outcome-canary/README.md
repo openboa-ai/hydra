@@ -75,7 +75,8 @@ python3 scripts/attest_outcome_canary.py \
   --output /trusted/path/signed-canary-run.json
 python3 scripts/evaluate_outcome_canary.py \
   /trusted/path/signed-canary-run.json \
-  --attestation-key-file /trusted/path/canary.key
+  --attestation-key-file /trusted/path/canary.key \
+  --expected-hydra-revision "$EXACT_CANDIDATE_SHA"
 ```
 
 The evaluator reports `accepted`, reasons, and the measured collaboration

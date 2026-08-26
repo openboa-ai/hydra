@@ -118,7 +118,11 @@ def _attestation_is_valid(record: dict[str, Any], key: bytes | None) -> bool:
     )
 
 
-def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> dict[str, Any]:
+def evaluate(
+    record: dict[str, Any],
+    attestation_key: bytes | None = None,
+    expected_hydra_revision: str | None = None,
+) -> dict[str, Any]:
     reasons: list[str] = []
     _exact_keys(record, {
         "schema_version", "run_id", "scenario_id", "attestation", "collector", "candidate",
@@ -126,7 +130,7 @@ def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> di
     }, "record", reasons)
     if not _attestation_is_valid(record, attestation_key):
         reasons.append("invalid-control-plane-attestation")
-    if record.get("schema_version") != SCHEMA_VERSION:
+    if type(record.get("schema_version")) is not int or record.get("schema_version") != SCHEMA_VERSION:
         reasons.append("schema-version-mismatch")
     if record.get("scenario_id") != SCENARIO_ID:
         reasons.append("unexpected-scenario")
@@ -146,6 +150,12 @@ def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> di
     hydra_revision = candidate.get("hydra_revision")
     if not isinstance(hydra_revision, str) or SHA_RE.fullmatch(hydra_revision) is None:
         reasons.append("invalid-hydra-revision")
+    if (
+        not isinstance(expected_hydra_revision, str)
+        or SHA_RE.fullmatch(expected_hydra_revision) is None
+        or hydra_revision != expected_hydra_revision
+    ):
+        reasons.append("hydra-revision-not-expected")
     if candidate.get("plugin_version") != PLUGIN_VERSION:
         reasons.append("plugin-version-mismatch")
     if not isinstance(candidate.get("codex_cli"), str) or not candidate["codex_cli"].strip():
@@ -195,6 +205,7 @@ def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> di
     _exact_keys(artifact, {"path", "sha256", "head_sha", "sections"}, "artifact-evidence", reasons)
     artifact_path = artifact.get("path")
     artifact_digest = artifact.get("sha256")
+    artifact_sections = artifact.get("sections")
     if (
         not isinstance(artifact_path, str)
         or not artifact_path
@@ -203,8 +214,10 @@ def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> di
         or not isinstance(artifact_digest, str)
         or re.fullmatch(r"[0-9a-f]{64}", artifact_digest) is None
         or artifact.get("head_sha") != head
-        or set(_list(artifact.get("sections"))) != {"Outcome", "Evidence", "Unknowns"}
-        or len(_list(artifact.get("sections"))) != 3
+        or not isinstance(artifact_sections, list)
+        or any(not isinstance(section, str) for section in artifact_sections)
+        or len(artifact_sections) != 3
+        or set(artifact_sections) != {"Outcome", "Evidence", "Unknowns"}
     ):
         reasons.append("artifact-evidence-not-proven")
 
@@ -370,12 +383,11 @@ def evaluate(record: dict[str, Any], attestation_key: bytes | None = None) -> di
         reasons.append("review-is-not-independent")
     metrics: dict[str, Any] = {}
     elapsed = collaboration.get("elapsed_minutes")
-    if (
-        not isinstance(elapsed, (int, float))
-        or isinstance(elapsed, bool)
-        or not math.isfinite(elapsed)
-        or elapsed < 0
-    ):
+    elapsed_is_valid = (
+        (type(elapsed) is int and elapsed >= 0)
+        or (type(elapsed) is float and math.isfinite(elapsed) and elapsed >= 0)
+    )
+    if not elapsed_is_valid:
         metrics["elapsed_minutes"] = "unknown"
         reasons.append("invalid-elapsed-minutes")
     else:
@@ -436,6 +448,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record", type=Path)
     parser.add_argument("--attestation-key-file", type=Path, required=True)
+    parser.add_argument("--expected-hydra-revision", required=True)
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
 
@@ -459,7 +472,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not isinstance(payload, dict):
         print("outcome canary record must be a JSON object", file=sys.stderr)
         return 2
-    result = evaluate(payload, attestation_key)
+    result = evaluate(payload, attestation_key, args.expected_hydra_revision)
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output is not None:
         try:

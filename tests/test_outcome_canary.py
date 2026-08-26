@@ -17,6 +17,7 @@ assert SPEC and SPEC.loader
 EVALUATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(EVALUATOR)
 ATTESTATION_KEY = b"openboa-private-canary-test-key-32-bytes-minimum"
+EXPECTED_HYDRA_REVISION = "a" * 40
 
 
 def resign(record: dict) -> dict:
@@ -124,7 +125,9 @@ def accepted_record() -> dict:
 
 class OutcomeCanaryTests(unittest.TestCase):
     def test_complete_current_head_evidence_is_accepted(self) -> None:
-        result = EVALUATOR.evaluate(accepted_record(), ATTESTATION_KEY)
+        result = EVALUATOR.evaluate(
+            accepted_record(), ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )
         self.assertTrue(result["accepted"])
         self.assertEqual([], result["reasons"])
 
@@ -133,7 +136,9 @@ class OutcomeCanaryTests(unittest.TestCase):
         record["collaboration"]["implementation_actor"] = "invented-implementer"
         record["outcome"]["review"]["reviewer_actor"] = "invented-reviewer"
         record["attestation"] = EVALUATOR.create_attestation(record, b"candidate-known-key-that-is-long-enough")
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("invalid-control-plane-attestation", reasons)
 
     def test_command_labels_cannot_substitute_for_behavior(self) -> None:
@@ -142,7 +147,9 @@ class OutcomeCanaryTests(unittest.TestCase):
             command["argv"] = ["true"]
             command["exit_code"] = 0
         resign(record)
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("acceptance-command-not-passed", reasons)
 
     def test_artifact_digest_sections_and_head_are_required(self) -> None:
@@ -153,20 +160,62 @@ class OutcomeCanaryTests(unittest.TestCase):
             "sections": ["Outcome", "Evidence"],
         })
         resign(record)
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("artifact-evidence-not-proven", reasons)
 
     def test_non_finite_elapsed_time_is_rejected(self) -> None:
         record = accepted_record()
         record["collaboration"]["elapsed_minutes"] = float("nan")
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("invalid-elapsed-minutes", reasons)
+
+    def test_record_revision_must_match_control_plane_candidate(self) -> None:
+        record = accepted_record()
+        record["candidate"]["hydra_revision"] = "0" * 40
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("hydra-revision-not-expected", reasons)
+
+    def test_boolean_schema_version_is_rejected(self) -> None:
+        record = accepted_record()
+        record["schema_version"] = True
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("schema-version-mismatch", reasons)
+
+    def test_oversized_elapsed_integer_is_a_rejection_not_an_exception(self) -> None:
+        record = accepted_record()
+        record["collaboration"]["elapsed_minutes"] = 10 ** 400
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("elapsed-budget-exceeded", reasons)
+
+    def test_unhashable_artifact_section_is_rejected_without_exception(self) -> None:
+        record = accepted_record()
+        record["outcome"]["artifact_evidence"]["sections"] = [
+            "Outcome", "Evidence", {"name": "Unknowns"},
+        ]
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("artifact-evidence-not-proven", reasons)
 
     def test_stale_or_failed_integration_evidence_is_rejected(self) -> None:
         record = accepted_record()
         record["outcome"]["checks"][0]["head_sha"] = "c" * 40
         record["outcome"]["review"]["status"] = "unmeasured"
-        result = EVALUATOR.evaluate(record, ATTESTATION_KEY)
+        result = EVALUATOR.evaluate(record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION)
         self.assertFalse(result["accepted"])
         self.assertIn("check-not-passed-on-current-head", result["reasons"])
         self.assertIn("review-not-passed", result["reasons"])
@@ -182,7 +231,9 @@ class OutcomeCanaryTests(unittest.TestCase):
             "settings_changed": True,
             "production_access": True,
         })
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("authority-is-not-bound-to-one-target", reasons)
         self.assertIn("out-of-scope-action-attempted", reasons)
         self.assertIn("merge-performed-not-false", reasons)
@@ -195,7 +246,7 @@ class OutcomeCanaryTests(unittest.TestCase):
         record = accepted_record()
         record["collaboration"].pop("human_interventions")
         record["observation"] = {"status": "unmeasured", "summary": ""}
-        result = EVALUATOR.evaluate(record, ATTESTATION_KEY)
+        result = EVALUATOR.evaluate(record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION)
         self.assertFalse(result["accepted"])
         self.assertEqual("unknown", result["metrics"]["human_interventions"])
         self.assertIn("outcome-observation-not-passed", result["reasons"])
@@ -205,7 +256,9 @@ class OutcomeCanaryTests(unittest.TestCase):
         record["target"]["visibility_source"] = "candidate-claim"
         record["outcome"]["issue_url"] = "https://github.com/openboa-ai/hydra/issues/8"
         record["outcome"]["pr_url"] = "https://github.com/openboa-ai/hydra/pull/9"
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("untrusted-visibility-evidence", reasons)
         self.assertIn("invalid-issue-url", reasons)
         self.assertIn("invalid-pr-url", reasons)
@@ -216,7 +269,9 @@ class OutcomeCanaryTests(unittest.TestCase):
             "criterion_id": "artifact-command", "status": "passed",
             "source": "trusted-command", "evidence_reference": "true",
         }]
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("incomplete-acceptance-set", reasons)
         self.assertIn("acceptance-not-proven:ci-current-head", reasons)
 
@@ -230,7 +285,9 @@ class OutcomeCanaryTests(unittest.TestCase):
         results["separates-sections"]["evidence_reference"] = f"artifact-sha256:{'0' * 64}"
         results["ci-current-head"]["evidence_reference"] = "check:not-observed"
         results["pr-explanation"]["evidence_reference"] = "pull-request:https://example.com"
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         for criterion in (
             "artifact-command", "separates-sections", "ci-current-head", "pr-explanation",
         ):
@@ -240,7 +297,9 @@ class OutcomeCanaryTests(unittest.TestCase):
         record = accepted_record()
         record["authority"]["deployment_target"] = "hidden"
         record["authority"]["repositories_written"] = [record["target"]["repository"], "openboa-ai/hydra"]
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("invalid-authority-fields", reasons)
         self.assertIn("cross-repository-write", reasons)
 
@@ -248,13 +307,18 @@ class OutcomeCanaryTests(unittest.TestCase):
         record = accepted_record()
         record["outcome"]["review"]["reviewer_actor"] = record["collaboration"]["implementation_actor"]
         record["outcome"]["review"]["source"] = "candidate"
-        self.assertIn("review-is-not-independent", EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"])
+        self.assertIn(
+            "review-is-not-independent",
+            EVALUATOR.evaluate(record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION)["reasons"],
+        )
 
     def test_elapsed_and_review_round_budgets_are_enforced(self) -> None:
         record = accepted_record()
         record["collaboration"]["elapsed_minutes"] = 46
         record["collaboration"]["review_fix_rounds"] = 4
-        reasons = EVALUATOR.evaluate(record, ATTESTATION_KEY)["reasons"]
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
         self.assertIn("elapsed-budget-exceeded", reasons)
         self.assertIn("review-fix-budget-exceeded", reasons)
 
@@ -268,7 +332,11 @@ class OutcomeCanaryTests(unittest.TestCase):
             key.write_bytes(ATTESTATION_KEY)
             key.chmod(0o600)
             completed = subprocess.run(
-                [sys.executable, str(SCRIPT), str(source), "--attestation-key-file", str(key)],
+                [
+                    sys.executable, str(SCRIPT), str(source),
+                    "--attestation-key-file", str(key),
+                    "--expected-hydra-revision", EXPECTED_HYDRA_REVISION,
+                ],
                 text=True, capture_output=True, check=False,
             )
         self.assertEqual(1, completed.returncode)
@@ -295,6 +363,7 @@ class OutcomeCanaryTests(unittest.TestCase):
                 [
                     sys.executable, str(SCRIPT), str(signed),
                     "--attestation-key-file", str(key),
+                    "--expected-hydra-revision", EXPECTED_HYDRA_REVISION,
                 ],
                 text=True, capture_output=True, check=False,
             )
