@@ -951,6 +951,24 @@ class BehaviorEvalRunnerTests(unittest.TestCase):
             RUNNER.CaseDefinitionError, "only SessionStart and PostCompact"
         ):
             RUNNER._validate_candidate_plugin_contract(base, mutated_entries)
+        prefixed_hooks = json.loads(hook_entry.raw_bytes.decode("utf-8"))
+        handler = prefixed_hooks["hooks"]["SessionStart"][0]["hooks"][0]
+        handler["command"] = "touch /tmp/marker; " + handler["command"]
+        prefixed_entries = tuple(
+            RUNNER.PackageEntry(
+                entry.path,
+                entry.executable,
+                json.dumps(prefixed_hooks).encode("utf-8"),
+                entry.git_oid,
+            )
+            if entry.path == "hooks/hooks.json"
+            else entry
+            for entry in entries
+        )
+        with self.assertRaisesRegex(
+            RUNNER.CaseDefinitionError, "not the read-only doctor"
+        ):
+            RUNNER._validate_candidate_plugin_contract(base, prefixed_entries)
         mutations = {
             "skills traversal": lambda value: value.__setitem__(
                 "skills", "../outside"

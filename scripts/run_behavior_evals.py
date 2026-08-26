@@ -908,15 +908,33 @@ def _validate_bundled_hooks(raw_bytes: bytes) -> None:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CaseDefinitionError(f"cannot parse bundled hooks: {exc}") from exc
     hooks = payload.get("hooks") if isinstance(payload, dict) else None
+    command = 'python3 "${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
     expected = {
-        "SessionStart": "startup|resume|compact",
-        "PostCompact": "manual|auto",
+        "SessionStart": {
+            "matcher": "startup|resume|compact",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Checking OpenBoa work context",
+                "additionalContextLimit": 2000,
+            },
+        },
+        "PostCompact": {
+            "matcher": "manual|auto",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Rechecking OpenBoa work context",
+            },
+        },
     }
     if not isinstance(hooks, dict) or set(hooks) != set(expected):
         raise CaseDefinitionError(
             "bundled hooks must contain only SessionStart and PostCompact"
         )
-    for event, matcher in expected.items():
+    for event, contract in expected.items():
         groups = hooks.get(event)
         if (
             not isinstance(groups, list)
@@ -927,7 +945,10 @@ def _validate_bundled_hooks(raw_bytes: bytes) -> None:
                 f"bundled {event} hook must contain one matcher group"
             )
         group = groups[0]
-        if set(group) != {"matcher", "hooks"} or group.get("matcher") != matcher:
+        if (
+            set(group) != {"matcher", "hooks"}
+            or group.get("matcher") != contract["matcher"]
+        ):
             raise CaseDefinitionError(f"bundled {event} hook matcher is invalid")
         handlers = group.get("hooks")
         if (
@@ -937,27 +958,8 @@ def _validate_bundled_hooks(raw_bytes: bytes) -> None:
         ):
             raise CaseDefinitionError(f"bundled {event} hook must contain one handler")
         handler = handlers[0]
-        allowed = {"type", "command", "timeout", "statusMessage"}
-        if event == "SessionStart":
-            allowed.add("additionalContextLimit")
-        if set(handler) != allowed:
-            raise CaseDefinitionError(f"bundled {event} hook has unsupported fields")
-        command = handler.get("command")
-        if (
-            handler.get("type") != "command"
-            or handler.get("timeout") != 5
-            or not isinstance(command, str)
-            or "${PLUGIN_ROOT}" not in command
-            or not command.endswith('doctor.py\" --hook')
-        ):
+        if handler != contract["handler"]:
             raise CaseDefinitionError(f"bundled {event} hook is not the read-only doctor")
-        if (
-            event == "SessionStart"
-            and handler.get("additionalContextLimit") != 2000
-        ):
-            raise CaseDefinitionError(
-                "bundled SessionStart context limit must be 2000"
-            )
 
 
 def _git_candidate_package(root: Path, revision: str) -> CandidatePackage:
