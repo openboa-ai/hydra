@@ -35,14 +35,15 @@ ACCEPTANCE_REFERENCES = {
     "artifact-command": "command:documented-command",
     "separates-sections": "artifact-sha256:",
     "malformed-input": "command:malformed-input",
-    "tests-coverage": "command:coverage",
+    "tests-coverage": "command:trusted-blackbox",
     "ci-current-head": "check:",
     "pr-explanation": "pull-request:",
 }
 COMMAND_OBSERVATIONS = {
     "documented-command": {"documented-command-produced-markdown"},
     "malformed-input": {"nonzero-exit", "no-traceback", "no-output"},
-    "coverage": {"success-path", "malformed-input", "unknown-preservation"},
+    "coverage": {"stdlib-unittest-command-completed"},
+    "trusted-blackbox": {"success-path", "malformed-input", "unknown-preservation"},
 }
 COVERAGE_PROGRAM = (
     "import sys,unittest; sys.path.insert(0,'.'); "
@@ -50,6 +51,7 @@ COVERAGE_PROGRAM = (
     "raise SystemExit(not result.wasSuccessful())"
 )
 COVERAGE_ARGV = ["python3", "-I", "-c", COVERAGE_PROGRAM]
+TRUSTED_BLACKBOX = Path(__file__).with_name("run_outcome_canary_blackbox.py")
 MAX_ELAPSED_MINUTES = 45
 MAX_REVIEW_FIX_ROUNDS = 3
 MAX_RECORD_BYTES = 1_048_576
@@ -144,6 +146,19 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
         )
     if command_id == "coverage":
         return exit_code == 0 and argv == COVERAGE_ARGV
+    if command_id == "trusted-blackbox":
+        return (
+            exit_code == 0
+            and len(argv) == 6
+            and argv[0] == "python3"
+            and Path(argv[1]).name == TRUSTED_BLACKBOX.name
+            and argv[2] == "--candidate-root"
+            and isinstance(argv[3], str)
+            and bool(argv[3])
+            and argv[4] == "--entrypoint"
+            and isinstance(argv[5], str)
+            and bool(argv[5])
+        )
     return False
 
 
@@ -414,33 +429,28 @@ def evaluate(
         or documented_input.get("probe_argv_sha256") != argv_sha256(documented_argv)
     ):
         reasons.append("documented-command-input-not-bound")
-    for command_id in ("malformed-input", "coverage"):
+    for command_id in ("malformed-input", "coverage", "trusted-blackbox"):
         if commands_by_id.get(command_id, {}).get("input_evidence") is not None:
             reasons.append(f"unexpected-input-evidence:{command_id}")
         if commands_by_id.get(command_id, {}).get("output_evidence") is not None:
             reasons.append(f"unexpected-output-evidence:{command_id}")
-    for command_id in ("documented-command", "malformed-input"):
+    for command_id in ("documented-command", "malformed-input", "coverage"):
         if commands_by_id.get(command_id, {}).get("test_evidence") is not None:
             reasons.append(f"unexpected-test-evidence:{command_id}")
-    coverage_tests = _mapping(commands_by_id.get("coverage", {}).get("test_evidence"))
+    coverage_tests = _mapping(commands_by_id.get("trusted-blackbox", {}).get("test_evidence"))
     if (
         set(coverage_tests) != {
-            "framework", "tests_run", "failures", "errors", "skipped",
-            "expected_failures", "unexpected_successes",
+            "framework", "tests_run", "failures", "failed_checks", "harness_sha256",
         }
-        or coverage_tests.get("framework") != "stdlib-unittest"
+        or coverage_tests.get("framework") != "openboa-blackbox-v1"
         or type(coverage_tests.get("tests_run")) is not int
-        or coverage_tests.get("tests_run", 0) < 3
+        or coverage_tests.get("tests_run") != 3
         or type(coverage_tests.get("failures")) is not int
         or coverage_tests.get("failures") != 0
-        or type(coverage_tests.get("errors")) is not int
-        or coverage_tests.get("errors") != 0
-        or type(coverage_tests.get("skipped")) is not int
-        or coverage_tests.get("skipped") != 0
-        or type(coverage_tests.get("expected_failures")) is not int
-        or coverage_tests.get("expected_failures") != 0
-        or type(coverage_tests.get("unexpected_successes")) is not int
-        or coverage_tests.get("unexpected_successes") != 0
+        or coverage_tests.get("failed_checks") != []
+        or not TRUSTED_BLACKBOX.is_file()
+        or coverage_tests.get("harness_sha256")
+        != hashlib.sha256(TRUSTED_BLACKBOX.read_bytes()).hexdigest()
     ):
         reasons.append("coverage-tests-not-proven")
 

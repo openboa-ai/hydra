@@ -84,11 +84,21 @@ minimal: pull-request trigger, read-only contents permission, Ubuntu runner,
 defined by `COVERAGE_ARGV` in the evaluator. It starts Python with `-I`, imports
 standard-library unittest before adding the checkout to the discovery path, and
 then runs `tests`. This prevents a candidate `unittest.py` from shadowing the
-standard library. The trusted local observation must also show that unittest ran
-at least three tests with zero failures, errors, skips, expected failures, or
-unexpected successes. Extra defaults, shells,
+standard library. This candidate-authored suite remains a CI signal, not trusted
+release accounting: test modules can still mutate their own in-process runner.
+Extra defaults, shells,
 conditions, environments, containers, steps, or continue-on-error behavior are
 rejected. A passing check name alone is not evidence that tests ran.
+
+Release acceptance comes from
+`scripts/run_outcome_canary_blackbox.py`. The trusted control plane runs that
+exact Hydra-revision harness outside the candidate process and records its
+digest. The harness invokes the candidate CLI as a child against three fixed
+synthetic behaviors: valid sectioned output, malformed-input rejection, and a
+changed unknown value that must change the output. It never imports candidate
+modules, so candidate test code cannot modify its counters. The evaluator
+requires three passing checks, zero failures, an empty failed-check list, and a
+harness digest matching the exact evaluator checkout.
 
 Evaluate a collected record without network or GitHub writes:
 

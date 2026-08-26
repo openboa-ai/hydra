@@ -211,15 +211,13 @@
               {"type": "null"},
               {
                 "type": "object", "additionalProperties": false,
-                "required": ["framework", "tests_run", "failures", "errors", "skipped", "expected_failures", "unexpected_successes"],
+                "required": ["framework", "tests_run", "failures", "failed_checks", "harness_sha256"],
                 "properties": {
-                  "framework": {"const": "stdlib-unittest"},
-                  "tests_run": {"type": "integer", "minimum": 3},
+                  "framework": {"const": "openboa-blackbox-v1"},
+                  "tests_run": {"const": 3},
                   "failures": {"const": 0},
-                  "errors": {"const": 0},
-                  "skipped": {"const": 0},
-                  "expected_failures": {"const": 0},
-                  "unexpected_successes": {"const": 0}
+                  "failed_checks": {"type": "array", "maxItems": 0},
+                  "harness_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
                 }
               }
             ]

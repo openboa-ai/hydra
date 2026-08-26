@@ -34,6 +34,11 @@ def accepted_record() -> dict:
     documented_argv = ["python3", "handoff.py", "events.jsonl", "handoff.md"]
     malformed_argv = ["python3", "handoff.py", "malformed.jsonl", "bad.md"]
     coverage_argv = list(EVALUATOR.COVERAGE_ARGV)
+    blackbox_argv = [
+        "python3", str(EVALUATOR.TRUSTED_BLACKBOX),
+        "--candidate-root", "/private/tmp/canary",
+        "--entrypoint", "handoff.py",
+    ]
     workflow_content = json.dumps({
         "name": "test",
         "on": {"pull_request": {}},
@@ -47,7 +52,7 @@ def accepted_record() -> dict:
         "artifact-command": "command:documented-command",
         "separates-sections": f"artifact-sha256:{'d' * 64}",
         "malformed-input": "command:malformed-input",
-        "tests-coverage": "command:coverage",
+        "tests-coverage": "command:trusted-blackbox",
         "ci-current-head": "check:test",
         "pr-explanation": f"pull-request:{pr_url}",
     }
@@ -113,10 +118,17 @@ def accepted_record() -> dict:
                     "exit_code": 0, "stdout_sha256": "5" * 64, "stderr_sha256": "6" * 64,
                     "input_evidence": None,
                     "output_evidence": None,
+                    "test_evidence": None,
+                    "head_sha": head, "observations": ["stdlib-unittest-command-completed"], "status": "passed",
+                },
+                {
+                    "id": "trusted-blackbox", "argv": blackbox_argv,
+                    "exit_code": 0, "stdout_sha256": "a" * 64, "stderr_sha256": "f" * 64,
+                    "input_evidence": None, "output_evidence": None,
                     "test_evidence": {
-                        "framework": "stdlib-unittest", "tests_run": 3,
-                        "failures": 0, "errors": 0, "skipped": 0,
-                        "expected_failures": 0, "unexpected_successes": 0,
+                        "framework": "openboa-blackbox-v1", "tests_run": 3,
+                        "failures": 0, "failed_checks": [],
+                        "harness_sha256": hashlib.sha256(EVALUATOR.TRUSTED_BLACKBOX.read_bytes()).hexdigest(),
                     },
                     "head_sha": head, "observations": ["success-path", "malformed-input", "unknown-preservation"], "status": "passed",
                 },
@@ -167,6 +179,43 @@ def accepted_record() -> dict:
 
 
 class OutcomeCanaryTests(unittest.TestCase):
+    def test_trusted_blackbox_harness_verifies_child_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entrypoint = root / "handoff.py"
+            entrypoint.write_text(
+                """import json
+import sys
+from pathlib import Path
+
+source, target = map(Path, sys.argv[1:])
+sections = {"outcome": [], "evidence": [], "unknown": []}
+try:
+    for line in source.read_text(encoding="utf-8").splitlines():
+        item = json.loads(line)
+        sections[item["kind"]].append(item["value"])
+except (KeyError, ValueError, json.JSONDecodeError) as error:
+    print(f"invalid JSONL: {error}", file=sys.stderr)
+    raise SystemExit(2)
+rendered = []
+for key, title in (("outcome", "Outcome"), ("evidence", "Evidence"), ("unknown", "Unknowns")):
+    rendered.extend([f"# {title}", *[f"- {value}" for value in sections[key]], ""])
+target.write_text("\\n".join(rendered), encoding="utf-8")
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(3, result["tests_run"])
+        self.assertEqual(0, result["failures"])
+
     def test_complete_current_head_evidence_is_accepted(self) -> None:
         result = EVALUATOR.evaluate(
             accepted_record(), ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
@@ -260,29 +309,29 @@ class OutcomeCanaryTests(unittest.TestCase):
         self.assertIn("acceptance-command-not-passed", reasons)
         self.assertIn("check-not-passed-on-current-head", reasons)
 
-    def test_coverage_command_requires_three_observed_tests(self) -> None:
+    def test_blackbox_evidence_requires_three_observed_checks(self) -> None:
         record = accepted_record()
-        record["outcome"]["acceptance_commands"][2]["test_evidence"]["tests_run"] = 0
+        record["outcome"]["acceptance_commands"][3]["test_evidence"]["tests_run"] = 0
         resign(record)
         reasons = EVALUATOR.evaluate(
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
         )["reasons"]
         self.assertIn("coverage-tests-not-proven", reasons)
 
-    def test_coverage_command_rejects_boolean_counts_and_skips(self) -> None:
+    def test_blackbox_evidence_rejects_boolean_failure_count(self) -> None:
         record = accepted_record()
-        evidence = record["outcome"]["acceptance_commands"][2]["test_evidence"]
-        evidence.update({"failures": False, "errors": False, "skipped": 3})
+        evidence = record["outcome"]["acceptance_commands"][3]["test_evidence"]
+        evidence["failures"] = False
         resign(record)
         reasons = EVALUATOR.evaluate(
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
         )["reasons"]
         self.assertIn("coverage-tests-not-proven", reasons)
 
-    def test_coverage_command_rejects_expected_failures(self) -> None:
+    def test_blackbox_evidence_is_bound_to_trusted_harness(self) -> None:
         record = accepted_record()
-        evidence = record["outcome"]["acceptance_commands"][2]["test_evidence"]
-        evidence["expected_failures"] = 3
+        evidence = record["outcome"]["acceptance_commands"][3]["test_evidence"]
+        evidence["harness_sha256"] = "0" * 64
         resign(record)
         reasons = EVALUATOR.evaluate(
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
