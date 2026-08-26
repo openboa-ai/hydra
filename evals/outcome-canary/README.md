@@ -99,6 +99,11 @@ changed unknown value that must change the output. It never imports candidate
 modules, so candidate test code cannot modify its counters. The evaluator
 requires three passing checks, zero failures, an empty failed-check list, and a
 harness digest matching the exact evaluator checkout.
+Each candidate child receives hard process, CPU, file-size, and file-descriptor
+limits before exec. In particular `RLIMIT_NPROC=1` prevents the
+candidate from creating a detached descendant, and the harness terminates the
+child session on timeout. This is a fixed release-canary verifier, not a
+generic unattended workspace runner.
 
 Evaluate a collected record without network or GitHub writes:
 

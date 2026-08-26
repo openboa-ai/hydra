@@ -216,6 +216,54 @@ target.write_text("\\n".join(rendered), encoding="utf-8")
         self.assertEqual(3, result["tests_run"])
         self.assertEqual(0, result["failures"])
 
+    def test_trusted_blackbox_rejects_dropped_outcome_and_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                """import json
+import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:])
+try:
+    values = [json.loads(line) for line in source.read_text().splitlines()]
+except json.JSONDecodeError:
+    raise SystemExit(2)
+unknowns = [item["value"] for item in values if item.get("kind") == "unknown"]
+target.write_text("# Outcome\\n\\n# Evidence\\n\\n# Unknowns\\n" + "\\n".join(unknowns))
+""",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(1, completed.returncode)
+        failed = json.loads(completed.stdout)["failed_checks"]
+        self.assertIn("outcome-preservation", failed)
+        self.assertIn("evidence-preservation", failed)
+
+    def test_trusted_blackbox_bounds_candidate_console_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "handoff.py").write_text(
+                "import sys\nprint('x' * 1000000)\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    "--candidate-root", str(root), "--entrypoint", "handoff.py",
+                ],
+                text=True, capture_output=True, check=False,
+                timeout=15,
+            )
+        self.assertEqual(1, completed.returncode)
+        self.assertLess(len(completed.stdout), 10_000)
+        self.assertGreater(json.loads(completed.stdout)["failures"], 0)
+
     def test_complete_current_head_evidence_is_accepted(self) -> None:
         result = EVALUATOR.evaluate(
             accepted_record(), ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
@@ -337,6 +385,17 @@ target.write_text("\\n".join(rendered), encoding="utf-8")
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
         )["reasons"]
         self.assertIn("coverage-tests-not-proven", reasons)
+
+    def test_blackbox_command_must_execute_the_trusted_harness_path(self) -> None:
+        record = accepted_record()
+        record["outcome"]["acceptance_commands"][3]["argv"][1] = (
+            "/tmp/candidate/run_outcome_canary_blackbox.py"
+        )
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("acceptance-command-not-passed", reasons)
 
     def test_documented_command_must_create_the_inspected_artifact(self) -> None:
         record = accepted_record()

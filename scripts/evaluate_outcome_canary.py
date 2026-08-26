@@ -147,11 +147,15 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
     if command_id == "coverage":
         return exit_code == 0 and argv == COVERAGE_ARGV
     if command_id == "trusted-blackbox":
+        try:
+            harness_is_trusted = Path(argv[1]).resolve(strict=True) == TRUSTED_BLACKBOX.resolve(strict=True)
+        except (IndexError, OSError, RuntimeError):
+            harness_is_trusted = False
         return (
             exit_code == 0
             and len(argv) == 6
             and argv[0] == "python3"
-            and Path(argv[1]).name == TRUSTED_BLACKBOX.name
+            and harness_is_trusted
             and argv[2] == "--candidate-root"
             and isinstance(argv[3], str)
             and bool(argv[3])

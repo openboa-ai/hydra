@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import re
+import resource
+import signal
 import stat
 import subprocess
 import sys
@@ -17,6 +19,8 @@ from typing import Sequence
 
 
 TIMEOUT_SECONDS = 10
+MAX_CHILD_FILE_BYTES = 65_536
+MAX_CHILD_FDS = 64
 EXPECTED_SECTIONS = ("Outcome", "Evidence", "Unknowns")
 
 
@@ -39,15 +43,45 @@ def regular_entrypoint(root: Path, relative: Path) -> Path:
 
 
 def run_candidate(root: Path, entrypoint: Path, source: Path, output: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(entrypoint), str(source), str(output)],
-        cwd=root,
-        env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8"},
-        text=True,
-        capture_output=True,
-        timeout=TIMEOUT_SECONDS,
-        check=False,
-    )
+    def apply_limits() -> None:
+        def hard_cap(kind: int, maximum: int) -> None:
+            _, current_hard = resource.getrlimit(kind)
+            bounded = maximum if current_hard == resource.RLIM_INFINITY else min(maximum, current_hard)
+            resource.setrlimit(kind, (bounded, bounded))
+
+        hard_cap(resource.RLIMIT_FSIZE, MAX_CHILD_FILE_BYTES)
+        hard_cap(resource.RLIMIT_CPU, TIMEOUT_SECONDS)
+        hard_cap(resource.RLIMIT_NOFILE, MAX_CHILD_FDS)
+        hard_cap(resource.RLIMIT_NPROC, 1)
+
+    command = [sys.executable, str(entrypoint), str(source), str(output)]
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        process = subprocess.Popen(
+            command,
+            cwd=root,
+            env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8"},
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+            preexec_fn=apply_limits,
+        )
+        try:
+            return_code = process.wait(timeout=TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            return_code = 124
+        stdout.seek(0)
+        stderr.seek(0)
+        return subprocess.CompletedProcess(
+            command,
+            return_code,
+            stdout.read(MAX_CHILD_FILE_BYTES + 1).decode("utf-8", errors="replace"),
+            stderr.read(MAX_CHILD_FILE_BYTES + 1).decode("utf-8", errors="replace"),
+        )
 
 
 def write_jsonl(path: Path, values: list[dict[str, str]]) -> None:
@@ -55,6 +89,14 @@ def write_jsonl(path: Path, values: list[dict[str, str]]) -> None:
         "".join(json.dumps(value, sort_keys=True) + "\n" for value in values),
         encoding="utf-8",
     )
+
+
+def markdown_section(rendered: str, title: str) -> str | None:
+    match = re.search(
+        rf"(?ms)^#{{1,6}}\s+{re.escape(title)}\s*$\n(.*?)(?=^#{{1,6}}\s+|\Z)",
+        rendered,
+    )
+    return match.group(1) if match else None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -77,12 +119,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failures.append("success-path")
             else:
                 rendered = output.read_text(encoding="utf-8")
-                if any(
-                    re.search(rf"(?m)^#{{1,6}}\s+{section}\s*$", rendered) is None
+                sections = {
+                    section: markdown_section(rendered, section)
                     for section in EXPECTED_SECTIONS
-                ):
+                }
+                if any(content is None for content in sections.values()):
                     failures.append("section-separation")
-                if "deployment-status-unknown" not in rendered:
+                if "cli-completed" not in (sections["Outcome"] or ""):
+                    failures.append("outcome-preservation")
+                if "tests-passed" not in (sections["Evidence"] or ""):
+                    failures.append("evidence-preservation")
+                if "deployment-status-unknown" not in (sections["Unknowns"] or ""):
                     failures.append("unknown-preservation")
                 original_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
@@ -98,7 +145,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     probe_text = output.read_text(encoding="utf-8")
                     probe_digest = hashlib.sha256(probe_text.encode("utf-8")).hexdigest()
-                    if "ownership-unknown" not in probe_text or probe_digest == original_digest:
+                    probe_unknowns = markdown_section(probe_text, "Unknowns") or ""
+                    if "ownership-unknown" not in probe_unknowns or probe_digest == original_digest:
                         failures.append("input-influence")
 
             malformed = temp / "malformed.jsonl"
