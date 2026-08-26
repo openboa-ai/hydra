@@ -133,7 +133,7 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
                 if (
                     marker[0] == fence[0]
                     and len(marker) >= fence[1]
-                    and not remainder.strip()
+                    and re.fullmatch(r"[ \t]*", remainder) is not None
                 ):
                     fence = None
             continue
@@ -147,14 +147,14 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
             if marker[0] == "~" or "`" not in remainder:
                 fence = (marker[0], len(marker))
             continue
-        heading = re.fullmatch(r"#{1,6}\s+(.+?)\s*", visible_line)
+        heading = re.fullmatch(r"#{1,6}[ \t]+(.+?)[ \t]*", visible_line)
         if heading:
             title = heading.group(1)
             current = title if title in EXPECTED_SECTIONS else None
             if current is not None:
                 sections.setdefault(current, set())
             continue
-        list_item = re.fullmatch(r"([ \t]*)[-*+]\s+(.+?)\s*", visible_line)
+        list_item = re.fullmatch(r"([ \t]*)[-*+][ \t]+(.+?)[ \t]*", visible_line)
         if current is not None and list_item is not None:
             indent, value = list_item.groups()
             if "\t" in indent or len(indent) > 3:

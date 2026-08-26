@@ -130,7 +130,9 @@ regular files, and read under the same 64-KiB cap. Expected values must appear
 as exact bullet values inside their corresponding sections; substrings do not
 qualify. One document-wide scan preserves the opening fence character and
 length, so only a valid same-character closing fence of at least that length
-ends it; headings or bullets inside fenced code never count.
+ends it. Fence closers, ATX heading separators, and list-marker separators use
+CommonMark ASCII space/tab rules rather than Python Unicode whitespace;
+headings or bullets inside fenced code never count.
 
 Evaluate a collected record without network or GitHub writes:
 
