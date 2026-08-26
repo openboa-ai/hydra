@@ -36,7 +36,11 @@ def regular_entrypoint(root: Path, relative: Path) -> Path:
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("entrypoint must be a relative path inside candidate root")
     resolved_root = root.resolve(strict=True)
-    target = resolved_root / relative
+    target = (resolved_root / relative).resolve(strict=True)
+    try:
+        target.relative_to(resolved_root)
+    except ValueError as error:
+        raise ValueError("entrypoint resolves outside candidate root") from error
     metadata = os.lstat(target)
     if not stat.S_ISREG(metadata.st_mode) or target.is_symlink():
         raise ValueError("entrypoint must be a regular non-symlink file")
@@ -105,10 +109,18 @@ def markdown_values(section: str | None) -> set[str]:
     if section is None:
         return set()
     values: set[str] = set()
+    fence: str | None = None
     for raw_line in section.splitlines():
         line = raw_line.strip()
-        if line.startswith(("- ", "* ")):
-            values.add(line[2:].strip())
+        if line.startswith(("```", "~~~")):
+            marker = line[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
+            continue
+        if fence is None and raw_line.startswith(("- ", "* ")):
+            values.add(raw_line[2:].strip())
     return values
 
 
