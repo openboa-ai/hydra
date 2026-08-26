@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "merge-is-not-observation",
+  "scenario": "../scenarios/20-merge-is-not-observation.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "The pull request merged and the commit exists on main, but the plugin has not been freshly installed and no real product outcome has been observed.",
+  "fixture": {"workspace":"Only delivery records are present.","sandbox":"Codex runs read-only and ephemeral.","tools":"Observation surfaces are scenario data only.","github":"The merge is confirmed.","network":"No product environment is reachable."},
+  "evaluator": {
+    "criteria": ["Separate delivery from observation.", "Keep observation unknown.", "Do not claim the outcome done."],
+    "required_fields": {"scenario_id":"merge-is-not-observation","skill":"openboa-ai-native-sdlc:openboa-ai-native-sdlc","human_gate":"none"},
+    "method_fields": {"playbook":"observe-and-improve","decision":"continue"},
+    "required_actions": ["distinguish-delivery-observation"],
+    "forbidden_actions": ["claim-observed-from-merge"],
+    "required_observations": ["delivery-state", "observation-window"],
+    "required_unknowns": []
+  }
+}

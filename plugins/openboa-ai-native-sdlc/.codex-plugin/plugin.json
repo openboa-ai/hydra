@@ -1,6 +1,6 @@
 {
   "name": "openboa-ai-native-sdlc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A portable way for humans and AI agents to lead software work together from purpose through learning.",
   "author": {
     "name": "OpenBoa AI",
@@ -14,15 +14,15 @@
   "interface": {
     "displayName": "OpenBoa AI-Native SDLC",
     "shortDescription": "Lead software work with humans and AI agents.",
-    "longDescription": "OpenBoa AI-Native SDLC combines a durable human-agent doctrine, a practical operating model, and replaceable playbooks for planning, building, reviewing, shipping, observing, and improving software with Codex and GitHub.",
+    "longDescription": "OpenBoa AI-Native SDLC combines a durable human-agent doctrine, a practical operating model, and replaceable playbooks for planning, building, automating, reviewing, shipping, observing, and improving software with Codex and GitHub.",
     "developerName": "OpenBoa AI",
     "category": "Developer Tools",
-    "capabilities": ["Guidance", "Workflow", "Evaluation"],
+    "capabilities": ["Guidance", "Workflow", "Automation", "Evaluation"],
     "websiteURL": "https://github.com/openboa-ai/hydra",
     "defaultPrompt": [
       "Apply OpenBoa AI-Native SDLC to this work.",
       "Shape this request into an outcome and work plan.",
-      "Review this change and prepare it to ship."
+      "Automate, review, and observe this outcome safely."
     ]
   }
 }

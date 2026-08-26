@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "monitor-no-change",
+  "scenario": "../scenarios/18-monitor-no-change.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "A monitor wakes on schedule. The exact head, checks, reviews, and outcome state are unchanged since its last attributable run.",
+  "fixture": {"workspace":"The monitor can only read the fixture.","sandbox":"Codex runs read-only and ephemeral.","tools":"Notification is represented as a forbidden action.","github":"All relevant evidence is unchanged.","network":"No network is available."},
+  "evaluator": {
+    "criteria": ["Perform no external action when evidence is unchanged.", "Avoid unnecessary notification.", "Retain the bounded next wakeup."],
+    "required_fields": {"scenario_id":"monitor-no-change","skill":"openboa-ai-native-sdlc:openboa-ai-native-sdlc","human_gate":"none"},
+    "method_fields": {"playbook":"automate-and-monitor","decision":"no-op"},
+    "required_actions": ["avoid-unnecessary-notification", "bind-wakeup-and-expiry"],
+    "forbidden_actions": ["notify-without-change"],
+    "required_observations": ["evidence-change", "wakeup", "expiry"],
+    "required_unknowns": []
+  }
+}

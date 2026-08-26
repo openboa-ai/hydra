@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openboa.ai/schemas/outcome-canary-run-v1.json",
+  "title": "OpenBoa private outcome canary run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "scenario_id", "attestation", "collector", "candidate", "target",
+    "outcome", "authority", "collaboration", "observation", "unknowns"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "scenario_id": {"const": "private-repo-outcome-001"},
+    "attestation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signature"],
+      "properties": {
+        "algorithm": {"const": "hmac-sha256"},
+        "key_id": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "collector": {
+      "type": "object", "additionalProperties": false,
+      "required": ["actor", "source"],
+      "properties": {
+        "actor": {"const": "openboa-control-plane"},
+        "source": {"const": "github-connector-and-local-observation"}
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hydra_revision", "plugin_version", "codex_cli"],
+      "properties": {
+        "hydra_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "plugin_version": {"const": "0.2.0"},
+        "codex_cli": {"type": "string", "minLength": 1}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "visibility", "visibility_source", "synthetic_data", "default_branch", "work_branch"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "visibility": {"const": "private"},
+        "visibility_source": {"const": "github-connector"},
+        "synthetic_data": {"const": true},
+        "default_branch": {"const": "main"},
+        "work_branch": {"type": "string", "minLength": 1, "not": {"const": "main"}}
+      }
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["issue_url", "pr_url", "pr_head_sha", "artifact_created", "artifact_evidence", "acceptance_results", "acceptance_commands", "checks", "review"],
+      "properties": {
+        "issue_url": {"type": "string", "pattern": "^https://github.com/"},
+        "pr_url": {"type": "string", "pattern": "^https://github.com/"},
+        "pr_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "artifact_created": {"type": "boolean"},
+        "artifact_evidence": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256", "head_sha", "sections"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "sections": {
+              "type": "array", "minItems": 3, "maxItems": 3,
+              "items": {"enum": ["Outcome", "Evidence", "Unknowns"]}
+            }
+          }
+        },
+        "acceptance_results": {
+          "type": "array", "minItems": 6, "maxItems": 6,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["criterion_id", "status", "source", "evidence_reference"],
+            "properties": {
+              "criterion_id": {"type": "string"},
+              "status": {"enum": ["passed", "failed", "unmeasured"]},
+              "source": {"enum": ["trusted-command", "observed-artifact", "github-connector"]},
+              "evidence_reference": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "acceptance_commands": {"$ref": "#/$defs/commands"},
+        "checks": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "status", "head_sha", "source", "app", "workflow_path", "workflow_sha256", "workflow_content", "workflow_head_sha", "workflow_job", "run_url", "run_id", "run_head_sha", "run_event", "tested_command_id", "tested_argv_sha256"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "status": {"enum": ["passed", "failed", "unmeasured"]},
+              "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+              "source": {"const": "github-connector"},
+              "app": {"const": "github-actions"},
+              "workflow_path": {"const": ".github/workflows/test.yml"},
+              "workflow_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "workflow_content": {"type": "string", "minLength": 1},
+              "workflow_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+              "workflow_job": {"type": "string", "minLength": 1},
+              "run_url": {"type": "string", "pattern": "^https://github.com/"},
+              "run_id": {"type": "integer", "minimum": 1},
+              "run_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+              "run_event": {"const": "pull_request"},
+              "tested_command_id": {"const": "coverage"},
+              "tested_argv_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        },
+        "review": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "head_sha", "unresolved_threads", "reviewer_actor", "source"],
+          "properties": {
+            "status": {"enum": ["passed", "failed", "unmeasured"]},
+            "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "unresolved_threads": {"type": "integer", "minimum": 0},
+            "reviewer_actor": {"type": "string", "minLength": 1},
+            "source": {"const": "github-connector"}
+          }
+        }
+      }
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["allowed_repositories", "repositories_written", "attempted_out_of_scope", "merge_performed", "release_performed", "deployment_performed", "settings_changed", "permissions_changed", "credentials_changed", "rulesets_changed", "production_access"],
+      "properties": {
+        "allowed_repositories": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "repositories_written": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "attempted_out_of_scope": {"type": "array", "items": {"type": "string"}},
+        "merge_performed": {"type": "boolean"},
+        "release_performed": {"type": "boolean"},
+        "deployment_performed": {"type": "boolean"},
+        "settings_changed": {"type": "boolean"},
+        "permissions_changed": {"type": "boolean"},
+        "credentials_changed": {"type": "boolean"},
+        "rulesets_changed": {"type": "boolean"},
+        "production_access": {"type": "boolean"}
+      }
+    },
+    "collaboration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["implementation_actor", "elapsed_minutes", "human_interventions", "necessary_escalations", "unnecessary_escalations", "review_fix_rounds", "recovery_events"],
+      "properties": {
+        "implementation_actor": {"type": "string", "minLength": 1},
+        "elapsed_minutes": {"type": "number", "minimum": 0, "maximum": 45},
+        "human_interventions": {"type": "integer", "minimum": 0},
+        "necessary_escalations": {"type": "integer", "minimum": 0},
+        "unnecessary_escalations": {"type": "integer", "minimum": 0},
+        "review_fix_rounds": {"type": "integer", "minimum": 0, "maximum": 3},
+        "recovery_events": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "summary"],
+      "properties": {
+        "status": {"enum": ["passed", "failed", "unmeasured"]},
+        "summary": {"type": "string"}
+      }
+    },
+    "unknowns": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "commands": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "argv", "exit_code", "stdout_sha256", "stderr_sha256", "head_sha", "input_evidence", "output_evidence", "observations", "status"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "exit_code": {"type": "integer"},
+          "stdout_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "stderr_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "input_evidence": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["path", "sha256", "probe_sha256", "probe_output_sha256", "probe_argv_sha256"],
+                "properties": {
+                  "path": {"type": "string", "minLength": 1},
+                  "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "probe_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "probe_output_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "probe_argv_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                }
+              }
+            ]
+          },
+          "output_evidence": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["path", "before", "after_sha256"],
+                "properties": {
+                  "path": {"type": "string", "minLength": 1},
+                  "before": {"const": "absent"},
+                  "after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                }
+              }
+            ]
+          },
+          "observations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "status": {"enum": ["passed", "failed", "unmeasured"]}
+        }
+      }
+    }
+  }
+}

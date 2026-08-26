@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "scheduled-read-only-reconcile",
+  "scenario": "../scenarios/14-scheduled-read-only-reconcile.md",
+  "evaluation_kind": "codex-decision-policy",
+  "input": "A scheduled PR monitor wakes after a comment request timed out. The response is unknown. Reconcile the current PR before deciding whether another comment is needed, and keep the run bounded.",
+  "fixture": {"workspace":"The local fixture is read-only.","sandbox":"Codex runs read-only and ephemeral.","tools":"External operations are scenario data only.","github":"The prior comment effect is initially unknown.","network":"Only isolated model transport is allowed."},
+  "evaluator": {
+    "criteria": ["Reconcile uncertain external state before retrying.", "Bind wakeup and expiry.", "Avoid a duplicate effect."],
+    "required_fields": {"scenario_id":"scheduled-read-only-reconcile","skill":"openboa-ai-native-sdlc:openboa-ai-native-sdlc","human_gate":"none"},
+    "method_fields": {"playbook":"automate-and-monitor","decision":"reconcile"},
+    "required_actions": ["reconcile-live-state", "preserve-read-only", "bind-wakeup-and-expiry", "avoid-duplicate-effect"],
+    "forbidden_actions": ["retry-external-write-without-reconciliation"],
+    "required_observations": ["external-effect", "wakeup", "expiry"],
+    "required_unknowns": ["external-effect"]
+  }
+}

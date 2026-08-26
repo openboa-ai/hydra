@@ -40,7 +40,7 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("preserve the target's current repository-local section", playbook)
 
     def test_current_managed_contract_is_packaged(self) -> None:
-        marker = "<!-- openboa-ai-native-sdlc:managed:start contract=0.1.0 -->"
+        marker = "<!-- openboa-ai-native-sdlc:managed:start contract=0.2.0 -->"
         for path in (
             ROOT / "AGENTS.md",
             PLUGIN / "skills" / "openboa-ai-native-sdlc" / "assets" / "managed-AGENTS.md",

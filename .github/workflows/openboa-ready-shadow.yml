@@ -1,0 +1,89 @@
+name: openboa-ready-shadow
+
+# Read-only readiness information. This workflow is intentionally not a required
+# check and does not merge, comment, resolve threads, or execute candidate code.
+# It fails closed until a verified trusted workflow source binding is observable.
+
+on:
+  workflow_run:
+    workflows: [validate]
+    types: [completed]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number; blank evaluates open pull requests
+        required: false
+        type: string
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+concurrency:
+  group: openboa-ready-shadow-${{ github.event.pull_request.number || github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    name: openboa-ready-shadow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted evaluator source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: openboa-ai/hydra
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Collect and evaluate readiness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PATH: ${{ github.event_path }}
+          REPOSITORY: ${{ github.repository }}
+          DISPATCH_PR: ${{ inputs.pull_request }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          from urllib import parse, request
+
+          event = json.loads(Path(os.environ["EVENT_PATH"]).read_text(encoding="utf-8"))
+          numbers = []
+          dispatch = os.environ.get("DISPATCH_PR", "").strip()
+          if dispatch:
+              numbers = [int(dispatch)]
+          elif event.get("pull_request"):
+              numbers = [int(event["pull_request"]["number"])]
+          elif event.get("workflow_run", {}).get("pull_requests"):
+              numbers = [int(item["number"]) for item in event["workflow_run"]["pull_requests"]]
+          else:
+              url = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/pulls?" + parse.urlencode({"state": "open", "per_page": 50})
+              req = request.Request(url, headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", "Accept": "application/vnd.github+json", "User-Agent": "openboa-ready-shadow"})
+              with request.urlopen(req, timeout=20) as response:
+                  numbers = [int(item["number"]) for item in json.load(response)]
+
+          summaries = ["## OpenBoa readiness shadow", ""]
+          if not numbers:
+              summaries.append("No open pull requests to evaluate.")
+          for number in sorted(set(numbers)):
+              snapshot = Path(f"/tmp/openboa-readiness-{number}.json")
+              result = Path(f"/tmp/openboa-readiness-result-{number}.json")
+              subprocess.run(["python3", "scripts/collect_readiness.py", "--repository", os.environ["REPOSITORY"], "--pr", str(number), "--output", str(snapshot)], check=True)
+              subprocess.run(["python3", "scripts/evaluate_readiness.py", str(snapshot), "--output", str(result)], check=True, stdout=subprocess.DEVNULL)
+              decision = json.loads(result.read_text(encoding="utf-8"))
+              status = "ready" if decision["ready"] else "not ready"
+              reasons = ", ".join(decision["reasons"]) or "none"
+              summaries.append(f"- PR #{number} at `{decision['head_sha']}`: **{status}** — {reasons}")
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summaries) + "\n", encoding="utf-8")
+          PY

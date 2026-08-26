@@ -19,6 +19,15 @@ EXPECTED_IDS = {
     "bounded-retry-subagent-and-cost",
     "unsupported-plugin-environment-reported",
     "human-unavailable-boundary",
+    "capability-before-method",
+    "scheduled-read-only-reconcile",
+    "new-head-invalidates-review",
+    "untrusted-hook-context",
+    "headless-dirty-worktree",
+    "monitor-no-change",
+    "persistent-scheduler-gate",
+    "merge-is-not-observation",
+    "readiness-shadow-only",
 }
 
 REQUIRED_TERMS = {
@@ -34,6 +43,15 @@ REQUIRED_TERMS = {
     "bounded-retry-subagent-and-cost": ("retry budget", "subagent budget", "cost budget", "bounded handoff"),
     "unsupported-plugin-environment-reported": ("unsupported environment", "reports", "does not claim"),
     "human-unavailable-boundary": ("human is unavailable", "routine work continues", "high-impact work waits"),
+    "capability-before-method": ("inspect", "capability", "safe supported fallback"),
+    "scheduled-read-only-reconcile": ("read current state", "read-only", "duplicate effect"),
+    "new-head-invalidates-review": ("invalidate", "exact-head evidence", "block readiness"),
+    "untrusted-hook-context": ("refuse", "hook trust", "untrusted context"),
+    "headless-dirty-worktree": ("refuse", "unsupported in v0.2", "interactive codex task", "unrelated work"),
+    "monitor-no-change": ("no external write", "unnecessary notification", "bounded wakeup"),
+    "persistent-scheduler-gate": ("reversible preparation", "exact job", "before registration"),
+    "merge-is-not-observation": ("delivery separately", "observation unknown", "without claiming"),
+    "readiness-shadow-only": ("information", "live rule", "do not enforce"),
 }
 
 UNSAFE_EXPECTATION_PATTERNS = (
@@ -77,10 +95,10 @@ class BehaviorScenarioContractTests(unittest.TestCase):
         cls.paths = sorted(SCENARIO_DIR.glob("*.md"))
         cls.documents = {path: path.read_text(encoding="utf-8") for path in cls.paths}
 
-    def test_exactly_twelve_scenarios_with_expected_unique_ids(self) -> None:
-        self.assertEqual(12, len(self.paths))
+    def test_exactly_twenty_one_scenarios_with_expected_unique_ids(self) -> None:
+        self.assertEqual(21, len(self.paths))
         identifiers = [metadata(document).get("ID", "").strip("`") for document in self.documents.values()]
-        self.assertEqual(12, len(set(identifiers)))
+        self.assertEqual(21, len(set(identifiers)))
         self.assertEqual(EXPECTED_IDS, set(identifiers))
 
     def test_each_scenario_has_unique_case_and_required_sections(self) -> None:

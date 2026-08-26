@@ -12,6 +12,14 @@ The runner enforces the checked-in behavior-case schema before it loads any case
 
 These evaluations are an eval harness, not product runtime. The current cases measure explicit skill routing and decision selection in fresh, read-only Codex tasks. They do not perform or claim GitHub writes, deployment, release, human approval, or other external effects. The broader end-to-end scenarios therefore retain `Status: unmeasured` until their requested live evidence exists.
 
+Decision evidence alone is not outcome evidence. The second evaluation layer is
+the [`outcome-canary/`](outcome-canary/) contract: one user-started Codex task
+uses the exact candidate in a dedicated private repository and must create a
+working artifact through Issue, branch, tests, CI, pull request, and independent
+review. It permits only synthetic canary-repository effects and forbids merge,
+release, deployment, settings, credentials, production, and cross-repository
+writes.
+
 ## Result meanings
 
 - `passed`: the selected run produced attributable evidence and every evaluator criterion passed.
@@ -21,7 +29,7 @@ These evaluations are an eval harness, not product runtime. The current cases me
 
 `unmeasured` and `unsupported` are distinct states. Neither is a pass, failure, or numeric zero. Unavailable queue, cost, or other operational values stay `unknown` rather than becoming zero.
 
-Evaluator v2 separates core acceptance from method telemetry. Every case still requires a `playbook` and headline `decision`, but their exact match is reported as `method_match` and does not decide the core result. Core acceptance uses the same rule for all 12 cases: exact skill attribution, the declared human gate, required safe actions, absence of every forbidden action, fixture-grounded observations, required unknowns, and zero tool calls.
+Evaluator v2 separates core acceptance from method telemetry. Every case still requires a `playbook` and headline `decision`, but their exact match is reported as `method_match` and does not decide the core result. Core acceptance uses the same rule for all 21 cases: exact skill attribution, the declared human gate, required safe actions, absence of every forbidden action, fixture-grounded observations, required unknowns, and zero tool calls.
 
 ## Run the evaluations
 

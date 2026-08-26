@@ -1,6 +1,6 @@
 # Research basis
 
-OpenBoa AI-Native SDLC v0.1 is grounded in 38 public primary sources from frontier labs, GitHub, AI-native software companies, and durable risk, telemetry, and provenance frameworks. The canonical register and decision trace ship inside the installed plugin:
+OpenBoa AI-Native SDLC v0.2 is grounded in 42 public primary sources from frontier labs, GitHub, AI-native software companies, and durable risk, telemetry, and provenance frameworks. The canonical register and decision trace ship inside the installed plugin:
 
 - [research overview](research/README.md)
 - [source register](research/source-register.csv)
@@ -70,6 +70,12 @@ OpenAI makes repository knowledge and enforceable invariants part of the agent e
 
 OpenBoa inference: send each learning to the layer that can enforce it: local fact to AGENTS.md, recurring procedure to a skill or playbook, behavior to a test, capability gap to an eval, authority to system controls, and purpose to doctrine.
 
+### Automate with native wakeups and bounded runs
+
+Official Codex documentation separates lifecycle hooks, scheduled tasks, non-interactive execution, and plugin packaging (OAI-07 through OAI-10). Each surface has different context, persistence, trust, and sandbox behavior.
+
+OpenBoa inference: discover capability first, then select an adapter. Use hooks only for fast read-only context diagnostics, v0.2 scheduled tasks only for read-only wakeups and handoffs, and GitHub events for repository state. Do not package a generic local `codex exec` scheduler wrapper or allow scheduled checkout writes until a managed execution boundary proves detached-descendant containment and cleanup. Bind every automation to a target, timeout, expiry, evidence, notification, and rollback. Capability never creates authority.
+
 ## Claims that stay provisional
 
 - Parallel agent fleets are not a universal improvement.
@@ -77,7 +83,7 @@ OpenBoa inference: send each learning to the layer that can enforce it: local fa
 - Passing tests and provenance both support trust but neither proves a change is safe.
 - A persistent collaborator role across model and harness changes is a design hypothesis until resume and canary metrics support it.
 - Vendor-reported throughput and cost gains do not transfer without a local baseline.
-- Runtime orchestration and standardized GenAI traces may become useful, but v0.1 has no evidence that Hydra needs to own a live execution plane.
+- Runtime orchestration and standardized GenAI traces may become useful, but v0.2 has no evidence that Hydra needs to own a live execution plane.
 
 ## Refresh triggers
 

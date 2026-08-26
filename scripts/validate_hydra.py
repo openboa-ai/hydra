@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import stat
@@ -13,12 +14,13 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 
-CONTRACT_VERSION = "0.1.0"
+CONTRACT_VERSION = "0.2.0"
 PLUGIN_NAME = "openboa-ai-native-sdlc"
 MARKETPLACE_NAME = "openboa-hydra"
 MANAGED_START = f"<!-- {PLUGIN_NAME}:managed:start contract={CONTRACT_VERSION} -->"
 MANAGED_END = f"<!-- {PLUGIN_NAME}:managed:end -->"
 LEGACY_ACTIVE_IDENTITIES = ("openboa-operations", "openboa operations")
+DOCTOR_SHA256 = "3ae53b6750a9d668a5d8ada2b022846d8156836fe6253acb80fd850edffa83e8"
 
 ROOT_ROUTERS = (
     "DOCTRINE.md",
@@ -37,6 +39,7 @@ REQUIRED_REFERENCES = (
     "evaluation-and-learning.md",
     "research-basis.md",
     "non-goals.md",
+    "capability-map.md",
 )
 REQUIRED_PLAYBOOKS = (
     "adopt-and-route.md",
@@ -44,6 +47,7 @@ REQUIRED_PLAYBOOKS = (
     "execute-and-handoff.md",
     "review-and-ship.md",
     "observe-and-improve.md",
+    "automate-and-monitor.md",
 )
 REQUIRED_TEMPLATES = (
     "issue.md",
@@ -51,6 +55,20 @@ REQUIRED_TEMPLATES = (
     "handoff.md",
     "exception.md",
     "observation-review.md",
+)
+REQUIRED_ADAPTERS = (
+    "codex.md",
+    "github.md",
+    "scheduled-tasks.md",
+    "headless-and-ci.md",
+)
+REQUIRED_AUTOMATIONS = (
+    "pr-convergence.md",
+    "outcome-health.md",
+    "release-observation.md",
+    "dependency-security.md",
+    "docs-drift.md",
+    "incident-follow-up.md",
 )
 REQUIRED_RESEARCH_COLUMNS = (
     "source_id",
@@ -113,15 +131,84 @@ def validate(root: Path) -> list[str]:
         skill_root / "agents" / "openai.yaml",
         assets_root / "managed-AGENTS.md",
         skill_root / "scripts" / "sync_agents.py",
+        skill_root / "scripts" / "doctor.py",
+        plugin_root / "hooks" / "hooks.json",
+        root / "scripts" / "evaluate_readiness.py",
+        root / "scripts" / "collect_readiness.py",
+        root / "scripts" / "evaluate_outcome_canary.py",
+        root / "scripts" / "attest_outcome_canary.py",
+        root / ".github" / "workflows" / "openboa-ready-shadow.yml",
         root / ".github" / "openboa-governance.yml",
         root / ".github" / "workflows" / "openboa-governance-v2.yml",
         root / "scripts" / "validate_governance.py",
         root / "evals" / "README.md",
+        root / "evals" / "outcome-canary" / "README.md",
+        root / "evals" / "outcome-canary" / "canary-run.schema.json",
+        root / "evals" / "outcome-canary" / "scenarios" / "01-jsonl-handoff-cli.json",
         root / "research" / "openboa-ai-native-sdlc-v0.1" / "README.md",
         root / "research" / "openboa-ai-native-sdlc-v0.1" / "evidence-to-design.md",
     ):
         if not is_regular_file(path):
             errors.append(f"missing required file: {display(root, path)}")
+
+    for path in (
+        skill_root / "scripts" / "run_headless.py",
+        assets_root / "launchd",
+        assets_root / "cron",
+    ):
+        if path.exists():
+            errors.append(f"unsupported generic local execution surface: {display(root, path)}")
+
+    automation_root = assets_root / "automations"
+    automation_readme = automation_root / "README.md"
+    automation_contract = read_bounded_text(
+        automation_readme, root, errors, "automation template", 131072
+    )
+    if automation_contract is not None:
+        for required in (
+            "read-only monitor prompts",
+            "must not edit a checkout or write to GitHub",
+            "Route every required mutation to an interactive Codex task",
+        ):
+            if required not in automation_contract:
+                errors.append(f"automation templates are missing v0.2 read-only contract: {required}")
+    if not is_safe_directory(automation_root):
+        errors.append(f"unsafe or missing automation directory: {display(root, automation_root)}")
+        automation_paths = []
+    else:
+        automation_paths = []
+        try:
+            for index, path in enumerate(automation_root.iterdir()):
+                if index >= 100:
+                    errors.append("automation templates exceed the bounded 100-entry limit")
+                    break
+                automation_paths.append(path)
+        except OSError as exc:
+            errors.append(f"unable to list automation templates: {exc}")
+            automation_paths = []
+    for path in sorted(automation_paths):
+        if path == automation_readme:
+            continue
+        if path.name not in REQUIRED_AUTOMATIONS:
+            errors.append(f"undeclared automation entry: {display(root, path)}")
+        if is_safe_directory(path):
+            errors.append(
+                f"automation directory must be flat; nested directory found: {display(root, path)}"
+            )
+            continue
+        if path.suffix != ".md":
+            errors.append(f"unexpected automation entry: {display(root, path)}")
+            continue
+        text = read_bounded_text(path, root, errors, "automation template", 131072)
+        if text is None:
+            continue
+        for forbidden in (
+            "fix routine findings inside the approved branch",
+            "open or update one durable private or public work item",
+            "prepare a coherent documentation update and run",
+        ):
+            if forbidden in text:
+                errors.append(f"scheduled automation retains an unattended write: {display(root, path)}")
 
     if (root / "plugins" / "openboa-operations").exists():
         errors.append("legacy plugin directory must be removed")
@@ -144,9 +231,25 @@ def validate(root: Path) -> list[str]:
     for name in REQUIRED_PLAYBOOKS:
         if not is_regular_file(references_root / "playbooks" / name):
             errors.append(f"missing playbook: references/playbooks/{name}")
+    for name in REQUIRED_ADAPTERS:
+        if not is_regular_file(references_root / "adapters" / name):
+            errors.append(f"missing adapter: references/adapters/{name}")
     for name in REQUIRED_TEMPLATES:
         if not is_regular_file(assets_root / "templates" / name):
             errors.append(f"missing template: assets/templates/{name}")
+    for name in REQUIRED_AUTOMATIONS:
+        if not is_regular_file(assets_root / "automations" / name):
+            errors.append(f"missing automation template: assets/automations/{name}")
+
+    validate_hooks(plugin_root / "hooks" / "hooks.json", errors)
+    validate_file_sha256(
+        skill_root / "scripts" / "doctor.py",
+        root,
+        errors,
+        "automatic doctor",
+        DOCTOR_SHA256,
+        131072,
+    )
 
     for path in (root / "AGENTS.md", assets_root / "managed-AGENTS.md"):
         if is_regular_file(path):
@@ -177,6 +280,67 @@ def is_regular_file(path: Path) -> bool:
     except OSError:
         return False
     return stat.S_ISREG(info.st_mode)
+
+
+def is_safe_directory(path: Path) -> bool:
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError:
+            return False
+        if stat.S_ISLNK(info.st_mode):
+            return False
+    return stat.S_ISDIR(info.st_mode)
+
+
+def read_bounded_text(
+    path: Path,
+    root: Path,
+    errors: list[str],
+    label: str,
+    maximum_bytes: int,
+) -> str | None:
+    shown = display(root, path)
+    if not is_regular_file(path):
+        errors.append(f"unsafe or missing {label}: {shown}")
+        return None
+    try:
+        if path.lstat().st_size > maximum_bytes:
+            errors.append(f"{label} exceeds {maximum_bytes} bytes: {shown}")
+            return None
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        errors.append(f"{label} is not UTF-8: {shown}")
+    except OSError as exc:
+        errors.append(f"unable to read {label} {shown}: {exc}")
+    return None
+
+
+def validate_file_sha256(
+    path: Path,
+    root: Path,
+    errors: list[str],
+    label: str,
+    expected: str,
+    maximum_bytes: int,
+) -> None:
+    shown = display(root, path)
+    if not is_regular_file(path):
+        errors.append(f"unsafe or missing {label}: {shown}")
+        return
+    try:
+        if path.lstat().st_size > maximum_bytes:
+            errors.append(f"{label} exceeds {maximum_bytes} bytes: {shown}")
+            return
+        observed = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        errors.append(f"unable to read {label} {shown}: {exc}")
+        return
+    if observed != expected:
+        errors.append(f"{label} does not match the trusted 0.2.0 artifact: {shown}")
 
 
 def markdown_fenced_ranges(text: str) -> list[tuple[int, int]]:
@@ -356,7 +520,7 @@ def validate_manifest(payload: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"plugin manifest is missing {key}")
     for forbidden in ("hooks", "mcpServers", "apps"):
         if forbidden in payload:
-            errors.append(f"v0.1 plugin must not declare {forbidden}")
+            errors.append(f"plugin manifest must not declare {forbidden}; use supported default discovery")
     interface = payload.get("interface")
     if isinstance(interface, dict):
         for key in ("displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "defaultPrompt"):
@@ -397,6 +561,60 @@ def validate_skill(skill_root: Path, errors: list[str]) -> None:
         return
     if "$openboa-ai-native-sdlc" not in openai_text:
         errors.append("openai.yaml default_prompt must name $openboa-ai-native-sdlc")
+
+
+def validate_hooks(path: Path, errors: list[str]) -> None:
+    payload = load_json(path, errors)
+    if payload is None:
+        return
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict) or set(hooks) != {"SessionStart", "PostCompact"}:
+        errors.append("plugin hooks must contain only SessionStart and PostCompact")
+        return
+    command = (
+        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -I '
+        '"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    )
+    expected = {
+        "SessionStart": {
+            "matcher": "startup|resume|compact",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Checking OpenBoa work context",
+                "additionalContextLimit": 2000,
+            },
+        },
+        "PostCompact": {
+            "matcher": "manual|auto",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Rechecking OpenBoa work context",
+            },
+        },
+    }
+    for event, contract in expected.items():
+        groups = hooks.get(event)
+        if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
+            errors.append(f"plugin hook {event} must contain one matcher group")
+            continue
+        group = groups[0]
+        if set(group) != {"matcher", "hooks"}:
+            errors.append(f"plugin hook {event} matcher group has unsupported fields")
+        if group.get("matcher") != contract["matcher"]:
+            errors.append(f"plugin hook {event} matcher must be {contract['matcher']}")
+        handlers = group.get("hooks")
+        if not isinstance(handlers, list) or len(handlers) != 1 or not isinstance(handlers[0], dict):
+            errors.append(f"plugin hook {event} must contain one handler")
+            continue
+        handler = handlers[0]
+        if handler != contract["handler"]:
+            errors.append(
+                f"plugin hook {event} handler must exactly match the read-only doctor contract"
+            )
 
 
 def validate_managed_agents(path: Path, errors: list[str]) -> None:
@@ -699,8 +917,8 @@ def validate_research(root: Path, errors: list[str]) -> None:
 
 def validate_scenarios(root: Path, errors: list[str]) -> None:
     paths = sorted((root / "evals" / "scenarios").glob("*.md"))
-    if len(paths) != 12:
-        errors.append(f"expected 12 behavioral scenarios, found {len(paths)}")
+    if len(paths) != 21:
+        errors.append(f"expected 21 behavioral scenarios, found {len(paths)}")
     identifiers: list[str] = []
     for path in paths:
         if not is_regular_file(path):

@@ -1,6 +1,6 @@
-# OpenBoa AI-Native SDLC v0.1 research
+# OpenBoa AI-Native SDLC research
 
-This installed research package records the external evidence used to design OpenBoa AI-Native SDLC v0.1. It is deliberately independent of Ouroboros, Coffee Chat, earlier Hydra material, and any retired repository. Those products may later test the design; they do not define it.
+This installed research package records the external evidence used to design the v0.1 foundation and v0.2 capability adapters. It is deliberately independent of Ouroboros, Coffee Chat, earlier Hydra material, and any retired repository. Those products may later test the design; they do not define it.
 
 ## Research question
 
@@ -14,7 +14,7 @@ It pays particular attention to work continuity, task and dependency graphs, obj
 
 ## Corpus
 
-The source register contains 38 public primary sources from:
+The source register contains 42 public primary sources from:
 
 - frontier labs: OpenAI, Anthropic, NVIDIA, Google/DeepMind, and Microsoft;
 - the GitHub control plane;

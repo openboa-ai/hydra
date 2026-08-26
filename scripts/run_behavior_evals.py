@@ -62,6 +62,7 @@ EXEC_DISABLED_FEATURES = (
     "multi_agent",
     "goals",
     "memories",
+    "hooks",
 )
 TOOL_ITEM_TYPES = {
     "command_execution",
@@ -76,6 +77,11 @@ PLUGIN_RELATIVE = Path("plugins") / PLUGIN_NAME
 PLUGIN_MANIFEST_RELATIVE = Path(".codex-plugin/plugin.json")
 PLUGIN_SKILLS_RELATIVE = Path("skills")
 PLUGIN_FORBIDDEN_RUNTIME_FIELDS = {"apps", "hooks", "mcpServers"}
+BUNDLED_HOOKS_PATH = "hooks/hooks.json"
+BUNDLED_DOCTOR_PATH = "skills/openboa-ai-native-sdlc/scripts/doctor.py"
+BUNDLED_DOCTOR_SHA256 = (
+    "3ae53b6750a9d668a5d8ada2b022846d8156836fe6253acb80fd850edffa83e8"
+)
 WINDOWS_RESERVED_BASENAMES = {
     "AUX",
     "CLOCK$",
@@ -375,8 +381,8 @@ def _load_cases_from_validated_schema(root: Path) -> list[BehaviorCase]:
     eval_root = (root / "evals").resolve()
     case_root = eval_root / "cases"
     paths = sorted(case_root.glob("*.json"))
-    if len(paths) != 12:
-        raise CaseDefinitionError(f"expected 12 executable cases, found {len(paths)}")
+    if len(paths) != 21:
+        raise CaseDefinitionError(f"expected 21 executable cases, found {len(paths)}")
 
     cases: list[BehaviorCase] = []
     identifiers: set[str] = set()
@@ -865,7 +871,7 @@ def _validate_candidate_plugin_contract(
     payload: Any,
     entries: Sequence[PackageEntry],
 ) -> str:
-    """Bind this skills-only evaluation to its declared loading surface."""
+    """Bind this evaluation to the declared skill and exact inert hook surface."""
     if not isinstance(payload, dict) or payload.get("name") != PLUGIN_NAME:
         raise CaseDefinitionError("candidate plugin identity is invalid")
 
@@ -886,16 +892,94 @@ def _validate_candidate_plugin_contract(
             + ", ".join(forbidden)
         )
 
+    by_path = {entry.path: entry for entry in entries}
+    hooks_entry = by_path.get(BUNDLED_HOOKS_PATH)
+    if hooks_entry is None:
+        raise CaseDefinitionError("candidate package is missing required bundled hooks")
+    doctor_entry = by_path.get(BUNDLED_DOCTOR_PATH)
+    if doctor_entry is None:
+        raise CaseDefinitionError("candidate package is missing required automatic doctor")
+    _validate_bundled_hooks(hooks_entry.raw_bytes)
+    if hashlib.sha256(doctor_entry.raw_bytes).hexdigest() != BUNDLED_DOCTOR_SHA256:
+        raise CaseDefinitionError(
+            "candidate automatic doctor does not match the trusted 0.2.0 artifact"
+        )
+
     for entry in entries:
         parts = _portable_package_parts(entry.path)
         if entry.path == PLUGIN_MANIFEST_RELATIVE.as_posix():
             continue
+        if entry.path == BUNDLED_HOOKS_PATH:
+            continue
         if parts[0] != PLUGIN_SKILLS_RELATIVE.as_posix():
             raise CaseDefinitionError(
-                "candidate skills-only evaluation found an undeclared loading "
+                "candidate evaluation found an undeclared loading "
                 f"surface: {entry.path}"
             )
     return version
+
+
+def _validate_bundled_hooks(raw_bytes: bytes) -> None:
+    try:
+        payload = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CaseDefinitionError(f"cannot parse bundled hooks: {exc}") from exc
+    hooks = payload.get("hooks") if isinstance(payload, dict) else None
+    command = (
+        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -I '
+        '"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    )
+    expected = {
+        "SessionStart": {
+            "matcher": "startup|resume|compact",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Checking OpenBoa work context",
+                "additionalContextLimit": 2000,
+            },
+        },
+        "PostCompact": {
+            "matcher": "manual|auto",
+            "handler": {
+                "type": "command",
+                "command": command,
+                "timeout": 5,
+                "statusMessage": "Rechecking OpenBoa work context",
+            },
+        },
+    }
+    if not isinstance(hooks, dict) or set(hooks) != set(expected):
+        raise CaseDefinitionError(
+            "bundled hooks must contain only SessionStart and PostCompact"
+        )
+    for event, contract in expected.items():
+        groups = hooks.get(event)
+        if (
+            not isinstance(groups, list)
+            or len(groups) != 1
+            or not isinstance(groups[0], dict)
+        ):
+            raise CaseDefinitionError(
+                f"bundled {event} hook must contain one matcher group"
+            )
+        group = groups[0]
+        if (
+            set(group) != {"matcher", "hooks"}
+            or group.get("matcher") != contract["matcher"]
+        ):
+            raise CaseDefinitionError(f"bundled {event} hook matcher is invalid")
+        handlers = group.get("hooks")
+        if (
+            not isinstance(handlers, list)
+            or len(handlers) != 1
+            or not isinstance(handlers[0], dict)
+        ):
+            raise CaseDefinitionError(f"bundled {event} hook must contain one handler")
+        handler = handlers[0]
+        if handler != contract["handler"]:
+            raise CaseDefinitionError(f"bundled {event} hook is not the read-only doctor")
 
 
 def _git_candidate_package(root: Path, revision: str) -> CandidatePackage:

@@ -1,6 +1,6 @@
 # OpenBoa AI-Native SDLC Operating Model
 
-**Status:** OpenBoa AI-Native SDLC v0.1
+**Status:** OpenBoa AI-Native SDLC v0.2
 **Layer:** Operating model
 **Change cadence:** Change when responsibilities, decision rights, or control surfaces change
 
@@ -9,6 +9,8 @@ This operating model turns the [doctrine](doctrine.md) into clear responsibiliti
 ## Operating premise
 
 OpenBoa has one ultimate human accountability boundary. It does not need to be restated in every Issue, pull request, or handoff.
+
+Accountability and responsibility are deliberately different. The human is accountable for why OpenBoa acts and for the consequences it accepts. An agent can be responsible for an outcome: it owns the work within its boundary, makes routine decisions, seeks evidence, recovers from failure, and does not hand ordinary execution back to the human.
 
 Individual work records instead identify what is operationally useful:
 
@@ -30,6 +32,7 @@ Roles describe responsibility in the work. One agent may hold more than one role
 | **Agent contributor** | A bounded part of the work with a clear interface and expected evidence | Redefine the parent outcome or bypass its work lead |
 | **Agent evaluator** | Independently test a claim, inspect evidence, identify failure modes, and challenge premature completion | Approve its own unsupported judgment as ground truth |
 | **Codex and GitHub controls** | Apply repository instructions, permission boundaries, protected branches, required checks, review state, and durable work history | Decide purpose or treat authentication as authorization |
+| **Automation monitor** | Wake on a declared signal, reconcile current state, perform a bounded read or run, and report only change, failure, or a decision | Invent authority, loop without a bound, or treat silence as success |
 
 The agent work lead is an operational collaborator. It is expected to make decisions and carry the work, not merely suggest the next command. The accountable human remains responsible for the organization's direction and consequences.
 
@@ -113,13 +116,16 @@ The exact labels are replaceable, but every durable work item must make these me
 
 | State | Meaning | Work lead responsibility |
 | --- | --- | --- |
-| **Planned** | The outcome and evidence are understood; work has not started | Confirm context, dependencies, and authority |
+| **Shaping** | Purpose is known but the outcome or evidence still needs investigation | Narrow ambiguity and recommend a testable direction |
+| **Planned** | The outcome and evidence are understood; work has not started | Confirm context, dependencies, authority, wakeups, and stop conditions |
 | **In progress** | Work is actively advancing | Keep the plan and live state aligned; verify after meaningful actions |
 | **Blocked** | A named dependency, decision, or permission prevents the next safe action | Preserve progress and state the exact unblock condition |
 | **In review** | The result and evidence are ready for independent challenge | Respond to findings and keep the change current |
 | **Ready to release** | Required checks and review are satisfied; a delivery boundary remains | Present the exact artifact and any gate evidence |
 | **Observing** | Delivery occurred and the required real-world behavior is being checked | Watch the agreed signals and be ready to recover |
 | **Done** | The outcome and its required observation are supported by durable evidence | Record the evidence and resulting learning |
+
+Each state transition names its evidence and the event that can wake the work again. A new commit invalidates exact-head review and check evidence. A changed deployment invalidates observations tied to the old artifact. A changed purpose or authority boundary sends work back to shaping. Time alone does not make an item ready or done.
 
 `Blocked` is not a substitute for ordinary uncertainty or difficult work. The work lead first investigates, tries safe alternatives, and narrows the missing decision.
 
