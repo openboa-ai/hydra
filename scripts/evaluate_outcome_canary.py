@@ -190,7 +190,7 @@ def workflow_runs_coverage(
             job_id: {
                 "runs-on": "ubuntu-latest",
                 "steps": [
-                    {"uses": "actions/checkout@v4"},
+                    {"uses": "actions/checkout@v4", "with": {"persist-credentials": "false"}},
                     {"run": expected},
                     {
                         "uses": f"openboa-ai/hydra/actions/outcome-canary@{hydra_revision}",

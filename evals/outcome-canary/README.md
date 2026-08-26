@@ -80,7 +80,7 @@ job ID, and complete workflow content. The evaluator recomputes the workflow
 digest, requires the named job to run the exact locally observed coverage argv,
 and binds the run URL and both heads. The canary workflow is deliberately
 minimal: pull-request trigger, read-only contents permission, Ubuntu runner,
-`actions/checkout@v4`, and the exact isolated coverage command
+`actions/checkout@v4` with `persist-credentials: false`, and the exact isolated coverage command
 defined by `COVERAGE_ARGV` in the evaluator. It starts Python with `-I`, imports
 standard-library unittest before adding the checkout to the discovery path, and
 then runs `tests`. This prevents a candidate `unittest.py` from shadowing the
@@ -111,7 +111,8 @@ do not provide the required ephemeral runner and resource boundary.
 Candidate Markdown outputs are opened without following links, validated as
 regular files, and read under the same 64-KiB cap. Expected values must appear
 as exact bullet values inside their corresponding sections; substrings do not
-qualify.
+qualify. One document-wide scan preserves fence state, so headings or bullets
+inside fenced code never count.
 
 Evaluate a collected record without network or GitHub writes:
 

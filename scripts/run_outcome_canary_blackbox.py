@@ -97,20 +97,11 @@ def write_jsonl(path: Path, values: list[dict[str, str]]) -> None:
     )
 
 
-def markdown_section(rendered: str, title: str) -> str | None:
-    match = re.search(
-        rf"(?ms)^#{{1,6}}\s+{re.escape(title)}\s*$\n(.*?)(?=^#{{1,6}}\s+|\Z)",
-        rendered,
-    )
-    return match.group(1) if match else None
-
-
-def markdown_values(section: str | None) -> set[str]:
-    if section is None:
-        return set()
-    values: set[str] = set()
+def markdown_sections(rendered: str) -> dict[str, set[str]]:
+    sections: dict[str, set[str]] = {}
+    current: str | None = None
     fence: str | None = None
-    for raw_line in section.splitlines():
+    for raw_line in rendered.splitlines():
         line = raw_line.strip()
         if line.startswith(("```", "~~~")):
             marker = line[:3]
@@ -119,9 +110,18 @@ def markdown_values(section: str | None) -> set[str]:
             elif marker == fence:
                 fence = None
             continue
-        if fence is None and raw_line.startswith(("- ", "* ")):
-            values.add(raw_line[2:].strip())
-    return values
+        if fence is not None:
+            continue
+        heading = re.fullmatch(r"#{1,6}\s+(.+?)\s*", raw_line)
+        if heading:
+            title = heading.group(1)
+            current = title if title in EXPECTED_SECTIONS else None
+            if current is not None:
+                sections.setdefault(current, set())
+            continue
+        if current is not None and raw_line.startswith(("- ", "* ")):
+            sections[current].add(raw_line[2:].strip())
+    return sections
 
 
 def read_bounded_output(path: Path) -> str:
@@ -166,17 +166,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failures.append("success-path")
             else:
                 rendered = read_bounded_output(output)
-                sections = {
-                    section: markdown_section(rendered, section)
-                    for section in EXPECTED_SECTIONS
-                }
-                if any(content is None for content in sections.values()):
+                sections = markdown_sections(rendered)
+                if set(sections) != set(EXPECTED_SECTIONS):
                     failures.append("section-separation")
-                if "cli-completed" not in markdown_values(sections["Outcome"]):
+                if "cli-completed" not in sections.get("Outcome", set()):
                     failures.append("outcome-preservation")
-                if "tests-passed" not in markdown_values(sections["Evidence"]):
+                if "tests-passed" not in sections.get("Evidence", set()):
                     failures.append("evidence-preservation")
-                if "deployment-status-unknown" not in markdown_values(sections["Unknowns"]):
+                if "deployment-status-unknown" not in sections.get("Unknowns", set()):
                     failures.append("unknown-preservation")
                 original_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
@@ -192,7 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     probe_text = read_bounded_output(output)
                     probe_digest = hashlib.sha256(probe_text.encode("utf-8")).hexdigest()
-                    probe_unknowns = markdown_values(markdown_section(probe_text, "Unknowns"))
+                    probe_unknowns = markdown_sections(probe_text).get("Unknowns", set())
                     if "ownership-unknown" not in probe_unknowns or probe_digest == original_digest:
                         failures.append("input-influence")
 

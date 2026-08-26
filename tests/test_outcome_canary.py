@@ -45,7 +45,7 @@ def accepted_record() -> dict:
         "on": {"pull_request": {}},
         "permissions": {"contents": "read"},
         "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": [
-            {"uses": "actions/checkout@v4"},
+            {"uses": "actions/checkout@v4", "with": {"persist-credentials": "false"}},
             {"run": shlex.join(coverage_argv)},
             {
                 "uses": f"openboa-ai/hydra/actions/outcome-canary@{'a' * 40}",
@@ -302,9 +302,11 @@ except json.JSONDecodeError:
     raise SystemExit(2)
 by_kind = {item["kind"]: item["value"] for item in values}
 target.write_text("\\n".join([
-    "# Outcome", "```", f"- {by_kind.get('outcome', '')}", "```",
-    "# Evidence", "```", f"- {by_kind.get('evidence', '')}", "```",
-    "# Unknowns", "```", f"- {by_kind.get('unknown', '')}", "```",
+    "```markdown",
+    "# Outcome", f"- {by_kind.get('outcome', '')}",
+    "# Evidence", f"- {by_kind.get('evidence', '')}",
+    "# Unknowns", f"- {by_kind.get('unknown', '')}",
+    "```",
 ]))
 """,
                 encoding="utf-8",
