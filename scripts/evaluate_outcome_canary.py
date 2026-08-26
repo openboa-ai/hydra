@@ -121,8 +121,7 @@ def validate_json_structure(payload: bytes) -> None:
 def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bool:
     if not isinstance(argv, list) or not argv or not isinstance(argv[0], str):
         return False
-    executable = Path(argv[0]).name
-    if executable not in {"python", "python3"}:
+    if argv[0] != "python3":
         return False
     if command_id == "documented-command":
         return (
@@ -167,8 +166,7 @@ def workflow_runs_coverage(
         or not isinstance(coverage_argv, list)
         or not coverage_argv
         or any(not isinstance(arg, str) or not arg for arg in coverage_argv)
-        or Path(coverage_argv[0]).name not in {"python", "python3"}
-        or coverage_argv[1:] != ["-m", "unittest", "discover"]
+        or coverage_argv != ["python3", "-m", "unittest", "discover"]
     ):
         return False
     try:

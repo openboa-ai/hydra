@@ -214,6 +214,25 @@ class OutcomeCanaryTests(unittest.TestCase):
         self.assertIn("acceptance-command-not-passed", reasons)
         self.assertIn("check-not-passed-on-current-head", reasons)
 
+    def test_coverage_command_rejects_repository_local_python_lookalike(self) -> None:
+        record = accepted_record()
+        coverage = record["outcome"]["acceptance_commands"][2]
+        coverage["argv"][0] = "./python3"
+        check = record["outcome"]["checks"][0]
+        workflow = json.loads(check["workflow_content"])
+        workflow["jobs"]["test"]["steps"][1]["run"] = "./python3 -m unittest discover"
+        check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
+        check["workflow_sha256"] = hashlib.sha256(
+            check["workflow_content"].encode()
+        ).hexdigest()
+        check["tested_argv_sha256"] = EVALUATOR.argv_sha256(coverage["argv"])
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("acceptance-command-not-passed", reasons)
+        self.assertIn("check-not-passed-on-current-head", reasons)
+
     def test_documented_command_must_create_the_inspected_artifact(self) -> None:
         record = accepted_record()
         command = record["outcome"]["acceptance_commands"][0]
