@@ -55,6 +55,14 @@ class ReadinessTests(unittest.TestCase):
         snapshot["head_sha"] = "b" * 40
         self.assertIn("missing-exact-head-codex-review", EVALUATOR.evaluate(snapshot)["reasons"])
 
+    def test_changes_requested_review_blocks_readiness(self) -> None:
+        snapshot = ready_snapshot()
+        snapshot["reviews"][0]["state"] = "CHANGES_REQUESTED"
+        decision = EVALUATOR.evaluate(snapshot)
+        self.assertFalse(decision["ready"])
+        self.assertIn("changes-requested-by-codex", decision["reasons"])
+        self.assertIn("missing-exact-head-codex-review", decision["reasons"])
+
     def test_untrusted_commit_status_cannot_impersonate_required_check(self) -> None:
         snapshot = ready_snapshot()
         snapshot["checks"][0]["producer"] = "commit-status"

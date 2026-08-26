@@ -64,12 +64,17 @@ def evaluate(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     reviews = snapshot.get("reviews")
     reviews = reviews if isinstance(reviews, list) else []
-    qualifying = [
+    exact_head_reviews = [
         item for item in reviews
         if isinstance(item, dict)
         and item.get("actor") == EXPECTED_REVIEWER
         and item.get("commit_sha") == head
-        and item.get("state") not in (None, "PENDING", "DISMISSED")
+    ]
+    if any(item.get("state") == "CHANGES_REQUESTED" for item in exact_head_reviews):
+        reasons.append("changes-requested-by-codex")
+    qualifying = [
+        item for item in exact_head_reviews
+        if item.get("state") in ("COMMENTED", "APPROVED")
     ]
     if not qualifying:
         reasons.append("missing-exact-head-codex-review")

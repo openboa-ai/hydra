@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from typing import Any, Sequence
 CONTRACT = "0.2.0"
 MARKER = f"<!-- openboa-ai-native-sdlc:managed:start contract={CONTRACT} -->"
 MAX_AGENTS_BYTES = 131072
+TRUSTED_PATH = "/usr/bin:/bin:/usr/local/bin"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -33,10 +35,14 @@ def run_git(cwd: Path, *args: str) -> tuple[int, str]:
         if name.startswith("GIT_CONFIG_"):
             environment.pop(name)
     environment["GIT_OPTIONAL_LOCKS"] = "0"
+    environment["PATH"] = TRUSTED_PATH
+    git = shutil.which("git", path=TRUSTED_PATH)
+    if git is None:
+        return 127, ""
     try:
         result = subprocess.run(
             [
-                "git", "--no-optional-locks",
+                git, "--no-optional-locks",
                 "-c", "core.fsmonitor=false",
                 "-c", "core.hooksPath=/dev/null",
                 *args,

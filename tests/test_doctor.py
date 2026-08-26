@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -68,6 +69,28 @@ class DoctorTests(unittest.TestCase):
 
             payload = json.loads(result.stdout)
             self.assertEqual("available", payload["git"])
+            self.assertFalse(marker.exists())
+
+    def test_repository_path_git_is_not_executed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            repository = base / "repo"
+            repository.mkdir()
+            marker = base / "hostile-git-ran"
+            hostile = repository / "git"
+            hostile.write_text(
+                "#!/bin/sh\n" + f"touch {marker}\n",
+                encoding="utf-8",
+            )
+            hostile.chmod(0o700)
+            environment = dict(os.environ)
+            environment["PATH"] = f"{repository}:{environment.get('PATH', '')}"
+
+            subprocess.run(
+                [sys.executable, str(DOCTOR), str(repository), "--json"],
+                text=True, capture_output=True, check=True, env=environment,
+            )
+
             self.assertFalse(marker.exists())
 
     def test_oversized_agents_file_is_not_read(self) -> None:

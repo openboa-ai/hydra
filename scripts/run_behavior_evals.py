@@ -80,7 +80,7 @@ PLUGIN_FORBIDDEN_RUNTIME_FIELDS = {"apps", "hooks", "mcpServers"}
 BUNDLED_HOOKS_PATH = "hooks/hooks.json"
 BUNDLED_DOCTOR_PATH = "skills/openboa-ai-native-sdlc/scripts/doctor.py"
 BUNDLED_DOCTOR_SHA256 = (
-    "dea26ce061157d568d5b263e00e682134b2a0909282bb4c2d62faaf357042eb8"
+    "fc275578bc2048571992b39e74156b65c341da5c390a7793091d9f4e424be0ba"
 )
 WINDOWS_RESERVED_BASENAMES = {
     "AUX",
@@ -925,7 +925,10 @@ def _validate_bundled_hooks(raw_bytes: bytes) -> None:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CaseDefinitionError(f"cannot parse bundled hooks: {exc}") from exc
     hooks = payload.get("hooks") if isinstance(payload, dict) else None
-    command = 'python3 "${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    command = (
+        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 '
+        '"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    )
     expected = {
         "SessionStart": {
             "matcher": "startup|resume|compact",

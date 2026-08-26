@@ -20,7 +20,7 @@ MARKETPLACE_NAME = "openboa-hydra"
 MANAGED_START = f"<!-- {PLUGIN_NAME}:managed:start contract={CONTRACT_VERSION} -->"
 MANAGED_END = f"<!-- {PLUGIN_NAME}:managed:end -->"
 LEGACY_ACTIVE_IDENTITIES = ("openboa-operations", "openboa operations")
-DOCTOR_SHA256 = "dea26ce061157d568d5b263e00e682134b2a0909282bb4c2d62faaf357042eb8"
+DOCTOR_SHA256 = "fc275578bc2048571992b39e74156b65c341da5c390a7793091d9f4e424be0ba"
 
 ROOT_ROUTERS = (
     "DOCTRINE.md",
@@ -566,7 +566,10 @@ def validate_hooks(path: Path, errors: list[str]) -> None:
     if not isinstance(hooks, dict) or set(hooks) != {"SessionStart", "PostCompact"}:
         errors.append("plugin hooks must contain only SessionStart and PostCompact")
         return
-    command = 'python3 "${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    command = (
+        '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin python3 '
+        '"${PLUGIN_ROOT}/skills/openboa-ai-native-sdlc/scripts/doctor.py" --hook'
+    )
     expected = {
         "SessionStart": {
             "matcher": "startup|resume|compact",
