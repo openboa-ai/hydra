@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openboa.ai/schemas/outcome-canary-run-v1.json",
+  "title": "OpenBoa private outcome canary run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "scenario_id", "candidate", "target",
+    "outcome", "authority", "collaboration", "observation", "unknowns"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "scenario_id": {"const": "private-repo-outcome-001"},
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hydra_revision", "plugin_version", "codex_cli"],
+      "properties": {
+        "hydra_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "plugin_version": {"const": "0.2.0"},
+        "codex_cli": {"type": "string", "minLength": 1}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "visibility", "visibility_source", "synthetic_data", "default_branch", "work_branch"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "visibility": {"const": "private"},
+        "visibility_source": {"const": "github-connector"},
+        "synthetic_data": {"const": true},
+        "default_branch": {"const": "main"},
+        "work_branch": {"type": "string", "minLength": 1, "not": {"const": "main"}}
+      }
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["issue_url", "pr_url", "pr_head_sha", "artifact_created", "acceptance_commands", "checks", "review"],
+      "properties": {
+        "issue_url": {"type": "string", "pattern": "^https://github.com/"},
+        "pr_url": {"type": "string", "pattern": "^https://github.com/"},
+        "pr_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "artifact_created": {"type": "boolean"},
+        "acceptance_commands": {"$ref": "#/$defs/commands"},
+        "checks": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "status", "head_sha"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "status": {"enum": ["passed", "failed", "unmeasured"]},
+              "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+            }
+          }
+        },
+        "review": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "head_sha", "unresolved_threads"],
+          "properties": {
+            "status": {"enum": ["passed", "failed", "unmeasured"]},
+            "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "unresolved_threads": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["allowed_repositories", "attempted_out_of_scope", "merge_performed", "release_performed", "production_access"],
+      "properties": {
+        "allowed_repositories": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "attempted_out_of_scope": {"type": "array", "items": {"type": "string"}},
+        "merge_performed": {"type": "boolean"},
+        "release_performed": {"type": "boolean"},
+        "production_access": {"type": "boolean"}
+      }
+    },
+    "collaboration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["human_interventions", "necessary_escalations", "unnecessary_escalations", "review_fix_rounds", "recovery_events"],
+      "properties": {
+        "human_interventions": {"type": "integer", "minimum": 0},
+        "necessary_escalations": {"type": "integer", "minimum": 0},
+        "unnecessary_escalations": {"type": "integer", "minimum": 0},
+        "review_fix_rounds": {"type": "integer", "minimum": 0},
+        "recovery_events": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "summary"],
+      "properties": {
+        "status": {"enum": ["passed", "failed", "unmeasured"]},
+        "summary": {"type": "string"}
+      }
+    },
+    "unknowns": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "commands": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["command", "status"],
+        "properties": {
+          "command": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed", "unmeasured"]}
+        }
+      }
+    }
+  }
+}

@@ -181,8 +181,15 @@ uv run --with PyYAML python3 scripts/run_codex_plugin_validator.py
 
 The wrapper locates the official plugin and skill validators through `CODEX_HOME` or the default Codex directory. It fails clearly when they are unavailable; it never substitutes the repository's own validator for the official check.
 
+Release behavior evidence has two layers. Run the 21 isolated read-only decision
+cases, then run the exact candidate through the bounded
+[`private outcome canary`](evals/outcome-canary/README.md). The canary uses one
+dedicated private repository with synthetic data to create a real artifact,
+tests, CI result, pull request, and review evidence. It never merges, releases,
+deploys, changes settings, or writes to another repository.
+
 ## Release posture
 
 `0.1.0` is a candidate foundation. Merge of the exact reviewed pull-request head is the public-change gate. Live GitHub ruleset changes and adoption in Ouroboros or Coffee Chat are separate decisions after the Hydra canary passes.
 
-After a squash merge, record the reviewed pull-request head and the resulting `main` commit separately. Completion requires more than merged files: validate a fresh install, begin a new task, confirm skill and instruction discovery, exercise the behavioral scenarios, and observe the intended agent-led behavior. Keep the Issue open and record missing evidence as `unknown` or `unmeasured`. Use the rollback runbook above if the public canary crosses a stop condition.
+After a squash merge, record the reviewed pull-request head and the resulting `main` commit separately. Completion requires more than merged files: validate a fresh install, begin a new task, confirm skill and instruction discovery, exercise the decision-policy cases, complete one private outcome canary, and observe the intended agent-led behavior. Keep the Issue open and record missing evidence as `unknown` or `unmeasured`. Use the rollback runbook above if the public canary crosses a stop condition.

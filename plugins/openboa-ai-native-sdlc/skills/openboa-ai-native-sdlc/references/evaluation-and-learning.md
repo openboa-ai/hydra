@@ -2,6 +2,13 @@
 
 AI-native development is judged by outcomes, not by how much code an agent produced or how convincing its final message sounds. Completion means the intended result works in the relevant environment, the change is integrated or delivered as required, and the evidence is durable enough for another task to verify.
 
+Use two complementary agent evaluations. Read-only decision-policy cases test
+whether the agent chooses the right authority and collaboration boundary.
+Private outcome canaries test whether the exact candidate can create a working
+artifact through the real GitHub lifecycle. A response-only pass does not prove
+delivery capability, and one successful project does not replace repeatable
+judgment regressions.
+
 ## Evidence order
 
 Prefer evidence in this order:
@@ -46,6 +53,20 @@ The order is not a rule to wait until the end. Use the strongest available evide
 - Compare the result with the baseline and acceptance criteria.
 - Record defects, rollback, recovery, and unexpected human intervention.
 - Turn a recurring lesson into a durable improvement, then test that improvement.
+
+### Private outcome canary
+
+Before a plugin release that changes agent operating behavior, prefer one
+bounded private-repository canary using synthetic data. Bind its evidence to the
+exact plugin revision and pull-request head. Observe the artifact, deterministic
+commands, current-head CI, review convergence, necessary and unnecessary human
+intervention, recovery, and authority violations.
+
+The canary may create an Issue, work branch, commits, and a pull request inside
+its named repository. It must not merge, release, deploy, change settings or
+permissions, use production data, or write outside that repository. Missing
+evidence remains unmeasured. The canary is a release input, never an automatic
+release decision.
 
 ## What to measure
 

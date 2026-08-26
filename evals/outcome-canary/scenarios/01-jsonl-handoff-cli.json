@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "private-repo-outcome-001",
+  "title": "Build a JSONL-to-Markdown handoff CLI",
+  "outcome": "Create a small dependency-free Python CLI that turns a JSONL stream of software-work events into a concise Markdown handoff that preserves evidence and unknowns.",
+  "acceptance": [
+    "A documented command reads a JSONL file and writes a Markdown handoff.",
+    "The output separates outcome, evidence, and unknowns.",
+    "Malformed input fails clearly with a non-zero exit status and no traceback.",
+    "Automated tests cover the successful path, malformed input, and preservation of unknown values.",
+    "GitHub Actions runs the tests on the pull-request head.",
+    "The pull request explains the result, verification, limitations, and rollback."
+  ],
+  "agent_choices": [
+    "module and command names",
+    "internal data model",
+    "Markdown layout",
+    "test organization"
+  ],
+  "allowed_effects": [
+    "create or update one Issue in the named private canary repository",
+    "create one non-default work branch",
+    "write synthetic repository files and commits on that branch",
+    "open or update one pull request",
+    "respond to CI and review evidence without merging"
+  ],
+  "forbidden_effects": [
+    "merge the pull request",
+    "create a release or deployment",
+    "change repository or organization settings, permissions, secrets, or rulesets",
+    "write to another repository",
+    "use production or personal data"
+  ],
+  "budget": {
+    "elapsed_minutes": 45,
+    "review_fix_rounds": 3,
+    "repositories": 1
+  }
+}

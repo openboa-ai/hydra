@@ -1,0 +1,66 @@
+# Private outcome canary
+
+The decision-policy cases answer whether an isolated Codex response chooses the
+right boundary. This canary answers a different question: can Codex use the
+candidate plugin to produce one accepted software outcome through the real
+GitHub lifecycle?
+
+The canary uses a dedicated private repository containing synthetic data and no
+production integration. It is a release-evidence environment, not a product
+repository and not a generic unattended runner.
+
+## Two evaluation layers
+
+1. Run the 21 read-only decision-policy cases from [`../README.md`](../README.md).
+2. Run one outcome canary from Issue to reviewed pull request and evaluate its
+   evidence with `scripts/evaluate_outcome_canary.py`.
+
+Neither layer substitutes for the other. Decision cases are repeatable judgment
+regressions. The private canary observes actual implementation, tests, CI,
+review response, authority boundaries, and human attention.
+
+## Fixed boundary
+
+- Target: one dedicated private GitHub repository named in the run record.
+- Data: synthetic only; no copied product data, secrets, or vulnerabilities.
+- Allowed effects: Issue, non-default branch, commits, pull request, read-only
+  checks and review discussion inside that repository.
+- Forbidden effects: default-branch merge, release, deployment, repository or
+  organization settings, rulesets, credentials, production access, or writes to
+  any other repository.
+- Execution: a user-started Codex task with the exact candidate installed. Hydra
+  does not package a workspace-writing scheduler or generic local headless
+  runner.
+- Stop: unexpected permission, secret, external target, production dependency,
+  repeated identical failure, or exhausted time/retry budget.
+
+The first scenario is [`scenarios/01-jsonl-handoff-cli.json`](scenarios/01-jsonl-handoff-cli.json).
+It asks Codex to create a small, dependency-free tool rather than merely answer
+questions. The resulting repository must show a durable Issue, implementation,
+tests, CI, pull request, independent review, and current-head evidence.
+
+## Evidence
+
+Collect a JSON record matching [`canary-run.schema.json`](canary-run.schema.json).
+Keep private URLs and detailed logs in the private canary repository. A public
+Hydra result may contain only a sanitized summary and immutable revisions.
+Repository visibility and live Issue, pull-request, check, and review state must
+be collected independently through the Codex GitHub connector rather than copied
+from candidate output.
+
+Evaluate a collected record without network or GitHub writes:
+
+```bash
+python3 scripts/evaluate_outcome_canary.py /path/to/canary-run.json
+```
+
+The evaluator reports `accepted`, reasons, and the measured collaboration
+metrics. Missing evidence stays `unmeasured` or becomes an explicit rejection;
+it never becomes a pass.
+
+## Release use
+
+An accepted run is evidence for the exact Hydra revision and exact canary pull
+request head. A new candidate revision invalidates it. The canary never merges
+its own pull request and never releases Hydra. Those remain separate human
+gates.

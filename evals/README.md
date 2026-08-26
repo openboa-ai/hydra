@@ -12,6 +12,14 @@ The runner enforces the checked-in behavior-case schema before it loads any case
 
 These evaluations are an eval harness, not product runtime. The current cases measure explicit skill routing and decision selection in fresh, read-only Codex tasks. They do not perform or claim GitHub writes, deployment, release, human approval, or other external effects. The broader end-to-end scenarios therefore retain `Status: unmeasured` until their requested live evidence exists.
 
+Decision evidence alone is not outcome evidence. The second evaluation layer is
+the [`outcome-canary/`](outcome-canary/) contract: one user-started Codex task
+uses the exact candidate in a dedicated private repository and must create a
+working artifact through Issue, branch, tests, CI, pull request, and independent
+review. It permits only synthetic canary-repository effects and forbids merge,
+release, deployment, settings, credentials, production, and cross-repository
+writes.
+
 ## Result meanings
 
 - `passed`: the selected run produced attributable evidence and every evaluator criterion passed.
