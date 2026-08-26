@@ -99,27 +99,6 @@ def write_jsonl(path: Path, values: list[dict[str, str]]) -> None:
     )
 
 
-def outside_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
-    visible: list[str] = []
-    cursor = 0
-    while cursor < len(line):
-        if in_comment:
-            end = line.find("-->", cursor)
-            if end < 0:
-                return "".join(visible), True
-            cursor = end + 3
-            in_comment = False
-            continue
-        start = line.find("<!--", cursor)
-        if start < 0:
-            visible.append(line[cursor:])
-            break
-        visible.append(line[cursor:start])
-        cursor = start + 4
-        in_comment = True
-    return "".join(visible), in_comment
-
-
 def markdown_sections(rendered: str) -> dict[str, set[str]]:
     sections: dict[str, set[str]] = {}
     current: str | None = None
@@ -137,7 +116,14 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
                 ):
                     fence = None
             continue
-        visible_line, html_comment = outside_html_comments(raw_line, html_comment)
+        if html_comment or "<!--" in raw_line:
+            sections.setdefault(INVALID_MARKDOWN, set()).add("html-comment")
+            if "<!--" in raw_line and "-->" not in raw_line.split("<!--", 1)[1]:
+                html_comment = True
+            if html_comment and "-->" in raw_line:
+                html_comment = False
+            continue
+        visible_line = raw_line
         if visible_line.lstrip().startswith("<"):
             sections.setdefault(INVALID_MARKDOWN, set()).add(visible_line.strip())
             continue

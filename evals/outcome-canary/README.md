@@ -109,9 +109,10 @@ only its corresponding generated value, preventing values from being copied
 into every section. Nested list items are included in that mapping and values
 inside Markdown HTML comments are ignored as non-rendered content. Bullet-like
 lines indented as Markdown code are rejected rather than counted as list items.
-Any visible line beginning with `<` invalidates the section structure after
-HTML comments are removed. Tags, processing instructions, declarations, and
-CDATA-style raw blocks therefore cannot disguise code as rendered evidence.
+Any HTML comment invalidates the document without reparsing a same-line suffix.
+Any other visible line beginning with `<` also invalidates the section
+structure. Tags, processing instructions, declarations, and CDATA-style raw
+blocks therefore cannot disguise code as rendered evidence.
 Malformed-input rejection requires no directory entry at the output path;
 dangling symlinks count as output and fail the check.
 It never imports candidate
