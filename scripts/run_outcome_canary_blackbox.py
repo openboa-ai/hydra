@@ -150,9 +150,13 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
             if current is not None:
                 sections.setdefault(current, set())
             continue
-        list_item = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", visible_line)
+        list_item = re.fullmatch(r"([ \t]*)[-*+]\s+(.+?)\s*", visible_line)
         if current is not None and list_item is not None:
-            sections[current].add(list_item.group(1))
+            indent, value = list_item.groups()
+            if "\t" in indent or len(indent) > 3:
+                sections[current].add(f"\0non-list-indentation:{value}")
+            else:
+                sections[current].add(value)
     return sections
 
 
