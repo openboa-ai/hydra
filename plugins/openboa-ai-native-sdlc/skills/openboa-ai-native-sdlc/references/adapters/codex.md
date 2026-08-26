@@ -20,7 +20,7 @@ The plugin's `SessionStart` and `PostCompact` hooks run a read-only doctor. Thei
 
 ## Headless execution
 
-Use the packaged runner only for a one-shot, bounded job. It defaults to read-only, ephemeral execution with approval disabled. Workspace writes require an explicitly selected clean isolated worktree. Full-access or bypass modes are not supported.
+Codex supports non-interactive execution, but v0.2 does not package a generic local scheduler wrapper. A portable process-group timeout cannot contain a tool that daemonizes into a new session. Use interactive Codex worktrees for writes, Codex scheduled tasks for task-owned bounded follow-up, and GitHub Actions for repository-owned unattended checks. Treat local persistent headless execution as unsupported until the host provides a verified containment boundary.
 
 ## Claims to verify
 

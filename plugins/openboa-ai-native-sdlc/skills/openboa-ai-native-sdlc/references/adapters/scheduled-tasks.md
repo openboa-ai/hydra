@@ -6,10 +6,9 @@ Scheduling is a wakeup mechanism, not a source of purpose or authority.
 
 1. Use a Codex scheduled task for follow-up that belongs to the current task and benefits from its context.
 2. Use GitHub Actions for repository events or repository-owned periodic checks.
-3. Use launchd on macOS for a local one-shot headless command that must survive the UI closing.
-4. Use cron only when launchd or a platform scheduler is unavailable.
+3. Treat launchd, cron, and other generic local wrappers as unsupported in v0.2. Process-group timeout alone cannot contain a detached descendant.
 
-The plugin provides templates; it does not register persistent jobs.
+The plugin provides prompt templates for supported native surfaces; it does not register persistent local jobs.
 
 ## Every scheduled job declares
 
@@ -27,4 +26,4 @@ Offset periodic repository checks from existing jobs to reduce contention. Avoid
 
 ## Persistent-install gate
 
-Generating a plist or crontab example is reversible repository work. Loading a launchd job, editing a user's crontab, granting filesystem or network access, or adding credentials changes the execution environment and requires an explicit decision for that exact job.
+Creating or enabling a new scheduler integration, granting filesystem or network access, or adding credentials changes the execution environment and requires an explicit decision for that exact adapter and job. The adapter must prove containment, cleanup, and rollback before it can carry unattended write authority.

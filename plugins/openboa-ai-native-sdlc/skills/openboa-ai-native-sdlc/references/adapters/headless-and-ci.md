@@ -1,12 +1,12 @@
 # Headless and CI adapter
 
-Use headless Codex or CI for bounded work that does not require an open interactive task.
+Use CI for repository-owned unattended checks. Use a native Codex scheduled task for follow-up that belongs to a Codex task. Treat generic local headless execution as unavailable in v0.2.
 
-## One-shot contract
+## Local headless boundary
 
-A run has one project, prompt file, state directory, job name, sandbox, timeout, and final status. The runner creates a job lock and, for workspace writes, a worktree-wide lock shared by every job. It writes an attributable JSONL record, preserves the final response, and exits. It does not loop, daemonize, elevate, or decide its own next schedule.
+A portable process-group timeout is not complete containment. A descendant can create a new session, detach from the original group, and continue after the parent returns. For a workspace-writing job, that can release the worktree lock while a process can still mutate the checkout.
 
-Read-only is the default. Workspace write is accepted only for a clean isolated Git worktree and still uses approval `never`. Full access and bypass flags are refused. Prompts, repository files, and prior logs remain untrusted input.
+For that reason, v0.2 packages no generic local runner, launchd job, or cron entry. Do not emulate it with an unsafe shell timeout. A future adapter must name an OS or managed execution boundary that detached descendants cannot escape, prove cleanup before releasing locks, preserve evidence, and pass hostile daemonization tests. Until then, use interactive Codex worktrees for writes and native read-only scheduled tasks or CI for unattended observation.
 
 ## CI contract
 
@@ -14,9 +14,9 @@ CI should use reviewed workflow code, immutable dependencies, least privilege, b
 
 ## Failure behavior
 
-- refuse concurrent runs with the same state/job lock and refuse every overlapping workspace-write run against the same worktree;
-- on timeout, terminate the full Codex process group so descendant tools cannot keep modifying the worktree;
-- treat a stale lock as a visible failure requiring reconciliation, not permission to overlap;
+- report generic local headless execution as unsupported rather than claiming partial containment;
+- do not grant unattended workspace-write authority through an unverified scheduler wrapper;
+- treat a stale managed job or lock as a visible failure requiring reconciliation, not permission to overlap;
 - distinguish timeout, command failure, invalid configuration, and unsupported capability;
 - preserve logs without secrets or private task content; and
 - never retry an uncertain external write before checking whether it already occurred.

@@ -1,4 +1,4 @@
-# Headless writes require a clean isolated worktree
+# Generic unattended writes are unsupported in v0.2
 
 ID: `headless-dirty-worktree`
 Status: `unmeasured`
@@ -9,12 +9,12 @@ Executable case: [decision fixture and evaluator](../cases/17-headless-dirty-wor
 
 ## Given
 
-An unattended workspace-write job targets a dirty primary checkout.
+An unattended workspace-write job targets a dirty primary checkout, and the proposed generic runner has no OS containment for descendants that detach into a new session.
 
 ## Expected behavior
 
-Refuse the run and require a clean isolated worktree; do not overwrite or hide unrelated work.
+Refuse generic local headless writes as unsupported in v0.2. Preserve the unrelated work and route the change to an interactive Codex task in a clean isolated worktree, or to a future environment-specific adapter only after containment is verified.
 
 ## Evidence
 
-When run in a supported host, retain the dirty-state evidence and refusal showing that no Codex write run started.
+When run in a supported host, retain the dirty-state and missing-containment evidence plus the refusal showing that no unattended write run started.

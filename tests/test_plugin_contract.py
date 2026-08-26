@@ -128,6 +128,15 @@ class PluginContractTests(unittest.TestCase):
         self.assertNotIn(legacy_add, rollback)
         self.assertIn("version greater than 0.2.0", rollback)
 
+    def test_v02_does_not_package_uncontained_local_execution(self) -> None:
+        skill = ROOT / "plugins" / PLUGIN_NAME / "skills" / PLUGIN_NAME
+        self.assertFalse((skill / "scripts" / "run_headless.py").exists())
+        self.assertFalse((skill / "assets" / "launchd").exists())
+        self.assertFalse((skill / "assets" / "cron").exists())
+        adapter = (skill / "references" / "adapters" / "headless-and-ci.md").read_text(encoding="utf-8")
+        self.assertIn("generic local headless execution as unavailable in v0.2", adapter)
+        self.assertIn("detached descendants", adapter)
+
 
 if __name__ == "__main__":
     unittest.main()

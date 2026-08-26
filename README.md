@@ -43,19 +43,7 @@ Run a read-only local context check without network access or mutation:
 python3 <installed-skill>/scripts/doctor.py /absolute/project --json
 ```
 
-Run one bounded headless job. The state directory must be private and outside the project. `workspace-write` is accepted only for a clean isolated Git worktree.
-
-```text
-python3 <installed-skill>/scripts/run_headless.py \
-  --project /absolute/clean/worktree \
-  --prompt /absolute/prompt.md \
-  --state-dir /absolute/private/state \
-  --job outcome-health
-```
-
-The runner uses ephemeral `codex exec`, approval `never`, read-only sandbox by default, hooks disabled, an exclusive job lock, a worktree-wide lock for every workspace-writing job, a bounded process-group timeout, JSONL events, and a separate final message. It refuses full-access modes.
-
-Use the templates under `assets/automations/` with Codex scheduled tasks, GitHub events, or a reviewed local scheduler. The launchd and cron files are inert examples; installation never loads them or changes a crontab.
+Use the templates under `assets/automations/` with Codex scheduled tasks or GitHub events. v0.2 intentionally does not package a generic local headless runner, launchd job, or cron entry: a child process can detach from a portable process-group timeout, so the plugin cannot honestly guarantee that an unattended writer has stopped. Local persistent execution remains unsupported until an environment-specific containment adapter is designed and verified.
 
 ## Migrate from OpenBoa Operations
 
@@ -163,7 +151,7 @@ The plugin contains one core/router skill and six replaceable playbooks:
 - observe and improve.
 - automate and monitor.
 
-It contains guidance, templates, deterministic validation, safe `AGENTS.md` synchronization, read-only lifecycle diagnostics, and bounded headless automation support. v0.2 deliberately contains no MCP server, custom dispatcher, always-on service, credential broker, or live work database. Scheduler files are examples only and are never registered by installation.
+It contains guidance, templates, deterministic validation, safe `AGENTS.md` synchronization, read-only lifecycle diagnostics, Codex scheduled-task guidance, and GitHub automation support. v0.2 deliberately contains no generic local headless runner, launchd or cron job, MCP server, custom dispatcher, always-on service, credential broker, or live work database.
 
 Hydra is the portable source. Codex is the execution surface. GitHub Issues, pull requests, Actions, rulesets, releases, and deployments are the durable control plane and evidence surfaces. Product repositories remain the source of truth for product behavior and local commands.
 

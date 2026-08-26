@@ -130,7 +130,6 @@ def validate(root: Path) -> list[str]:
         assets_root / "managed-AGENTS.md",
         skill_root / "scripts" / "sync_agents.py",
         skill_root / "scripts" / "doctor.py",
-        skill_root / "scripts" / "run_headless.py",
         plugin_root / "hooks" / "hooks.json",
         root / "scripts" / "evaluate_readiness.py",
         root / "scripts" / "collect_readiness.py",
@@ -144,6 +143,14 @@ def validate(root: Path) -> list[str]:
     ):
         if not is_regular_file(path):
             errors.append(f"missing required file: {display(root, path)}")
+
+    for path in (
+        skill_root / "scripts" / "run_headless.py",
+        assets_root / "launchd",
+        assets_root / "cron",
+    ):
+        if path.exists():
+            errors.append(f"unsupported generic local execution surface: {display(root, path)}")
 
     if (root / "plugins" / "openboa-operations").exists():
         errors.append("legacy plugin directory must be removed")

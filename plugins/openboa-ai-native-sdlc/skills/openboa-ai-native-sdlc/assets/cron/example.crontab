@@ -1,3 +1,0 @@
-# Example only. Review exact paths, run one-shot manually, then obtain the persistent-install gate.
-# Offset the minute from repository CI schedules and redirect only to a private state directory.
-17 9 * * * /usr/bin/python3 /ABSOLUTE/PLUGIN/skills/openboa-ai-native-sdlc/scripts/run_headless.py --project /ABSOLUTE/CLEAN/WORKTREE --prompt /ABSOLUTE/PROMPTS/outcome-health.md --state-dir /ABSOLUTE/PRIVATE/STATE --job outcome-health

@@ -20,7 +20,7 @@ OpenBoa AI-Native SDLC v0.2 establishes a portable way for humans and agents to 
 
 ## v0.2 product boundary
 
-The plugin remains a portable guidance and automation package. It adds read-only lifecycle hooks, diagnostics, bounded headless execution, and templates that adapt native Codex, GitHub, launchd, cron, and CI capabilities. Those adapters do not turn Hydra into a central runtime or grant authority.
+The plugin remains a portable guidance and automation package. It adds read-only lifecycle hooks, diagnostics, and templates that adapt native Codex scheduled tasks, GitHub, and CI capabilities. Those adapters do not turn Hydra into a central runtime or grant authority.
 
 v0.2 does not add:
 
@@ -33,7 +33,7 @@ v0.2 does not add:
 
 Unsupported environments should be reported plainly. They must not be treated as successful adoption.
 
-The package may supply launchd and cron examples, but it does not register them. It may wake Codex through supported hooks or scheduled tasks, but every run remains bounded, least-privilege, observable, and recoverable. It does not emulate a missing platform capability with an unsafe shell loop.
+The package does not supply or register a generic local headless runner, launchd job, or cron entry. A portable process group does not contain a descendant that creates a new session, so v0.2 refuses to claim unattended write safety without an environment-specific containment boundary. It may wake Codex through supported hooks or scheduled tasks, but every supported run remains least-privilege, observable, and recoverable. It does not emulate a missing platform capability with an unsafe shell loop.
 
 ## Future work must earn its complexity
 

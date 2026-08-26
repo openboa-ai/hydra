@@ -47,7 +47,7 @@ REQUIRED_TERMS = {
     "scheduled-read-only-reconcile": ("read current state", "read-only", "duplicate effect"),
     "new-head-invalidates-review": ("invalidate", "exact-head evidence", "block readiness"),
     "untrusted-hook-context": ("refuse", "hook trust", "untrusted context"),
-    "headless-dirty-worktree": ("refuse", "clean isolated worktree", "unrelated work"),
+    "headless-dirty-worktree": ("refuse", "unsupported in v0.2", "interactive codex task", "unrelated work"),
     "monitor-no-change": ("no external write", "unnecessary notification", "bounded wakeup"),
     "persistent-scheduler-gate": ("reversible preparation", "exact job", "before registration"),
     "merge-is-not-observation": ("delivery separately", "observation unknown", "without claiming"),
