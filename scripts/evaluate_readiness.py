@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -70,13 +71,23 @@ def evaluate(snapshot: dict[str, Any]) -> dict[str, Any]:
         and item.get("actor") == EXPECTED_REVIEWER
         and item.get("commit_sha") == head
     ]
-    if any(item.get("state") == "CHANGES_REQUESTED" for item in exact_head_reviews):
+    ordered_reviews: list[tuple[datetime, dict[str, Any]]] = []
+    for item in exact_head_reviews:
+        submitted_at = item.get("submitted_at")
+        try:
+            observed_at = datetime.fromisoformat(
+                submitted_at.replace("Z", "+00:00")
+            )
+            if observed_at.tzinfo is None:
+                raise ValueError
+        except (AttributeError, TypeError, ValueError):
+            reasons.append("invalid-review-submitted-at")
+            continue
+        ordered_reviews.append((observed_at, item))
+    latest_review = max(ordered_reviews, key=lambda value: value[0])[1] if ordered_reviews else None
+    if latest_review is not None and latest_review.get("state") == "CHANGES_REQUESTED":
         reasons.append("changes-requested-by-codex")
-    qualifying = [
-        item for item in exact_head_reviews
-        if item.get("state") in ("COMMENTED", "APPROVED")
-    ]
-    if not qualifying:
+    if latest_review is None or latest_review.get("state") not in ("COMMENTED", "APPROVED"):
         reasons.append("missing-exact-head-codex-review")
 
     unresolved = snapshot.get("unresolved_threads")

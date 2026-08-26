@@ -18,7 +18,7 @@ query($owner:String!, $name:String!, $number:Int!) {
     pullRequest(number:$number) {
       number state isDraft mergeable baseRefName headRefOid
       reviewThreads(first:100) { nodes { isResolved } pageInfo { hasNextPage } }
-      reviews(last:100) { nodes { state author { login } commit { oid } } pageInfo { hasPreviousPage } }
+      reviews(last:100) { nodes { state submittedAt author { login } commit { oid } } pageInfo { hasPreviousPage } }
       commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:100) {
         nodes {
           ... on CheckRun { name status conclusion app { slug } }
@@ -93,7 +93,12 @@ def normalize(payload: dict[str, Any], number: int) -> dict[str, Any]:
         "head_sha": pr["headRefOid"],
         "unresolved_threads": sum(1 for item in threads["nodes"] if not item["isResolved"]),
         "reviews": [
-            {"state": item["state"], "actor": (item.get("author") or {}).get("login"), "commit_sha": (item.get("commit") or {}).get("oid")}
+            {
+                "state": item["state"],
+                "submitted_at": item.get("submittedAt"),
+                "actor": (item.get("author") or {}).get("login"),
+                "commit_sha": (item.get("commit") or {}).get("oid"),
+            }
             for item in reviews["nodes"]
         ],
         "checks": checks,

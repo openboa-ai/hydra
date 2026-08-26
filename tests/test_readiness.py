@@ -32,7 +32,10 @@ def ready_snapshot(head: str = "a" * 40) -> dict:
                 "source_binding": "openboa-ai/hydra:.github/workflows/openboa-governance-v2.yml@refs/heads/main",
             },
         ],
-        "reviews": [{"actor": "chatgpt-codex-connector", "state": "COMMENTED", "commit_sha": head}],
+        "reviews": [{
+            "actor": "chatgpt-codex-connector", "state": "COMMENTED",
+            "commit_sha": head, "submitted_at": "2026-08-26T00:00:00Z",
+        }],
     }
 
 
@@ -63,6 +66,22 @@ class ReadinessTests(unittest.TestCase):
         self.assertIn("changes-requested-by-codex", decision["reasons"])
         self.assertIn("missing-exact-head-codex-review", decision["reasons"])
 
+    def test_later_approval_supersedes_changes_requested_on_same_head(self) -> None:
+        snapshot = ready_snapshot()
+        snapshot["reviews"] = [
+            {
+                "actor": "chatgpt-codex-connector", "state": "CHANGES_REQUESTED",
+                "commit_sha": snapshot["head_sha"], "submitted_at": "2026-08-26T00:00:00Z",
+            },
+            {
+                "actor": "chatgpt-codex-connector", "state": "APPROVED",
+                "commit_sha": snapshot["head_sha"], "submitted_at": "2026-08-26T00:01:00Z",
+            },
+        ]
+        decision = EVALUATOR.evaluate(snapshot)
+        self.assertTrue(decision["ready"])
+        self.assertNotIn("changes-requested-by-codex", decision["reasons"])
+
     def test_untrusted_commit_status_cannot_impersonate_required_check(self) -> None:
         snapshot = ready_snapshot()
         snapshot["checks"][0]["producer"] = "commit-status"
@@ -90,7 +109,7 @@ class ReadinessTests(unittest.TestCase):
         payload = {"data":{"repository":{"pullRequest":{
             "number":8,"state":"OPEN","isDraft":False,"mergeable":"MERGEABLE","baseRefName":"main","headRefOid":head,
             "reviewThreads":{"nodes":[{"isResolved":True}],"pageInfo":{"hasNextPage":False}},
-            "reviews":{"nodes":[{"state":"COMMENTED","author":{"login":"chatgpt-codex-connector"},"commit":{"oid":head}}],"pageInfo":{"hasPreviousPage":False}},
+            "reviews":{"nodes":[{"state":"COMMENTED","submittedAt":"2026-08-26T00:00:00Z","author":{"login":"chatgpt-codex-connector"},"commit":{"oid":head}}],"pageInfo":{"hasPreviousPage":False}},
             "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"name":"openboa-governance","status":"COMPLETED","conclusion":"SUCCESS","app":{"slug":"github-actions"}}],"pageInfo":{"hasNextPage":False}}}}}]}
         }}}}
         collected = COLLECTOR.normalize(payload, 8)
