@@ -12,7 +12,7 @@ Codex is OpenBoa's current execution environment. Use its native capabilities be
 
 ## Scheduled tasks and wakeups
 
-Use a Codex scheduled task when the same conversation should wake later to inspect state or perform a bounded follow-up. The prompt must name the target, read-only or write boundary, stop condition, notification condition, and expiry. A scheduled task must reconcile live state and avoid duplicate comments, releases, merges, or deployments.
+Use a Codex scheduled task when the same conversation should wake later to inspect state or perform a bounded follow-up. In v0.2 every scheduled-task adaptation is read-only: it may reconcile, evaluate, preserve task-local evidence, notify, and hand work back to an interactive task, but it must not edit a checkout or perform GitHub, release, deployment, or other external writes. The prompt must name the target, read-only boundary, stop condition, notification condition, and expiry.
 
 ## Hooks
 

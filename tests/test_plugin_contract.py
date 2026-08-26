@@ -137,6 +137,22 @@ class PluginContractTests(unittest.TestCase):
         self.assertIn("generic local headless execution as unavailable in v0.2", adapter)
         self.assertIn("detached descendants", adapter)
 
+    def test_v02_scheduled_templates_are_read_only_handoffs(self) -> None:
+        skill = ROOT / "plugins" / PLUGIN_NAME / "skills" / PLUGIN_NAME
+        automation = skill / "assets" / "automations"
+        combined = "\n".join(
+            path.read_text(encoding="utf-8") for path in sorted(automation.glob("*.md"))
+        )
+        self.assertIn("read-only monitor prompts", combined)
+        self.assertIn("must not edit a checkout or write to GitHub", combined)
+        self.assertIn("interactive Codex task", combined)
+        for forbidden in (
+            "fix routine findings inside the approved branch",
+            "open or update one durable private or public work item",
+            "prepare a coherent documentation update and run",
+        ):
+            self.assertNotIn(forbidden, combined)
+
 
 if __name__ == "__main__":
     unittest.main()

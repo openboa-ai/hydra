@@ -43,7 +43,7 @@ Run a read-only local context check without network access or mutation:
 python3 <installed-skill>/scripts/doctor.py /absolute/project --json
 ```
 
-Use the templates under `assets/automations/` with Codex scheduled tasks or GitHub events. v0.2 intentionally does not package a generic local headless runner, launchd job, or cron entry: a child process can detach from a portable process-group timeout, so the plugin cannot honestly guarantee that an unattended writer has stopped. Local persistent execution remains unsupported until an environment-specific containment adapter is designed and verified.
+Use the read-only monitor templates under `assets/automations/` with Codex scheduled tasks or GitHub events. In v0.2 they inspect, evaluate, notify, and hand mutations to interactive work; they never edit a checkout or perform external writes. v0.2 intentionally does not package a generic local headless runner, launchd job, or cron entry: a child process can detach from a portable process-group timeout, so the plugin cannot honestly guarantee that an unattended writer has stopped. Local persistent execution remains unsupported until an environment-specific containment adapter is designed and verified.
 
 ## Migrate from OpenBoa Operations
 

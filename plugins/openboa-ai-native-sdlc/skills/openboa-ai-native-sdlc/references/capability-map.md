@@ -9,7 +9,7 @@ OpenBoa chooses a method from capabilities that are actually available in the cu
 | Execute code changes | isolated Codex task plus local `git` worktree | branch, commit, focused and full tests | clean clone or a documented handoff | new credentials, scope, or material effect |
 | Split independent work | Codex subagents or separate tasks | bounded outputs and integration evidence | sequential execution | overlapping authority or unclear product choice |
 | Review a candidate | deterministic CI plus exact-head Codex review | check run, review commit, unresolved-thread state | local test and recorded `unknown` for missing review | merge when repository policy requires it |
-| Revisit work in this task | Codex scheduled task or task wakeup | schedule definition and task updates | explicit follow-up | public or consequential action triggered by time |
+| Revisit work in this task | read-only Codex scheduled task or task wakeup | schedule definition, observation, notification, and handoff | explicit interactive follow-up | any checkout or external write triggered by time |
 | Run without an open task | GitHub Actions or a verified managed execution surface | workflow run, exact revision, logs, final status | native Codex scheduled task or manual run | adding a scheduler, containment adapter, or write authority |
 | Observe delivered behavior | deployment, logs, metrics, support evidence | environment, window, revision, result | a scheduled read-only check | rollback, public notice, or material production action |
 | Enforce repository policy | GitHub Actions and rulesets | workflow source, permissions, producer, rule readback | shadow evaluation | ruleset or required-check change |

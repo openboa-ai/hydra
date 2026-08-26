@@ -74,7 +74,7 @@ OpenBoa inference: send each learning to the layer that can enforce it: local fa
 
 Official Codex documentation separates lifecycle hooks, scheduled tasks, non-interactive execution, and plugin packaging (OAI-07 through OAI-10). Each surface has different context, persistence, trust, and sandbox behavior.
 
-OpenBoa inference: discover capability first, then select an adapter. Use hooks only for fast read-only context diagnostics, scheduled tasks for bounded wakeups, GitHub events for repository state, and one-shot `codex exec` for headless work. Bind every automation to a target, lock, timeout, expiry, evidence, notification, and rollback. Capability never creates authority.
+OpenBoa inference: discover capability first, then select an adapter. Use hooks only for fast read-only context diagnostics, v0.2 scheduled tasks only for read-only wakeups and handoffs, and GitHub events for repository state. Do not package a generic local `codex exec` scheduler wrapper or allow scheduled checkout writes until a managed execution boundary proves detached-descendant containment and cleanup. Bind every automation to a target, timeout, expiry, evidence, notification, and rollback. Capability never creates authority.
 
 ## Claims that stay provisional
 

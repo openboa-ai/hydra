@@ -15,7 +15,7 @@ The plugin provides prompt templates for supported native surfaces; it does not 
 - outcome and exact target;
 - wakeup event or cadence, timezone, and expiry;
 - capability and authority boundary;
-- read-only default and any explicitly allowed write;
+- read-only sandbox and an explicit prohibition on checkout and external writes;
 - lock, timeout, retry limit, and resource bound;
 - live-state reconciliation and idempotency key;
 - success, change, failure, and human-decision notification rules;
@@ -23,6 +23,8 @@ The plugin provides prompt templates for supported native surfaces; it does not 
 - disable and rollback procedure.
 
 Offset periodic repository checks from existing jobs to reduce contention. Avoid schedules faster than the evidence can change. Silence means only that no notification condition was met; it is not proof of health.
+
+In v0.2 a Codex scheduled task may inspect, evaluate, notify, and create a task-local handoff. If code, branch, Issue, pull-request, release, deployment, credential, or policy state must change, stop and route that action to an interactive task or a separately verified managed adapter. Declaring a write boundary in a prompt is not containment.
 
 ## Persistent-install gate
 

@@ -152,6 +152,27 @@ def validate(root: Path) -> list[str]:
         if path.exists():
             errors.append(f"unsupported generic local execution surface: {display(root, path)}")
 
+    automation_root = assets_root / "automations"
+    automation_readme = automation_root / "README.md"
+    if is_regular_file(automation_readme):
+        automation_contract = automation_readme.read_text(encoding="utf-8")
+        for required in (
+            "read-only monitor prompts",
+            "must not edit a checkout or write to GitHub",
+            "Route every required mutation to an interactive Codex task",
+        ):
+            if required not in automation_contract:
+                errors.append(f"automation templates are missing v0.2 read-only contract: {required}")
+    for path in automation_root.glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        for forbidden in (
+            "fix routine findings inside the approved branch",
+            "open or update one durable private or public work item",
+            "prepare a coherent documentation update and run",
+        ):
+            if forbidden in text:
+                errors.append(f"scheduled automation retains an unattended write: {display(root, path)}")
+
     if (root / "plugins" / "openboa-operations").exists():
         errors.append("legacy plugin directory must be removed")
 
