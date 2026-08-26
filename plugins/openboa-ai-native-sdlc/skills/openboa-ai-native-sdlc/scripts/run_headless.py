@@ -15,10 +15,12 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from typing import IO, Sequence
 
 
 JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+SHUTDOWN_GRACE_SECONDS = 2
 
 
 def absolute_dir(value: str) -> Path:
@@ -96,18 +98,22 @@ def acquire_lock(handle: IO[str], message: str) -> bool:
 
 
 def terminate_process_group(process: subprocess.Popen[str]) -> tuple[str, int]:
+    process_group = process.pid
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(process_group, signal.SIGTERM)
     except ProcessLookupError:
         pass
+
+    # Do not use leader exit or pipe closure as evidence that the process group
+    # is gone: a descendant can ignore SIGTERM and redirect every pipe. Keep the
+    # worktree lock for the full grace period, then always attempt the group kill.
+    time.sleep(SHUTDOWN_GRACE_SECONDS)
     try:
-        _, stderr = process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        _, stderr = process.communicate()
+        os.killpg(process_group, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    _, stderr = process.communicate()
     return stderr or "", 124
 
 

@@ -136,6 +136,7 @@ class HeadlessRunnerTests(unittest.TestCase):
             fake.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n", encoding="utf-8")
             fake.chmod(0o700)
             result = subprocess.run([sys.executable, str(RUNNER), "--project", str(project), "--prompt", str(prompt), "--state-dir", str(base / "state"), "--job", "timeout", "--timeout", "1", "--codex-bin", str(fake)], text=True, capture_output=True)
+            self.assertTrue(result.stdout, result.stderr)
             record = json.loads(result.stdout)
             events = Path(record["events"]).read_text(encoding="utf-8")
         self.assertEqual(124, result.returncode)
@@ -152,13 +153,15 @@ class HeadlessRunnerTests(unittest.TestCase):
             marker = base / "descendant-survived"
             fake = base / "spawning-codex"
             child = (
-                "import pathlib,time; time.sleep(2); "
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(4); "
                 f"pathlib.Path({str(marker)!r}).write_text('unsafe', encoding='utf-8')"
             )
             fake.write_text(
                 "#!/usr/bin/env python3\n"
                 "import subprocess,sys,time\n"
-                f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+                f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+                "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
                 "time.sleep(10)\n",
                 encoding="utf-8",
             )
