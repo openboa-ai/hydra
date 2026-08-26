@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,14 @@ def accepted_record() -> dict:
     documented_argv = ["python3", "handoff.py", "events.jsonl", "handoff.md"]
     malformed_argv = ["python3", "handoff.py", "malformed.jsonl", "bad.md"]
     coverage_argv = ["python3", "-m", "unittest", "discover"]
+    workflow_content = json.dumps({
+        "name": "test",
+        "on": {"pull_request": {}},
+        "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": [
+            {"uses": "actions/checkout@v4"},
+            {"run": "python3 -m unittest discover"},
+        ]}},
+    }, separators=(",", ":"))
     evidence_references = {
         "artifact-command": "command:documented-command",
         "separates-sections": f"artifact-sha256:{'d' * 64}",
@@ -80,18 +89,25 @@ def accepted_record() -> dict:
                 {
                     "id": "documented-command", "argv": documented_argv,
                     "exit_code": 0, "stdout_sha256": "1" * 64, "stderr_sha256": "2" * 64,
+                    "input_evidence": {
+                        "path": "events.jsonl", "sha256": "8" * 64,
+                        "probe_sha256": "9" * 64, "probe_output_sha256": "e" * 64,
+                        "probe_argv_sha256": EVALUATOR.argv_sha256(documented_argv),
+                    },
                     "output_evidence": {"path": "handoff.md", "before": "absent", "after_sha256": "d" * 64},
                     "head_sha": head, "observations": ["documented-command-produced-markdown"], "status": "passed",
                 },
                 {
                     "id": "malformed-input", "argv": malformed_argv,
                     "exit_code": 2, "stdout_sha256": "3" * 64, "stderr_sha256": "4" * 64,
+                    "input_evidence": None,
                     "output_evidence": None,
                     "head_sha": head, "observations": ["nonzero-exit", "no-traceback", "no-output"], "status": "passed",
                 },
                 {
                     "id": "coverage", "argv": coverage_argv,
                     "exit_code": 0, "stdout_sha256": "5" * 64, "stderr_sha256": "6" * 64,
+                    "input_evidence": None,
                     "output_evidence": None,
                     "head_sha": head, "observations": ["success-path", "malformed-input", "unknown-preservation"], "status": "passed",
                 },
@@ -100,8 +116,11 @@ def accepted_record() -> dict:
                 "name": "test", "status": "passed", "head_sha": head,
                 "source": "github-connector", "app": "github-actions",
                 "workflow_path": ".github/workflows/test.yml",
-                "workflow_sha256": "7" * 64,
+                "workflow_sha256": hashlib.sha256(workflow_content.encode()).hexdigest(),
+                "workflow_content": workflow_content, "workflow_head_sha": head,
+                "workflow_job": "test",
                 "run_url": "https://github.com/openboa-ai/openboa-ai-native-sdlc-canary/actions/runs/123",
+                "run_id": 123, "run_head_sha": head, "run_event": "pull_request",
                 "tested_command_id": "coverage",
                 "tested_argv_sha256": EVALUATOR.argv_sha256(coverage_argv),
             }],
@@ -185,6 +204,16 @@ class OutcomeCanaryTests(unittest.TestCase):
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
         )["reasons"]
         self.assertIn("documented-command-output-not-bound", reasons)
+
+    def test_documented_command_must_be_observed_to_depend_on_input(self) -> None:
+        record = accepted_record()
+        evidence = record["outcome"]["acceptance_commands"][0]["input_evidence"]
+        evidence["probe_output_sha256"] = record["outcome"]["artifact_evidence"]["sha256"]
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("documented-command-input-not-bound", reasons)
 
     def test_artifact_digest_sections_and_head_are_required(self) -> None:
         record = accepted_record()
@@ -273,6 +302,21 @@ class OutcomeCanaryTests(unittest.TestCase):
             "workflow_path": ".github/workflows/noop.yml",
             "run_url": "https://example.com/run/1",
             "tested_argv_sha256": "0" * 64,
+        })
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("check-not-passed-on-current-head", reasons)
+
+    def test_ci_check_is_bound_to_exact_head_run_and_workflow_content(self) -> None:
+        record = accepted_record()
+        check = record["outcome"]["checks"][0]
+        check.update({
+            "workflow_content": json.dumps({"jobs": {"test": {"steps": [{"run": "true"}]}}}),
+            "workflow_sha256": "0" * 64,
+            "run_head_sha": "c" * 40,
+            "run_url": "https://github.com/openboa-ai/openboa-ai-native-sdlc-canary/actions/runs/999",
         })
         resign(record)
         reasons = EVALUATOR.evaluate(
@@ -376,6 +420,16 @@ class OutcomeCanaryTests(unittest.TestCase):
         record = accepted_record()
         record["collaboration"]["implementation_actor"] = "codex-task:same-actor"
         record["outcome"]["review"]["reviewer_actor"] = " codex-task:same-actor "
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("review-is-not-independent", reasons)
+
+    def test_github_actor_comparison_is_case_insensitive(self) -> None:
+        record = accepted_record()
+        record["collaboration"]["implementation_actor"] = "github-user:Alice"
+        record["outcome"]["review"]["reviewer_actor"] = "github-user:alice"
         resign(record)
         reasons = EVALUATOR.evaluate(
             record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,

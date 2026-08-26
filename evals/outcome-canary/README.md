@@ -68,10 +68,18 @@ writes, and runs beyond the fixed time or review-loop budget.
 
 For the documented command, the control plane must observe that the output path
 was absent before execution and that its post-execution digest equals the
-inspected artifact digest. For CI, inspect the exact workflow blob and record its
-path and digest, the GitHub Actions app provenance, connector-observed run URL,
-and the digest of the same coverage argv recorded in local command evidence. A
-passing check name alone is not evidence that tests ran.
+inspected artifact digest. It must also hash the JSONL input, rerun the exact
+same argv after replacing that input with a controlled probe, and observe a
+different output digest. This rejects a command that merely writes fixed
+Markdown while ignoring its input.
+
+For CI, the workflow is a strict JSON-form GitHub Actions file (valid YAML) so
+the offline evaluator can hash and inspect it without a YAML dependency. Record
+the connector-observed numeric run ID, event, exact head SHA, workflow head SHA,
+job ID, and complete workflow content. The evaluator recomputes the workflow
+digest, requires the named job to run the exact locally observed coverage argv,
+and binds the run URL and both heads. A passing check name alone is not evidence
+that tests ran.
 
 Evaluate a collected record without network or GitHub writes:
 

@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import stat
 import sys
 from typing import Any, Sequence
@@ -144,6 +145,46 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
 def argv_sha256(argv: list[str]) -> str:
     encoded = json.dumps(argv, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def principal_identity(value: str) -> tuple[str, str] | None:
+    """Return the identity used for independence comparisons."""
+    if PRINCIPAL_RE.fullmatch(value) is None:
+        return None
+    namespace, identifier = value.split(":", 1)
+    if namespace in {"github-app", "github-user"}:
+        identifier = identifier.casefold()
+    return namespace, identifier
+
+
+def workflow_runs_coverage(
+    content: str, job_id: Any, coverage_argv: Any,
+) -> bool:
+    """Validate a strict JSON-form GitHub Actions workflow and its test job."""
+    if (
+        not isinstance(job_id, str)
+        or not job_id
+        or not isinstance(coverage_argv, list)
+        or not coverage_argv
+        or any(not isinstance(arg, str) or not arg for arg in coverage_argv)
+    ):
+        return False
+    try:
+        workflow = json.loads(content)
+    except (json.JSONDecodeError, RecursionError):
+        return False
+    job = _mapping(_mapping(workflow).get("jobs")).get(job_id)
+    if not isinstance(job, dict) or "if" in job or job.get("continue-on-error") is True:
+        return False
+    expected = shlex.join(coverage_argv)
+    matching_steps = [
+        step for step in _list(job.get("steps"))
+        if isinstance(step, dict)
+        and step.get("run") == expected
+        and "if" not in step
+        and step.get("continue-on-error") is not True
+    ]
+    return len(matching_steps) == 1
 
 
 def canonical_record(record: dict[str, Any]) -> bytes:
@@ -295,7 +336,7 @@ def evaluate(
             continue
         _exact_keys(item, {
             "id", "argv", "exit_code", "stdout_sha256", "stderr_sha256",
-            "head_sha", "output_evidence", "observations", "status",
+            "head_sha", "input_evidence", "output_evidence", "observations", "status",
         }, "acceptance-command", reasons)
         command_id = item.get("id")
         if not isinstance(command_id, str) or not command_id.strip() or command_id in command_ids:
@@ -336,7 +377,36 @@ def evaluate(
         "after_sha256": artifact_digest,
     }:
         reasons.append("documented-command-output-not-bound")
+    documented_command = commands_by_id.get("documented-command", {})
+    documented_argv = documented_command.get("argv")
+    documented_input = _mapping(documented_command.get("input_evidence"))
+    input_path = documented_input.get("path")
+    input_digest = documented_input.get("sha256")
+    probe_input_digest = documented_input.get("probe_sha256")
+    probe_output_digest = documented_input.get("probe_output_sha256")
+    if (
+        set(documented_input) != {
+            "path", "sha256", "probe_sha256", "probe_output_sha256",
+            "probe_argv_sha256",
+        }
+        or not isinstance(documented_argv, list)
+        or input_path not in documented_argv
+        or not isinstance(input_path, str)
+        or not input_path.endswith(".jsonl")
+        or any(not isinstance(arg, str) for arg in documented_argv)
+        or any(
+            not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            for digest in (input_digest, probe_input_digest, probe_output_digest)
+        )
+        or input_digest == probe_input_digest
+        or artifact_digest == probe_output_digest
+        or documented_input.get("probe_argv_sha256") != argv_sha256(documented_argv)
+    ):
+        reasons.append("documented-command-input-not-bound")
     for command_id in ("malformed-input", "coverage"):
+        if commands_by_id.get(command_id, {}).get("input_evidence") is not None:
+            reasons.append(f"unexpected-input-evidence:{command_id}")
         if commands_by_id.get(command_id, {}).get("output_evidence") is not None:
             reasons.append(f"unexpected-output-evidence:{command_id}")
 
@@ -350,7 +420,9 @@ def evaluate(
             continue
         _exact_keys(item, {
             "name", "status", "head_sha", "source", "app", "workflow_path",
-            "workflow_sha256", "run_url", "tested_command_id", "tested_argv_sha256",
+            "workflow_sha256", "workflow_content", "workflow_head_sha", "workflow_job",
+            "run_url", "run_id", "run_head_sha", "run_event",
+            "tested_command_id", "tested_argv_sha256",
         }, "check", reasons)
         name = item.get("name")
         if isinstance(name, str) and name.strip():
@@ -363,7 +435,9 @@ def evaluate(
             else None
         )
         workflow_digest = item.get("workflow_sha256")
+        workflow_content = item.get("workflow_content")
         run_url = item.get("run_url")
+        run_id = item.get("run_id")
         if (
             not isinstance(name, str)
             or not name.strip()
@@ -374,8 +448,17 @@ def evaluate(
             or item.get("workflow_path") != ".github/workflows/test.yml"
             or not isinstance(workflow_digest, str)
             or re.fullmatch(r"[0-9a-f]{64}", workflow_digest) is None
+            or not isinstance(workflow_content, str)
+            or hashlib.sha256(workflow_content.encode("utf-8")).hexdigest() != workflow_digest
+            or item.get("workflow_head_sha") != head
+            or item.get("workflow_job") != name
+            or not workflow_runs_coverage(workflow_content, item.get("workflow_job"), coverage_argv)
             or not isinstance(run_url, str)
-            or not run_url.startswith(f"https://github.com/{repository}/actions/runs/")
+            or type(run_id) is not int
+            or run_id <= 0
+            or run_url != f"https://github.com/{repository}/actions/runs/{run_id}"
+            or item.get("run_head_sha") != head
+            or item.get("run_event") != "pull_request"
             or item.get("tested_command_id") != "coverage"
             or item.get("tested_argv_sha256") != expected_tested_argv
         ):
@@ -471,16 +554,22 @@ def evaluate(
         "recovery_events",
     }, "collaboration", reasons)
     implementation_actor = collaboration.get("implementation_actor")
+    implementation_identity = None
     if (
         not isinstance(implementation_actor, str)
         or PRINCIPAL_RE.fullmatch(implementation_actor) is None
     ):
         reasons.append("invalid-implementation-actor")
+    else:
+        implementation_identity = principal_identity(implementation_actor)
     reviewer_actor = review.get("reviewer_actor")
+    reviewer_identity = (
+        principal_identity(reviewer_actor) if isinstance(reviewer_actor, str) else None
+    )
     if (
         not isinstance(reviewer_actor, str)
         or PRINCIPAL_RE.fullmatch(reviewer_actor) is None
-        or reviewer_actor == implementation_actor
+        or reviewer_identity == implementation_identity
         or review.get("source") != "github-connector"
     ):
         reasons.append("review-is-not-independent")
