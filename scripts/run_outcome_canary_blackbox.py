@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -140,13 +141,9 @@ def markdown_sections(rendered: str) -> dict[str, set[str]]:
             if current is not None:
                 sections.setdefault(current, set())
             continue
-        list_item = re.fullmatch(r"([ \t]*)[-*+][ \t]+(.+?)[ \t]*", visible_line)
+        list_item = re.fullmatch(r"- (.+?)[ \t]*", visible_line)
         if current is not None and list_item is not None:
-            indent, value = list_item.groups()
-            if "\t" in indent or len(indent) > 3:
-                sections[current].add(f"\0non-list-indentation:{value}")
-            else:
-                sections[current].add(value)
+            sections[current].add(list_item.group(1))
     return sections
 
 
@@ -209,11 +206,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             evidence_value = f"evidence-{secrets.token_hex(16)}"
             unknown_value = f"unknown-{secrets.token_hex(16)}"
             probe_unknown_value = f"unknown-{secrets.token_hex(16)}"
-            write_jsonl(source, [
+            success_events = [
                 {"kind": "outcome", "value": outcome_value},
                 {"kind": "evidence", "value": evidence_value},
                 {"kind": "unknown", "value": unknown_value},
-            ])
+            ]
+            orders = list(itertools.permutations(range(len(success_events))))
+            first_order = secrets.choice(orders)
+            second_order = secrets.choice([order for order in orders if order != first_order])
+            write_jsonl(source, [success_events[index] for index in first_order])
             success = run_candidate(root, entrypoint, source, output)
             if success.returncode != 0:
                 failures.append("success-path")
@@ -225,11 +226,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 original_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
                 output.unlink()
-                write_jsonl(source, [
+                probe_events = [
                     {"kind": "outcome", "value": outcome_value},
                     {"kind": "evidence", "value": evidence_value},
                     {"kind": "unknown", "value": probe_unknown_value},
-                ])
+                ]
+                write_jsonl(source, [probe_events[index] for index in second_order])
                 probe = run_candidate(root, entrypoint, source, output)
                 if probe.returncode != 0:
                     failures.append("input-influence")

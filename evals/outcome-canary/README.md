@@ -104,11 +104,12 @@ output, malformed-input rejection, and a changed unknown value that must change
 the output. Success-path values are unpredictable per run, so a candidate
 cannot pass by recognizing only the public fixture strings. Both successful
 runs must preserve all three sections and every expected value; the influence
-probe cannot discard unchanged values. Each section's bullet set must equal
+probe uses a different randomized event order and cannot discard unchanged
+values. Each section's bullet set must equal
 only its corresponding generated value, preventing values from being copied
-into every section. Nested list items are included in that mapping and values
-inside Markdown HTML comments are ignored as non-rendered content. Bullet-like
-lines indented as Markdown code are rejected rather than counted as list items.
+into every section. Only the public contract's exact unindented `- value` form
+counts; nested bullets, excess marker padding, alternate markers, and indented
+code are rejected.
 Any HTML comment invalidates the document without reparsing a same-line suffix.
 Any other visible line beginning with `<` also invalidates the section
 structure. Tags, processing instructions, declarations, and CDATA-style raw
@@ -131,8 +132,8 @@ regular files, and read under the same 64-KiB cap. Expected values must appear
 as exact bullet values inside their corresponding sections; substrings do not
 qualify. One document-wide scan preserves the opening fence character and
 length, so only a valid same-character closing fence of at least that length
-ends it. Fence closers, ATX heading separators, and list-marker separators use
-CommonMark ASCII space/tab rules rather than Python Unicode whitespace;
+ends it. Fence closers and ATX heading separators use CommonMark ASCII
+space/tab rules rather than Python Unicode whitespace;
 headings or bullets inside fenced code never count.
 
 Evaluate a collected record without network or GitHub writes:
