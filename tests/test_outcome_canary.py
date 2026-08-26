@@ -268,6 +268,16 @@ class OutcomeCanaryTests(unittest.TestCase):
         )["reasons"]
         self.assertIn("coverage-tests-not-proven", reasons)
 
+    def test_coverage_command_rejects_boolean_counts_and_skips(self) -> None:
+        record = accepted_record()
+        evidence = record["outcome"]["acceptance_commands"][2]["test_evidence"]
+        evidence.update({"failures": False, "errors": False, "skipped": 3})
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("coverage-tests-not-proven", reasons)
+
     def test_documented_command_must_create_the_inspected_artifact(self) -> None:
         record = accepted_record()
         command = record["outcome"]["acceptance_commands"][0]

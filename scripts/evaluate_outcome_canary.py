@@ -428,10 +428,12 @@ def evaluate(
         or coverage_tests.get("framework") != "stdlib-unittest"
         or type(coverage_tests.get("tests_run")) is not int
         or coverage_tests.get("tests_run", 0) < 3
+        or type(coverage_tests.get("failures")) is not int
         or coverage_tests.get("failures") != 0
+        or type(coverage_tests.get("errors")) is not int
         or coverage_tests.get("errors") != 0
         or type(coverage_tests.get("skipped")) is not int
-        or coverage_tests.get("skipped", -1) < 0
+        or coverage_tests.get("skipped") != 0
     ):
         reasons.append("coverage-tests-not-proven")
 
