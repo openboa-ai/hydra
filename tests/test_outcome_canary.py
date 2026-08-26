@@ -142,6 +142,14 @@ class OutcomeCanaryTests(unittest.TestCase):
         )["reasons"]
         self.assertIn("invalid-control-plane-attestation", reasons)
 
+    def test_non_ascii_attestation_signature_is_a_structured_rejection(self) -> None:
+        record = accepted_record()
+        record["attestation"]["signature"] = "é"
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("invalid-control-plane-attestation", reasons)
+
     def test_command_labels_cannot_substitute_for_behavior(self) -> None:
         record = accepted_record()
         for command in record["outcome"]["acceptance_commands"]:
@@ -382,6 +390,29 @@ class OutcomeCanaryTests(unittest.TestCase):
         self.assertEqual(0, attested.returncode, attested.stderr)
         self.assertEqual(0, evaluated.returncode, evaluated.stdout + evaluated.stderr)
         self.assertIn('"accepted": true', evaluated.stdout)
+
+    def test_attester_never_outputs_a_record_larger_than_evaluator_accepts(self) -> None:
+        framing = len(b'{"padding":""}')
+        padding = "x" * (EVALUATOR.MAX_RECORD_BYTES - framing - 10)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "near-limit.json"
+            signed = Path(directory) / "signed.json"
+            key = Path(directory) / "canary.key"
+            source.write_text(
+                json.dumps({"padding": padding}, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            key.write_bytes(ATTESTATION_KEY)
+            key.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ATTEST_SCRIPT), str(source),
+                    "--key-file", str(key), "--output", str(signed),
+                ],
+                text=True, capture_output=True, check=False,
+            )
+        self.assertEqual(2, completed.returncode)
+        self.assertIn("attested record exceeds", completed.stderr)
 
     def test_oversized_record_is_rejected_before_json_parsing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

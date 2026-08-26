@@ -170,6 +170,7 @@ def _attestation_is_valid(record: dict[str, Any], key: bytes | None) -> bool:
         and attestation.get("algorithm") == expected["algorithm"]
         and attestation.get("key_id") == expected["key_id"]
         and isinstance(attestation.get("signature"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", attestation["signature"]) is not None
         and hmac.compare_digest(attestation["signature"], expected["signature"])
     )
 

@@ -56,10 +56,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if "attestation" in payload:
             raise ValueError("input record must not already contain an attestation")
         payload["attestation"] = evaluator.create_attestation(payload, key)
-        args.output.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        rendered = (
+            json.dumps(
+                payload, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                separators=(",", ":"),
+            ) + "\n"
+        ).encode("utf-8")
+        if len(rendered) > evaluator.MAX_RECORD_BYTES:
+            raise ValueError(
+                f"attested record exceeds {evaluator.MAX_RECORD_BYTES} bytes"
+            )
+        args.output.write_bytes(rendered)
     except (
         OSError, OverflowError, RecursionError, UnicodeDecodeError,
         json.JSONDecodeError, RuntimeError, ValueError,

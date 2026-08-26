@@ -85,7 +85,8 @@ it never becomes a pass. Both attestation and evaluation reject non-regular or
 larger-than-1-MiB records before parsing.
 They open inputs without following links, validate the opened descriptor, and
 reject JSON deeper than 64 containers or broader than 10,000 containers before
-decoding the object graph.
+decoding the object graph. The attester emits compact JSON and refuses any final
+signed record that would exceed the evaluator's same 1-MiB limit.
 
 ## Release use
 
