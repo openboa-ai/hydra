@@ -1,0 +1,21 @@
+name: OpenBoa outcome canary
+description: Run the fixed private-repository black-box verifier on an ephemeral GitHub runner.
+inputs:
+  candidate-root:
+    description: Candidate checkout root.
+    required: true
+  entrypoint:
+    description: Relative Python CLI entrypoint.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Run trusted black-box verifier
+      shell: bash
+      env:
+        OPENBOA_CANDIDATE_ROOT: ${{ inputs.candidate-root }}
+        OPENBOA_ENTRYPOINT: ${{ inputs.entrypoint }}
+      run: >-
+        python3 "$GITHUB_ACTION_PATH/../../scripts/run_outcome_canary_blackbox.py"
+        --candidate-root "$OPENBOA_CANDIDATE_ROOT"
+        --entrypoint "$OPENBOA_ENTRYPOINT"

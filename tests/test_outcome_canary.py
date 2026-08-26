@@ -22,6 +22,11 @@ EVALUATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(EVALUATOR)
 ATTESTATION_KEY = b"openboa-private-canary-test-key-32-bytes-minimum"
 EXPECTED_HYDRA_REVISION = "a" * 40
+ACTION_HARNESS_AVAILABLE = (
+    sys.platform == "linux"
+    and os.environ.get("GITHUB_ACTIONS") == "true"
+    and os.geteuid() != 0
+)
 
 
 def resign(record: dict) -> dict:
@@ -35,11 +40,6 @@ def accepted_record() -> dict:
     documented_argv = ["python3", "handoff.py", "events.jsonl", "handoff.md"]
     malformed_argv = ["python3", "handoff.py", "malformed.jsonl", "bad.md"]
     coverage_argv = list(EVALUATOR.COVERAGE_ARGV)
-    blackbox_argv = [
-        "python3", str(EVALUATOR.TRUSTED_BLACKBOX),
-        "--candidate-root", "/private/tmp/canary",
-        "--entrypoint", "handoff.py",
-    ]
     workflow_content = json.dumps({
         "name": "test",
         "on": {"pull_request": {}},
@@ -47,13 +47,17 @@ def accepted_record() -> dict:
         "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": [
             {"uses": "actions/checkout@v4"},
             {"run": shlex.join(coverage_argv)},
+            {
+                "uses": f"openboa-ai/hydra/actions/outcome-canary@{'a' * 40}",
+                "with": {"candidate-root": ".", "entrypoint": "handoff.py"},
+            },
         ]}},
     }, separators=(",", ":"))
     evidence_references = {
         "artifact-command": "command:documented-command",
         "separates-sections": f"artifact-sha256:{'d' * 64}",
         "malformed-input": "command:malformed-input",
-        "tests-coverage": "command:trusted-blackbox",
+        "tests-coverage": "check:test",
         "ci-current-head": "check:test",
         "pr-explanation": f"pull-request:{pr_url}",
     }
@@ -103,7 +107,6 @@ def accepted_record() -> dict:
                         "probe_argv_sha256": EVALUATOR.argv_sha256(documented_argv),
                     },
                     "output_evidence": {"path": "handoff.md", "before": "absent", "after_sha256": "d" * 64},
-                    "test_evidence": None,
                     "head_sha": head, "observations": ["documented-command-produced-markdown"], "status": "passed",
                 },
                 {
@@ -111,7 +114,6 @@ def accepted_record() -> dict:
                     "exit_code": 2, "stdout_sha256": "3" * 64, "stderr_sha256": "4" * 64,
                     "input_evidence": None,
                     "output_evidence": None,
-                    "test_evidence": None,
                     "head_sha": head, "observations": ["nonzero-exit", "no-traceback", "no-output"], "status": "passed",
                 },
                 {
@@ -119,19 +121,7 @@ def accepted_record() -> dict:
                     "exit_code": 0, "stdout_sha256": "5" * 64, "stderr_sha256": "6" * 64,
                     "input_evidence": None,
                     "output_evidence": None,
-                    "test_evidence": None,
                     "head_sha": head, "observations": ["stdlib-unittest-command-completed"], "status": "passed",
-                },
-                {
-                    "id": "trusted-blackbox", "argv": blackbox_argv,
-                    "exit_code": 0, "stdout_sha256": "a" * 64, "stderr_sha256": "f" * 64,
-                    "input_evidence": None, "output_evidence": None,
-                    "test_evidence": {
-                        "framework": "openboa-blackbox-v1", "tests_run": 3,
-                        "failures": 0, "failed_checks": [],
-                        "harness_sha256": hashlib.sha256(EVALUATOR.TRUSTED_BLACKBOX.read_bytes()).hexdigest(),
-                    },
-                    "head_sha": head, "observations": ["success-path", "malformed-input", "unknown-preservation"], "status": "passed",
                 },
             ],
             "checks": [{
@@ -180,6 +170,7 @@ def accepted_record() -> dict:
 
 
 class OutcomeCanaryTests(unittest.TestCase):
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_harness_verifies_child_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -207,7 +198,7 @@ target.write_text("\\n".join(rendered), encoding="utf-8")
             )
             completed = subprocess.run(
                 [
-                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
                     "--candidate-root", str(root), "--entrypoint", "handoff.py",
                 ],
                 text=True, capture_output=True, check=False,
@@ -217,6 +208,7 @@ target.write_text("\\n".join(rendered), encoding="utf-8")
         self.assertEqual(3, result["tests_run"])
         self.assertEqual(0, result["failures"])
 
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_rejects_dropped_outcome_and_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -236,7 +228,7 @@ target.write_text("# Outcome\\n- not-cli-completed-value\\n\\n# Evidence\\n- not
             )
             completed = subprocess.run(
                 [
-                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
                     "--candidate-root", str(root), "--entrypoint", "handoff.py",
                 ],
                 text=True, capture_output=True, check=False,
@@ -246,6 +238,7 @@ target.write_text("# Outcome\\n- not-cli-completed-value\\n\\n# Evidence\\n- not
         self.assertIn("outcome-preservation", failed)
         self.assertIn("evidence-preservation", failed)
 
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_rejects_symlinked_candidate_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -269,7 +262,7 @@ target.symlink_to(Path(__file__).with_name("large.md"))
             )
             completed = subprocess.run(
                 [
-                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
                     "--candidate-root", str(root), "--entrypoint", "handoff.py",
                 ],
                 text=True, capture_output=True, check=False,
@@ -277,6 +270,7 @@ target.symlink_to(Path(__file__).with_name("large.md"))
         self.assertEqual(1, completed.returncode)
         self.assertIn("OSError", json.loads(completed.stdout)["failed_checks"])
 
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_bounds_candidate_console_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -286,7 +280,7 @@ target.symlink_to(Path(__file__).with_name("large.md"))
             )
             completed = subprocess.run(
                 [
-                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
                     "--candidate-root", str(root), "--entrypoint", "handoff.py",
                 ],
                 text=True, capture_output=True, check=False,
@@ -296,6 +290,7 @@ target.symlink_to(Path(__file__).with_name("large.md"))
         self.assertLess(len(completed.stdout), 10_000)
         self.assertGreater(json.loads(completed.stdout)["failures"], 0)
 
+    @unittest.skipUnless(ACTION_HARNESS_AVAILABLE, "requires non-root Linux GitHub Actions")
     def test_trusted_blackbox_prevents_detached_descendants(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -333,7 +328,7 @@ target.write_text("\\n".join([
             )
             completed = subprocess.run(
                 [
-                    sys.executable, str(EVALUATOR.TRUSTED_BLACKBOX),
+                    sys.executable, str(ROOT / "scripts/run_outcome_canary_blackbox.py"),
                     "--candidate-root", str(root), "--entrypoint", "handoff.py",
                 ],
                 text=True, capture_output=True, check=False,
@@ -435,46 +430,6 @@ target.write_text("\\n".join([
         )["reasons"]
         self.assertIn("acceptance-command-not-passed", reasons)
         self.assertIn("check-not-passed-on-current-head", reasons)
-
-    def test_blackbox_evidence_requires_three_observed_checks(self) -> None:
-        record = accepted_record()
-        record["outcome"]["acceptance_commands"][3]["test_evidence"]["tests_run"] = 0
-        resign(record)
-        reasons = EVALUATOR.evaluate(
-            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
-        )["reasons"]
-        self.assertIn("coverage-tests-not-proven", reasons)
-
-    def test_blackbox_evidence_rejects_boolean_failure_count(self) -> None:
-        record = accepted_record()
-        evidence = record["outcome"]["acceptance_commands"][3]["test_evidence"]
-        evidence["failures"] = False
-        resign(record)
-        reasons = EVALUATOR.evaluate(
-            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
-        )["reasons"]
-        self.assertIn("coverage-tests-not-proven", reasons)
-
-    def test_blackbox_evidence_is_bound_to_trusted_harness(self) -> None:
-        record = accepted_record()
-        evidence = record["outcome"]["acceptance_commands"][3]["test_evidence"]
-        evidence["harness_sha256"] = "0" * 64
-        resign(record)
-        reasons = EVALUATOR.evaluate(
-            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
-        )["reasons"]
-        self.assertIn("coverage-tests-not-proven", reasons)
-
-    def test_blackbox_command_must_execute_the_trusted_harness_path(self) -> None:
-        record = accepted_record()
-        record["outcome"]["acceptance_commands"][3]["argv"][1] = (
-            "/tmp/candidate/run_outcome_canary_blackbox.py"
-        )
-        resign(record)
-        reasons = EVALUATOR.evaluate(
-            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
-        )["reasons"]
-        self.assertIn("acceptance-command-not-passed", reasons)
 
     def test_documented_command_must_create_the_inspected_artifact(self) -> None:
         record = accepted_record()
@@ -611,6 +566,23 @@ target.write_text("\\n".join([
         check = record["outcome"]["checks"][0]
         workflow = json.loads(check["workflow_content"])
         workflow["jobs"]["test"]["defaults"] = {"run": {"shell": "true {0}"}}
+        check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
+        check["workflow_sha256"] = hashlib.sha256(
+            check["workflow_content"].encode()
+        ).hexdigest()
+        resign(record)
+        reasons = EVALUATOR.evaluate(
+            record, ATTESTATION_KEY, EXPECTED_HYDRA_REVISION,
+        )["reasons"]
+        self.assertIn("check-not-passed-on-current-head", reasons)
+
+    def test_ci_workflow_requires_exact_candidate_action_ref(self) -> None:
+        record = accepted_record()
+        check = record["outcome"]["checks"][0]
+        workflow = json.loads(check["workflow_content"])
+        workflow["jobs"]["test"]["steps"][2]["uses"] = (
+            f"openboa-ai/hydra/actions/outcome-canary@{'0' * 40}"
+        )
         check["workflow_content"] = json.dumps(workflow, separators=(",", ":"))
         check["workflow_sha256"] = hashlib.sha256(
             check["workflow_content"].encode()

@@ -20,6 +20,7 @@ from typing import Sequence
 
 TIMEOUT_SECONDS = 10
 MAX_CHILD_FILE_BYTES = 65_536
+MAX_CHILD_MEMORY_BYTES = 536_870_912
 MAX_CHILD_FDS = 64
 EXPECTED_SECTIONS = ("Outcome", "Evidence", "Unknowns")
 
@@ -51,6 +52,7 @@ def run_candidate(root: Path, entrypoint: Path, source: Path, output: Path) -> s
 
         hard_cap(resource.RLIMIT_FSIZE, MAX_CHILD_FILE_BYTES)
         hard_cap(resource.RLIMIT_CPU, TIMEOUT_SECONDS)
+        hard_cap(resource.RLIMIT_AS, MAX_CHILD_MEMORY_BYTES)
         hard_cap(resource.RLIMIT_NOFILE, MAX_CHILD_FDS)
         hard_cap(resource.RLIMIT_NPROC, 1)
 
@@ -134,8 +136,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     failures: list[str] = []
     try:
-        if os.geteuid() == 0:
-            raise ValueError("trusted black-box harness refuses root execution")
+        if sys.platform != "linux" or os.geteuid() == 0 or os.environ.get("GITHUB_ACTIONS") != "true":
+            raise ValueError("trusted black-box harness requires a non-root Linux GitHub Actions runner")
         root = args.candidate_root.resolve(strict=True)
         entrypoint = regular_entrypoint(root, args.entrypoint)
         with tempfile.TemporaryDirectory(prefix="openboa-canary-blackbox-") as directory:

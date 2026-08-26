@@ -86,25 +86,28 @@ standard-library unittest before adding the checkout to the discovery path, and
 then runs `tests`. This prevents a candidate `unittest.py` from shadowing the
 standard library. This candidate-authored suite remains a CI signal, not trusted
 release accounting: test modules can still mutate their own in-process runner.
-Extra defaults, shells,
+The third and final step must use
+`openboa-ai/hydra/actions/outcome-canary@<exact-candidate-sha>` with fixed
+candidate root `.` and entrypoint `handoff.py`. Extra defaults, shells,
 conditions, environments, containers, steps, or continue-on-error behavior are
 rejected. A passing check name alone is not evidence that tests ran.
 
-Release acceptance comes from
-`scripts/run_outcome_canary_blackbox.py`. The trusted control plane runs that
-exact Hydra-revision harness outside the candidate process and records its
-digest. The harness invokes the candidate CLI as a child against three fixed
+Release acceptance comes from that exact-revision composite action on the same
+exact-head GitHub Actions check. The action runs
+`scripts/run_outcome_canary_blackbox.py` only on an ephemeral non-root Linux
+GitHub runner with a 512-MiB address-space cap. The harness invokes the candidate CLI as a child against three fixed
 synthetic behaviors: valid sectioned output, malformed-input rejection, and a
 changed unknown value that must change the output. It never imports candidate
 modules, so candidate test code cannot modify its counters. The evaluator
-requires three passing checks, zero failures, an empty failed-check list, and a
-harness digest matching the exact evaluator checkout.
+requires the connector-observed exact-head job containing both the candidate
+coverage command and the exact-revision trusted action to pass.
 Each candidate child receives hard process, CPU, file-size, and file-descriptor
 limits before exec. In particular `RLIMIT_NPROC=1` prevents the
 candidate from creating a detached descendant, and the harness terminates the
 child session on timeout. This is a fixed release-canary verifier, not a
 generic unattended workspace runner.
-The harness refuses to run as root because root bypasses `RLIMIT_NPROC`.
+The harness refuses local, non-Linux, or root execution because those surfaces
+do not provide the required ephemeral runner and resource boundary.
 Candidate Markdown outputs are opened without following links, validated as
 regular files, and read under the same 64-KiB cap. Expected values must appear
 as exact bullet values inside their corresponding sections; substrings do not

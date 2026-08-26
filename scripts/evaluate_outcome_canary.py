@@ -27,7 +27,7 @@ ACCEPTANCE_SOURCES = {
     "artifact-command": "trusted-command",
     "separates-sections": "observed-artifact",
     "malformed-input": "trusted-command",
-    "tests-coverage": "trusted-command",
+    "tests-coverage": "github-connector",
     "ci-current-head": "github-connector",
     "pr-explanation": "github-connector",
 }
@@ -35,7 +35,7 @@ ACCEPTANCE_REFERENCES = {
     "artifact-command": "command:documented-command",
     "separates-sections": "artifact-sha256:",
     "malformed-input": "command:malformed-input",
-    "tests-coverage": "command:trusted-blackbox",
+    "tests-coverage": "check:",
     "ci-current-head": "check:",
     "pr-explanation": "pull-request:",
 }
@@ -43,7 +43,6 @@ COMMAND_OBSERVATIONS = {
     "documented-command": {"documented-command-produced-markdown"},
     "malformed-input": {"nonzero-exit", "no-traceback", "no-output"},
     "coverage": {"stdlib-unittest-command-completed"},
-    "trusted-blackbox": {"success-path", "malformed-input", "unknown-preservation"},
 }
 COVERAGE_PROGRAM = (
     "import sys,unittest; sys.path.insert(0,'.'); "
@@ -51,7 +50,6 @@ COVERAGE_PROGRAM = (
     "raise SystemExit(not result.wasSuccessful())"
 )
 COVERAGE_ARGV = ["python3", "-I", "-c", COVERAGE_PROGRAM]
-TRUSTED_BLACKBOX = Path(__file__).with_name("run_outcome_canary_blackbox.py")
 MAX_ELAPSED_MINUTES = 45
 MAX_REVIEW_FIX_ROUNDS = 3
 MAX_RECORD_BYTES = 1_048_576
@@ -146,23 +144,6 @@ def _command_matches_criterion(command_id: Any, argv: Any, exit_code: Any) -> bo
         )
     if command_id == "coverage":
         return exit_code == 0 and argv == COVERAGE_ARGV
-    if command_id == "trusted-blackbox":
-        try:
-            harness_is_trusted = Path(argv[1]).resolve(strict=True) == TRUSTED_BLACKBOX.resolve(strict=True)
-        except (IndexError, OSError, RuntimeError):
-            harness_is_trusted = False
-        return (
-            exit_code == 0
-            and len(argv) == 6
-            and argv[0] == "python3"
-            and harness_is_trusted
-            and argv[2] == "--candidate-root"
-            and isinstance(argv[3], str)
-            and bool(argv[3])
-            and argv[4] == "--entrypoint"
-            and isinstance(argv[5], str)
-            and bool(argv[5])
-        )
     return False
 
 
@@ -182,7 +163,7 @@ def principal_identity(value: str) -> tuple[str, str] | None:
 
 
 def workflow_runs_coverage(
-    content: str, job_id: Any, coverage_argv: Any,
+    content: str, job_id: Any, coverage_argv: Any, hydra_revision: Any,
 ) -> bool:
     """Validate the canary's minimal JSON-form GitHub Actions workflow."""
     if (
@@ -192,6 +173,8 @@ def workflow_runs_coverage(
         or not coverage_argv
         or any(not isinstance(arg, str) or not arg for arg in coverage_argv)
         or coverage_argv != COVERAGE_ARGV
+        or not isinstance(hydra_revision, str)
+        or SHA_RE.fullmatch(hydra_revision) is None
     ):
         return False
     try:
@@ -209,6 +192,10 @@ def workflow_runs_coverage(
                 "steps": [
                     {"uses": "actions/checkout@v4"},
                     {"run": expected},
+                    {
+                        "uses": f"openboa-ai/hydra/actions/outcome-canary@{hydra_revision}",
+                        "with": {"candidate-root": ".", "entrypoint": "handoff.py"},
+                    },
                 ],
             },
         },
@@ -364,8 +351,7 @@ def evaluate(
             continue
         _exact_keys(item, {
             "id", "argv", "exit_code", "stdout_sha256", "stderr_sha256",
-            "head_sha", "input_evidence", "output_evidence", "test_evidence",
-            "observations", "status",
+            "head_sha", "input_evidence", "output_evidence", "observations", "status",
         }, "acceptance-command", reasons)
         command_id = item.get("id")
         if not isinstance(command_id, str) or not command_id.strip() or command_id in command_ids:
@@ -433,30 +419,11 @@ def evaluate(
         or documented_input.get("probe_argv_sha256") != argv_sha256(documented_argv)
     ):
         reasons.append("documented-command-input-not-bound")
-    for command_id in ("malformed-input", "coverage", "trusted-blackbox"):
+    for command_id in ("malformed-input", "coverage"):
         if commands_by_id.get(command_id, {}).get("input_evidence") is not None:
             reasons.append(f"unexpected-input-evidence:{command_id}")
         if commands_by_id.get(command_id, {}).get("output_evidence") is not None:
             reasons.append(f"unexpected-output-evidence:{command_id}")
-    for command_id in ("documented-command", "malformed-input", "coverage"):
-        if commands_by_id.get(command_id, {}).get("test_evidence") is not None:
-            reasons.append(f"unexpected-test-evidence:{command_id}")
-    coverage_tests = _mapping(commands_by_id.get("trusted-blackbox", {}).get("test_evidence"))
-    if (
-        set(coverage_tests) != {
-            "framework", "tests_run", "failures", "failed_checks", "harness_sha256",
-        }
-        or coverage_tests.get("framework") != "openboa-blackbox-v1"
-        or type(coverage_tests.get("tests_run")) is not int
-        or coverage_tests.get("tests_run") != 3
-        or type(coverage_tests.get("failures")) is not int
-        or coverage_tests.get("failures") != 0
-        or coverage_tests.get("failed_checks") != []
-        or not TRUSTED_BLACKBOX.is_file()
-        or coverage_tests.get("harness_sha256")
-        != hashlib.sha256(TRUSTED_BLACKBOX.read_bytes()).hexdigest()
-    ):
-        reasons.append("coverage-tests-not-proven")
 
     checks = _list(outcome.get("checks"))
     check_names: set[str] = set()
@@ -500,7 +467,9 @@ def evaluate(
             or hashlib.sha256(workflow_content.encode("utf-8")).hexdigest() != workflow_digest
             or item.get("workflow_head_sha") != head
             or item.get("workflow_job") != name
-            or not workflow_runs_coverage(workflow_content, item.get("workflow_job"), coverage_argv)
+            or not workflow_runs_coverage(
+                workflow_content, item.get("workflow_job"), coverage_argv, hydra_revision,
+            )
             or not isinstance(run_url, str)
             or type(run_id) is not int
             or run_id <= 0
