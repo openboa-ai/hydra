@@ -44,7 +44,7 @@ Hydra Eval owns the tasks, runs, verifiers, and reviewed evidence for this loop.
 
 ## Current status
 
-`0.0.0` is a foundation release. It contains the two manifests and the product documents, but no skills, MCP server, hooks, runner, or custom runtime. It is not an installable or supported release, and no evaluation score is claimed.
+`0.0.0` is an unreleased foundation. It contains the two manifests and the product documents, but no skills, MCP server, hooks, runner, or custom runtime. It is not an installable or supported release, and no evaluation score is claimed.
 
 ## Repository map
 
