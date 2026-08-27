@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hydra",
+  "version": "0.0.0",
+  "description": "Agent plugin for AI-native work with capable agents, bounded authority, and verifiable outcomes.",
+  "author": {
+    "name": "OpenBoa AI"
+  },
+  "repository": "https://github.com/openboa-ai/hydra",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent-plugin",
+    "ai-native",
+    "software-development",
+    "agent-collaboration"
+  ]
+}

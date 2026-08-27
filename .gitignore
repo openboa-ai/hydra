@@ -3,3 +3,6 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+jobs/
+results/
+traces/

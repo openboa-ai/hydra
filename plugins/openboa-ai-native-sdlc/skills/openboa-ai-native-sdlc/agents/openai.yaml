@@ -1,7 +1,0 @@
-interface:
-  display_name: "OpenBoa AI-Native SDLC"
-  short_description: "Lead software work with humans and AI agents"
-  brand_color: "#111111"
-  default_prompt: "Use $openboa-ai-native-sdlc to lead this work from outcome through verified learning."
-policy:
-  allow_implicit_invocation: true
