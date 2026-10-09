@@ -363,6 +363,32 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.turn.events = [terminal(turn_id="wrong")]
         result = await self.execute()
         self.assertEqual(result["status"], "transport_unknown")
+        self.assertEqual(self.events, [])
+
+    async def test_foreign_usage_is_not_persisted_as_current_evidence(self):
+        self.turn.events = [event('thread/tokenUsage/updated', threadId='foreign-thread',
+                                  turnId='turn-1', tokenUsage={'total': 10})]
+        result = await self.execute()
+        self.assertEqual(result['status'], 'transport_unknown')
+        self.assertEqual(self.events, [])
+        self.assertIsNone(result['detail']['usage'])
+
+    async def test_missing_or_nested_foreign_identity_is_not_persisted(self):
+        missing_thread = message()
+        del missing_thread.payload['threadId']
+        cases = [
+            missing_thread,
+            event('thread/tokenUsage/updated', threadId='thread-1', tokenUsage={}),
+            event('turn/started', threadId='thread-1', turn={'id': 'foreign-turn'}),
+            # Malformed known SDK notifications can arrive in an UnknownNotification wrapper.
+            event('item/completed', params={'turnId': 'turn-1', 'item': None}),
+        ]
+        for invalid in cases:
+            with self.subTest(method=invalid.method, payload=invalid.payload):
+                self.turn.events = [invalid]
+                result = await self.execute()
+                self.assertEqual(result['status'], 'transport_unknown')
+                self.assertEqual(self.events, [])
 
     async def test_persistence_failure_is_unknown(self):
         def fail(**fields):
@@ -385,6 +411,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.execute()
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(result["detail"]["items"], {})
+        self.assertEqual(self.events, [])
 
     async def test_sdk_missing_is_failed_before_dispatch(self):
         with patch.object(codex, "_new_client", side_effect=codex.AdapterUnavailable):

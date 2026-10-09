@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def main(argv=None):
                 result = getattr(store, method)(args.work_id)
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
-    except (StateError, ValueError, OSError, ImportError) as exc:
+    except (StateError, ValueError, OSError, ImportError, sqlite3.Error) as exc:
         # Do not print provider exceptions, environments or auth payloads.
         print(json.dumps({"error": type(exc).__name__, "message": str(exc) if isinstance(exc, StateError) else "Operation failed; inspect local prerequisites and input"}), file=sys.stderr)
         return 1

@@ -466,15 +466,28 @@ async def execute(
             if kind != "event":
                 raise ConnectionError("Provider stream ended without terminal evidence.")
             payload = {"method": value.method, "params": _json(value.payload)}
+            params = payload["params"]
+            if not isinstance(params, dict):
+                raise ValueError("Provider event parameters must be an object.")
+            if params.get("threadId", thread_id) != thread_id or params.get("turnId", turn_id) != turn_id:
+                raise ValueError("Provider event identity does not match the run.")
+            if value.method in ("item/completed", "thread/tokenUsage/updated"):
+                if params.get("threadId") != thread_id or params.get("turnId") != turn_id:
+                    raise ValueError("Provider work evidence must identify its thread and turn.")
+            if value.method in ("turn/started", "turn/completed"):
+                terminal = params.get("turn", {})
+                if not isinstance(terminal, dict) or terminal.get("id") != turn_id or params.get("threadId") != thread_id:
+                    raise ValueError("Provider terminal identity does not match the run.")
+                if value.method == "turn/completed" and terminal.get("status") not in ("completed", "failed", "interrupted"):
+                    raise ValueError("Provider terminal status is invalid.")
+            # The store binds this callback to the current run. Never give it
+            # foreign or malformed evidence to persist as a current event.
             raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
             event_id = hashlib.sha256(raw.encode()).hexdigest()
             if event_id in seen:
                 continue
             on_event(event_id, payload)
             seen.add(event_id)
-            params = payload["params"]
-            if params.get("threadId", thread_id) != thread_id or params.get("turnId", turn_id) != turn_id:
-                raise ValueError("Provider event identity does not match the run.")
             if value.method == "item/completed":
                 item = params.get("item", {})
                 if isinstance(item, dict) and isinstance(item.get("id"), str):
@@ -482,11 +495,6 @@ async def execute(
             elif value.method == "thread/tokenUsage/updated":
                 detail["usage"] = params.get("tokenUsage")
             elif value.method == "turn/completed":
-                terminal = params.get("turn", {})
-                if terminal.get("id") != turn_id or params.get("threadId") != thread_id:
-                    raise ValueError("Provider terminal identity does not match the run.")
-                if terminal.get("status") not in ("completed", "failed", "interrupted"):
-                    raise ValueError("Provider terminal status is invalid.")
                 detail["terminal"] = terminal
                 detail["result"] = _structured_result(detail["items"])
                 result["status"] = terminal["status"]
