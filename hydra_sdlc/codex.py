@@ -243,6 +243,13 @@ async def execute(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + QUALIFICATION_TIMEOUT_SECONDS
 
+    def persist_event(method, params):
+        payload = {"method": method, "params": params}
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        event_id = hashlib.sha256(raw.encode()).hexdigest()
+        on_event(event_id, payload)
+        return event_id
+
     async def bounded_call(awaitable):
         task = asyncio.create_task(awaitable)
         try:
@@ -323,14 +330,39 @@ async def execute(
         reader = asyncio.create_task(read_stream())
         seen = set()
         interrupt_deadline = None
+
+        async def interrupt():
+            try:
+                await turn.interrupt()
+                state = {"state": "response_acknowledged"}
+            except Exception as exc:
+                state = {"state": "request_failed", "error_type": type(exc).__name__}
+                code = getattr(exc, "code", None)
+                if isinstance(code, int):
+                    state["rpc_code"] = code
+                if code == -32600 and getattr(exc, "message", None) == "no active turn to interrupt":
+                    state["reason_code"] = "no_active_turn"
+            detail["interrupt"].update(state)
+            persist_event("hydra/interruptResponse", {
+                "threadId": thread_id, "turnId": turn_id, **state,
+            })
+
         while True:
             now = loop.time()
             if interrupt_deadline is None and (stop_requested() or now >= deadline):
                 detail["reason"] = "stop_requested" if now < deadline else "deadline_exceeded"
                 interrupt_deadline = now + INTERRUPT_GRACE_SECONDS
-                interrupt_task = asyncio.create_task(turn.interrupt())
+                detail["interrupt"] = {"state": "response_pending", "reason": detail["reason"]}
+                persist_event("hydra/interruptRequested", {
+                    "threadId": thread_id, "turnId": turn_id, "reason": detail["reason"],
+                })
+                interrupt_task = asyncio.create_task(interrupt())
             if interrupt_deadline is not None and now >= interrupt_deadline:
+                detail["reason"] = "interrupt_terminal_timeout"
                 raise TimeoutError
+            if interrupt_task is not None and interrupt_task.done():
+                # A persistence failure in the interrupt audit must not be silently discarded.
+                interrupt_task.result()
             # Only queue.get() is timed out; the SDK stream subscription remains intact.
             timeout = min(POLL_SECONDS, max(0.001, (interrupt_deadline or deadline) - now))
             try:
@@ -374,7 +406,8 @@ async def execute(
         detail["reason"] = "stop_during_start" if attempted_start else "stopped_before_dispatch"
     except Exception as exc:
         result["status"] = "transport_unknown" if attempted_start else "failed"
-        detail["reason"] = "uncertain_execution" if attempted_start else "before_dispatch_failure"
+        if detail["reason"] is None:
+            detail["reason"] = "uncertain_execution" if attempted_start else "before_dispatch_failure"
         detail["error_type"] = type(exc).__name__
     finally:
         for task in (reader, interrupt_task):

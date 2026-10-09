@@ -42,6 +42,7 @@ class FakeTurn:
         self.interrupted = asyncio.Event()
         self.interrupts = 0
         self.streams = 0
+        self.interrupt_error = None
 
     async def stream(self):
         self.streams += 1
@@ -59,6 +60,8 @@ class FakeTurn:
 
     async def interrupt(self):
         self.interrupts += 1
+        if self.interrupt_error:
+            raise self.interrupt_error
         self.interrupted.set()
 
 
@@ -211,6 +214,31 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(self.turn.interrupts, 1)
         self.assertIsNone(result["detail"]["terminal"])
+        self.assertEqual(result["detail"]["reason"], "interrupt_terminal_timeout")
+        self.assertEqual(result["detail"]["interrupt"]["state"], "response_acknowledged")
+
+    async def test_interrupt_failure_is_durable_without_sensitive_message(self):
+        self.turn.silent = True
+        self.turn.interrupt_error = ConnectionError("private response diagnostics")
+        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        result = await self.execute()
+        self.assertEqual(result["status"], "transport_unknown")
+        self.assertEqual(result["detail"]["interrupt"], {
+            "state": "request_failed", "reason": "stop_requested", "error_type": "ConnectionError",
+        })
+        methods = [payload["method"] for _, payload in self.events]
+        self.assertIn("hydra/interruptRequested", methods)
+        self.assertIn("hydra/interruptResponse", methods)
+        self.assertNotIn("private response diagnostics", json.dumps(result))
+
+    async def test_interrupt_acknowledgement_does_not_count_as_terminal(self):
+        self.turn.silent = True
+        self.turn.interrupt_terminal = False
+        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        result = await self.execute()
+        response = next(payload for _, payload in self.events if payload["method"] == "hydra/interruptResponse")
+        self.assertEqual(response["params"]["state"], "response_acknowledged")
+        self.assertEqual(result["status"], "transport_unknown")
 
     async def test_execution_deadline_interrupts_silent_stream(self):
         self.turn.silent = True
