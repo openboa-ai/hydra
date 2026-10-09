@@ -69,5 +69,10 @@ jobs:
       - name: Scan history and source with trusted rules
         run: |
           set -euo pipefail
+          # Git history scans also load the repository's ignore fingerprints.
+          if test -e candidate/.gitleaksignore || test -L candidate/.gitleaksignore; then
+            printf '%s\n' 'Candidate .gitleaksignore is not permitted by the trusted secret scan.' >&2
+            exit 1
+          fi
           gitleaks git --config "$GITLEAKS_TRUSTED_CONFIG" --gitleaks-ignore-path /dev/null --ignore-gitleaks-allow --redact --no-banner candidate
           gitleaks dir --config "$GITLEAKS_TRUSTED_CONFIG" --gitleaks-ignore-path /dev/null --ignore-gitleaks-allow --redact --no-banner candidate
