@@ -4,7 +4,7 @@ Observed 2026-10-09. This record separates local tests, real execution, and deli
 
 ## Deterministic acceptance
 
-`python3 -m unittest discover -s tests -v`: 53 tests passed without Codex installation or model
+`python3 -m unittest discover -s tests -v`: 59 tests passed without Codex installation or model
 access. They cover assignment validation and idempotency, competing claims, repository/global
 reservations, reopen persistence, cancellation priority, stale generations, unknown execution,
 explicit recovery, malformed results, unchanged waits, adapter identity binding, silent streams,
@@ -14,12 +14,24 @@ Independent review identified and the change fixed saved-thread propagation, mal
 handling, incomplete database detection, invalid JSON/integer boundaries, and malformed adapter
 outcomes. Provider completion remains a verification/decision wait, never delivered Work.
 
+PR code review found two additional failure paths. Process inspection now has a five-second
+timeout and occurs before claiming work, so inspection failure cannot strand an undispatched
+run. Capability inspection runs in a separate POSIX process with a 20-second deadline and at
+most two seconds for its own process-group cleanup. This avoids an unbounded SDK request holding
+up the command's default-executor shutdown. A real subprocess regression blocks that request,
+ignores TERM, and verifies bounded command exit and removal of the probe process. Unconfirmed
+cleanup reports unavailable. Both corrections received independent implementation review.
+
 ## Actual local Codex qualification
 
 The pinned SDK/runtime pair 0.162.0 reported existing authenticated ChatGPT access, available
 models and readable usage. A bounded read-only repository inspection completed with persisted
 thread/turn IDs and a structured result. Reopening state preserved verification wait and did not
 dispatch another turn.
+
+The packaged CLI was also invoked from outside the source checkout. With the corrected capability
+process boundary, a real `doctor` call returned known account/model/usage observations in 2.4
+seconds with confirmed cleanup. This inspection did not generate a model turn.
 
 An immediate interrupt after resume exposed a real startup race: the provider explicitly rejected
 the interrupt because the turn was not active yet. The adapter preserved an unknown result and
