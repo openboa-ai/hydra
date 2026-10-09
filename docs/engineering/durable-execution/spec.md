@@ -30,6 +30,17 @@ private DB directory. Existing unknown versions fail closed. Tables hold assignm
 events and a schema version. Use JSON for immutable assignment data plus indexed scheduling and
 ownership fields. State contains no credentials. Views expose outcome and wait explicitly.
 
+Before creating or opening state, validate directory ownership and POSIX mode from root to leaf.
+Trust only root and the current effective UID. Reject group/other-writable ancestors unless they
+are trusted-owner sticky directories whose next component is also trusted-owner. Check aliases
+before following them; only root-owned directory aliases are supported. Validate their targets
+by the same rules and use the resulting canonical path for database operations. Create missing
+directories with mode 0700 only below validated ancestors. The final parent must belong to the
+current effective UID and have no group/other write permission. Reject a database-file symlink;
+new files start at 0600, and rejected existing files retain their content and mode. This guards
+against path replacement permitted by POSIX ownership/mode; it does not claim isolation from
+same-UID/root actors or ACL-granted access.
+
 Public store operations return plain dictionaries and raise a descriptive `StateError`:
 
 - `add_work(assignment)`: validate, insert ready; exact duplicate is idempotent, conflicting ID

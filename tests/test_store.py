@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from hydra_sdlc.store import StateError, StateStore
 
@@ -54,6 +55,67 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(state.path.stat().st_mode & 0o777, 0o600)
         finally:
             state.db.close()
+
+    def test_shared_ancestor_is_rejected_before_creating_state(self):
+        shared = Path(self.temp.name) / 'shared'
+        shared.mkdir(mode=0o777)
+        shared.chmod(0o777)
+        path = shared / 'not-created' / 'state.sqlite3'
+        with self.assertRaisesRegex(StateError, 'other-user replacement'):
+            StateStore(path)
+        self.assertFalse(path.parent.exists())
+
+    def test_sticky_ancestor_allows_a_private_owned_leaf(self):
+        shared = Path(self.temp.name) / 'sticky'
+        shared.mkdir()
+        shared.chmod(0o1777)
+        private = shared / 'private'
+        state = StateStore(private / 'state.sqlite3')
+        try:
+            self.assertEqual(private.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(state.path, (private / 'state.sqlite3').resolve())
+            with self.assertRaisesRegex(StateError, 'Final state directory'):
+                StateStore(shared / 'rejected.sqlite3')
+            self.assertFalse((shared / 'rejected.sqlite3').exists())
+        finally:
+            state.db.close()
+
+    def test_untrusted_alias_does_not_redirect_to_private_target(self):
+        private = Path(self.temp.name) / 'private'
+        private.mkdir(mode=0o700)
+        target = private / 'state.sqlite3'
+        target.write_bytes(b'Preserve the alias target.')
+        target.chmod(0o644)
+        alias = Path(self.temp.name) / 'alias'
+        alias.symlink_to(private, target_is_directory=True)
+        canonical_alias = alias.parent.resolve() / alias.name
+        original = Path.lstat
+
+        def foreign_alias(path):
+            info = original(path)
+            if path == canonical_alias:
+                values = list(info)
+                values[4] = os.geteuid() + 1
+                return os.stat_result(values)
+            return info
+
+        # No privileged chown is needed to exercise the ownership decision.
+        with patch.object(Path, 'lstat', foreign_alias):
+            with self.assertRaisesRegex(StateError, 'trusted owner'):
+                StateStore(alias / target.name)
+        self.assertEqual(target.read_bytes(), b'Preserve the alias target.')
+        self.assertEqual(target.stat().st_mode & 0o777, 0o644)
+
+    def test_file_symlink_preserves_target_content_and_mode(self):
+        target = Path(self.temp.name) / 'unrelated.txt'
+        target.write_bytes(b'Preserve the file target.')
+        target.chmod(0o644)
+        path = Path(self.temp.name) / 'linked.sqlite3'
+        path.symlink_to(target)
+        with self.assertRaisesRegex(StateError, 'symbolic link'):
+            StateStore(path)
+        self.assertEqual(target.read_bytes(), b'Preserve the file target.')
+        self.assertEqual(target.stat().st_mode & 0o777, 0o644)
 
     def test_invalid_types_and_dependencies(self):
         for field, value in [('repository_id', True), ('priority', True), ('dependencies', 'a'),

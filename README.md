@@ -47,3 +47,8 @@ turn becomes a verification/decision wait, never delivered Work. The S1 profile 
 do not use it as a production development scheduler. See the contract for fields and limits.
 Interrupted/unknown runs remain reserved until their actual state is reconciled. There is no
 force-complete, force-recover, publication or installation command.
+
+Authenticated runtime qualification currently covers a native macOS host. Deterministic process
+fixtures also pass on GitHub-hosted Ubuntu. Containers whose PID 1 does not reap orphaned children
+are unsupported: unresolved process-group cleanup retains recovery wait instead of permitting
+another run. A general container runtime or cross-host recovery is not qualified by this slice.

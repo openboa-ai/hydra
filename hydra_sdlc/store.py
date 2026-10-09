@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import stat
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -26,10 +27,68 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _private_state_path(path):
+    """Resolve only protected directory entries; never follow an untrusted alias.
+
+    POSIX owner/mode checks exclude same-UID/root actors and ACL-granted access.
+    A sticky shared ancestor is safe only with trusted-owner children. The final
+    parent is private from other-user writes so the DB entry cannot be replaced
+    between the symlink check, SQLite open and chmod under this threat boundary.
+    """
+    uid = os.geteuid()
+    trusted = {0, uid}
+
+    def directory(info):
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in trusted:
+            raise StateError('State directory must have a trusted owner')
+        if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+            raise StateError('State directory must not permit other-user replacement')
+
+    def walk(target, aliases=0):
+        if aliases > 40:
+            raise StateError('Too many state directory aliases')
+        current = Path(target.anchor)
+        directory(current.lstat())
+        for component in target.parts[1:]:
+            if component == '..':
+                current = current.parent
+                continue
+            child = current / component
+            try:
+                info = child.lstat()
+            except FileNotFoundError:
+                # The containing directory is already validated. If another
+                # creator wins, inspect its entry without following it.
+                try:
+                    child.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
+                info = child.lstat()
+            if info.st_uid not in trusted:
+                raise StateError('State directory entry must have a trusted owner')
+            if stat.S_ISLNK(info.st_mode):
+                if info.st_uid != 0:
+                    raise StateError('Only root-owned state directory aliases are supported')
+                link = Path(os.readlink(child))
+                current = walk(link if link.is_absolute() else current / link, aliases + 1)
+            else:
+                directory(info)
+                current = child
+        return current
+
+    target = Path(path).absolute()
+    if target.name in ('', '.', '..'):
+        raise StateError('State path must name a database file')
+    parent = walk(target.parent)
+    info = parent.lstat()
+    if info.st_uid != uid or info.st_mode & 0o022:
+        raise StateError('Final state directory must be owned by the current user without shared writes')
+    return parent / target.name
+
+
 class StateStore:
     def __init__(self, path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.path = _private_state_path(path)
         if self.path.is_symlink():
             raise StateError('State must not be a symbolic link')
         try:

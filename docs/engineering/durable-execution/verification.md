@@ -4,7 +4,7 @@ Observed 2026-10-09. This record separates local tests, real execution, and deli
 
 ## Deterministic acceptance
 
-`python3 -m unittest discover -s tests -v`: 90 tests passed without Codex installation or model
+`python3 -m unittest discover -s tests -v`: 94 tests passed without Codex installation or model
 access. They cover assignment validation and idempotency, competing claims, repository/global
 reservations, reopen persistence, cancellation priority, stale generations, unknown execution,
 explicit recovery, malformed results, unchanged waits, adapter identity binding, silent streams,
@@ -54,11 +54,22 @@ Identity/event callbacks commit in the parent before an ACK permits dependent pr
 subprocess fixtures cover late or blocked startup, response loss, parent cancellation/EOF,
 oversized or malformed frames, blocked shutdown and SIGTERM-resistant descendants. Independent
 review repeated 59 adapter/boundary tests and ten real subprocess-creation cancellation races;
-the integrated 90-test suite passed locally. Linux execution remains a separate CI observation.
+the integrated 90-test suite passed locally. GitHub-hosted Ubuntu also passed all 90 tests in
+[CI run 37916412136](https://github.com/openboa-ai/hydra/actions/runs/37916412136) at revision
+`4319c59aa5beaa6d8b2d1017204e944775a6255c`.
 
 A stop before the mutation coroutine begins no longer marks an attempted dispatch. A failed
 provider terminal always waits for diagnosis even if its earlier result proposed a human decision.
 Both failure classifications have requirement-linked regressions.
+
+The silent-turn stop test now waits for persisted turn identity rather than assuming interpreter
+startup completes within 150 ms. It covers normal and deliberately delayed startup. State-file
+opening validates the original directory chain's owner/mode before following trusted aliases or
+creating directories, then uses the canonical private parent. Regressions reject a shared
+ancestor and untrusted alias, allow a private leaf below a trusted sticky directory, and preserve
+the content/mode of a rejected file-symlink target. The integrated 94-test suite passed locally.
+Both existing qualification databases reopened with their original verification/recovery waits
+and run counts; this compatibility check made no provider calls or recovery transitions.
 
 ## Actual local Codex qualification
 
@@ -107,6 +118,12 @@ This qualifies local read-only execution and explicit recovery, not unattended c
 automatic GitHub delivery, a background installation, full host isolation, product acceptance or
 multi-project operation. The operator explicitly reconciled unknown attempts using external
 terminal evidence. Automatic recovery dispatch is still a later slice.
+
+Authenticated runtime execution has been qualified on native macOS; deterministic process
+fixtures have also passed on GitHub-hosted Ubuntu. Containers with a PID 1 that does not reap
+orphans are unsupported. A killed orphan can retain a process-group entry there, so cleanup
+remains unconfirmed and ownership stays held for recovery. This preserves the contract's
+cleanup condition; no subreaper, container support, or ignored-zombie exception was added.
 
 Current PR hygiene/Kernel tests, code and security review, native workflow ownership approval,
 merge and post-merge CI are separate external delivery requirements. They are not established by
