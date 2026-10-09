@@ -190,6 +190,14 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_wrong_resumed_identity_is_unknown_and_does_not_run(self):
         result = await self.execute(resume_thread_id="different-thread")
         self.assertEqual(result["status"], "transport_unknown")
+        self.assertEqual(result["detail"]["reason"], "resume_identity_mismatch")
+        self.assertEqual(result["detail"]["identity_mismatch"], {
+            "requested_thread_id": "different-thread", "observed_thread_id": "thread-1",
+        })
+        self.assertIsNone(result["thread_id"])
+        self.assertIsNone(result["turn_id"])
+        self.assertEqual(self.identities, [])
+        self.assertEqual(self.events, [])
         self.assertNotIn("turn-start", self.trace)
 
     async def test_stop_before_dispatch(self):
@@ -221,6 +229,62 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(self.turn.interrupts, 1)
         self.assertEqual(result["detail"]["terminal"]["status"], "interrupted")
+
+    async def test_buffered_burst_yields_to_external_stop_with_bounded_handoff(self):
+        produced = 0
+        maximum_ahead = 0
+        closed = False
+
+        async def burst():
+            nonlocal produced, maximum_ahead, closed
+            try:
+                # Finite so a regression reports failure instead of hanging the suite.
+                for index in range(10_000):
+                    if self.turn.interrupted.is_set():
+                        break
+                    produced += 1
+                    consumed = sum(payload["method"] == "item/agentMessage/delta" for _, payload in self.events)
+                    maximum_ahead = max(maximum_ahead, produced - consumed)
+                    if produced == 3:
+                        asyncio.get_running_loop().call_soon(setattr, self, "stop", True)
+                    yield event("item/agentMessage/delta", threadId="thread-1", turnId="turn-1", delta=str(index))
+                await self.turn.interrupted.wait()
+                yield terminal("interrupted")
+            finally:
+                closed = True
+
+        stream = burst()
+        self.turn.stream = lambda: stream
+        result = await self.execute()
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(self.turn.interrupts, 1)
+        self.assertLess(produced, 20)
+        self.assertLessEqual(maximum_ahead, 3)  # Consumer, handoff, producer only.
+        self.assertTrue(closed)
+
+    async def test_consumer_failure_closes_backpressured_stream(self):
+        closed = False
+
+        async def burst():
+            nonlocal closed
+            try:
+                for index in range(10_000):
+                    yield event("item/agentMessage/delta", threadId="thread-1", turnId="turn-1", delta=str(index))
+            finally:
+                closed = True
+
+        def fail(event_id, payload):
+            raise OSError("disk unavailable")
+
+        # Keep the generator alive: cleanup must close it, not rely on garbage collection.
+        stream = burst()
+        self.turn.stream = lambda: stream
+        result = await self.execute(on_event=fail)
+        self.assertEqual(result["status"], "transport_unknown")
+        self.assertTrue(closed)
+        self.assertFalse(any(
+            task.get_coro().__name__ == "read_stream" for task in asyncio.all_tasks()
+        ))
 
     async def test_interrupt_without_terminal_does_not_claim_stopped(self):
         self.turn.silent = True

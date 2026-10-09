@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import sys
+from contextlib import aclosing
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -361,11 +362,17 @@ async def execute(
             client.thread_resume(resume_thread_id, **options)
             if resume_thread_id else client.thread_start(service_name="hydra", **options)
         )
-        thread_id = thread.id
-        if not isinstance(thread_id, str) or not thread_id:
+        observed_thread_id = thread.id
+        if not isinstance(observed_thread_id, str) or not observed_thread_id:
             raise ValueError("Provider returned no thread identity.")
-        if resume_thread_id and thread_id != resume_thread_id:
+        if resume_thread_id and observed_thread_id != resume_thread_id:
+            detail["reason"] = "resume_identity_mismatch"
+            detail["identity_mismatch"] = {
+                "requested_thread_id": resume_thread_id,
+                "observed_thread_id": observed_thread_id,
+            }
             raise ValueError("Provider returned a different resumed thread.")
+        thread_id = observed_thread_id
         result["thread_id"] = thread_id
         on_identity(thread_id=thread_id)
         # A confirmed empty thread has not run code; stopping here is unambiguous.
@@ -388,15 +395,17 @@ async def execute(
             raise ValueError("Provider returned no turn identity.")
         result["turn_id"] = turn_id
         on_identity(turn_id=turn_id)
-        queue = asyncio.Queue()
+        queue = asyncio.Queue(maxsize=1)
 
         async def read_stream():
             try:
-                async for event in turn.stream():
-                    await queue.put(("event", event))
+                async with aclosing(turn.stream()) as stream:
+                    async for event in stream:
+                        await queue.put(("event", event))
+                        await asyncio.sleep(0)
             except Exception as exc:
                 await queue.put(("error", type(exc).__name__))
-            finally:
+            else:
                 await queue.put(("end", None))
 
         reader = asyncio.create_task(read_stream())
@@ -512,15 +521,20 @@ async def execute(
             detail["reason"] = "uncertain_execution" if attempted_start else "before_dispatch_failure"
         detail["error_type"] = type(exc).__name__
     finally:
-        for task in (reader, interrupt_task):
-            if task is not None:
-                if not task.done():
-                    task.cancel()
-                task.add_done_callback(_consume_exception)
+        cleanup_deadline = loop.time() + INTERRUPT_GRACE_SECONDS
+        background = [task for task in (reader, interrupt_task) if task is not None]
+        for task in background:
+            if not task.done():
+                task.cancel()
+            task.add_done_callback(_consume_exception)
         if client is not None:
             try:
-                await asyncio.wait_for(client.close(), INTERRUPT_GRACE_SECONDS)
+                await asyncio.wait_for(client.close(), max(0.001, cleanup_deadline - loop.time()))
             except Exception:
+                detail["cleanup"] = "unknown"
+        if background:
+            _, pending = await asyncio.wait(background, timeout=max(0, cleanup_deadline - loop.time()))
+            if pending:
                 detail["cleanup"] = "unknown"
     return result
 
