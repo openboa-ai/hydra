@@ -165,6 +165,16 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_work('a')['wait_reason'], 'decision')
         self.assertIsNone(self.store.claim_next())
 
+    def test_failed_provider_terminal_takes_precedence_over_decision_text(self):
+        run = self.claim()
+        detail = {'detail': {'result': {'outcome': 'needs_decision'}}}
+        self.store.finish_run(run['id'], 1, 'failed', detail)
+        self.assertEqual(self.store.get_work('a')['wait_reason'], 'diagnosis')
+        saved = self.store.list_runs()[0]
+        self.assertEqual(saved['status'], 'failed')
+        self.assertEqual(saved['detail'], detail)
+        self.assertIsNone(self.store.claim_next())
+
     def test_local_stop_before_run(self):
         self.store.add_work(self.assignment())
         self.store.pause('a')

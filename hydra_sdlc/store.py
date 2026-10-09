@@ -277,7 +277,7 @@ class StateStore:
             else:
                 nested = detail.get('detail') if isinstance(detail, dict) else None
                 result = nested.get('result') if isinstance(nested, dict) else None
-                decision = isinstance(result, dict) and result.get('outcome') == 'needs_decision'
+                decision = outcome == 'completed' and isinstance(result, dict) and result.get('outcome') == 'needs_decision'
                 status, reason, current, reserved = 'waiting', ('decision' if decision else 'verification' if outcome == 'completed' else 'diagnosis'), None, 1
             self.db.execute('UPDATE work SET status=?,wait_reason=?,current_run_id=?,reserved=?,updated_at=? WHERE work_id=?',
                             (status, reason, current, reserved, now(), work['work_id']))
