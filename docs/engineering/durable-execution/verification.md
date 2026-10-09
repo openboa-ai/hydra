@@ -4,7 +4,7 @@ Observed 2026-10-09. This record separates local tests, real execution, and deli
 
 ## Deterministic acceptance
 
-`python3 -m unittest discover -s tests -v`: 64 tests passed without Codex installation or model
+`python3 -m unittest discover -s tests -v`: 70 tests passed without Codex installation or model
 access. They cover assignment validation and idempotency, competing claims, repository/global
 reservations, reopen persistence, cancellation priority, stale generations, unknown execution,
 explicit recovery, malformed results, unchanged waits, adapter identity binding, silent streams,
@@ -38,6 +38,15 @@ fixtures cover it in the same correction batch.
 The strict identity checks also accepted all 25 relevant events saved from the real qualification
 runs. This was replay validation, without another model call.
 
+Further PR findings are covered by the same bounded contract. Process identity and the run claim
+now commit in one transaction; a rejected identity insert leaves no run or reservation. Existing
+invalid state files retain both bytes and permissions, while new state files are private from
+creation. A mismatched resume response retains requested/observed IDs as recovery detail without
+binding the foreign thread or starting a turn. The stream handoff has one-event capacity and
+cooperative scheduling; cancellation closes a backpressured stream within the shared cleanup
+budget. Independent reviews accepted these corrections. This bounds Hydra's handoff queue, not
+all buffering inside the SDK or provider process.
+
 ## Actual local Codex qualification
 
 The pinned SDK/runtime pair 0.162.0 reported existing authenticated ChatGPT access, available
@@ -63,6 +72,14 @@ a duplicate run. Raw thread identities, local paths and transcripts remain priva
 The observed corrected interrupt succeeded on its first request. The bounded retry branch has
 deterministic coverage; it is not claimed to have fired in that successful live run. Earlier failed
 qualification attempts remain in the audit history rather than being counted as successes.
+
+An additional real resume attempt after the final review corrections was rejected because the
+existing thread already had an active writer. No new thread/turn identity was acknowledged.
+An official read showed the five earlier turns terminal; a separate resume-only diagnostic
+confirmed the writer conflict without starting a turn. Hydra preserved this attempt as recovery
+wait and reopening state dispatched nothing. The writer was not forcibly taken over. This
+additional attempt is blocked qualification evidence, not a successful new resume or a reason
+to erase the earlier successful observations.
 
 ## Limits and external checks
 
