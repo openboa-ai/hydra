@@ -1,7 +1,9 @@
 import asyncio
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from hydra_sdlc.coordinator import coordinator_lock, run_once
 from hydra_sdlc.store import StateError, StateStore
@@ -36,6 +38,32 @@ class CoordinatorTests(unittest.TestCase):
     def test_competing_coordinator_does_not_claim(self):
         with coordinator_lock(self.path), self.assertRaises(StateError):
             asyncio.run(run_once(self.store, self.path, execute=lambda: None))
+        self.assertEqual(self.store.list_runs(), [])
+
+    def test_process_inspection_failure_leaves_work_dispatchable(self):
+        calls = []
+
+        async def runner(*args, **kwargs):
+            calls.append(True)
+            return {'status': 'completed', 'detail': {}}
+
+        for error in (FileNotFoundError('ps'), subprocess.CalledProcessError(1, 'ps'),
+                      subprocess.TimeoutExpired('ps', 5)):
+            with self.subTest(error=type(error).__name__):
+                with patch('hydra_sdlc.coordinator.subprocess.check_output', side_effect=error):
+                    with self.assertRaisesRegex(StateError, 'no work was started'):
+                        asyncio.run(run_once(self.store, self.path, runner))
+                self.assertEqual(self.store.list_runs(), [])
+                self.assertEqual(self.store.get_work('a')['status'], 'ready')
+                self.assertEqual(calls, [])
+        result = asyncio.run(run_once(self.store, self.path, runner))
+        self.assertEqual(result['action'], 'executed')
+        self.assertEqual(len(calls), 1)
+
+    def test_empty_process_inspection_does_not_claim(self):
+        with patch('hydra_sdlc.coordinator.subprocess.check_output', return_value='\n'):
+            with self.assertRaises(StateError):
+                asyncio.run(run_once(self.store, self.path, execute=lambda: None))
         self.assertEqual(self.store.list_runs(), [])
 
     def test_exception_retains_unknown_attempt(self):

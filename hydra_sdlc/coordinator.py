@@ -34,13 +34,24 @@ async def run_once(store: StateStore, state_path: Path, execute=None):
         from .codex import execute
 
     with coordinator_lock(state_path):
+        # Local preparation must succeed before a durable execution claim exists.
+        # A missing/incompatible ps must not strand a task that never dispatched.
+        try:
+            process_start = subprocess.check_output(
+                ["ps", "-p", str(os.getpid()), "-o", "lstart="],
+                text=True, timeout=5,
+            ).strip()
+            if not process_start:
+                raise ValueError("Empty process start observation")
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise StateError("Cannot inspect coordinator process; no work was started") from exc
         run = store.claim_next()
         if run is None:
             return {"action": "idle", "work": store.list_work()}
         run_id, generation = run["id"], run["generation"]
         identity = {
             "pid": os.getpid(),
-            "process_start": subprocess.check_output(["ps", "-p", str(os.getpid()), "-o", "lstart="], text=True).strip(),
+            "process_start": process_start,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "coordinator_run_id": run_id,
         }
