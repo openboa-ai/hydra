@@ -4,7 +4,7 @@ Observed 2026-10-09. This record separates local tests, real execution, and deli
 
 ## Deterministic acceptance
 
-`python3 -m unittest discover -s tests -v`: 70 tests passed without Codex installation or model
+`python3 -m unittest discover -s tests -v`: 90 tests passed without Codex installation or model
 access. They cover assignment validation and idempotency, competing claims, repository/global
 reservations, reopen persistence, cancellation priority, stale generations, unknown execution,
 explicit recovery, malformed results, unchanged waits, adapter identity binding, silent streams,
@@ -47,6 +47,19 @@ cooperative scheduling; cancellation closes a backpressured stream within the sh
 budget. Independent reviews accepted these corrections. This bounds Hydra's handoff queue, not
 all buffering inside the SDK or provider process.
 
+The final lifecycle corrections follow the independently accepted
+[SDK process boundary appendix](sdk-process-boundary.md). The coordinator never owns the SDK's
+blocking worker threads: one disposable process group contains startup, requests and shutdown.
+Identity/event callbacks commit in the parent before an ACK permits dependent progress. Actual
+subprocess fixtures cover late or blocked startup, response loss, parent cancellation/EOF,
+oversized or malformed frames, blocked shutdown and SIGTERM-resistant descendants. Independent
+review repeated 59 adapter/boundary tests and ten real subprocess-creation cancellation races;
+the integrated 90-test suite passed locally. Linux execution remains a separate CI observation.
+
+A stop before the mutation coroutine begins no longer marks an attempted dispatch. A failed
+provider terminal always waits for diagnosis even if its earlier result proposed a human decision.
+Both failure classifications have requirement-linked regressions.
+
 ## Actual local Codex qualification
 
 The pinned SDK/runtime pair 0.162.0 reported existing authenticated ChatGPT access, available
@@ -80,6 +93,13 @@ confirmed the writer conflict without starting a turn. Hydra preserved this atte
 wait and reopening state dispatched nothing. The writer was not forcibly taken over. This
 additional attempt is blocked qualification evidence, not a successful new resume or a reason
 to erase the earlier successful observations.
+
+With the supervised boundary integrated, a separate bounded read-only qualification used the
+pinned real SDK/runtime and a fresh test state/thread. It completed with the worker launch and
+both dispatch intents durably recorded, returned to verification wait, and reopened idle without
+duplicate dispatch. The supervisor confirmed process-group cleanup before returning completion.
+The earlier desktop-writer conflict and its unresolved test record were preserved; the new
+qualification did not take over that thread or claim cross-host recovery.
 
 ## Limits and external checks
 
