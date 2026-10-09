@@ -18,6 +18,7 @@ from typing import Any, Callable
 SDK_VERSION = "0.162.0"
 QUALIFICATION_TIMEOUT_SECONDS = 300.0
 INTERRUPT_GRACE_SECONDS = 10.0
+INTERRUPT_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 POLL_SECONDS = 0.2
 CAPABILITIES_TIMEOUT_SECONDS = 20.0
 
@@ -332,20 +333,45 @@ async def execute(
         interrupt_deadline = None
 
         async def interrupt():
-            try:
-                await turn.interrupt()
-                state = {"state": "response_acknowledged"}
-            except Exception as exc:
-                state = {"state": "request_failed", "error_type": type(exc).__name__}
-                code = getattr(exc, "code", None)
-                if isinstance(code, int):
-                    state["rpc_code"] = code
-                if code == -32600 and getattr(exc, "message", None) == "no active turn to interrupt":
-                    state["reason_code"] = "no_active_turn"
-            detail["interrupt"].update(state)
-            persist_event("hydra/interruptResponse", {
-                "threadId": thread_id, "turnId": turn_id, **state,
-            })
+            # The pinned runtime can reject an exact-turn interrupt before its
+            # newly acknowledged turn becomes active. Only that explicit rejection
+            # permits retrying the same interrupt; uncertain writes never retry.
+            for attempt in range(1, len(INTERRUPT_RETRY_DELAYS_SECONDS) + 2):
+                if loop.time() >= interrupt_deadline:
+                    return
+                detail["interrupt"] = {
+                    "state": "response_pending", "reason": detail["interrupt"]["reason"],
+                    "attempt": attempt,
+                }
+                persist_event("hydra/interruptRequested", {
+                    "threadId": thread_id, "turnId": turn_id, "attempt": attempt,
+                    "reason": detail["interrupt"]["reason"],
+                })
+                retry = False
+                try:
+                    await turn.interrupt()
+                    state = {"state": "response_acknowledged", "attempt": attempt}
+                except Exception as exc:
+                    state = {
+                        "state": "request_failed", "attempt": attempt,
+                        "error_type": type(exc).__name__,
+                    }
+                    code = getattr(exc, "code", None)
+                    if isinstance(code, int):
+                        state["rpc_code"] = code
+                    if code == -32600 and getattr(exc, "message", None) == "no active turn to interrupt":
+                        state["reason_code"] = "no_active_turn"
+                        retry = True
+                detail["interrupt"].update(state)
+                persist_event("hydra/interruptResponse", {
+                    "threadId": thread_id, "turnId": turn_id, **state,
+                })
+                if not retry or attempt > len(INTERRUPT_RETRY_DELAYS_SECONDS):
+                    return
+                delay = INTERRUPT_RETRY_DELAYS_SECONDS[attempt - 1]
+                if loop.time() + delay >= interrupt_deadline:
+                    return
+                await asyncio.sleep(delay)
 
         while True:
             now = loop.time()
@@ -353,9 +379,6 @@ async def execute(
                 detail["reason"] = "stop_requested" if now < deadline else "deadline_exceeded"
                 interrupt_deadline = now + INTERRUPT_GRACE_SECONDS
                 detail["interrupt"] = {"state": "response_pending", "reason": detail["reason"]}
-                persist_event("hydra/interruptRequested", {
-                    "threadId": thread_id, "turnId": turn_id, "reason": detail["reason"],
-                })
                 interrupt_task = asyncio.create_task(interrupt())
             if interrupt_deadline is not None and now >= interrupt_deadline:
                 detail["reason"] = "interrupt_terminal_timeout"

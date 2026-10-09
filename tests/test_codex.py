@@ -31,6 +31,13 @@ def message(outcome="candidate_ready"):
     })
 
 
+class NoActiveTurn(Exception):
+    def __init__(self, message="no active turn to interrupt"):
+        super().__init__(message)
+        self.code = -32600
+        self.message = message
+
+
 class FakeTurn:
     id = "turn-1"
 
@@ -43,6 +50,7 @@ class FakeTurn:
         self.interrupts = 0
         self.streams = 0
         self.interrupt_error = None
+        self.interrupt_errors = []
 
     async def stream(self):
         self.streams += 1
@@ -60,6 +68,10 @@ class FakeTurn:
 
     async def interrupt(self):
         self.interrupts += 1
+        if self.interrupt_errors:
+            error = self.interrupt_errors.pop(0)
+            if error is not None:
+                raise error
         if self.interrupt_error:
             raise self.interrupt_error
         self.interrupted.set()
@@ -225,11 +237,56 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(result["detail"]["interrupt"], {
             "state": "request_failed", "reason": "stop_requested", "error_type": "ConnectionError",
+            "attempt": 1,
         })
+        self.assertEqual(self.turn.interrupts, 1)
         methods = [payload["method"] for _, payload in self.events]
         self.assertIn("hydra/interruptRequested", methods)
         self.assertIn("hydra/interruptResponse", methods)
         self.assertNotIn("private response diagnostics", json.dumps(result))
+
+    async def test_delayed_turn_activation_retries_same_interrupt(self):
+        self.turn.silent = True
+        self.turn.interrupt_errors = [NoActiveTurn(), None]
+        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
+            result = await self.execute()
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(self.turn.interrupts, 2)
+        self.assertEqual(self.trace.count("turn-start"), 1)
+        requests = [payload["params"] for _, payload in self.events if payload["method"] == "hydra/interruptRequested"]
+        self.assertEqual([item["attempt"] for item in requests], [1, 2])
+        self.assertEqual({item["turnId"] for item in requests}, {"turn-1"})
+
+    async def test_no_active_turn_retries_are_bounded_to_two(self):
+        self.turn.silent = True
+        self.turn.interrupt_errors = [NoActiveTurn() for _ in range(4)]
+        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
+            result = await self.execute()
+        self.assertEqual(result["status"], "transport_unknown")
+        self.assertEqual(self.turn.interrupts, 3)
+        self.assertEqual(result["detail"]["interrupt"]["attempt"], 3)
+        self.assertEqual(result["detail"]["interrupt"]["reason_code"], "no_active_turn")
+
+    async def test_terminal_cancels_pending_interrupt_retry(self):
+        self.turn.silent = True
+        self.turn.interrupt_errors = [NoActiveTurn()]
+        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        asyncio.get_running_loop().call_later(0.022, self.turn.interrupted.set)
+        with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.02, 0.03)):
+            result = await self.execute()
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(self.turn.interrupts, 1)
+
+    async def test_different_invalid_request_does_not_retry(self):
+        self.turn.silent = True
+        self.turn.interrupt_error = NoActiveTurn("different active turn")
+        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
+            result = await self.execute()
+        self.assertEqual(result["status"], "transport_unknown")
+        self.assertEqual(self.turn.interrupts, 1)
 
     async def test_interrupt_acknowledgement_does_not_count_as_terminal(self):
         self.turn.silent = True
