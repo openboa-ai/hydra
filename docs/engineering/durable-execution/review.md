@@ -11,3 +11,8 @@ external-effect isolation. No implementation blocker remained.
 
 This is acceptance of S1's bounded execution contract. It is not a completed runtime, autonomous
 delivery, credential isolation, background installation or multi-project operation result.
+
+The subsequent CI section, in spec SHA256
+`8fd46a785576290e4782a2c051566b21bd6d714bd50753baccdee333e2ccf4f8`,
+was independently accepted before adding the isolated, credential-free Kernel tests job.
+This does not replace the native CODEOWNER review for the workflow change.

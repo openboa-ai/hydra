@@ -4,7 +4,7 @@ Hydra is an SDLC software project for developing multiple projects with Codex. I
 
 ## Status
 
-This repository starts from a new foundation. It contains the project purpose, collaboration rules, repository development workflow, and a draft design. An autonomous runtime has not been implemented or installed. No release, working runtime integration, or operational reliability claim is made.
+Hydra has a reviewed control-plane design and an initial bounded execution kernel: a private SQLite work/run record, transactional ownership, a Codex adapter, and CLI status/pause/cancel/resume. The kernel qualifies read-only local Codex execution. Goal planning, development-capable workers, GitHub publishing/review continuation, automatic merge and a background service are not implemented yet. This is not an installed autonomous SDLC or a production release.
 
 ## Intended workflow
 
@@ -19,10 +19,31 @@ Deterministic software should handle routine state checks and execution bookkeep
 
 ## Design
 
-Read [the draft SDLC design](docs/engineering/sdlc-v1/spec.md) and [the collaboration rules](AGENTS.md). Runtime language, persistence, MCP integration, and scheduling are intentionally undecided until the design is reviewed.
+Read [the SDLC architecture](docs/engineering/sdlc-v1/spec.md), [bounded execution contract](docs/engineering/durable-execution/spec.md), and [collaboration rules](AGENTS.md). The implementation uses Python, SQLite and the official local Codex SDK. Predictable coordination runs in code; model calls serve a bounded assignment.
 
 Each managed project owns its product requirements and quality criteria. Hydra must not lower those criteria to report a successful delivery. Public source and examples must remain separate from private project configuration and operating data.
 
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR, verification, review, and delivery workflow. Repository hygiene checks are separate from runtime tests and product acceptance.
+
+Run deterministic checks without an SDK, account or model call:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+For local qualification, use Python 3.11+ and install into an isolated environment:
+
+```sh
+python3 -m pip install '.[codex]'
+hydra doctor --cwd /absolute/path/to/owned/worktree
+hydra --state /private/path/hydra.sqlite3 status
+```
+
+`work add assignment.json` registers an explicit bounded assignment referencing accepted goal
+and spec revisions. `run --once` executes at most one eligible assignment. A provider-completed
+turn becomes a verification/decision wait, never delivered Work. The S1 profile is read-only;
+do not use it as a production development scheduler. See the contract for fields and limits.
+Interrupted/unknown runs remain reserved until their actual state is reconciled. There is no
+force-complete, force-recover, publication or installation command.
