@@ -10,6 +10,9 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
+import os
+import signal
+import sys
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -135,9 +138,8 @@ def _safe_usage(data: dict) -> dict:
     }
 
 
-async def capabilities(cwd: str) -> dict:
-    """Inspect the local runtime without a model turn or authentication mutation."""
-    output = {
+def _unknown_capabilities() -> dict:
+    return {
         "available": False,
         "sdk_version": None,
         "runtime_version": None,
@@ -145,54 +147,123 @@ async def capabilities(cwd: str) -> dict:
         "models": {"status": "unknown", "ids": []},
         "usage": {"status": "unknown", "data": None},
     }
+
+
+def _capabilities_probe(cwd: str) -> dict:
+    """Synchronous SDK probe, called only in a supervised disposable process."""
+    output = _unknown_capabilities()
     client = None
     try:
         _validate_cwd(cwd)
         output.update(_versions())
         client, usage_model = _new_capability_client(cwd)
-
-        def inspect():
-            client.start()
-            client.initialize()
-            observed = {"available": True}
-            for field, call in (
-                ("account", lambda: client.account_read({"refreshToken": False})),
-                ("models", client.model_list),
-                ("usage", lambda: client.request(
-                    "account/rateLimits/read", None, response_model=usage_model,
-                )),
-            ):
-                try:
-                    data = _json(call())
-                    if field == "account":
-                        account = data.get("account") or {}
-                        observed[field] = {
-                            "status": "known", "type": account.get("type"),
-                            "authenticated": bool(account),
-                            "requires_auth": data.get("requiresOpenaiAuth"),
-                        }
-                    elif field == "models":
-                        observed[field] = {"status": "known", "ids": [
-                            model["id"] for model in data.get("data", [])
-                            if isinstance(model, dict) and isinstance(model.get("id"), str)
-                        ]}
-                    else:
-                        observed[field] = {"status": "known", "data": _safe_usage(data)}
-                except Exception as exc:
-                    observed[field] = {"status": "unknown", "error_type": type(exc).__name__}
-            return observed
-
-        output.update(await asyncio.wait_for(
-            asyncio.to_thread(inspect), CAPABILITIES_TIMEOUT_SECONDS,
-        ))
+        client.start()
+        client.initialize()
+        output["available"] = True
+        for field, call in (
+            ("account", lambda: client.account_read({"refreshToken": False})),
+            ("models", client.model_list),
+            ("usage", lambda: client.request(
+                "account/rateLimits/read", None, response_model=usage_model,
+            )),
+        ):
+            try:
+                data = _json(call())
+                if field == "account":
+                    account = data.get("account") or {}
+                    output[field] = {
+                        "status": "known", "type": account.get("type"),
+                        "authenticated": bool(account),
+                        "requires_auth": data.get("requiresOpenaiAuth"),
+                    }
+                elif field == "models":
+                    output[field] = {"status": "known", "ids": [
+                        model["id"] for model in data.get("data", [])
+                        if isinstance(model, dict) and isinstance(model.get("id"), str)
+                    ]}
+                else:
+                    output[field] = {"status": "known", "data": _safe_usage(data)}
+            except Exception as exc:
+                output[field] = {"status": "unknown", "error_type": type(exc).__name__}
     except Exception as exc:
         output["error_type"] = type(exc).__name__
     finally:
         if client is not None:
             try:
-                await asyncio.wait_for(asyncio.to_thread(client.close), INTERRUPT_GRACE_SECONDS)
+                client.close()
             except Exception:
+                output["available"] = False
                 output["cleanup"] = "unknown"
+    return output
+
+
+def _capability_command(cwd: str) -> list[str]:
+    # Use this exact installed adapter, even when the operator's cwd differs.
+    return [sys.executable, "-I", str(Path(__file__).resolve()), "--capability-worker", cwd]
+
+
+async def _stop_capability_probe(process) -> bool:
+    # This group belongs exclusively to the probe and its SDK runtime. Closing
+    # the parent alone could leave a blocked app-server child behind.
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        deadline = asyncio.get_running_loop().time() + 1.0
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                try:
+                    await asyncio.wait_for(
+                        process.communicate(), max(0.001, deadline - asyncio.get_running_loop().time()),
+                    )
+                    return True
+                except TimeoutError:
+                    break
+            except OSError:
+                return False
+            await asyncio.sleep(0.02)
+    return False
+
+
+async def capabilities(cwd: str) -> dict:
+    """Inspect without generation; even a blocked SDK request has a hard boundary.
+
+    The SDK's synchronous request wait has no deadline. Running it through
+    asyncio.to_thread would let its thread hold up asyncio.run shutdown after
+    timeout, so the entire probe (including close) lives in a killable process.
+    """
+    output = _unknown_capabilities()
+    process = None
+    try:
+        _validate_cwd(cwd)
+        if os.name != "posix":
+            raise AdapterUnavailable("This qualification host requires POSIX process groups.")
+        process = await asyncio.create_subprocess_exec(
+            *_capability_command(cwd), stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        )
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(), CAPABILITIES_TIMEOUT_SECONDS,
+        )
+        if process.returncode != 0:
+            raise AdapterUnavailable("Capability probe did not complete successfully.")
+        observed = json.loads(stdout)
+        if not isinstance(observed, dict) or not isinstance(observed.get("available"), bool):
+            raise ValueError("Capability probe returned an invalid result.")
+        output.update({
+            key: observed[key] for key in (*output, "error_type", "cleanup") if key in observed
+        })
+    except Exception as exc:
+        output["error_type"] = type(exc).__name__
+    finally:
+        if process is not None and not await _stop_capability_probe(process):
+            output["available"] = False
+            output["cleanup"] = "unknown"
     return output
 
 
@@ -449,3 +520,9 @@ async def execute(
 def _consume_exception(task: asyncio.Task) -> None:
     if not task.cancelled():
         task.exception()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3 or sys.argv[1] != "--capability-worker":
+        raise SystemExit(2)
+    print(json.dumps(_capabilities_probe(sys.argv[2])))

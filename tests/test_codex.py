@@ -1,9 +1,13 @@
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from hydra_sdlc import codex
 
@@ -427,7 +431,7 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(
             codex, "_versions", return_value={"sdk_version": "0.162.0", "runtime_version": "0.162.0"}
         ), patch.object(codex, "_new_capability_client", return_value=(FakeCapabilityClient(), object)):
-            result = await codex.capabilities(directory)
+            result = codex._capabilities_probe(directory)
         serialized = json.dumps(result)
         for secret in ("private@example.test", "private-account", "secret-token", "hidden"):
             self.assertNotIn(secret, serialized)
@@ -440,10 +444,91 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(
             codex, "_versions", side_effect=codex.AdapterUnavailable("private diagnostic")
         ):
-            result = await codex.capabilities(directory)
+            result = codex._capabilities_probe(directory)
         self.assertFalse(result["available"])
         self.assertEqual(result["error_type"], "AdapterUnavailable")
         self.assertNotIn("private diagnostic", json.dumps(result))
+
+    async def test_completed_probe_is_collected_without_extra_output(self):
+        payload = codex._unknown_capabilities()
+        payload.update(available=True, private_diagnostic="must not propagate")
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            codex, "_capability_command", return_value=[
+                sys.executable, "-I", "-c", "print(" + repr(json.dumps(payload)) + ")",
+            ],
+        ):
+            result = await codex.capabilities(directory)
+        self.assertTrue(result["available"])
+        self.assertNotIn("cleanup", result)
+        self.assertNotIn("must not propagate", json.dumps(result))
+
+    async def test_unconfirmed_cleanup_is_unavailable(self):
+        payload = codex._unknown_capabilities()
+        payload["available"] = True
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            codex, "_capability_command", return_value=[
+                sys.executable, "-I", "-c", "print(" + repr(json.dumps(payload)) + ")",
+            ],
+        ), patch.object(codex, "_stop_capability_probe", new=AsyncMock(return_value=False)):
+            result = await codex.capabilities(directory)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["cleanup"], "unknown")
+
+    def test_blocked_sdk_request_does_not_hold_asyncio_run_shutdown(self):
+        # A separate outer interpreter tests the actual asyncio.run shutdown:
+        # cancelling a to_thread wrapper alone would still hang this process.
+        adapter = str(Path(codex.__file__).resolve())
+        load = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('adapter', sys.argv[1])\n"
+            "codex = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(codex)\n"
+        )
+        worker = load + """
+import json, os, signal, threading
+from pathlib import Path
+class BlockedClient:
+    def start(self): pass
+    def initialize(self): pass
+    def account_read(self, params):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        Path(sys.argv[3]).write_text(str(os.getpid()))
+        threading.Event().wait()
+    def model_list(self): return {}
+    def request(self, *args, **kwargs): return {}
+    def close(self): pass
+codex._versions = lambda: {'sdk_version': '0.162.0', 'runtime_version': '0.162.0'}
+codex._new_capability_client = lambda cwd: (BlockedClient(), object)
+print(json.dumps(codex._capabilities_probe(sys.argv[2])))
+"""
+        outer = load + """
+import asyncio, json
+codex.CAPABILITIES_TIMEOUT_SECONDS = 0.5
+codex._capability_command = lambda cwd: [
+    sys.executable, '-I', '-c', sys.argv[4], sys.argv[1], cwd, sys.argv[3]
+]
+print(json.dumps(asyncio.run(codex.capabilities(sys.argv[2]))))
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "probe.pid"
+            completed = subprocess.run(
+                [sys.executable, "-I", "-c", outer, adapter, directory, str(pid_file), worker],
+                capture_output=True, text=True, timeout=6, check=True,
+            )
+            result = json.loads(completed.stdout)
+            self.assertEqual(result["error_type"], "TimeoutError")
+            self.assertFalse(result["available"])
+            self.assertNotIn("cleanup", result)
+            pid = int(pid_file.read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_worker_uses_exact_source_and_isolated_interpreter(self):
+        command = codex._capability_command("/unrelated/candidate")
+        self.assertEqual(command, [
+            sys.executable, "-I", str(Path(codex.__file__).resolve()),
+            "--capability-worker", "/unrelated/candidate",
+        ])
 
     def test_native_capability_requests_never_approve(self):
         self.assertEqual(codex._reject_approval("item/commandExecution/requestApproval", {}), {"decision": "decline"})
