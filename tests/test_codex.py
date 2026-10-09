@@ -163,7 +163,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.trace.append("persist-event")
 
     async def execute(self, **kwargs):
-        return await codex.execute(
+        return await codex._execute_in_process(
             self.assignment, kwargs.pop("on_identity", self.identity),
             kwargs.pop("on_event", self.save_event), lambda: self.stop, **kwargs,
         )
@@ -205,6 +205,23 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.execute()
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(self.trace, [])
+
+    async def test_stop_after_account_before_mutation_coroutine_is_not_dispatched(self):
+        async def account(refresh_token=False):
+            self.stop = True
+            return {"account": {"type": "chatgpt"}}
+        self.client.account = account
+        grants = []
+        result = await self.execute(on_dispatch=lambda operation: grants.append(operation) or True)
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(result["detail"]["reason"], "stopped_before_dispatch")
+        self.assertEqual(grants, [])
+        self.assertNotIn("thread-start", self.trace)
+
+    async def test_refused_dispatch_never_invokes_sdk_mutation(self):
+        result = await self.execute(on_dispatch=lambda operation: False)
+        self.assertEqual(result["status"], "interrupted")
+        self.assertNotIn("thread-start", self.trace)
 
     async def test_stop_after_thread_identity_does_not_start_turn(self):
         def save(**fields):

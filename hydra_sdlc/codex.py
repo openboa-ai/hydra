@@ -304,10 +304,29 @@ async def execute(
     stop_requested: Callable[[], bool],
     resume_thread_id: str | None = None,
 ) -> dict:
+    """Supervise the optional SDK without owning its threads in this process."""
+    from .execution_boundary import execute_worker
+
+    return await execute_worker(
+        assignment, on_identity, on_event, stop_requested, resume_thread_id,
+        worker_source=str(Path(__file__).resolve()), timeout=QUALIFICATION_TIMEOUT_SECONDS,
+        grace=INTERRUPT_GRACE_SECONDS, poll=POLL_SECONDS,
+    )
+
+
+async def _execute_in_process(
+    assignment: dict,
+    on_identity: Callable,
+    on_event: Callable,
+    stop_requested: Callable[[], bool],
+    resume_thread_id: str | None = None,
+    on_dispatch: Callable[[str], bool] | None = None,
+) -> dict:
     """Run one qualification turn; uncertain starts always require reconciliation."""
     thread_id = None
     turn_id = None
     attempted_start = False
+    attempted_turn = False
     client = None
     reader = None
     interrupt_task = None
@@ -341,6 +360,14 @@ async def execute(
                 # Do not permit a stalled SDK call to extend the qualification indefinitely.
                 task.add_done_callback(_consume_exception)
 
+    async def dispatch(operation, call):
+        nonlocal attempted_start, attempted_turn
+        if stop_requested() or (on_dispatch is not None and not on_dispatch(operation)):
+            raise _Stopped
+        attempted_start = True
+        attempted_turn = attempted_turn or operation == "turn/start"
+        return await call()
+
     try:
         _validate_cwd(assignment["cwd"])
         if not isinstance(assignment.get("task"), str) or not assignment["task"].strip():
@@ -356,12 +383,12 @@ async def execute(
         account = _json(await bounded_call(client.account(refresh_token=False)))
         if (account.get("account") or {}).get("type") != "chatgpt":
             raise AdapterUnavailable("Qualification requires the existing ChatGPT account.")
-        attempted_start = True
         options = {"cwd": assignment["cwd"], "sandbox": sandbox, "approval_mode": approval_mode}
-        thread = await bounded_call(
-            client.thread_resume(resume_thread_id, **options)
-            if resume_thread_id else client.thread_start(service_name="hydra", **options)
-        )
+        thread = await bounded_call(dispatch(
+            "thread/resume" if resume_thread_id else "thread/start",
+            lambda: client.thread_resume(resume_thread_id, **options)
+            if resume_thread_id else client.thread_start(service_name="hydra", **options),
+        ))
         observed_thread_id = thread.id
         if not isinstance(observed_thread_id, str) or not observed_thread_id:
             raise ValueError("Provider returned no thread identity.")
@@ -387,9 +414,9 @@ async def execute(
             "If the assignment requires an excluded action, return needs_decision. "
             "Return the requested structured result.\n\n" + assignment["task"]
         )
-        turn = await bounded_call(thread.turn(
+        turn = await bounded_call(dispatch("turn/start", lambda: thread.turn(
             prompt, sandbox=sandbox, approval_mode=approval_mode, output_schema=RESULT_SCHEMA,
-        ))
+        )))
         turn_id = turn.id
         if not isinstance(turn_id, str) or not turn_id:
             raise ValueError("Provider returned no turn identity.")
@@ -513,8 +540,12 @@ async def execute(
                         detail["reason"] = "invalid_structured_result"
                 return result
     except _Stopped:
-        result["status"] = "transport_unknown" if attempted_start else "interrupted"
-        detail["reason"] = "stop_during_start" if attempted_start else "stopped_before_dispatch"
+        if thread_id is not None and not attempted_turn:
+            result["status"] = "interrupted"
+            detail["reason"] = "stopped_before_turn"
+        else:
+            result["status"] = "transport_unknown" if attempted_start else "interrupted"
+            detail["reason"] = "stop_during_start" if attempted_start else "stopped_before_dispatch"
     except Exception as exc:
         result["status"] = "transport_unknown" if attempted_start else "failed"
         if detail["reason"] is None:
@@ -545,6 +576,11 @@ def _consume_exception(task: asyncio.Task) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3 or sys.argv[1] != "--capability-worker":
+    if len(sys.argv) == 3 and sys.argv[1] == "--capability-worker":
+        print(json.dumps(_capabilities_probe(sys.argv[2])))
+    elif len(sys.argv) == 2 and sys.argv[1] == "--execution-worker":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from execution_boundary import worker_main
+        worker_main(_execute_in_process)
+    else:
         raise SystemExit(2)
-    print(json.dumps(_capabilities_probe(sys.argv[2])))
