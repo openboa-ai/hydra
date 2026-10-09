@@ -63,7 +63,7 @@ async def execute(assignment, identity, event, stopped, resume_thread_id=None, o
     if mode == 'result_loss':
         os._exit(8)
     status = 'completed'
-    if mode == 'silent':
+    if mode in ('silent', 'slow_silent'):
         while not stopped():
             await asyncio.sleep(.005)
         status = 'interrupted'
@@ -76,6 +76,8 @@ async def execute(assignment, identity, event, stopped, resume_thread_id=None, o
     return {'status': status, 'thread_id': 'thread-1', 'turn_id': 'turn-1',
             'detail': {'reason': 'provider_terminal', 'terminal': terminal,
                        'result': {'outcome': 'candidate_ready'}}}
+if mode == 'slow_silent':
+    time.sleep(.25)
 b.worker_main(execute)
 '''
 
@@ -195,12 +197,22 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.observations(), [])
 
     async def test_silent_turn_observes_parent_stop(self):
-        self.mode = 'silent'
-        asyncio.get_running_loop().call_later(.15, setattr, self, 'stop', True)
-        result = await self.run_worker()
-        self.assertEqual(result['status'], 'interrupted')
-        self.assertEqual(result['detail']['terminal']['status'], 'interrupted')
-        self.assert_pids_gone()
+        def stop_after_turn_identity(**values):
+            self.identity(**values)
+            if 'turn_id' in values:
+                self.stop = True
+
+        for mode in ('silent', 'slow_silent'):
+            with self.subTest(mode=mode):
+                self.mode = mode
+                self.stop = False
+                self.identities.clear()
+                self.marker.unlink(missing_ok=True)
+                result = await self.run_worker(identity=stop_after_turn_identity)
+                self.assertEqual(self.identities, [{'thread_id': 'thread-1'}, {'turn_id': 'turn-1'}])
+                self.assertEqual(result['status'], 'interrupted')
+                self.assertEqual(result['detail']['terminal']['status'], 'interrupted')
+                self.assert_pids_gone()
 
     async def test_repeated_parent_cancellation_still_cleans_worker(self):
         self.mode = 'startup_hang'
