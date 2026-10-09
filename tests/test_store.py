@@ -1,4 +1,5 @@
 import concurrent.futures
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -32,6 +33,27 @@ class StoreTests(unittest.TestCase):
         for key, value in [('repository_id', 2), ('goal_revision', 'other'), ('task', 'changed')]:
             with self.assertRaises(StateError):
                 self.store.add_work({**a, key: value})
+
+    def test_rejected_state_file_preserves_unrelated_permissions(self):
+        path = Path(self.temp.name) / 'unrelated.txt'
+        content = b'Not a database; preserve this file.'
+        path.write_bytes(content)
+        path.chmod(0o644)
+        with self.assertRaises(StateError):
+            StateStore(path)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(path.read_bytes(), content)
+
+    def test_new_state_is_created_private_even_with_permissive_umask(self):
+        previous = os.umask(0)
+        try:
+            state = StateStore(Path(self.temp.name) / 'private.sqlite3')
+        finally:
+            os.umask(previous)
+        try:
+            self.assertEqual(state.path.stat().st_mode & 0o777, 0o600)
+        finally:
+            state.db.close()
 
     def test_invalid_types_and_dependencies(self):
         for field, value in [('repository_id', True), ('priority', True), ('dependencies', 'a'),

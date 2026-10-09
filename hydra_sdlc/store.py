@@ -32,13 +32,20 @@ class StateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.path.is_symlink():
             raise StateError('State must not be a symbolic link')
-        self.db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
-        os.chmod(self.path, 0o600)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute('PRAGMA foreign_keys=ON')
-        self.db.execute('PRAGMA busy_timeout=5000')
         try:
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(fd)
+        self.db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+        try:
+            self.db.row_factory = sqlite3.Row
+            self.db.execute('PRAGMA foreign_keys=ON')
+            self.db.execute('PRAGMA busy_timeout=5000')
             self._initialize()
+            # Reject unrelated/invalid existing files before changing their mode.
+            os.chmod(self.path, 0o600)
         except BaseException:
             self.db.close()
             raise
@@ -181,7 +188,9 @@ class StateStore:
             self._audit(a['work_id'], 'registered', {'input_digest': digest})
         return self.get_work(a['work_id'])
 
-    def claim_next(self):
+    def claim_next(self, *, process_identity=None):
+        if process_identity is not None and not isinstance(process_identity, dict):
+            raise StateError('Process identity must be an object')
         with self.tx():
             count = self.db.execute('SELECT count(*) FROM work WHERE reserved=1').fetchone()[0]
             for row in self.db.execute("SELECT * FROM work WHERE status='ready' ORDER BY priority DESC,created_at,work_id").fetchall():
@@ -194,8 +203,11 @@ class StateStore:
                 if other or work['current_run_id']:
                     continue
                 run_id, generation, stamp = str(uuid.uuid4()), work['generation'] + 1, now()
-                self.db.execute('''INSERT INTO runs(id,work_id,generation,status,created_at,updated_at)
-                                   VALUES(?,?,?,'running',?,?)''', (run_id, work['work_id'], generation, stamp, stamp))
+                identity = None if process_identity is None else encoded({
+                    **process_identity, 'coordinator_run_id': run_id,
+                })
+                self.db.execute('''INSERT INTO runs(id,work_id,generation,status,process_identity,created_at,updated_at)
+                                   VALUES(?,?,?,'running',?,?,?)''', (run_id, work['work_id'], generation, identity, stamp, stamp))
                 self.db.execute("""UPDATE work SET status='running',reserved=1,current_run_id=?,generation=?,
                                    wait_reason=NULL,stop_requested=NULL,updated_at=? WHERE work_id=?""",
                                 (run_id, generation, stamp, work['work_id']))

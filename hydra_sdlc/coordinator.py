@@ -45,17 +45,15 @@ async def run_once(store: StateStore, state_path: Path, execute=None):
                 raise ValueError("Empty process start observation")
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             raise StateError("Cannot inspect coordinator process; no work was started") from exc
-        run = store.claim_next()
-        if run is None:
-            return {"action": "idle", "work": store.list_work()}
-        run_id, generation = run["id"], run["generation"]
         identity = {
             "pid": os.getpid(),
             "process_start": process_start,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
-            "coordinator_run_id": run_id,
         }
-        store.set_identity(run_id, generation, process_identity=identity)
+        run = store.claim_next(process_identity=identity)
+        if run is None:
+            return {"action": "idle", "work": store.list_work()}
+        run_id, generation = run["id"], run["generation"]
 
         def on_identity(**values):
             store.set_identity(run_id, generation, **values)

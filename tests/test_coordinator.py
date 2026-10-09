@@ -76,6 +76,30 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIsNotNone(result['work']['current_run_id'])
         self.assertEqual(self.store.list_runs()[0]['thread_id'], 'observed')
 
+    def test_process_identity_is_already_durable_before_dispatch(self):
+        async def runner(*args, **kwargs):
+            run = self.store.list_runs()[0]
+            self.assertEqual(run['process_identity']['coordinator_run_id'], run['id'])
+            self.assertGreater(run['process_identity']['pid'], 0)
+            self.assertTrue(run['process_identity']['process_start'])
+            return {'status': 'completed', 'detail': {}}
+
+        # An unrelated writer can no longer fail a separate post-claim identity write.
+        with patch.object(self.store, 'set_identity', side_effect=StateError('writer busy')):
+            self.assertEqual(asyncio.run(run_once(self.store, self.path, runner))['action'], 'executed')
+
+    def test_identity_insert_failure_rolls_back_claim_before_dispatch(self):
+        self.store.db.execute('''CREATE TRIGGER fail_identity BEFORE INSERT ON runs
+                                WHEN NEW.process_identity IS NOT NULL BEGIN
+                                SELECT RAISE(ABORT, 'identity unavailable'); END''')
+        with self.assertRaises(StateError):
+            asyncio.run(run_once(self.store, self.path, execute=lambda: None))
+        self.assertEqual(self.store.list_runs(), [])
+        work = self.store.get_work('a')
+        self.assertEqual(work['status'], 'ready')
+        self.assertEqual(work['reserved'], 0)
+        self.assertIsNone(work['current_run_id'])
+
     def test_malformed_adapter_outcome_retains_unknown(self):
         async def broken(*args, **kwargs):
             return None
