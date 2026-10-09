@@ -1,0 +1,73 @@
+name: Repository CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out immutable shared tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: openboa-ai/.github
+          ref: 700dacb7d811a080cb49bb4a81a9d5f437d697fd
+          persist-credentials: false
+          path: controls
+      - name: Check out PR merge candidate or main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - name: Check whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CHECKED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse HEAD)" = "$CHECKED_SHA"
+          if test "$BASE_SHA" = 0000000000000000000000000000000000000000; then
+            BASE_SHA="$(git -C candidate hash-object -t tree /dev/null)"
+          fi
+          mkdir -p candidate/.git/info
+          printf '%s\n' '* diff whitespace=blank-at-eol,blank-at-eof,space-before-tab' > candidate/.git/info/attributes
+          git -C candidate diff --check --no-ext-diff --no-textconv "$BASE_SHA" "$CHECKED_SHA" --
+      - name: Install pinned workflow linter
+        run: bash controls/.github/scripts/install-actionlint.sh
+      - name: Validate workflows as data
+        run: |
+          set -euo pipefail
+          for directory in candidate candidate/.github candidate/.github/workflows; do
+            test -d "$directory" && test ! -L "$directory" || exit 1
+          done
+          shopt -s nullglob dotglob
+          workflows=(candidate/.github/workflows/*.yml candidate/.github/workflows/*.yaml)
+          test "${#workflows[@]}" -gt 0
+          lint_config="$(mktemp "${RUNNER_TEMP:?}/actionlint.XXXXXX")"
+          printf '{}\n' > "$lint_config"
+          for workflow in "${workflows[@]}"; do
+            test -f "$workflow" && test ! -L "$workflow" || exit 1
+            actionlint -config-file "$lint_config" -shellcheck= -pyflakes= - < "$workflow"
+          done
+      - name: Install pinned secret scanner
+        run: bash controls/.github/scripts/install-gitleaks.sh
+      - name: Scan history and source with trusted rules
+        run: |
+          set -euo pipefail
+          gitleaks git --config "$GITLEAKS_TRUSTED_CONFIG" --gitleaks-ignore-path /dev/null --ignore-gitleaks-allow --redact --no-banner candidate
+          gitleaks dir --config "$GITLEAKS_TRUSTED_CONFIG" --gitleaks-ignore-path /dev/null --ignore-gitleaks-allow --redact --no-banner candidate
