@@ -1,0 +1,8 @@
+# Human review is scoped to repository policy and verification controls.
+/.github/ @SonSangjoon
+/AGENTS.md @SonSangjoon
+/SECURITY.md @SonSangjoon
+/CODEOWNERS @SonSangjoon
+/docs/CODEOWNERS @SonSangjoon
+/.gitleaks* @SonSangjoon
+/.githooks/ @SonSangjoon

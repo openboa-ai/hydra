@@ -4,7 +4,7 @@ Hydra is an SDLC software project for developing multiple projects with Codex. I
 
 ## Status
 
-This repository starts from a new foundation. It currently contains the project purpose, collaboration rules, and a draft design. An autonomous runtime has not been implemented or installed. No release, working integration, or operational reliability claim is made.
+This repository starts from a new foundation. It contains the project purpose, collaboration rules, repository development workflow, and a draft design. An autonomous runtime has not been implemented or installed. No release, working runtime integration, or operational reliability claim is made.
 
 ## Intended workflow
 
@@ -22,3 +22,7 @@ Deterministic software should handle routine state checks and execution bookkeep
 Read [the draft SDLC design](docs/engineering/sdlc-v1/spec.md) and [the collaboration rules](AGENTS.md). Runtime language, persistence, MCP integration, and scheduling are intentionally undecided until the design is reviewed.
 
 Each managed project owns its product requirements and quality criteria. Hydra must not lower those criteria to report a successful delivery. Public source and examples must remain separate from private project configuration and operating data.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR, verification, review, and delivery workflow. Repository hygiene checks are separate from runtime tests and product acceptance.
