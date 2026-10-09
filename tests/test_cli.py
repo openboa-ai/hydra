@@ -22,7 +22,9 @@ class CliFailureTests(unittest.TestCase):
 
     def test_directory_is_not_a_database(self):
         with tempfile.TemporaryDirectory() as directory:
-            self.check_structured_database_error(Path(directory), 'OperationalError')
+            path = Path(directory) / 'not-a-database'
+            path.mkdir()
+            self.check_structured_database_error(path, 'OperationalError')
 
     def test_unreadable_database_format_returns_structured_error(self):
         with tempfile.TemporaryDirectory() as directory:
