@@ -40,6 +40,20 @@ class StoreTests(unittest.TestCase):
             with self.subTest(field=field, value=value), self.assertRaises(StateError):
                 self.store.add_work({**self.assignment(), field: value})
 
+    def test_exact_duplicate_survives_unavailable_workspace(self):
+        cwd = Path(self.temp.name) / 'workspace'
+        cwd.mkdir()
+        assignment = {**self.assignment(), 'cwd': str(cwd)}
+        original = self.store.add_work(assignment)
+        cwd.rmdir()
+        self.assertEqual(self.store.add_work(assignment), original)
+        with self.assertRaisesRegex(StateError, 'different immutable input'):
+            self.store.add_work({**assignment, 'task': 'Changed scope'})
+        with self.assertRaisesRegex(StateError, 'existing absolute directory'):
+            self.store.add_work({**assignment, 'work_id': 'new'})
+        self.assertEqual(len(self.store.list_work()), 1)
+        self.assertEqual(self.store.list_runs(), [])
+
     def test_racing_claims_one_run(self):
         self.store.add_work(self.assignment())
 

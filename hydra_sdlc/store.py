@@ -148,8 +148,8 @@ class StateStore:
         if type(a.get('repository_id')) is not int or not 0 < a['repository_id'] < 2**63:
             raise StateError('Repository identity must be a positive integer')
         cwd = Path(a['cwd'])
-        if not cwd.is_absolute() or not cwd.is_dir():
-            raise StateError('Cwd must be an existing absolute directory')
+        if not cwd.is_absolute():
+            raise StateError('Cwd must be an absolute directory')
         a.setdefault('role', 'implement')
         a.setdefault('priority', 0)
         a.setdefault('dependencies', [])
@@ -168,6 +168,10 @@ class StateStore:
                 if existing[0] != digest:
                     raise StateError('Work ID already has different immutable input')
                 return self.get_work(a['work_id'])
+            # A retry observes the existing record even if its disk disappeared.
+            # Only a new registration depends on the current filesystem state.
+            if not cwd.is_dir():
+                raise StateError('Cwd must be an existing absolute directory')
             for dependency in deps:
                 self.get_work(dependency)  # Existing immutable nodes cannot introduce a cycle.
             stamp = now()

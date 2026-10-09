@@ -4,7 +4,7 @@ Observed 2026-10-09. This record separates local tests, real execution, and deli
 
 ## Deterministic acceptance
 
-`python3 -m unittest discover -s tests -v`: 59 tests passed without Codex installation or model
+`python3 -m unittest discover -s tests -v`: 60 tests passed without Codex installation or model
 access. They cover assignment validation and idempotency, competing claims, repository/global
 reservations, reopen persistence, cancellation priority, stale generations, unknown execution,
 explicit recovery, malformed results, unchanged waits, adapter identity binding, silent streams,
@@ -21,6 +21,11 @@ most two seconds for its own process-group cleanup. This avoids an unbounded SDK
 up the command's default-executor shutdown. A real subprocess regression blocks that request,
 ignores TERM, and verifies bounded command exit and removal of the probe process. Unconfirmed
 cleanup reports unavailable. Both corrections received independent implementation review.
+
+A subsequent review identified duplicate registration after a workspace became unavailable.
+Exact stored-input matches now return the existing Work before checking the live directory;
+new or conflicting registrations remain rejected. The regression removes the workspace and
+checks all three outcomes without dispatching or adding a second record.
 
 ## Actual local Codex qualification
 
