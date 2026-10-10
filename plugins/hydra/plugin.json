@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hydra",
+  "version": "0.2.0",
+  "description": "Operate delegated GitHub development through native Codex tasks",
+  "extensions": {
+    "com.openai": {
+      "interface": {"displayName": "Hydra", "shortDescription": "GitHub-backed development and delivery"}
+    }
+  }
+}

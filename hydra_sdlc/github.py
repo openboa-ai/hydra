@@ -246,17 +246,18 @@ class GitHub:
         allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "published_head", "pr_number", "pending_action", "pending_thread", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "pending_review_kind", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
         if metadata:
             allowed |= {"repository_id", "issue_number", "version"}
+        allowed |= {"execution_mode", "native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest", "native_origin_phase", "native_resume_phase", "native_correction"}
         if not isinstance(record, dict) or set(record) - allowed:
             raise GitHubError("Unknown progress fields")
         for key, value in record.items():
             if value is None:
                 continue
-            if key == "intake_digest":
+            if key in {"intake_digest", "native_spec_digest"}:
                 if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
                     raise GitHubError("Invalid delegated intake digest")
-            elif key in {"contract_revision", "spec_revision", "head", "published_head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head"}:
+            elif key in {"contract_revision", "spec_revision", "head", "published_head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head", "native_head"}:
                 _sha(value)
-            elif key == "attempt_id":
+            elif key in {"attempt_id", "native_step"}:
                 try:
                     if str(uuid.UUID(value)) != value:
                         raise ValueError()
@@ -268,6 +269,15 @@ class GitHub:
             elif key == "pending_review_kind":
                 if value not in {"code", "security"}:
                     raise GitHubError("Invalid pending review kind")
+            elif key == "execution_mode":
+                if value != "native":
+                    raise GitHubError("Invalid execution mode")
+            elif key == "native_phase":
+                if value not in {"design", "spec_review", "implementation", "correction", "change_review"}:
+                    raise GitHubError("Invalid native phase")
+            elif key == "native_outcome":
+                if value not in {"candidate_ready", "failed", "needs_decision", "stopped"}:
+                    raise GitHubError("Invalid native outcome")
             elif key in {"action_attempt", "delivery_attempt", "correction_attempt"}:
                 if type(value) is not int or not 1 <= value <= 3:
                     raise GitHubError("Service action retry bound exceeded")
@@ -291,7 +301,7 @@ class GitHub:
                 raise GitHubError("Existing progress identity mismatch")
             self._validate_record(old, metadata=True)
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
-                     and metadata.get("wait_reason") is None)
+                     and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
         if not completed:
             self._active(repo, n, True)
         if previous and old == metadata:

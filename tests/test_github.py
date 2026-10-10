@@ -136,6 +136,16 @@ class GitHubTests(unittest.TestCase):
                      ('POST', f'/repos/{REPO}/issues/4/comments'): {'id': 77},
                      ('PATCH', f'/repos/{REPO}/issues/comments/77'): {'id': 77}})
 
+    def test_completed_delivery_with_pending_resources_keeps_recovery_label(self):
+        record = {'phase': 'completed', 'pending_action': None, 'wait_reason': None,
+                  'next_action': 'resource_cleanup', 'head': HEAD}
+        metadata = {**record, 'version': 1, 'repository_id': 123, 'issue_number': 4}
+        comment = {'id': 77, 'user': IDENTITY,
+                   'body': '<!-- hydra-progress:v1 ' + json.dumps(metadata) + ' -->'}
+        fake = self.progress_fake([comment])
+        GitHub(transport=fake).record(REPO, 4, record)
+        self.assertFalse(any(method == 'DELETE' for method, _, _ in fake.calls))
+
     def test_foreign_progress_ignored_and_own_duplicate_is_conflict(self):
         body = '<!-- hydra-progress:v1 {"version":1,"repository_id":123,"issue_number":4,"phase":"waiting"} -->'
         foreign = {'id': 1, 'user': {'login': 'openboa', 'id': 999}, 'body': body}
