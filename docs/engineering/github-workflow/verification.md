@@ -4,7 +4,7 @@ The new workflow removes runtime SQLite/store imports. Old qualification files a
 outside dispatch and are not adopted. The same CLI provides foreground operation
 and eventual login-service execution.
 
-On 2026-10-10 all 234 deterministic tests passed with the pinned SDK installed
+On 2026-10-10 all 259 deterministic tests passed with the pinned SDK installed
 (Python 3.14.2, SDK/CLI 0.162.0), with no skipped tests. `git diff --check` passed.
 
 Deterministic evidence covers supervised SDK startup/interrupt/unknown outcomes,
@@ -32,6 +32,16 @@ verification group and no later command. Spec readiness requires the exact regul
 tracked artifact, with bounded no-follow reads rejecting special files and aliases.
 Actually merged policy changes finish under the original delivery contract, including
 missing/invalid new policy, while current Issue controls still stop completion.
+Integration and initial design retain the needed first implementation after
+interruption, usage waits or decisions; completed implementation is not repeated
+by integration. Five exhausted delivery effects preserve exact pending requests
+through authorized replan, and thread resolution reconciles its own target before
+starting another thread's retry budget. Historical service actions do not bypass
+required correction/implementation turns. Final fresh merge checks PR ownership.
+Out-of-scope owned checkpoints enter bounded restoration or diagnosis. Failure to
+create or record a design/implementation/correction checkpoint preserves the active
+write and its stopped-work recovery route. The independently authored regressions
+failed on the prior code and pass on the corrected candidate.
 
 On 2026-10-10 the pinned Codex SDK/CLI 0.162.0 completed a fresh authenticated
 workspace-write turn on the development Mac. The temporary Git workspace contained
@@ -39,10 +49,10 @@ the exact requested file afterward, with two identity observations, 105 lifecycl
 events and no unknown cleanup. The turn used deny-all approval and the configured
 ChatGPT subscription. This proves an actual bounded edit, not autonomous delivery.
 
-Remote kernel/hygiene CI passed at `90fe583a2e39f2a02abfa2c108fe0340f13d9d2f`.
+Remote kernel/hygiene CI passed at `2e883a037ec4319c34c59a38e898b109b486b80f`.
 Both coupled provider reviews completed at that head; the code review identified
-additional integration, verification cancellation, spec artifact and merged-policy
-completion findings. They are covered by the revised candidate and regressions. A prior-head
+additional pending-work, final ownership, retry diagnosis, scoped checkpoint and
+write-completion ordering findings. They are covered by the revised candidate and regressions. A prior-head
 review or CI result does not qualify this revision; check its current remote facts
 before merge.
 

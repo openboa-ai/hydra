@@ -59,3 +59,19 @@ instead of the base validated for that publication. Actual process/Git regressio
 cover verification termination, fetched-versus-integrated bases and bounded regular
 tracked spec reads. This acceptance does not replace final-head provider reviews,
 native protected-change approval or actual two-project delivery/recovery evidence.
+
+The pending-work/actionable-recovery appendix was independently accepted before
+dependent edits at spec SHA-256
+`d2737ab2c72a67fb2180e5b3fa5283c87404acb92159ae8499299dfdaff982c3`.
+Independent source review accepted final runner SHA-256
+`c07d06847167532ce6000ea32f5224f07741539d799f7c5c95287e4b6a84f4c7`
+and GitHub adapter SHA-256
+`6560f6251ffa4f0cad096b5e2be894fac031708304cdd71e8b46b76424b91eea`.
+The review corrected historical delivery actions misclassifying replans and
+lost thread-resolution responses transferring exhausted retries to another thread.
+It also reproduced interrupted integration and design skipping first implementation;
+the corrected dispatch records the pending continuation before the worker starts.
+Independent regressions reproduce the prior failures and pass on the correction.
+Checkpoint failures retain active write ownership until confirmed stopped recovery;
+scope correction stays within the original boundary. Source acceptance remains
+separate from current-head provider reviews, native approval and actual delivery.
