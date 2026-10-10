@@ -288,3 +288,81 @@ waits; pending merge with new findings/behind state and later actual merge read-
 regular oversized specs; non-finite parsed CLI timeouts; and terminal code/security
 review rows without findings. Preserve the original scope, credentials and native
 protection. These are recovery clarifications, not a new operating component.
+
+## Review corrections: delivery evidence and interrupted allocation
+
+Interrupted design is subject to the same exact-spec boundary as successful design.
+Preserve an owned local checkpoint, but publish it only when its diff contains exactly
+the delegated spec and that artifact passes regular-file/size validation. A broader
+global implementation allowlist cannot authorize design output. Retain design
+continuation and diagnose an invalid checkpoint without exposing non-spec edits.
+Interrupted implementation/correction keeps its existing scoped checkpoint behavior.
+
+Required CI that has actually reached any terminal non-success state enters bounded
+recovery or actionable CI diagnosis, including cancelled, startup_failure,
+action_required, stale, neutral/skipped and unknown terminal conclusions. Select the
+current formally bound workflow/event/head/job/Actions source, rather than an
+unrelated check with a matching display name. Queued/in-progress work still waits.
+Ordinary code remains responsible for observation; a terminal state cannot silently
+become an endless model-free gate wait or a false success.
+
+Every final delivery guard re-reads dependencies from the unchanged bound intake.
+A reopened dependency stops the effect before its intent/request, including a
+change while recording intent. Preserve existing uncertainty; do not rewrite goals
+or infer a closed dependency from its old observation. Other ready work may continue.
+
+An owned exact-head PR merged outside this service is an observed merge, not proof
+of completed delivery. Before Issue completion, verify the preserved candidate
+head/repository/path scope, formal PR CI, authenticated Code/Security evidence,
+resolved threads and required head-specific human review for protected changes,
+then the actual merge commit's bound main checks. Missing/stale/unknown evidence
+keeps completion waiting; no model, PR, publication or repeat merge can repair an
+already merged candidate in place.
+
+Separate candidate evidence from permission to perform a new merge. Historical
+completion does not require an open/mergeable PR, automatic merge enabled, or the
+old PR base to equal current main. Preserve formal PR number, head, repository,
+event, job and source identities. A historical server association must have a valid
+base identity; it need not equal main after that merge. The pinned reusable producer
+requirement for an empty target-event association remains unchanged. Never forge an
+open PR or passing observation to reuse an effect gate. Changed-policy completion
+uses the already specified pinned-contract route and never adopts new policy.
+
+Builtin standalone workspace allocation clones into an unpredictable sibling
+staging directory. Validate its actual standalone checkout, branch, origin/push
+origin, cleanliness, expected remote and ownership tuple keyed to the final
+canonical path, then atomically promote without replacing any existing destination.
+Plain replace-capable rename is insufficient. Unsupported exclusive promotion or
+a destination race holds safely. A pre-promotion interruption leaves final absent
+and preserves abandoned staging; restart may allocate fresh staging without
+adopting or deleting the abandoned/foreign path. After promotion, ordinary ownership
+validation can resume. Never move lifecycle-provider linked worktrees behind their
+resource registry; those retain the existing provider recovery contract.
+
+Linux SDK/capability cleanup must actually reap adopted descendants before reporting
+clean. Use one short-lived per-execution subreaper helper outside the SDK process
+group; it is part of the existing process boundary, not a scheduler or service.
+Verify subreaper setup before SDK dispatch. A separate bounded private channel
+records the actual owned SDK PID/group and cleanup receipt; it is not inherited by
+the SDK worker. Preserve existing SDK assignment/event/identity/ACK/policy framing.
+The parent targets only the recorded live-owned group, the helper survives to reap,
+and clean requires the receipt, helper reaping and group absence. No process-wide
+coordinator adoption, unscoped child wait or zombie-ignore shortcut is permitted.
+Execution and capability probes share this supervision; macOS keeps its direct path.
+Setup/receipt/helper failure or any live residual remains unknown and blocks dispatch.
+Coordinator death without a receipt remains unresolved; a broken PID 1 may retain
+the helper itself as a zombie, so this does not promise its absence after parent loss.
+No new credentials, environment provisioning or process outside owned execution is
+authorized by this correction.
+
+Acceptance adds exact-spec versus extra-path interrupted design, all formal terminal
+CI outcomes with active/unrelated controls, reopened dependency at final intent,
+externally merged missing/stale candidate evidence versus normal historical
+completion, allocation interruption before/after promotion and foreign destination
+races, plus real Linux timeout/cancellation/resistant-descendant/EOF and capability
+cleanup. Local macOS evidence and actual Linux CI remain distinct; unavailable Linux
+execution is not a passing result. Native protection and actual product delivery
+requirements remain unchanged.
+
+OS semantics: [Linux subreapers](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html)
+and [exclusive rename](https://man7.org/linux/man-pages/man2/rename.2.html).
