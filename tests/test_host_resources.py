@@ -1,5 +1,6 @@
 """Resource hints cannot establish delivery; cleanup needs confirmed completion."""
 import copy
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -103,8 +104,66 @@ class CompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(issues, [])
         self.assertEqual(self.ws.retired, [])
 
+    async def test_provider_timeout_preserves_delivery_and_retries_without_redelivery(self):
+        class Provider:
+            def completed(self, *args):
+                raise error
+        real = RealWorkspace(self.ws.path, lifecycle_provider=Provider())
+        self.ws.completed = real.completed
+        error = subprocess.TimeoutExpired(["fixture"], 1)
+        result = await self.deliver()
+        self.assertEqual(result["resource_wait_reason"], "resource_cleanup_pending")
+        self.assertEqual(self.gh.note["phase"], "completed")
+        self.assertEqual(self.gh.work["state"], "closed")
+        effects = [w for w in self.gh.writes if w[0] in {"push", "pr", "merge", "close"}]
+        error = subprocess.CalledProcessError(1, ["fixture"])
+        result = await self.runner.step("example/product", 4)
+        self.assertEqual(result["resource_wait_reason"], "resource_cleanup_pending")
+        real.lifecycle_provider.completed = lambda *args: {"retired": True}
+        self.assertEqual((await self.runner.step("example/product", 4))["resource_status"], "retired")
+        self.assertEqual([w for w in self.gh.writes if w[0] in {"push", "pr", "merge", "close"}], effects)
+
 
 class ProviderTests(unittest.TestCase):
+    def test_operational_provider_errors_wait_and_control_exceptions_propagate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            class Provider:
+                def issue_numbers(self, repo):
+                    raise error
+                def completed(self, *args):
+                    raise error
+            ws = RealWorkspace(Path(directory), lifecycle_provider=Provider())
+            for error in (subprocess.TimeoutExpired(["fixture"], 1),
+                          subprocess.CalledProcessError(1, ["fixture"]), KeyError("registry")):
+                with self.subTest(error=type(error).__name__):
+                    with self.assertRaisesRegex(WorkspaceWait, "resource_discovery_unavailable"):
+                        ws.issue_numbers("example/product")
+                    with self.assertRaisesRegex(WorkspaceWait, "resource_cleanup_pending"):
+                        ws.completed("example/product", 4, "hydra/issue-4", HEAD, 7, MERGE)
+            for error in (WorkspaceWait("unknown_process", uncertain=True), KeyboardInterrupt(), SystemExit()):
+                for operation in (lambda: ws.issue_numbers("example/product"),
+                                  lambda: ws.completed("example/product", 4, "hydra/issue-4", HEAD, 7, MERGE)):
+                    with self.subTest(error=type(error).__name__), self.assertRaises(type(error)) as raised:
+                        operation()
+                    self.assertIs(raised.exception, error)
+
+    def test_unavailable_provider_does_not_abort_other_repository_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            seen = []
+            class Provider:
+                def issue_numbers(self, repo):
+                    seen.append(repo)
+                    if repo == "example/unavailable":
+                        raise subprocess.TimeoutExpired(["fixture"], 1)
+                    return []
+            gh = GitHub()
+            gh.issues = lambda repo: []
+            ws = RealWorkspace(Path(directory), lifecycle_provider=Provider())
+            runner = Runner(gh, ws, host_alias="test", execute=None, capabilities=None)
+            self.assertEqual(runner.status(["example/unavailable", "example/healthy"]),
+                             [{"repository": "example/unavailable", "wait_reason": "resource_discovery_unavailable"}])
+            self.assertEqual(seen, ["example/unavailable", "example/healthy"])
+
     def test_completed_path_is_derived_and_receipt_is_required(self):
         with tempfile.TemporaryDirectory() as directory:
             calls = []

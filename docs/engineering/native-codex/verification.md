@@ -19,6 +19,17 @@ fresh review after restart, write-summary disposal, and durable cleanup discover
 even when a provider no longer lists the retired resource. Remote checks must
 still run against the correction commit before delivery.
 
+The second PR correction batch passed 32 native tests and 10 host-resource tests.
+Its full macOS/Python 3.14.2 regression ran 653 tests in 230.450 seconds,
+with 25 environment-specific skips. Actual Git fixtures advance and delete the
+remote Issue ref during implementation: ordinary candidate results are refused;
+explicit stop commits the owned edits and releases admission; fresh begin still
+waits without dispatch, push or PR creation. Design, implementation and correction
+results feed the returned current identity directly into the next native tool.
+Provider timeout/failure fixtures preserve delivered progress, reconcile other
+repositories and retry cleanup without redelivery. Final-head CI and coupled
+external reviews remain required after publication of this batch.
+
 The native fixtures exercise spec review, implementation, verification, independent
 change review, existing exact-head merge/post-merge gates, interrupted result and
 callback recovery, stale results, policy/intake/head changes and shared host admission.

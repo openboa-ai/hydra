@@ -221,7 +221,12 @@ class Workspace:
         discover = getattr(self.lifecycle_provider, "issue_numbers", None)
         if discover is None:
             return []
-        numbers = discover(repo)
+        try:
+            numbers = discover(repo)
+        except WorkspaceWait:
+            raise
+        except Exception as exc:
+            raise WorkspaceWait("resource_discovery_unavailable") from exc
         if not isinstance(numbers, list) or any(type(n) is not int or n <= 0 for n in numbers):
             raise WorkspaceWait("resource_discovery_unavailable")
         return sorted(set(numbers))
@@ -241,7 +246,12 @@ class Workspace:
             raise WorkspaceWait("workspace_missing_or_aliased")
         # The provider owns registry/read-back validation, including already
         # retired resources. Never recreate a missing checkout for cleanup.
-        result = complete(repo, number, branch, head, pr_number, merge_sha, path)
+        try:
+            result = complete(repo, number, branch, head, pr_number, merge_sha, path)
+        except WorkspaceWait:
+            raise
+        except Exception as exc:
+            raise WorkspaceWait("resource_cleanup_pending") from exc
         if not isinstance(result, dict) or result.get("retired") is not True:
             raise WorkspaceWait("resource_completion_unconfirmed")
         return True

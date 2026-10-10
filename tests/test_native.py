@@ -79,6 +79,33 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         await self.result(implementation, summary="private implementation summary")
         self.assertEqual(self.controller.runner.summaries, {})
 
+    async def test_initial_design_returns_identity_for_direct_continuation(self):
+        from test_spec_reacceptance import SnapshotWorkspace
+        self.ws = SnapshotWorkspace(Path(self.tmp.name) / "owned", self.gh, [])
+        spec = self.ws.path / "docs/engineering/task/spec.md"
+        spec.unlink()
+        self.ws.snapshots[BASE] = self.ws.contents()
+        self.controller = self.new_controller()
+        design = await self.controller.begin(self.url)
+        self.assertEqual(design["phase"], "design")
+        spec.write_text("Requirement-linked specification with lifecycle acceptance")
+        progress = await self.result(design)
+        self.assertEqual(progress["action"], "continue")
+        self.assertNotEqual(progress["head"], design["head"])
+        review = await self.controller.advance(self.url, progress["attempt_id"], progress["head"], progress["contract_revision"])
+        self.assertEqual(review["phase"], "spec_review")
+
+    async def test_implementation_correction_returns_current_continuation_identity(self):
+        implementation = await self.result(await self.controller.begin(self.url))
+        self.ws.dirty = True
+        correction = await self.result(implementation, "failed")
+        self.assertEqual(correction["phase"], "correction")
+        self.ws.dirty = True
+        progress = await self.result(correction)
+        self.assertNotEqual(progress["head"], correction["head"])
+        review = await self.controller.advance(self.url, progress["attempt_id"], progress["head"], progress["contract_revision"])
+        self.assertEqual(review["phase"], "change_review")
+
     async def test_native_development_review_merge_and_observation(self):
         review = await self.controller.begin(self.url)
         self.assertEqual(review["phase"], "spec_review")
@@ -87,8 +114,8 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.ws.dirty = True
         progress = await self.result(implementation)
         self.assertEqual(progress["action"], "continue")
-        record = self.gh.progress("example/product", 4)
-        review = await self.controller.advance(self.url, record["attempt_id"], record["head"], record["contract_revision"])
+        self.assertNotEqual(progress["head"], implementation["head"])
+        review = await self.controller.advance(self.url, progress["attempt_id"], progress["head"], progress["contract_revision"])
         self.assertEqual(review["phase"], "change_review")
         self.assertIn("verification", review["prompt"])
         await self.result(review)
@@ -367,7 +394,8 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         spec.write_text(spec.read_text() + "\nAdd explicit failure acceptance.")
         result = await self.result(correction)
         self.assertEqual(result["action"], "continue")
-        review = await self.controller.begin(self.url)
+        self.assertNotEqual(result["head"], correction["head"])
+        review = await self.controller.advance(self.url, result["attempt_id"], result["head"], result["contract_revision"])
         self.assertEqual(review["phase"], "spec_review")
         implementation = await self.result(review)
         self.assertEqual(implementation["phase"], "implementation")
@@ -394,6 +422,66 @@ class NativeSchemaTests(unittest.TestCase):
 
 
 class ActualGitNativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_stop_preserves_local_edits_and_refuses_changed_or_deleted_remote(self):
+        from hydra_sdlc.workspace import WorkspaceWait
+        from test_workspace import LocalWorkspace, git
+        for deleted in (False, True):
+            with self.subTest(deleted=deleted), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                remote, seed = root / "origin.git", root / "seed"
+                remote.mkdir(); seed.mkdir()
+                git(remote, "init", "--bare", "--initial-branch=main")
+                git(seed, "init", "--initial-branch=main")
+                spec = seed / "docs/engineering/task/spec.md"
+                spec.parent.mkdir(parents=True)
+                spec.write_text("Requirement and acceptance for stopped Git fixture.\n")
+                git(seed, "add", ".")
+                git(seed, "commit", "-m", "accepted fixture base")
+                base = git(seed, "rev-parse", "HEAD")
+                git(seed, "remote", "add", "origin", str(remote))
+                git(seed, "push", "origin", "main")
+                gh = GitHub()
+                gh.cfg["revision"] = base
+                workspace = LocalWorkspace(root / "owned", remote)
+                make = lambda: NativeController(gh, workspace, repos=["example/product"],
+                    host_alias="test", lock_path=root / "host.lock")
+                url = "https://github.com/example/product/issues/4"
+                async def result(c, assignment, outcome="candidate_ready"):
+                    return await c.checkpoint(url, assignment["attempt_id"], assignment["step_id"],
+                        assignment["head"], assignment["contract_revision"], outcome)
+                with patch("hydra_sdlc.runner.load_project", side_effect=lambda *a, **kw: copy.deepcopy(gh.cfg)), \
+                        patch("hydra_sdlc.native.load_project", side_effect=lambda *a, **kw: copy.deepcopy(gh.cfg)):
+                    c = make()
+                    assignment = await result(c, await c.begin(url))
+                    path = Path(assignment["cwd"])
+                    git(path, "push", "origin", "hydra/issue-4")
+                    gh.branch = gh.note["expected_head"] = base
+                    if deleted:
+                        git(seed, "push", "origin", "--delete", "hydra/issue-4")
+                        gh.branch = None
+                    else:
+                        (seed / "external.txt").write_text("separate remote work\n")
+                        git(seed, "add", ".")
+                        git(seed, "commit", "-m", "external branch update")
+                        gh.branch = git(seed, "rev-parse", "HEAD")
+                        git(seed, "push", "origin", "HEAD:hydra/issue-4")
+                    source = path / "src/main.py"
+                    source.parent.mkdir()
+                    source.write_text("preserved_implementation = True\n")
+                    with self.assertRaisesRegex(WorkspaceWait, "remote_head_changed"):
+                        await result(c, assignment)
+                    stopped = await result(c, assignment, "stopped")
+                    self.assertEqual(stopped["reason"], "remote_head_changed")
+                    self.assertEqual(gh.note["expected_head"], base)
+                    self.assertEqual((root / "host.lock").read_bytes(), b"")
+                    self.assertFalse(workspace.inspect(path)["dirty"])
+                    self.assertEqual(git(path, "show", "HEAD:src/main.py"), "preserved_implementation = True")
+                    self.assertFalse((path / "external.txt").exists())
+                    wait = await make().begin(url)
+                    self.assertEqual(wait["reason"], "remote_head_changed")
+                    self.assertNotIn("native_step", gh.note)
+                    self.assertFalse(any(w[0] in {"push", "pr", "merge"} for w in gh.writes))
+
     async def test_committed_decision_checkpoint_resumes_from_real_git_after_restart(self):
         from test_workspace import LocalWorkspace, git
         with tempfile.TemporaryDirectory() as directory:

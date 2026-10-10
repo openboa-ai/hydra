@@ -57,6 +57,8 @@ research context, never workflow truth or public prompt/transcript storage.
    not commit, push or merge through a competing path.
 4. Submit `hydra_checkpoint` with its exact identity and candidate result. Hydra
    commits owned edits, checks actual scope/spec and chooses the next continuation.
+   Committed write results include the read-back attempt, current head and policy
+   for the next tool call; use these instead of the assignment's pre-edit head.
    `candidate_ready` is judgment, not acceptance of a PR or a check.
 5. `hydra_verify`/`hydra_deliver` continue the same guarded workflow. These are
    continuation entry points, not separate authorization boundaries. They may
@@ -81,6 +83,9 @@ OS lock. It blocks another repository too, even if its Issue is paused or closed
 Service restart and reboot do not prove a native task stopped. Inspect and stop
 the old task/processes, then submit `stopped` with its original identity. Owned
 edits are preserved; late results cannot consume the new step.
+If the remote branch changed or was deleted, explicit stop can still preserve and
+commit the existing owned local edits and release its matching ticket. The original
+expected ref stays pinned; the affected Issue waits for remote reconciliation.
 
 If assignment publication was unconfirmed, the returned recovery identity can
 release only its exact scoped ticket after explicit stop. It never manufactures

@@ -44,3 +44,26 @@ Reviewed SHA256 values:
 
 Current-head remote CI, coupled code/security review and required native approval
 remain separate delivery conditions.
+
+## Second PR review corrections
+
+Review of `713d5de339b580e588cede44e49b4ba930f4cb3f` found provider timeout
+exceptions escaping resource waits, omitted continuation identities after write
+callbacks, and explicit stopped checkpoints blocked by changed/deleted remote refs.
+
+The follow-up remains within accepted R2/R4/R5. Independent design review required
+the resumption guard: a current ref is only a validation precondition for the
+already owned local checkout; the original expected ref remains pinned. Local edits
+and confirmed public shutdown precede ticket release. A changed/deleted ref still
+blocks resumption, model dispatch and publication. No fetch/reset/adoption is added.
+
+Native write callbacks now return the read-back current attempt/head/policy. Trusted
+provider calls normalize ordinary exceptions to resource waits, preserving original
+`WorkspaceWait` uncertainty and propagating `BaseException` control signals.
+Independent source review found no additional actionable defect. Reviewed SHA256:
+
+- `native.py`: `4918a48fae9362d1e60b244a8eaffa2654d2a703063d5b9fc96853130e441327`
+- `workspace.py`: `eb5d862c40eff58e24605228a8a414162417eed0a62bdc87aa7c5f833e4d7662`
+
+Actual native installation, product delivery and final-head external review remain
+separate acceptance evidence.
