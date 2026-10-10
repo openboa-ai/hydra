@@ -1,5 +1,10 @@
 # S1 appendix: supervised SDK execution
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Status: Proposed; requires independent acceptance before implementation.
 Parent contract: [durable bounded execution](spec.md).
 Work record: https://github.com/openboa-ai/hydra/issues/3

@@ -1,5 +1,10 @@
 # Specification review
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Revision 1 of [spec.md](spec.md) was accepted by an independent design review before implementation on 2026-10-09.
 
 Reviewed file SHA-256: `653d4940fd79ed58e93499528a044c1abfb7f969e9ad6b2ca13dad8d49ed4881`.

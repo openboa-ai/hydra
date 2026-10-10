@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openboa-hydra-sdlc"
 version = "0.1.0"
-description = "Durable coordination for delegated software development"
+description = "GitHub-native coordination for Codex software development"
 requires-python = ">=3.11"
 
 [project.optional-dependencies]

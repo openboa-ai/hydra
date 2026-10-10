@@ -1,5 +1,10 @@
 # S1 execution boundary review
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Accepted contract: `sdk-process-boundary.md` SHA-256
 `60344d42dd2ba417fa25a164954768ea87a9d97e41cf4e235aac2cea73adc4dc`.
 

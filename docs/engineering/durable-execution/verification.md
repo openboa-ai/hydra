@@ -1,5 +1,10 @@
 # S1 verification record
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Observed 2026-10-09. This record separates local tests, real execution, and delivery.
 
 ## Deterministic acceptance

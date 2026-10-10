@@ -1,5 +1,10 @@
 # S1: durable bounded Codex execution
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Status: Proposed implementation contract within the reviewed SDLC v1 architecture.
 Work record: https://github.com/openboa-ai/hydra/issues/3
 

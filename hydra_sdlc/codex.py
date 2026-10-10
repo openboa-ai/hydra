@@ -683,8 +683,8 @@ async def _execute_in_process(
                     raise ValueError("Provider terminal identity does not match the run.")
                 if value.method == "turn/completed" and terminal.get("status") not in ("completed", "failed", "interrupted"):
                     raise ValueError("Provider terminal status is invalid.")
-            # The store binds this callback to the current run. Never give it
-            # foreign or malformed evidence to persist as a current event.
+            # The supervisor binds this callback to the current execution. Never
+            # deliver foreign or malformed evidence as a current event.
             raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
             event_id = hashlib.sha256(raw.encode()).hexdigest()
             if event_id in seen:

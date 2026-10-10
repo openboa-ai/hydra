@@ -1,5 +1,10 @@
 # S1 contract review
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Independent recovery and adapter reviews accepted spec SHA256
 `9183680c6c4afe82808f8f62fb3b1dcca9955eb43f65f0ee21341324b591b039`
 on 2026-10-09 before implementation.

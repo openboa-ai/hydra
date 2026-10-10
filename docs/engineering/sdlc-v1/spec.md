@@ -1,5 +1,10 @@
 # Hydra v1 — delegated development through verified outcomes
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Status: Proposed for independent review. Acceptance of this specification does not establish
 installation, autonomous delivery, or operational reliability.
 Work record: https://github.com/openboa-ai/hydra/issues/3

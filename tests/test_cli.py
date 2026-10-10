@@ -1,36 +1,29 @@
-import contextlib
-import io
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from hydra_sdlc.cli import main
+from hydra_sdlc.cli import parser
+from hydra_sdlc.coordinator import HostBusy, coordinator_lock
 
 
-class CliFailureTests(unittest.TestCase):
-    def check_structured_database_error(self, path, expected_error):
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = main(['--state', str(path), 'status'])
-        self.assertEqual(code, 1)
-        self.assertEqual(out.getvalue(), '')
-        error = json.loads(err.getvalue())
-        self.assertEqual(error['error'], expected_error)
-        self.assertNotIn(str(path), err.getvalue())
-        self.assertNotIn('Traceback', err.getvalue())
+class CliTests(unittest.TestCase):
+    def test_three_commands_without_database_flag(self):
+        p = parser()
+        args = p.parse_args(['run', '--issue', 'https://github.com/example/product/issues/1',
+                             '--workspace-root', '/owned/workspaces', '--host-alias', 'host-a'])
+        self.assertFalse(hasattr(args, 'state'))
+        self.assertEqual(args.command, 'run')
+        self.assertEqual(p.parse_args(['status', '--repos', 'example/product']).command, 'status')
 
-    def test_directory_is_not_a_database(self):
+    def test_same_host_duplicate_launch_is_refused_without_state_file(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'not-a-database'
-            path.mkdir()
-            self.check_structured_database_error(path, 'OperationalError')
-
-    def test_unreadable_database_format_returns_structured_error(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'state.sqlite3'
-            path.write_bytes(b'not a sqlite database')
-            self.check_structured_database_error(path, 'StateError')
+            lock = Path(directory) / 'host.lock'
+            with coordinator_lock(lock):
+                with self.assertRaises(HostBusy):
+                    with coordinator_lock(lock):
+                        self.fail('duplicate acquired lock')
+            with coordinator_lock(lock):
+                self.assertEqual([p.name for p in Path(directory).iterdir()], ['host.lock'])
 
 
 if __name__ == '__main__':
