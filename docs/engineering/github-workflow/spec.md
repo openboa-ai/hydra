@@ -502,3 +502,32 @@ required versus optional CI failures, dependency-unblocker selection, and real G
 fsmonitor/include/worktree/filter/transport traps in both supported layouts using
 only synthetic credentials. Final-head reviews, native approval and actual product
 delivery remain unchanged.
+
+### Review corrections: interrupted startup and terminal input validation
+
+Keep the existing Linux startup/control reader owned through deadline or caller
+cancellation. A tracked shielded handshake validates a late ready identity and
+starts the single receipt reader. Cleanup consumes that evidence within the
+existing grace budget; it does not extend deadlines, authorize late SDK dispatch,
+add a component or treat helper exit alone as clean. Malformed/missing identity,
+receipt or unconfirmed reaping stays unknown. Existing absence/signaling rules hold.
+
+Reserve the service-managed `hydra:active` label from ready/paused/decision controls,
+including case variants. Protect `AGENTS.md` at every repository depth using the
+same current-head human policy approval as other protected instructions. Reject
+self-dependencies by canonical owner/repository and Issue number, preserving
+ordinary cross-Issue dependencies and their existing authority checks.
+
+When both authenticated current-head review rows are terminal Completed, validate
+the same formal provider format and repository/PR/head binding used by delivery.
+A missing/malformed/stale security marker or malformed terminal rows enters the
+existing durable review diagnosis rather than repeated delivery waits or a new
+review request. Queued/running reviews still wait; actual findings retain correction
+and resolution handling. Uncertain request kinds and retry budgets remain intact.
+
+Acceptance covers deterministic cancellation/deadline between helper launch and
+ready (actual Linux reaping/receipt evidence), malformed/no-ready controls, reserved
+label variants, nested instruction changes with absent/stale/current human approval,
+case-variant self-dependencies with valid other-Issue controls, and terminal malformed
+provider envelopes versus running/valid completion. Native protection and actual
+two-project delivery remain required; no new authority or host-isolation claim.
