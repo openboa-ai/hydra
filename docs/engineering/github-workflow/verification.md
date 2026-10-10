@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 342 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 324 passed, 16 Linux-only process tests and
+On 2026-10-10 the final local suite collected 350 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 332 passed, 16 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -24,6 +24,15 @@ explicit stopped-host handover, usage waits, private review output, authenticate
 provider findings and current formal workflow/job/check identities. Candidate-head
 reviews and CI remain required when a PR was merged externally. Current merge
 permission is distinct from evidence of an already performed merge.
+
+Focused regressions cover final-guard cancellation before model/verification
+dispatch, exact checkpoint restoration and ordinary restart without a spurious
+handover. Actual correction dispatch clears the pending mutation marker; cancelled
+dispatch preserves it and its budget. Authenticated duplicate summaries or review
+rows enter durable diagnosis. Repeated authorized replanning retains an uncertain
+request's original head/kind; repaired evidence resumes delivery without new model
+work. Interruption fixtures bind cancellation to actual start/turn identity rather
+than a timer racing account setup, without changing runtime interruption rules.
 
 Final effects recheck bound dependencies and Issue controls, including after the
 last PR observation and during closed-Issue recovery. Exact merge-commit push checks

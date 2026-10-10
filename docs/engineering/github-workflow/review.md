@@ -152,3 +152,19 @@ receipt-confirmed group disappearance before fallback signals. Verification uses
 the existing isolated helper, with no host-wide child adoption or new service.
 These source acceptances remain separate from final-head CI/provider reviews,
 native approval and actual two-project unattended delivery.
+
+The undispatched-work/ambiguous-review appendix was independently accepted before
+dependent implementation at spec SHA-256
+`1f5bbf5d3fd707fc2e4483e0f3d34af0193861bd72f9348b8be258b6bf2b4a09`.
+Independent source review accepted runner SHA-256
+`fea259a0ae1cc5e6072eb5c41c11f8e05742a3be8860628ceea2cceb262d2cb7`.
+Known-undispatched work restores its prior checkpoint; genuine unknown execution
+and external effects remain unresolved. Review caught repeated replanning losing
+an uncertain review kind after retry metadata was reset. Authenticated ambiguity
+now enters diagnosis and repaired review evidence resumes the existing candidate.
+Eight independently authored regression tests passed against that source, including
+mutation-marker consumption only at actual dispatch and interrupted compensation.
+The CI interruption-fixture correction was also independently checked with delayed
+account setup; its assertions and runtime interruption contract remain intact.
+These source/test acceptances do not replace final-head CI, both provider reviews,
+native protected approval or actual two-project delivery and recovery.
