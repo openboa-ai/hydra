@@ -387,6 +387,168 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('change_review', self.calls)
                 self.assertEqual(self.effects(writes), [])
 
+    async def test_stopped_verification_is_checkpointed_before_ci_or_merge_shortcuts(self):
+        for remote_state in ('cancelled_ci', 'external_merge'):
+            with self.subTest(remote_state=remote_state):
+                self.reset()
+                await self.opened_pr()
+                self.github.note['phase'] = 'implementation_done'
+                def unknown(*args, **kwargs):
+                    self.mutate('dirty')
+                    raise WorkspaceWait('verification_cleanup_unknown', uncertain=True)
+                self.workspace.verify = unknown
+                self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'waiting')
+                self.assertEqual(self.github.note['pending_action'], 'verification')
+                self.assertTrue(self.workspace.dirty)
+                self.github.extra_comments.append({'user': {'login': 'operator'},
+                    'body': f"hydra: handover {self.github.note['attempt_id']} stopped"})
+                if remote_state == 'cancelled_ci':
+                    def cancelled(value):
+                        value['runs'][0].update(status='completed', conclusion='cancelled')
+                        value['runs'][0]['jobs'][0].update(status='completed', conclusion='cancelled')
+                        value['checks'][0].update(status='completed', conclusion='cancelled')
+                        return value
+                    self.github.transform_observation = cancelled
+                else:
+                    self.github.pr.update(merged=True, state='closed', merge_commit_sha=MERGE)
+                calls, writes = len(self.calls), len(self.github.writes)
+                result = await self.runner().step(REPO, NUMBER)
+                self.assertEqual(result['action'], 'waiting')
+                self.assertFalse(self.workspace.dirty)
+                self.assertNotEqual(self.workspace.head, HEAD)
+                self.assertEqual(self.github.note['head'], self.workspace.head)
+                self.assertEqual(self.github.note['resume_phase'], 'correction')
+                self.assertEqual(self.github.note['correction_reason'], 'verification_mutation')
+                self.assertEqual(self.github.note['checkpoint'], 'verification_mutation_pending')
+                self.assertNotEqual(self.github.note['phase'], 'completed')
+                self.assertEqual(self.github.work['state'], 'open')
+                self.assertEqual(len(self.calls), calls)
+                self.assertEqual(self.effects(writes), [])
+                self.assertTrue((self.workspace.path / 'src/generated.py').is_file())
+
+    async def test_authorized_replan_retains_unknown_security_before_new_code_request(self):
+        await self.opened_pr()
+        self.github.transform_observation = self.code_running
+        self.github.note['checkpoint'] = 'await_auto_review'
+        requests = []
+        def lost(repo, pr, kind='code', head=None):
+            requests.append(kind)
+            raise RuntimeError('request response unavailable')
+        self.github.request_review = lost
+        for _ in range(3):
+            self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'review_request_unknown')
+        self.assertEqual(requests, ['security'] * 3)
+        self.assertIsNone(self.github.note.get('review_requested_head'))
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'replan_required')
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: replan {self.github.note['attempt_id']} ready"})
+        self.github.transform_observation = lambda value: {**value, 'provider_comments': []}
+        calls = len(self.calls)
+        for _ in range(2):
+            result = await self.runner().step(REPO, NUMBER)
+            if len(requests) > 3:
+                break
+        self.assertEqual(requests, ['security'] * 4)
+        self.assertEqual(result['reason'], 'review_request_unknown')
+        self.assertEqual(self.github.note['pending_review_kind'], 'security')
+        self.assertEqual(self.github.note['delivery_attempt'], 1)
+        self.assertEqual(len(self.calls), calls)
+
+    async def test_repeated_mutation_stops_consume_new_correction_attempts_on_resume(self):
+        runner = await self.prepare_verification()
+        original = self.workspace.verify
+        def mutates_and_stops(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.mutate('dirty')
+            self.stopped = True
+            return result
+        self.workspace.verify = mutates_and_stops
+        writes = len(self.github.writes)
+        for attempt in (1, 2, 3):
+            self.assertEqual((await runner.step(REPO, NUMBER))['reason'], 'stop_requested')
+            self.assertEqual(self.github.note['checkpoint'], 'verification_mutation_pending')
+            self.assertEqual(self.github.note['resume_phase'], 'correction')
+            self.stopped = False
+            if attempt < 3:
+                async def low_usage(cwd):
+                    return complete_capabilities(used=95)
+                runner.capabilities = low_usage
+                self.assertEqual((await runner.step(REPO, NUMBER))['reason'], 'usage_unavailable_or_low')
+                self.assertEqual(self.github.note['checkpoint'], 'verification_mutation_pending')
+                runner = self.runner()
+                self.assertEqual((await runner.step(REPO, NUMBER))['action'], 'continue')
+                self.assertEqual(self.github.note['correction_attempt'], attempt)
+                self.assertNotEqual(self.github.note['checkpoint'], 'verification_mutation_pending')
+                runner = self.runner()
+            else:
+                self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'replan_required')
+        self.assertEqual(self.calls.count('correction'), 2)
+        self.assertNotIn('change_review', self.calls)
+        self.assertEqual(self.effects(writes), [])
+        self.assertFalse(self.workspace.dirty)
+        self.assertEqual(self.github.note['head'], self.workspace.head)
+
+    async def test_stopped_verification_cannot_adopt_an_advanced_or_deleted_remote(self):
+        for remote in ('e' * 40, None):
+            with self.subTest(remote=remote):
+                self.reset()
+                await self.opened_pr()
+                self.github.note['phase'] = 'implementation_done'
+                def unknown(*args, **kwargs):
+                    self.mutate('dirty')
+                    raise WorkspaceWait('verification_cleanup_unknown', uncertain=True)
+                self.workspace.verify = unknown
+                self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'waiting')
+                self.assertEqual(self.github.note['expected_head'], HEAD)
+                pinned = copy.deepcopy(self.github.note)
+                self.github.extra_comments.append({'user': {'login': 'operator'},
+                    'body': f"hydra: handover {self.github.note['attempt_id']} stopped"})
+                self.github.branch = remote
+                if remote:
+                    self.github.pr['head']['sha'] = remote
+                calls, writes, prepared = len(self.calls), len(self.github.writes), len(self.workspace.prepared_recovery)
+                for _ in range(2):
+                    self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'remote_head_changed')
+                    self.assertEqual(self.github.note, pinned)
+                self.assertTrue(self.workspace.dirty)
+                self.assertEqual(self.workspace.head, HEAD)
+                self.assertEqual(len(self.workspace.prepared_recovery), prepared)
+                self.assertEqual(len(self.calls), calls)
+                self.assertEqual(self.effects(writes), [])
+
+    async def test_policy_change_preserves_verification_origin_until_original_policy_returns(self):
+        await self.opened_pr()
+        original_config = copy.deepcopy(self.github.cfg)
+        self.github.note['phase'] = 'implementation_done'
+        original_verify = self.workspace.verify
+        def unknown(*args, **kwargs):
+            self.mutate('dirty')
+            raise WorkspaceWait('verification_cleanup_unknown', uncertain=True)
+        self.workspace.verify = unknown
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'waiting')
+        pinned = copy.deepcopy(self.github.note)
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: handover {self.github.note['attempt_id']} stopped"})
+        self.github.file = lambda repo, path, revision: {'sha': original_config['blob_sha'], 'content': ''}
+        self.github.cfg.update(revision='e' * 40, blob_sha='f' * 40)
+        calls, writes, prepared = len(self.calls), len(self.github.writes), len(self.workspace.prepared_recovery)
+        for _ in range(2):
+            self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'policy_changed')
+            self.assertEqual(self.github.note, pinned)
+        self.assertTrue(self.workspace.dirty)
+        self.assertEqual(len(self.workspace.prepared_recovery), prepared)
+        self.assertEqual(len(self.calls), calls)
+        self.assertEqual(self.effects(writes), [])
+        self.github.cfg = original_config
+        self.workspace.verify = original_verify
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'continue')
+        self.assertFalse(self.workspace.dirty)
+        self.assertEqual(self.github.note['head'], self.workspace.head)
+        self.assertEqual(self.github.note['correction_reason'], 'verification_mutation')
+        self.assertIn('correction', self.calls[calls:])
+        self.assertNotIn('change_review', self.calls[calls:])
+        self.assertEqual(self.effects(writes), [])
+
 
 if __name__ == '__main__':
     unittest.main()
