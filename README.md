@@ -21,8 +21,7 @@ hydra serve --repos owner/product owner/another-product \
   --workspace-root /absolute/owned/workspaces --host-alias development-mac
 ```
 
-The first runtime selects the existing `openboa` GitHub CLI account per service
-process and the existing ChatGPT subscription. It neither buys credits nor switches
+The first runtime selects the existing `openboa` GitHub CLI account per operation and the existing ChatGPT subscription. It neither buys credits nor switches
 to a paid model API. Configure the project's reviewed `.hydra.toml` on its protected
 default branch and delegate a ready Issue using the [registration guide](docs/registration.md).
 

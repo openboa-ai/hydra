@@ -31,3 +31,17 @@ inline finding payloads and correction counts across publication/restart. Positi
 and negative pause-resumption probes accepted runner source SHA-256
 `bacff9315f9533b41048a1b3c22501621d11312ae7e184129bb706f62d859d0a`.
 Remote reviews and native protection still apply to the updated commit.
+
+The decision/recovery correction appendix was independently accepted before
+dependent edits at spec SHA-256
+`52390ba277e1d191be455867bbd659ca12b9364bd5334d80529ec3017c8dbdbb`.
+Focused independent source reviews accepted phase resumption, bound checkpoints,
+private successful verification output, review-request diagnosis, observation-only
+closed-Issue recovery, and bounded SDK result/environment handling. Review found and
+corrected loss of the close intent during post-merge waits and correction counts
+consumed before dispatch. Final runner SHA-256
+`98e7903fc3ba1b15602d301b372e1bac76e6acbbc74f297d3589be01a87db16a`
+and project-gate SHA-256
+`b44088b5fe5bb96471e25152b1b3cac7d8487edb08446ccec6a2e0781a4a7b89`
+include fail-closed null author/app handling. These are source reviews, not native
+GitHub approval or proof of real two-project autonomous delivery.

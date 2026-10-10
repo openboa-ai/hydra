@@ -85,7 +85,7 @@ def load_project(github, repo):
     permissions = {}
     for actor in config["authorized_actors"]:
         access = github.api("GET", f"/repos/{repo}/collaborators/{actor}/permission")
-        _require(isinstance(access, dict) and access.get("user", {}).get("login") == actor and access.get("permission") in {"admin", "write", "maintain"}, "Authorized intake actor is not a repository writer")
+        _require(isinstance(access, dict) and (access.get("user") or {}).get("login") == actor and access.get("permission") in {"admin", "write", "maintain"}, "Authorized intake actor is not a repository writer")
         permissions[actor] = access["permission"]
     return {**config, "repository": repo, "default_branch": identity["default_branch"], "revision": revision, "blob_sha": blob["sha"], "actor_permissions": permissions}
 
@@ -93,7 +93,7 @@ def load_project(github, repo):
 def parse_intake(issue, config):
     _require(isinstance(issue, dict) and "pull_request" not in issue and type(issue.get("number")) is int, "Expected a product Issue")
     _require(issue.get("state") == "open", "Issue is closed")
-    _require(issue.get("user", {}).get("login") in config["authorized_actors"] and config.get("actor_permissions", {}).get(issue.get("user", {}).get("login")) in {"admin", "write", "maintain"}, "Issue author is not an authorized repository writer")
+    _require((issue.get("user") or {}).get("login") in config["authorized_actors"] and config.get("actor_permissions", {}).get((issue.get("user") or {}).get("login")) in {"admin", "write", "maintain"}, "Issue author is not an authorized repository writer")
     labels = {x.get("name") if isinstance(x, dict) else x for x in issue.get("labels", [])}
     policy = config["labels"]
     _require(policy["ready"] in labels and not labels.intersection({policy["paused"], policy["decision"]}), "Issue is not ready")
@@ -206,7 +206,7 @@ def _provider(config, observation, head):
     raw = observation["pr"]
     if not isinstance(comments, list) or not isinstance(commits, list) or raw.get("commits") != len(commits) or not commits or not all(_sha(c.get("sha")) for c in commits):
         return ["provider_evidence_incomplete"]
-    own = [c for c in comments if c.get("user", {}).get("id") == provider["user_id"] and c.get("user", {}).get("login") == provider["login"] and c.get("performed_via_github_app", {}).get("id") == provider["app_id"]]
+    own = [c for c in comments if (c.get("user") or {}).get("id") == provider["user_id"] and (c.get("user") or {}).get("login") == provider["login"] and (c.get("performed_via_github_app") or {}).get("id") == provider["app_id"]]
     summaries = [c for c in own if "<!-- codex-pull-request-review-summary -->" in (c.get("body") or "")]
     if len(summaries) != 1:
         return ["provider_summary_missing_or_ambiguous"]
@@ -298,12 +298,16 @@ def gate_delivery(config, observation, head, paths):
     latest = {}
     for review in sorted(reviews, key=lambda r: (r.get("submitted_at") or "", r.get("id", 0))):
         if review.get("state") in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-            latest[review.get("user", {}).get("login")] = review
+            login = (review.get("user") or {}).get("login")
+            if not isinstance(login, str) or not login:
+                blockers.append("native_review_author_unknown")
+                continue
+            latest[login] = review
     if any(r.get("state") == "CHANGES_REQUESTED" for r in latest.values()) or observation.get("review_decision") not in {"APPROVED", None}:
         blockers.append("native_review_not_approved")
     protected = [".hydra.toml", ".github/", "AGENTS.md", "SECURITY.md", "CODEOWNERS", "docs/CODEOWNERS"] + config["protected_paths"]
     if any(matches(p, protected) for p in paths):
-        humans = [r for login, r in latest.items() if login in config["human_reviewers"] and login != pr.get("user", {}).get("login") and r.get("user", {}).get("type") == "User" and r.get("state") == "APPROVED" and r.get("commit_id") == head]
+        humans = [r for login, r in latest.items() if login in config["human_reviewers"] and login != (pr.get("user") or {}).get("login") and (r.get("user") or {}).get("type") == "User" and r.get("state") == "APPROVED" and r.get("commit_id") == head]
         if not humans or observation.get("review_decision") != "APPROVED":
             blockers.append("protected_change_needs_current_human_review")
     required_count = max((p.get("required_approving_review_count", 0) for p in pull_rules), default=0)

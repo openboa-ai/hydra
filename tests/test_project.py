@@ -279,6 +279,16 @@ class ProjectTests(unittest.TestCase):
         obs['native_reviews'][0]['commit_id'] = BASE
         self.assertIn('protected_change_needs_current_human_review', gate_delivery(config(), obs, HEAD, paths))
 
+    def test_nullable_review_authors_and_app_identity_never_authorize_delivery(self):
+        obs = observation()
+        obs['provider_comments'].insert(0, {'user': None, 'performed_via_github_app': None})
+        self.assertEqual(gate_delivery(config(), obs, HEAD, ['src/main.py']), [])
+        obs['provider_comments'][-1]['performed_via_github_app'] = None
+        self.assertTrue(gate_delivery(config(), obs, HEAD, ['src/main.py']))
+        obs = observation()
+        obs['native_reviews'] = [{'id': 1, 'user': None, 'state': 'APPROVED', 'commit_id': HEAD}]
+        self.assertIn('native_review_author_unknown', gate_delivery(config(), obs, HEAD, ['src/main.py']))
+
     def test_actual_merge_push_checks_required_before_completion(self):
         cfg, obs = config(), observation()
         self.assertTrue(gate_post_merge(cfg, obs, MERGE))

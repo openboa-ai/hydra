@@ -46,8 +46,8 @@ dependent implementation. Issue text cannot supply executable verification comma
 
 Use the paused label to stop new work, remove it to resume, and close an Issue to
 cancel further delivery. Important product choices hold that Issue while siblings
-continue. Resolve the choice in its specification/Issue, then an authorized actor
-records `hydra: decision ATTEMPT_UUID resolved`. A repeated failure requires diagnosis
+continue. Record the choice in an Issue comment without changing its bound title,
+body or accepted scope, then an authorized actor records `hydra: decision ATTEMPT_UUID resolved`. A repeated failure requires diagnosis
 and `hydra: replan ATTEMPT_UUID ready`, rather than an endless correction loop.
 
 For a host change: stop the old `serve`, confirm its supervised worker and uncertain

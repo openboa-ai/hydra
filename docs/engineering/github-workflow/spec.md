@@ -152,3 +152,34 @@ Tests use fake GitHub/SDK and real temporary Git repositories/processes where us
 Live evidence remains distinct: read-only inspection, real workspace edit, review,
 merge, post-merge checks, host handover and login service. Do not enable unattended
 service or call full setup complete until a real episode and recovery are observed.
+
+## Review corrections: decision resumption and bounded recovery
+
+A completed turn that needs a product decision records its originating phase. For
+workspace-write turns, checkpoint owned partial edits locally before waiting; do
+not publish or treat them as verified. An authorized resolution resumes that phase
+against the same bound intake and accepted policy. A fresh attempt ID prevents a
+previous resolution marker from resolving another later question. Design resumes
+only the Issue's exact spec path; implementation and correction resume their own
+work, with verification and independent review still required afterward. Read-only
+review decisions resume the corresponding review path. Operator comment context
+remains untrusted input and never changes scope or policy by itself.
+
+Authorized failure replanning resets bounded failure counters and returns the task
+to executable design/implementation work, rather than treating unchanged code as
+ready for delivery. Published work remains subject to actual PR ownership and head
+checks. A recorded local checkpoint must exist at its exact recorded head before
+continuing. A different host with only an older published head holds the task;
+confirmed shutdown does not recreate an unpushed commit. Explicit recovery of an
+unknown stopped write may checkpoint its preserved edits under the existing rule.
+
+Successful verification output is bounded private input to independent review,
+including warnings and skipped checks, not public progress text. Exhausted review
+request retries enter explicit diagnosis/replan wait instead of an endless remote
+review wait. Closed Issues with authenticated pending close intent remain eligible
+only for actual merge/post-merge reconciliation, never new implementation.
+
+Acceptance adds real origin-phase dispatch after a decision, partial-edit retention,
+actual new implementation after replan, exact spec-only edits, missing unpublished
+checkpoint refusal, successful-output review without public disclosure, three failed
+review requests followed by diagnosis, and closed-Issue recovery through serve/status.

@@ -499,6 +499,27 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'replan_required')
         self.assertEqual(len(self.calls), count + 2)  # Read-only recheck; no third correction.
 
+    async def test_usage_wait_never_consumes_an_undispatched_correction(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        def failed(value):
+            value['checks'][0]['conclusion'] = 'failure'
+            return value
+        self.github.transform_observation = failed
+        async def low_usage(cwd):
+            return complete_capabilities(81)
+        runner.capabilities = low_usage
+        count = len(self.calls)
+        for _ in range(4):
+            self.assertEqual((await runner.step('example/product', 4))['reason'], 'usage_unavailable_or_low')
+            self.assertIsNone(self.github.note.get('correction_attempt'))
+        self.assertEqual(len(self.calls), count)
+        runner.capabilities = self.capabilities
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.github.note['correction_attempt'], 1)
+        self.assertEqual(len(self.calls), count + 1)
+
     async def test_completed_thread_resolution_does_not_consume_next_threads_budget(self):
         self.github.remote_pending = True
         runner = await self.publish()
@@ -507,6 +528,16 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
              {'author': {'login': self.github.cfg['review_provider']['login']}}]}} for i in range(4)]}
         await runner.step('example/product', 4)
         self.assertEqual(len([x for x in self.github.writes if x[0] == 'resolve_thread']), 4)
+
+    async def test_unknown_thread_author_holds_resolution_without_crashing_loop(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        self.github.transform_observation = lambda v: {**v, 'threads': [
+            {'id': 'unknown-author', 'isOutdated': True, 'isResolved': False,
+             'comments': {'nodes': [{'databaseId': 77, 'author': None}]}}]}
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'remote_delivery_gates')
+        self.assertFalse(any(x[0] == 'resolve_thread' for x in self.github.writes))
+        self.assertEqual((await self.runner().cycle(['example/product']))[0]['reason'], 'remote_delivery_gates')
 
     async def test_known_closed_issue_is_not_closed_again_after_lost_response(self):
         runner = await self.publish()
@@ -526,6 +557,273 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         await self.runner().step('example/product', 4)
         self.assertNotEqual(self.github.note['attempt_id'], old)
         self.assertIsNone(self.github.note['checkpoint'])
+
+    async def test_replan_of_unchanged_candidate_really_dispatches_implementation(self):
+        runner = self.runner()
+        config = {**self.github.cfg}
+        record = dict(attempt_id='12345678-1234-1234-1234-123456789abc', host_alias='host-a',
+                      contract_revision=BASE, spec_revision=None, head=BASE,
+                      branch='hydra/issue-4', phase='waiting', pending_action=None,
+                      wait_reason='replan_required')
+        from hydra_sdlc.runner import intake_digest
+        record['intake_digest'] = intake_digest(self.github.work)
+        self.github.record('example/product', 4, record)
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: replan {record['attempt_id']} ready"})
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.calls, ['read_only', 'workspace_write'])
+        self.assertEqual(self.workspace.head, HEAD)
+        self.assertEqual(self.github.note['phase'], 'implementation_done')
+        self.assertFalse(any(x[0] in {'push', 'pr', 'merge'} for x in self.github.writes))
+
+    async def test_decision_resumes_owned_partial_implementation_and_correction(self):
+        for phase in ['implementation', 'correction']:
+            with self.subTest(phase=phase):
+                self.github = GitHub()
+                self.workspace = Workspace(self.directory.name, self.github)
+                self.calls.clear()
+                runner = await self.publish()
+                config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+                async def needs_decision(assignment, **kwargs):
+                    self.workspace.dirty = True
+                    (self.workspace.path / 'partial.txt').write_text('preserved partial work')
+                    return {'status': 'completed', 'detail': {'result': {'outcome': 'needs_decision'}}}
+                runner.execute = needs_decision
+                record = {**self.github.note, 'correction_reason': 'review_findings', 'correction_attempt': 1}
+                _, result = await runner._model('example/product', 4, config, record,
+                                               self.workspace.path, phase, 'Apply accepted requirement')
+                self.assertEqual(result['reason'], 'product_decision')
+                self.assertFalse(self.workspace.dirty)
+                partial_head = self.workspace.head
+                self.assertEqual(self.github.note['head'], partial_head)
+                self.assertEqual(self.github.note['resume_phase'], phase)
+                attempt = self.github.note['attempt_id']
+                self.github.extra_comments += [{'user': {'login': 'operator'}, 'body': 'Choose the existing safe behavior.'},
+                    {'user': None, 'body': f'hydra: decision {attempt} resolved'},
+                    {'user': {'login': 'operator'}, 'body': f'hydra: decision {attempt} resolved'}]
+                prompts = []
+                async def resume(assignment, **kwargs):
+                    prompts.append(assignment)
+                    return await self.execute(assignment, **kwargs)
+                resumed = self.runner()
+                resumed.execute = resume
+                self.assertEqual((await resumed.step('example/product', 4))['action'], 'continue')
+                self.assertEqual(prompts[-1]['mode'], 'workspace_write')
+                self.assertIn('Choose the existing safe behavior.', prompts[-1]['prompt'])
+                self.assertNotEqual(self.workspace.head, partial_head)
+                self.assertNotEqual(self.github.note['attempt_id'], attempt)
+                self.assertIsNone(self.github.note['resume_phase'])
+                self.assertEqual((self.workspace.path / 'partial.txt').read_text(), 'preserved partial work')
+                self.assertFalse(any(x[0] in {'push', 'pr', 'merge'} for x in self.github.writes))
+
+    async def test_decision_marker_does_not_resolve_a_later_question(self):
+        runner = await self.publish()
+        self.github.note.update(phase='waiting', wait_reason='product_decision', resume_phase='implementation')
+        attempt = self.github.note['attempt_id']
+        self.github.extra_comments.append({'user': {'login': 'operator'}, 'body': f'hydra: decision {attempt} resolved'})
+        async def needs_decision(assignment, **kwargs):
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'needs_decision' if assignment['mode'] == 'workspace_write' else 'candidate_ready'}}}
+        runner.execute = needs_decision
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'product_decision')
+        current = self.github.note['attempt_id']
+        self.assertNotEqual(current, attempt)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'product_decision')
+
+    async def test_read_only_decision_resumes_review_before_delivery(self):
+        runner = await self.publish()
+        config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+        async def needs_decision(assignment, **kwargs):
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'needs_decision'}}}
+        runner.execute = needs_decision
+        await runner._model('example/product', 4, config, self.github.note,
+                            self.workspace.path, 'change_review', 'Review actual candidate')
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.calls.clear()
+        self.github.remote_pending = True
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
+        self.assertEqual(self.calls, ['read_only', 'read_only'])
+        self.assertEqual(self.workspace.verification_calls, 1)
+        self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
+        count = len(self.calls)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
+        self.assertEqual(len(self.calls), count)
+
+    async def test_partial_design_resumes_design_before_spec_acceptance(self):
+        runner = await self.publish()
+        self.workspace.changed_paths = lambda *args: ['docs/engineering/task/spec.md']
+        config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+        async def needs_decision(assignment, **kwargs):
+            self.workspace.dirty = True
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'needs_decision'}}}
+        runner.execute = needs_decision
+        await runner._model('example/product', 4, config, self.github.note,
+                            self.workspace.path, 'design', 'Complete only the scoped spec')
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.calls.clear()
+        self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.calls, ['workspace_write'])
+        self.assertEqual(self.github.note['phase'], 'design_done')
+        self.assertFalse(any(x[0] in {'push', 'pr', 'merge'} for x in self.github.writes))
+
+    async def test_spec_only_design_and_correction_reject_sibling_edits(self):
+        for correction in [False, True]:
+            with self.subTest(correction=correction):
+                self.github = GitHub()
+                self.workspace = Workspace(self.directory.name, self.github)
+                spec = self.workspace.path / 'docs/engineering/task/spec.md'
+                if not correction:
+                    spec.unlink()
+                self.workspace.changed_paths = lambda *args: ['docs/engineering/task/spec.md', 'docs/engineering/unrelated/spec.md']
+                async def create_spec(assignment, **kwargs):
+                    if assignment['mode'] == 'workspace_write':
+                        spec.write_text('Scoped requirement')
+                        self.workspace.dirty = True
+                    return {'status': 'completed', 'detail': {'result': {'outcome': 'failed' if assignment['mode'] == 'read_only' else 'candidate_ready'}}}
+                runner = self.runner()
+                runner.execute = create_spec
+                self.assertEqual((await runner.step('example/product', 4))['reason'], 'implementation_before_design_acceptance')
+                self.assertEqual(self.workspace.head, BASE)
+                self.assertTrue(self.workspace.dirty)
+                self.assertFalse(any(x[0] in {'push', 'pr', 'merge'} for x in self.github.writes))
+
+    async def test_missing_unpublished_checkpoint_is_not_replaced_by_older_checkout(self):
+        runner = await self.publish()
+        self.github.note.update(head=HEAD, expected_head=BASE, phase='implementation_done')
+        self.github.branch = BASE
+        self.workspace.head = BASE
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: handover {self.github.note['attempt_id']} stopped"})
+        self.calls.clear()
+        self.assertEqual((await self.runner('host-b').step('example/product', 4))['reason'], 'unpublished_checkpoint_missing')
+        self.assertEqual(self.github.note['head'], HEAD)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.workspace.verification_calls, 0)
+        self.assertFalse(any(x[0] in {'push', 'pr', 'merge'} for x in self.github.writes))
+
+    async def test_low_usage_wait_preserves_unpublished_correction_for_later_verification(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        self.workspace.head = 'f' * 40
+        self.github.note.update(head='f' * 40, expected_head=HEAD, phase='implementation_done')
+        runner = self.runner()
+        async def low_usage(cwd):
+            return complete_capabilities(81)
+        runner.capabilities = low_usage
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'usage_unavailable_or_low')
+        self.assertEqual(self.github.note['head'], 'f' * 40)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
+        self.assertEqual(self.github.branch, 'f' * 40)
+
+    async def test_failed_correction_checkpoint_remains_available_to_replan(self):
+        runner = await self.publish()
+        config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+        async def failed(assignment, **kwargs):
+            self.workspace.dirty = True
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'failed'}}}
+        runner.execute = failed
+        self.assertEqual((await runner._correct('example/product', 4, config, self.github.note,
+                            self.workspace.path, 'implementation_failure'))['reason'], 'replan_required')
+        self.assertEqual(self.github.note['head'], self.workspace.head)
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: replan {self.github.note['attempt_id']} ready"})
+        self.calls.clear()
+        self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+        self.assertIn('workspace_write', self.calls)
+
+    async def test_successful_verification_output_is_private_review_input(self):
+        runner = await self.publish()
+        private_output = 'SKIPPED behavior receipt; warning private-test-account'
+        self.workspace.verification_output = lambda digest: private_output + 'x' * 30000
+        prompts = []
+        async def capture(assignment, **kwargs):
+            prompts.append(assignment['prompt'])
+            return await self.execute(assignment, **kwargs)
+        runner.execute = capture
+        self.github.remote_pending = True
+        await runner.step('example/product', 4)
+        self.assertIn(private_output, prompts[-1])
+        self.assertLess(len(prompts[-1]), 27000)
+        self.assertNotIn(private_output, str(self.github.note))
+        self.assertNotIn(private_output, self.github.pr['body'])
+
+    async def test_exhausted_review_request_retries_wait_for_explicit_replan(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        self.github.transform_observation = lambda v: {**v, 'provider_comments': []}
+        calls = []
+        def lost(*args, **kwargs):
+            calls.append(kwargs['head'])
+            raise RuntimeError('review request outcome unknown')
+        self.github.request_review = lost
+        self.github.note['checkpoint'] = 'await_auto_review'
+        for _ in range(3):
+            self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'review_request_unknown')
+            self.assertEqual(self.github.note['pending_action'], 'request_review')
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'replan_required')
+        self.assertEqual(self.github.note['next_action'], 'diagnose')
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'replan_required')
+        self.assertEqual(len(calls), 3)
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: replan {self.github.note['attempt_id']} ready"})
+        before = len(self.calls)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'review_request_unknown')
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(self.calls), before)
+
+    async def test_cycle_and_status_recover_closed_pending_completion_without_model_or_close(self):
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        self.github.note.update(pending_action='close_issue', phase='closing')
+        self.github.work['state'] = 'closed'
+        before = len(self.calls)
+        restarted = self.runner()
+        self.assertEqual(restarted.status(['example/product'])[0]['wait_reason'], 'completion_reconciliation')
+        self.assertEqual((await restarted.cycle(['example/product']))[0]['action'], 'completed')
+        self.assertEqual(self.github.note['phase'], 'completed')
+        self.assertEqual(len(self.calls), before)
+        self.assertFalse(any(x[0] == 'close' for x in self.github.writes))
+
+    async def test_closed_completion_intent_survives_post_merge_wait_and_restart(self):
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        self.github.note.update(pending_action='close_issue', phase='closing')
+        self.github.work['state'] = 'closed'
+        self.github.issues = lambda repo: [self.github.issue(repo, 4)] if self.github.note.get('pending_action') == 'close_issue' else []
+        actual = self.github.observe_commit
+        def pending(repo, sha):
+            value = actual(repo, sha)
+            value['runs'][0]['status'] = 'in_progress'
+            return value
+        self.github.observe_commit = pending
+        before = len(self.calls)
+        self.assertEqual((await self.runner().cycle(['example/product']))[0]['reason'], 'post_merge_checks')
+        self.assertEqual(self.github.note['pending_action'], 'close_issue')
+        self.assertEqual(self.runner().status(['example/product'])[0]['wait_reason'], 'completion_reconciliation')
+        self.github.observe_commit = actual
+        self.assertEqual((await self.runner().cycle(['example/product']))[0]['action'], 'completed')
+        self.assertEqual(len(self.calls), before)
+        self.assertFalse(any(x[0] == 'close' for x in self.github.writes))
+
+    async def test_closed_completion_never_falls_through_to_implementation(self):
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        self.github.note.update(pending_action='close_issue', phase='closing')
+        self.github.work['state'] = 'closed'
+        pr = copy.deepcopy(self.github.pr)
+        before = len(self.calls), len(self.github.writes)
+        for value, expected in [(None, 'completion_pr_unavailable'),
+                                ({**pr, 'merged': False, 'state': 'open'}, 'completion_merge_unconfirmed')]:
+            with self.subTest(reason=expected):
+                self.github.pr = value
+                self.assertEqual((await self.runner().cycle(['example/product']))[0]['reason'], expected)
+                self.assertEqual(self.github.note['pending_action'], 'close_issue')
+        self.assertEqual(len(self.calls), before[0])
+        self.assertFalse(any(x[0] in {'push', 'pr', 'merge', 'close'} for x in self.github.writes[before[1]:]))
 
     async def test_signal_received_during_blocking_intent_prevents_merge(self):
         from hydra_sdlc.cli import operate, parser
@@ -566,7 +864,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             runner = Runner(router, Workspaces(), host_alias='host-a', execute=execute, capabilities=self.capabilities)
             first.extra_comments = []
             await runner.step('example/product', 4)
-            first.note.update(wait_reason='product_decision', phase='waiting')
+            first.note.update(wait_reason='product_decision', phase='waiting', resume_phase='implementation')
             result = await runner.cycle(['example/product', 'example/another'])
             self.assertEqual(result[0]['reason'], 'product_decision')
             self.assertEqual(result[1]['action'], 'continue')
@@ -593,7 +891,8 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                     return {**complete_capabilities(), field: value}
                 runner = self.runner()
                 runner.capabilities = incomplete
-                self.assertEqual((await runner.step('example/product', 4))['reason'], 'usage_unavailable_or_low')
+                self.assertEqual((await runner.step('example/product', 4))['reason'],
+                                 'host_cleanup_unconfirmed' if field == 'cleanup' else 'usage_unavailable_or_low')
         self.assertEqual(self.calls, [])
         for value in [None, False]:
             caps = complete_capabilities()
@@ -697,6 +996,62 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
         self.assertEqual(self.workspace.verification_calls, before + 1)
         self.assertEqual(self.github.branch, 'f' * 40)
+
+    async def test_remote_head_changed_during_interruption_is_never_adopted(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+        async def interrupted(assignment, **kwargs):
+            self.workspace.dirty = True
+            self.github.branch = 'd' * 40
+            self.github.pr['head']['sha'] = 'd' * 40
+            self.stop = True
+            return {'status': 'interrupted', 'detail': {'cleanup': 'confirmed'}}
+        runner.execute = interrupted
+        await runner._model('example/product', 4, config, self.github.note,
+                            self.workspace.path, 'correction', 'Fix actual finding')
+        self.assertEqual(self.github.note['expected_head'], HEAD)
+        self.assertFalse(any(x == ('push', 'f' * 40) for x in self.github.writes))
+        self.stop = False
+        self.calls.clear()
+        before = self.workspace.verification_calls
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_head_changed')
+        self.assertEqual(self.workspace.verification_calls, before)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
+
+    async def test_unknown_host_cleanup_blocks_other_projects_until_restart(self):
+        for unknown in ['capability', 'execution']:
+            with self.subTest(unknown=unknown):
+                first, second = GitHub(), GitHub()
+                first.work['body'] = first.work['body'].replace('```hydra\n', '```hydra\npriority = 1\n')
+                second.cfg.update(repository='example/another', repository_id=456)
+                class Router:
+                    def __getattr__(self, name):
+                        return lambda repo, *args, **kwargs: getattr(first if repo == 'example/product' else second, name)(repo, *args, **kwargs)
+                router = Router()
+                path = Path(self.directory.name) / unknown
+                path.mkdir()
+                workspace = Workspace(path, first)
+                probes, turns = [], []
+                async def capabilities(cwd):
+                    probes.append(cwd)
+                    return {**complete_capabilities(), 'cleanup': 'unknown'} if unknown == 'capability' else complete_capabilities()
+                async def execute(assignment, **kwargs):
+                    turns.append(assignment)
+                    return {'status': 'transport_unknown', 'detail': {'cleanup': 'unknown'}}
+                with patch('hydra_sdlc.runner.load_project', side_effect=lambda gh, repo: copy.deepcopy(first.cfg if repo == 'example/product' else second.cfg)):
+                    runner = Runner(router, workspace, host_alias='host-a', execute=execute, capabilities=capabilities)
+                    result = await runner.cycle(['example/product', 'example/another'])
+                    self.assertEqual(len(result), 1)
+                    expected = 'host_cleanup_unconfirmed' if unknown == 'capability' else 'host_execution_unconfirmed'
+                    self.assertEqual(runner.host_hold_reason, expected)
+                    self.assertIsNone(second.note)
+                    before = len(probes), len(turns)
+                    self.assertEqual((await runner.cycle(['example/product', 'example/another']))[0]['reason'], expected)
+                    self.assertEqual((await runner.step('example/another', 4))['reason'], expected)
+                    self.assertEqual((len(probes), len(turns)), before)
 
 
 if __name__ == '__main__':
