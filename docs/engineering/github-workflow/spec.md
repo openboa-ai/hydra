@@ -104,8 +104,10 @@ Workspace-write mode is explicit with deny-all approval. Restrict writes to the
 owned workspace/resources; keep read-only reviewer mode. Product checks run through
 registered resource/lifecycle provider. The reviewer examines actual spec/diff/output.
 A provider-completed result proposes candidate readiness, never delivery completion.
-Missing resources/auth/usage observation or any usage window below 20% prevents a
-new model turn. Preserve failed/unknown outcomes as waits rather than automatic restart.
+Missing resources/auth/usage observation or Codex denying ordinary usage prevents
+a new model turn. Respect reported native spend controls. Existing account credits
+may be consumed when Codex permits use; never buy credits, auto-recharge or switch
+to API billing. Preserve failed/unknown outcomes as waits rather than automatic restart.
 
 Pin evidence to current head/spec/contract. UI tasks need a public-safe actual screen
 checkpoint shared with the operator before final PR publication; otherwise wait.
@@ -469,11 +471,18 @@ malformed, unauthorized or paused work cannot boost another task's priority.
 
 Validate every reported usage bucket and every actual reported window. Each bucket
 needs at least one valid numeric finite window, and every observed usedPercent must
-remain within the existing 0..80 dispatch boundary. A missing/null optional window
+be valid within 0..100. These percentages provide observation, not an additional
+subscription reserve gate. A missing/null optional window
 is unreported, never zero; malformed buckets/windows must not be normalized to null
 or hidden by a healthy bucket. Use legacy rateLimits only when the multi-bucket map
 is absent/null, not when a supplied map is empty or malformed. Invalid normalization
-keeps usage unknown. Credits do not override this existing policy.
+keeps usage unknown. On 2026-10-10 the operator chose Codex's native usage permission,
+including existing credits, instead of the previous optional 20% subscription reserve.
+Require ordinaryUsageAllowed to be exactly true; a reported spend-control denial or
+malformed spend-control value holds. Missing/unreported optional controls do not
+invent a denial. No credit balance, pricing arithmetic or fallback billing mechanism
+is added. Acceptance covers valid high-usage/credit-backed dispatch, native denial,
+spend controls and unchanged unknown/malformed-report holds.
 
 Required CI is the explicitly bound job and matching check, not optional jobs in
 the same workflow. After formal producer/run identity validation, inspect that job
