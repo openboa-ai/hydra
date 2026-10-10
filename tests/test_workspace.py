@@ -586,6 +586,19 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
             self.workspace.read_spec(self.path, "README.md")
 
+    def test_spec_size_limit_applies_before_tracked_or_untracked_readiness(self):
+        for relative in ("README.md", "candidate.md"):
+            with self.subTest(relative=relative):
+                spec = self.path / relative
+                spec.write_bytes(b"x" * (1024 * 1024))
+                self.assertTrue(self.workspace.valid_spec(self.path, relative, require_tracked=False))
+                self.assertEqual(self.workspace.valid_spec(self.path, relative), relative == "README.md")
+                spec.write_bytes(b"x" * (1024 * 1024 + 1))
+                self.assertFalse(self.workspace.valid_spec(self.path, relative, require_tracked=False))
+                self.assertFalse(self.workspace.valid_spec(self.path, relative))
+                with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+                    self.workspace.read_spec(self.path, relative)
+
     def test_read_spec_refuses_raced_fifo_and_symlink_without_blocking(self):
         spec = self.path / "README.md"
         outside = self.root / "outside.md"

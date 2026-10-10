@@ -29,6 +29,7 @@ class WorkspaceWait(RuntimeError):
 
 PUBLISH_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_SPEC_BYTES = 1024 * 1024
 GIT_TIMEOUT = 60
 
 
@@ -355,7 +356,7 @@ class Workspace:
                 os.close(directory)
                 directory = child
             info = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
-            if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_SPEC_BYTES:
                 return False
         except OSError:
             return False
@@ -389,7 +390,7 @@ class Workspace:
                 directory = child
             source = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
             info = os.fstat(source)
-            limit = 1024 * 1024
+            limit = MAX_SPEC_BYTES
             if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
                 raise WorkspaceWait("invalid_spec")
             data = bytearray()

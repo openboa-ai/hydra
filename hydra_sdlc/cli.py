@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import importlib
 import json
+import math
 import os
 import signal
 import sys
@@ -42,6 +43,8 @@ def _provider(value):
 
 
 async def operate(args, *, github=None, workspace=None, execute=None, capabilities=None, emit=print):
+    if args.command != "status" and args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
+        raise ValueError("Timeout must be finite and positive")
     from .codex import capabilities as inspect_capabilities, execute as execute_codex
     from .github import GitHub
     from .runner import Runner, issue_url
@@ -53,8 +56,6 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
         result = runner.status(args.repos)
         emit(json.dumps(result, indent=2, ensure_ascii=False))
         return result
-    if args.timeout is not None and args.timeout <= 0:
-        raise ValueError("Timeout must be positive")
     if not __import__("re").fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.host_alias):
         raise ValueError("Host alias must be a public-safe slug")
     workspace = workspace or Workspace(args.workspace_root, lifecycle_provider=_provider(args.lifecycle_provider),
