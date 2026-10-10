@@ -172,6 +172,93 @@ class DeliveryRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_thread_exhaustion_and_authorized_replan_resume_same_effect(self):
         await self.service_replan('resolve_threads')
 
+    async def test_resolved_thread_lost_response_does_not_consume_next_thread_budget(self):
+        await self.opened_pr()
+        threads = [{'id': name, 'isOutdated': True, 'isResolved': False,
+                    'comments': {'nodes': [{'author': {'login': self.github.cfg['review_provider']['login']}}]}}
+                   for name in ['thread-a', 'thread-b']]
+        self.github.transform_observation = lambda value: {**value, 'threads': copy.deepcopy(threads)}
+        requests = []
+        writes = self.calls.count('workspace_write')
+
+        def resolve(repo, number, thread, head, provider):
+            self.github.assert_intent('resolve_threads')
+            requests.append((thread, copy.deepcopy(self.github.note)))
+            if thread == 'thread-a':
+                if len(requests) == 3:
+                    threads[0]['isResolved'] = True
+                raise RuntimeError('thread resolution read-back unavailable')
+            threads[1]['isResolved'] = True
+
+        self.github.resolve_thread = resolve
+        for attempt in range(1, 4):
+            result = await self.runner().step(REPO, NUMBER)
+            self.assertEqual(result['reason'], 'review_resolution_boundary')
+            self.assertEqual(len(requests), attempt)
+            self.assertEqual(requests[-1][0], 'thread-a')
+            self.assertEqual(requests[-1][1]['delivery_attempt'], attempt)
+        self.assertTrue(threads[0]['isResolved'])
+        self.assertFalse(threads[1]['isResolved'])
+        result = await self.runner().step(REPO, NUMBER)
+        self.assertEqual([thread for thread, _ in requests], ['thread-a'] * 3 + ['thread-b'])
+        self.assertEqual(requests[-1][1]['delivery_attempt'], 1)
+        self.assertEqual(requests[-1][1]['pending_thread'], 'thread-b')
+        self.assertEqual(result['action'], 'continue')
+        self.assertIsNone(self.github.note.get('pending_action'))
+        self.assertTrue(all(thread['isResolved'] for thread in threads))
+        self.assertEqual(self.calls.count('workspace_write'), writes)
+
+    async def test_historical_pr_delivery_does_not_skip_failed_correction_replan(self):
+        await self.opened_pr()
+        published = self.workspace.head
+        self.assertEqual(self.github.note['delivery_action'], 'upsert_pr')
+        self.assertEqual(self.github.note['delivery_head'], published)
+        original_execute = self.execute
+
+        async def failed_correction(assignment, **kwargs):
+            result = await original_execute(assignment, **kwargs)
+            if assignment['mode'] == 'workspace_write':
+                self.assertEqual(self.github.note['pending_action'], 'correction')
+                result['detail']['result']['outcome'] = 'failed'
+            return result
+
+        def failed_ci(value):
+            value['checks'][0]['conclusion'] = 'failure'
+            return value
+
+        self.execute = failed_correction
+        self.github.transform_observation = failed_ci
+        result = await self.runner().step(REPO, NUMBER)
+        self.assertEqual(result['reason'], 'replan_required')
+        checkpointed = self.workspace.head
+        self.assertNotEqual(checkpointed, published)
+        self.assertEqual(self.github.note['head'], checkpointed)
+        self.assertEqual(self.github.note['expected_head'], published)
+        self.assertIsNone(self.github.note['pending_action'])
+        self.assertFalse(self.workspace.dirty)
+        self.assertEqual(self.github.note['delivery_action'], 'upsert_pr')
+        self.assertEqual(self.github.note['delivery_head'], published)
+        self.assertEqual(self.github.branch, published)
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: replan {self.github.note['attempt_id']} ready"})
+        async def replanned_implementation(assignment, **kwargs):
+            if assignment['mode'] == 'workspace_write':
+                self.assertEqual(self.github.note['pending_action'], 'implementation')
+            return await original_execute(assignment, **kwargs)
+
+        self.execute = replanned_implementation
+        self.github.transform_observation = lambda value: value
+        writes = self.calls.count('workspace_write')
+        before = len(self.github.writes)
+        result = await self.runner().step(REPO, NUMBER)
+        self.assertEqual(self.calls.count('workspace_write'), writes + 1)
+        self.assertEqual(result['action'], 'continue')
+        self.assertNotEqual(self.workspace.head, checkpointed)
+        self.assertEqual(self.github.note['phase'], 'implementation_done')
+        self.assertFalse(any(item[0] in EFFECTS for item in self.github.writes[before:]))
+        self.assertEqual(self.github.branch, published)
+        self.assertEqual(self.github.pr['head']['sha'], published)
+
     async def test_replan_cannot_adopt_conflicting_remote_publication(self):
         requests, failing, pinned = await self.exhausted_service('publish')
         self.github.branch = 'e' * 40
