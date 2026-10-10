@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import selectors
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -52,8 +53,14 @@ def _sha(value, *, absent=False):
     return value
 
 
-def _run(argv, cwd, timeout, env=None):
+def _check_stop(stop_requested):
+    if stop_requested is not None and stop_requested():
+        raise WorkspaceWait("verification_stopped")
+
+
+def _run(argv, cwd, timeout, env=None, *, stop_requested=None):
     """Bound command and descendants, retaining bounded private output only."""
+    _check_stop(stop_requested)
     try:
         process = subprocess.Popen(argv, cwd=cwd, env=env or _environment(),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -66,6 +73,7 @@ def _run(argv, cwd, timeout, env=None):
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
             while True:
+                _check_stop(stop_requested)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(argv, timeout)
@@ -79,7 +87,22 @@ def _run(argv, cwd, timeout, env=None):
                         raise WorkspaceWait("command_output_limit", uncertain=True)
                 elif process.poll() is not None:
                     break
-        code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        if stop_requested is None:
+            code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        else:
+            # A check may close stdout long before exiting; keep polling the
+            # same stop predicate while waiting for that process as well.
+            while process.poll() is None:
+                _check_stop(stop_requested)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                try:
+                    process.wait(timeout=min(0.1, remaining))
+                except subprocess.TimeoutExpired:
+                    continue
+            _check_stop(stop_requested)
+            code = process.returncode
     except subprocess.TimeoutExpired:
         code = -signal.SIGKILL
     finally:
@@ -100,7 +123,10 @@ class Workspace:
     must create/register exactly path, or raise when resources/ownership are not
     available. For an existing path it must validate the registered resources
     without changing checkout contents. storage_provider.run(path, argv, cwd,
-    timeout) returns a CompletedProcess (combined private output in stdout), or raises. Managed
+    timeout, *, stop_requested) must poll stop/deadline at most every 100ms,
+    terminate its owned process group, and raise verification_stopped on stop.
+    It returns a CompletedProcess (combined private output in stdout), or raises;
+    timeout kills have a negative signal return code. Managed
     OpenBoa roots require these providers; the standalone fallback is explicit.
     """
 
@@ -297,6 +323,92 @@ class Workspace:
                 "dirty": bool(self._git(path, "status", "--porcelain=v1", "--untracked-files=all").stdout),
                 "branch": branch, "remote_sha": self._remote_sha(path, branch)}
 
+    def contains_base(self, path, expected_base_sha):
+        """Whether the owned head descends from this exact local commit."""
+        path, _, _ = self._identity(path)
+        _sha(expected_base_sha)
+        kind = self._git(path, "--no-replace-objects", "cat-file", "-t", expected_base_sha).stdout
+        if kind.strip() != b"commit":
+            raise WorkspaceWait("invalid_commit")
+        head = _sha(self._git(path, "rev-parse", "--verify", "HEAD^{commit}").stdout.decode().strip())
+        result = self._git(path, "--no-replace-objects", "merge-base", "--is-ancestor",
+                           expected_base_sha, head, check=False)
+        if result.returncode not in (0, 1):
+            raise WorkspaceWait("git_operation_failed")
+        return result.returncode == 0
+
+    def valid_spec(self, path, relative, *, require_tracked=True):
+        """Inspect a regular nonempty artifact without opening its contents."""
+        path, _, _ = self._identity(path)
+        if (type(require_tracked) is not bool or not isinstance(relative, str)
+                or "\0" in relative or "\\" in relative
+                or any(part in ("", ".", "..") or part.casefold() == ".git"
+                       for part in relative.split("/"))):
+            return False
+        parts = relative.split("/")
+        directory = None
+        try:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            directory = os.open(path, flags)
+            for part in parts[:-1]:
+                child = os.open(part, flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            info = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+                return False
+        except OSError:
+            return False
+        finally:
+            if directory is not None:
+                os.close(directory)
+        if not require_tracked:
+            return True
+        entries = self._git(path, "--literal-pathspecs", "ls-files", "--stage", "-z", "--", relative).stdout.split(b"\0")
+        if len(entries) != 2 or entries[-1]:
+            return False
+        metadata, separator, name = entries[0].partition(b"\t")
+        fields = metadata.split()
+        return (separator == b"\t" and name == os.fsencode(relative) and len(fields) == 3
+                and fields[0] in (b"100644", b"100755") and fields[2] == b"0"
+                and re.fullmatch(rb"[0-9a-f]{40}", fields[1]) is not None
+                and fields[1] != b"0" * 40)
+
+    def read_spec(self, path, relative):
+        """Read at most 1 MiB from a tracked spec without following aliases."""
+        if not self.valid_spec(path, relative):
+            raise WorkspaceWait("invalid_spec")
+        directory = source = None
+        try:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            directory = os.open(Path(path).absolute(), flags)
+            parts = relative.split("/")
+            for part in parts[:-1]:
+                child = os.open(part, flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            source = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            info = os.fstat(source)
+            limit = 1024 * 1024
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+                raise WorkspaceWait("invalid_spec")
+            data = bytearray()
+            while len(data) <= limit:
+                chunk = os.read(source, min(65536, limit + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+            if not data or len(data) > limit:
+                raise WorkspaceWait("invalid_spec")
+            return bytes(data)
+        except OSError as exc:
+            raise WorkspaceWait("invalid_spec") from exc
+        finally:
+            if source is not None:
+                os.close(source)
+            if directory is not None:
+                os.close(directory)
+
     def fetch_base(self, path, expected_base_sha):
         """Prepare one observed base commit for offline integration by the worker.
 
@@ -312,7 +424,12 @@ class Workspace:
             raise WorkspaceWait("fetched_base_mismatch")
         return _sha(observed)
 
-    def verify(self, path, commands):
+    def verify(self, path, commands, *, stop_requested=None):
+        if stop_requested is None:
+            stop_requested = lambda: False
+        if not callable(stop_requested):
+            raise WorkspaceWait("invalid_verification_stop")
+        _check_stop(stop_requested)
         path, _, _ = self._identity(path)
         if not isinstance(commands, list) or not commands or len(commands) > 64:
             raise WorkspaceWait("verification_policy_missing")
@@ -334,11 +451,13 @@ class Workspace:
             prepared.append((list(argv), cwd, timeout))
         records = []
         for argv, cwd, timeout in prepared:
+            _check_stop(stop_requested)
             try:
-                result = (self.storage_provider.run(path, argv, cwd, timeout) if self.storage_provider
-                          else _run(argv, cwd, timeout))
+                result = (self.storage_provider.run(path, argv, cwd, timeout, stop_requested=stop_requested)
+                          if self.storage_provider else _run(argv, cwd, timeout, stop_requested=stop_requested))
             except (OSError, subprocess.SubprocessError) as exc:
                 raise WorkspaceWait("verification_unavailable") from exc
+            _check_stop(stop_requested)
             output = result.stdout or b""
             if isinstance(output, str):
                 output = output.encode()
@@ -349,6 +468,8 @@ class Workspace:
             records.append({"argv": argv, "cwd": str(cwd.relative_to(path)),
                             "exit_code": result.returncode, "passed": result.returncode == 0,
                             "output_digest": digest})
+            if result.returncode < 0:
+                break
         return records
 
     def verification_output(self, digest):

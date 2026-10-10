@@ -1,9 +1,11 @@
 import hashlib
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -259,9 +261,74 @@ class WorkspaceTests(unittest.TestCase):
         with patch.dict(os.environ, {"GH_TOKEN": "not-forwarded", "GITHUB_TOKEN": "not-forwarded"}):
             records = self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",
                 "import os; assert 'GH_TOKEN' not in os.environ and 'GITHUB_TOKEN' not in os.environ"]},
-                {"argv": [sys.executable, "-c", "import time; time.sleep(60)"], "timeout": 0.05}])
+                {"argv": [sys.executable, "-c", "import time; time.sleep(60)"], "timeout": 0.05},
+                {"argv": [sys.executable, "-c", "from pathlib import Path; Path('later-check').touch()"]}])
         self.assertTrue(records[0]["passed"])
         self.assertFalse(records[1]["passed"])
+        self.assertEqual(len(records), 2)
+        self.assertFalse((self.path / "later-check").exists())
+
+    def test_verification_stop_kills_owned_process_group_and_skips_later_checks(self):
+        marker = self.path / "processes"
+        child = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready',flush=True); time.sleep(60)"
+        command = (
+            "import os,subprocess,sys,time\nfrom pathlib import Path\n"
+            "child = subprocess.Popen([sys.executable, '-c', " + repr(child) + "], stdout=subprocess.PIPE)\n"
+            "child.stdout.readline()\n"
+            "Path('processes').write_text(str(os.getpid()) + ' ' + str(child.pid))\n"
+            "time.sleep(60)\n"
+        )
+        started = time.monotonic()
+        with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"):
+            self.workspace.verify(self.path, [
+                {"argv": [sys.executable, "-c", command], "timeout": 5},
+                {"argv": [sys.executable, "-c", "from pathlib import Path; Path('later-check').touch()"]},
+            ], stop_requested=marker.exists)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertFalse((self.path / "later-check").exists())
+        pids = [int(value) for value in marker.read_text().split()]
+        for pid in pids:
+            until = time.monotonic() + 2
+            while True:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                if time.monotonic() >= until:
+                    self.fail("Stopped verification left an owned process running")
+                time.sleep(0.01)
+
+    def test_verification_deadline_remains_active_after_stdout_closes(self):
+        deadline = time.monotonic() + 0.4
+        with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"):
+            self.workspace.verify(self.path, [
+                {"argv": [sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(60)"], "timeout": 5},
+                {"argv": [sys.executable, "-c", "from pathlib import Path; Path('later-check').touch()"]},
+            ], stop_requested=lambda: time.monotonic() >= deadline)
+        self.assertLess(time.monotonic() - deadline, 1)
+        self.assertFalse((self.path / "later-check").exists())
+
+    def test_verification_signal_stop_is_not_a_passing_receipt(self):
+        stopped = False
+        def stop(_signal, _frame):
+            nonlocal stopped
+            stopped = True
+        previous = signal.signal(signal.SIGUSR1, stop)
+        try:
+            with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"):
+                self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",
+                    "import os,signal,time; os.kill(os.getppid(),signal.SIGUSR1); time.sleep(60)"], "timeout": 5}],
+                    stop_requested=lambda: stopped)
+        finally:
+            signal.signal(signal.SIGUSR1, previous)
+        self.assertTrue(stopped)
+
+    def test_verification_stop_before_dispatch_never_runs_a_command(self):
+        with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"), patch(
+            "hydra_sdlc.workspace.subprocess.Popen"
+        ) as spawn:
+            self.workspace.verify(self.path, [{"argv": ["true"]}], stop_requested=lambda: True)
+        spawn.assert_not_called()
 
     def test_publish_reads_back_and_never_forces(self):
         (self.path / "README.md").write_text("changed\n")
@@ -362,13 +429,32 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_storage_provider_receives_owned_path_and_validated_arguments(self):
         class Storage:
-            def run(inner, path, argv, cwd, timeout):
+            def run(inner, path, argv, cwd, timeout, *, stop_requested):
                 self.assertEqual(path, self.path)
                 self.assertEqual(cwd, self.path)
                 self.assertEqual(timeout, 20)
-                return _run(argv, cwd, timeout)
+                self.assertFalse(stop_requested())
+                return _run(argv, cwd, timeout, stop_requested=stop_requested)
         self.workspace.storage_provider = Storage()
         self.assertTrue(self.workspace.verify(self.path, [{"argv": [sys.executable, "-c", "pass"], "timeout": 20}])[0]["passed"])
+
+    def test_storage_stop_cannot_return_success_or_dispatch_later_command(self):
+        stopped = False
+        def stop_requested():
+            return stopped
+        class Storage:
+            def run(inner, path, argv, cwd, timeout, *, stop_requested):
+                nonlocal stopped
+                self.assertFalse(stop_requested())
+                stopped = True
+                return subprocess.CompletedProcess(argv, 0, b"finished during stop")
+        storage = Storage()
+        self.workspace.storage_provider = storage
+        with patch.object(storage, "run", wraps=storage.run) as calls:
+            with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"):
+                self.workspace.verify(self.path, [{"argv": ["true"]}, {"argv": ["true"]}],
+                                      stop_requested=stop_requested)
+        self.assertEqual(calls.call_count, 1)
 
     def test_lifecycle_provider_can_register_independent_linked_worktrees(self):
         class Lifecycle:
@@ -380,6 +466,191 @@ class WorkspaceTests(unittest.TestCase):
         second = self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
         self.assertEqual(self.workspace.inspect(second)["head"], self.base)
         self.assertEqual(self.workspace.inspect(self.path)["head"], self.base)
+
+    def test_contains_base_requires_integration_not_just_a_fetched_object(self):
+        (self.seed / "upstream").write_text("base addition")
+        git(self.seed, "add", "upstream")
+        git(self.seed, "commit", "-m", "upstream")
+        upstream = git(self.seed, "rev-parse", "HEAD")
+        git(self.seed, "push", "origin", "main")
+        (self.path / "candidate").write_text("owned change")
+        candidate = self.workspace.checkpoint(self.path, "Candidate")
+        self.workspace.fetch_base(self.path, upstream)
+        self.assertTrue(self.workspace.contains_base(self.path, self.base))
+        self.assertFalse(self.workspace.contains_base(self.path, upstream))
+        self.assertEqual(git(self.path, "rev-parse", "HEAD"), candidate)
+        git(self.path, "merge", "--no-ff", "--no-edit", upstream)
+        self.assertTrue(self.workspace.contains_base(self.path, upstream))
+        self.assertTrue(self.workspace.contains_base(self.path, git(self.path, "rev-parse", "HEAD")))
+
+    def test_contains_base_rejects_refs_tags_blobs_missing_objects_and_git_errors(self):
+        git(self.path, "tag", "-a", "base-tag", "-m", "tag")
+        for value in ("HEAD", "refs/heads/main", git(self.path, "rev-parse", "base-tag"),
+                      git(self.path, "rev-parse", "HEAD:README.md"), "f" * 40):
+            with self.subTest(value=value), self.assertRaises(WorkspaceWait):
+                self.workspace.contains_base(self.path, value)
+        real = self.workspace._git
+        def failed(path, *args, **kwargs):
+            if "merge-base" in args:
+                return subprocess.CompletedProcess(args, 128, b"unavailable")
+            return real(path, *args, **kwargs)
+        with patch.object(self.workspace, "_git", side_effect=failed):
+            with self.assertRaisesRegex(WorkspaceWait, "git_operation_failed"):
+                self.workspace.contains_base(self.path, self.base)
+
+    def test_spec_candidate_inspection_does_not_stage_untracked_artifacts(self):
+        spec = self.path / "spec.md"
+        spec.write_bytes(b"candidate specification\n")
+        index = (self.path / ".git/index").read_bytes()
+        self.assertTrue(self.workspace.valid_spec(self.path, "README.md"))
+        self.assertFalse(self.workspace.valid_spec(self.path, "spec.md"))
+        self.assertTrue(self.workspace.valid_spec(self.path, "spec.md", require_tracked=False))
+        self.assertEqual((self.path / ".git/index").read_bytes(), index)
+        with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+            self.workspace.read_spec(self.path, "spec.md")
+        git(self.path, "add", "spec.md")
+        self.assertTrue(self.workspace.valid_spec(self.path, "spec.md"))
+        self.assertEqual(self.workspace.read_spec(self.path, "spec.md"), b"candidate specification\n")
+
+    def test_spec_rejects_missing_empty_special_and_aliased_artifacts(self):
+        (self.path / "empty.md").touch()
+        (self.path / "directory").mkdir()
+        os.mkfifo(self.path / "pipe.md")
+        (self.path / "alias.md").symlink_to("README.md")
+        (self.path / "dangling.md").symlink_to("missing.md")
+        (self.path / "docs").mkdir()
+        (self.path / "docs/spec.md").write_text("specification")
+        (self.path / "alias-parent").symlink_to("docs", target_is_directory=True)
+        for relative in ("missing.md", "empty.md", "directory", "pipe.md", "alias.md",
+                         "dangling.md", "alias-parent/spec.md"):
+            with self.subTest(relative=relative):
+                self.assertFalse(self.workspace.valid_spec(self.path, relative, require_tracked=False))
+                with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+                    self.workspace.read_spec(self.path, relative)
+
+    def test_spec_rejects_noncanonical_paths_and_invalid_tracking_flags(self):
+        for relative in ("", "/README.md", "./README.md", "../README.md", "docs/../README.md",
+                         "docs//spec.md", "README.md/", ".git/config", ".GIT/config",
+                         "docs\\spec.md", "bad\0name", None):
+            with self.subTest(relative=relative):
+                self.assertFalse(self.workspace.valid_spec(self.path, relative, require_tracked=False))
+        for flag in (None, 0, 1, "false"):
+            with self.subTest(flag=flag):
+                self.assertFalse(self.workspace.valid_spec(self.path, "README.md", require_tracked=flag))
+        git(self.path, "config", "--unset", self.workspace._marker(self.path, "owner"))
+        for operation in (lambda: self.workspace.valid_spec(self.path, "README.md"),
+                          lambda: self.workspace.read_spec(self.path, "README.md"),
+                          lambda: self.workspace.contains_base(self.path, self.base)):
+            with self.assertRaisesRegex(WorkspaceWait, "foreign_workspace"):
+                operation()
+
+    def test_spec_rejects_symlink_index_entry_even_with_regular_worktree_file(self):
+        spec = self.path / "spec.md"
+        spec.symlink_to("README.md")
+        git(self.path, "add", "spec.md")
+        spec.unlink()
+        spec.write_text("regular replacement")
+        self.assertTrue(self.workspace.valid_spec(self.path, "spec.md", require_tracked=False))
+        self.assertFalse(self.workspace.valid_spec(self.path, "spec.md"))
+
+    def test_spec_rejects_unmerged_index_entries(self):
+        git(self.path, "checkout", "-b", "other-spec")
+        (self.path / "README.md").write_text("other specification\n")
+        git(self.path, "add", "README.md")
+        git(self.path, "commit", "-m", "other spec")
+        git(self.path, "checkout", "hydra/issue-1")
+        (self.path / "README.md").write_text("owned specification\n")
+        self.workspace.checkpoint(self.path, "Owned spec")
+        with self.assertRaises(subprocess.CalledProcessError):
+            git(self.path, "merge", "other-spec")
+        self.assertTrue(self.workspace.valid_spec(self.path, "README.md", require_tracked=False))
+        self.assertFalse(self.workspace.valid_spec(self.path, "README.md"))
+        with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+            self.workspace.read_spec(self.path, "README.md")
+
+    def test_spec_index_lookup_uses_exact_literal_paths(self):
+        for relative in (":(glob)*", "spec[1].md", "spec\tline\n.md"):
+            with self.subTest(relative=relative):
+                (self.path / relative).write_bytes(b"literal artifact")
+                self.assertFalse(self.workspace.valid_spec(self.path, relative))
+                git(self.path, "--literal-pathspecs", "add", "--", relative)
+                self.assertTrue(self.workspace.valid_spec(self.path, relative))
+                self.assertEqual(self.workspace.read_spec(self.path, relative), b"literal artifact")
+
+    def test_read_spec_preserves_bytes_and_bounds_size(self):
+        spec = self.path / "README.md"
+        for content in (b"spec\x00\xff\n", b"x" * (1024 * 1024)):
+            spec.write_bytes(content)
+            self.assertEqual(self.workspace.read_spec(self.path, "README.md"), content)
+        spec.write_bytes(b"x" * (1024 * 1024 + 1))
+        with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+            self.workspace.read_spec(self.path, "README.md")
+
+    def test_read_spec_refuses_raced_fifo_and_symlink_without_blocking(self):
+        spec = self.path / "README.md"
+        outside = self.root / "outside.md"
+        outside.write_bytes(b"must not be read")
+        real_open = os.open
+        for kind in ("fifo", "symlink"):
+            if spec.exists() or spec.is_symlink():
+                spec.unlink()
+            spec.write_text("valid before open")
+            opened = []
+            def raced(name, flags, *args, **kwargs):
+                if name == "README.md":
+                    self.assertTrue(flags & os.O_NONBLOCK)
+                    self.assertTrue(flags & os.O_NOFOLLOW)
+                    self.assertIn("dir_fd", kwargs)
+                    spec.unlink()
+                    if kind == "fifo":
+                        os.mkfifo(spec)
+                    else:
+                        spec.symlink_to(outside)
+                    opened.append(kind)
+                return real_open(name, flags, *args, **kwargs)
+            with self.subTest(kind=kind), patch("hydra_sdlc.workspace.os.open", side_effect=raced):
+                with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+                    self.workspace.read_spec(self.path, "README.md")
+            self.assertEqual(opened, [kind])
+
+    def test_read_spec_refuses_parent_symlink_created_after_validation(self):
+        docs = self.path / "docs"
+        docs.mkdir()
+        (docs / "spec.md").write_text("owned spec")
+        git(self.path, "add", "docs/spec.md")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "spec.md").write_text("must not be read")
+        real_open = os.open
+        traversals = []
+        def raced(name, flags, *args, **kwargs):
+            if name == "docs":
+                traversals.append(name)
+                self.assertTrue(flags & os.O_DIRECTORY)
+                self.assertTrue(flags & os.O_NOFOLLOW)
+                self.assertIn("dir_fd", kwargs)
+                if len(traversals) == 2:
+                    docs.rename(self.path / "original-docs")
+                    docs.symlink_to(outside, target_is_directory=True)
+            return real_open(name, flags, *args, **kwargs)
+        with patch("hydra_sdlc.workspace.os.open", side_effect=raced):
+            with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+                self.workspace.read_spec(self.path, "docs/spec.md")
+        self.assertEqual(len(traversals), 2)
+
+    def test_read_spec_bounds_growth_after_descriptor_validation(self):
+        spec = self.path / "README.md"
+        real_fstat = os.fstat
+        checks = []
+        def grown(fd):
+            info = real_fstat(fd)
+            checks.append(fd)
+            spec.write_bytes(b"x" * (1024 * 1024 + 1))
+            return info
+        with patch("hydra_sdlc.workspace.os.fstat", side_effect=grown):
+            with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):
+                self.workspace.read_spec(self.path, "README.md")
+        self.assertEqual(len(checks), 1)
 
     def test_additional_push_destination_is_rejected(self):
         git(self.path, "remote", "set-url", "--add", "--push", "origin", str(self.remote))
