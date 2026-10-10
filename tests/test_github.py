@@ -272,9 +272,11 @@ class GitHubTests(unittest.TestCase):
     def test_progress_recovery_fields_are_typed_and_bounded(self):
         fake = self.progress_fake([])
         record = {'phase': 'publishing', 'expected_head': HEAD, 'expected_base': BASE,
-                  'action_attempt': 3, 'review_requested_head': HEAD, 'pending_thread': 'PRRT_kwDO-AbC_123'}
+                  'action_attempt': 3, 'review_requested_head': HEAD, 'published_head': HEAD,
+                  'pending_thread': 'PRRT_kwDO-AbC_123'}
         GitHub(transport=fake).record(REPO, 4, record)
         for mutation in [{'action_attempt': 4}, {'action_attempt': True}, {'expected_base': 'main'}, {'review_requested_head': 'short'},
+                         {'published_head': 'pass=true'}, {'published_head': True},
                          {'pending_thread': 'raw thread text'}, {'pending_thread': '/private/path'}, {'pending_thread': 12},
                          {'pending_thread': 'a' * 201}]:
             with self.subTest(mutation=mutation), self.assertRaises(GitHubError):

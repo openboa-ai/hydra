@@ -702,7 +702,8 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_unpublished_checkpoint_is_not_replaced_by_older_checkout(self):
         runner = await self.publish()
-        self.github.note.update(head=HEAD, expected_head=BASE, phase='implementation_done')
+        # The base branch was published by this service before the newer local checkpoint.
+        self.github.note.update(head=HEAD, expected_head=BASE, published_head=BASE, phase='implementation_done')
         self.github.branch = BASE
         self.workspace.head = BASE
         self.github.extra_comments.append({'user': {'login': 'operator'},

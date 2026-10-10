@@ -536,9 +536,12 @@ class Runner:
             self._record(repo, number, record, pr_number=pr["number"], phase="review_wait",
                          pending_action=None, next_action="remote_review")
             return {"action": "continue", "repository": repo, "issue": number}
-        boundary, remote, _ = self._branch_boundary(repo, number, record)
+        boundary, fresh_remote, _ = self._branch_boundary(repo, number, record)
         if boundary:
             return self._wait(repo, number, record, boundary,
+                              phase="uncertain" if record.get("pending_action") else "waiting")
+        if fresh_remote != remote:
+            return self._wait(repo, number, record, "remote_head_changed",
                               phase="uncertain" if record.get("pending_action") else "waiting")
         path = self.workspace.prepare(repo, number, branch, remote, recover_dirty=recover_dirty)
         self.workspace.fetch_base(path, config["revision"])
@@ -679,6 +682,7 @@ class Runner:
             publication = self._publish(repo, number, config, record, path, head)
             if publication:
                 return publication
+            record = self.github.progress(repo, number)
         record = {**record, "head": head}
         if self._latest(repo, number, config):
             return self._wait(repo, number, record, "delivery_boundary_changed")
