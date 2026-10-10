@@ -90,3 +90,39 @@ read-back or the same gated effect. Terminal review failures enter durable diagn
 The shared spec-size limit and finite CLI deadlines were also independently checked.
 No blocking finding remained in these source scopes; final-head CI/provider/native
 protection and actual product delivery remain separate acceptance evidence.
+
+The delivery-evidence/interrupted-allocation appendix was independently accepted
+before dependent implementation at spec SHA-256
+`19661c559503a1dc108d561aa0d7f52f5d2e3e4cee1931ebb78d6b13aa823485`.
+Independent source review accepted runner SHA-256
+`8af5fe73ce093fb053f902582b27a09ce0d8e931469ef6577f1b5b749abb1112`
+and project SHA-256
+`0114a50fa85053b3f8859fd191493784abcee063e64dc7ed30fabcd818f325d5`.
+The review identified and corrected a final close-control race and pending design
+publication using a newer base. Candidate evidence is verified for externally merged
+PRs without treating current merge permission as evidence of past delivery. Formal
+terminal CI enters bounded recovery or diagnosis; interrupted designs publish only
+the exact valid specification. Final dependency and Issue controls apply after the
+last candidate observation, including recovered close intents. Status isolates an
+invalid Issue rather than hiding other work.
+
+Standalone allocation source SHA-256
+`44a138df8eca1b9f6c1aacb881cece7fd2970c5b4bbb19df6642184587d7d913`
+passed independent source review and native crash/race tests. Staging uses final-path
+ownership markers and atomic exclusive promotion; lifecycle-provider worktrees are
+not moved. These source acceptances do not establish Linux execution, final-head
+provider/native approval, actual product delivery or unattended operation.
+
+Independent source review also accepted the shared process-supervision boundary
+at execution SHA-256
+`a252c8f918c9ddc696dc2128560b0654fe188ac29a43ff7a1646c664e9663579`,
+Codex adapter SHA-256
+`b214b6d74156f922b242543f778785a93b91fe1a353dc270ab35224a0cf41408`
+and coordinator SHA-256
+`bd839a2470f566402a3feda51cd19650f175314d5401e90f5fb14434619c2102`.
+The Linux helper alone adopts and reaps owned descendants; valid private receipts,
+actual helper collection and group absence are required for cleanup confirmation.
+Both helper and parent stop signaling a group after observing its disappearance.
+Unknown startup, receipts or helper death remain holds. The same-host startup scan
+also detects residual helpers. The native direct path retains its cleanup deadline.
+Source review does not substitute for actual Linux process tests or host qualification.
