@@ -10,6 +10,7 @@ import ctypes
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 SOURCE = Path(__file__).resolve()
@@ -531,11 +532,11 @@ class SynchronousCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.reason, "stopped")
         spawn.assert_not_called()
 
-    async def test_completed_receipt_needs_no_further_control_write(self):
+    def run_collected_helper(self):
         # Exercise the actual private socket on any POSIX host. This helper
         # reaps one real child; it does not simulate Linux descendant reaping.
         helper = """
-import json, os, socket, subprocess, sys, time
+import json, os, socket, subprocess, sys
 from pathlib import Path
 
 control = socket.socket(fileno=int(sys.argv[1]))
@@ -561,7 +562,6 @@ frames = [
 # An extra terminate write must fail, while the receipt can still be read.
 control.shutdown(socket.SHUT_RD)
 control.sendall(b''.join(json.dumps(frame).encode() + b'\\n' for frame in frames))
-time.sleep(.05)
 control.close()
 """
 
@@ -575,8 +575,25 @@ control.close()
         )
         with patch.object(self.boundary.sys, "platform", "linux"), \
                 patch.object(self.boundary, "_helper_command", side_effect=helper_command):
-            result = self.run_command(source)
+            return self.run_command(source)
+
+    async def test_completed_receipt_needs_no_further_control_write(self):
+        result = self.run_collected_helper()
         self.assertEqual((result.returncode, result.stdout), (0, b"collected\n"))
+        self.assert_worker_gone()
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / "helper.pid").read_text()), 0)
+
+    async def test_sync_receipt_prevents_signaling_a_reused_group(self):
+        # The real helper verifies disappearance before sending its receipt.
+        # Only the parent's later observation is replaced by a reused group.
+        with patch.object(self.boundary, "_group_absent", return_value=False), \
+                patch.object(self.boundary, "CLEANUP_SECONDS", .2), \
+                patch.object(self.boundary.os, "killpg") as signal_group:
+            with self.assertRaises(self.boundary.OwnedCommandError) as raised:
+                self.run_collected_helper()
+        self.assertEqual(raised.exception.reason, "cleanup_unknown")
+        signal_group.assert_not_called()
         self.assert_worker_gone()
         with self.assertRaises(ProcessLookupError):
             os.kill(int((self.root / "helper.pid").read_text()), 0)
@@ -622,6 +639,77 @@ control.close()
         self.assertLess(result.returncode, 0)
         self.assertEqual(result.stdout, b"")
         self.assert_worker_gone()
+
+
+class ReceiptGroupOwnershipTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_receipt_prevents_signaling_a_reused_group(self):
+        from hydra_sdlc import execution_boundary as boundary
+
+        handle = boundary.OwnedProcess(["unused"])
+        handle.linux = True
+        handle.pid = handle.pgid = 41001
+        handle.process = SimpleNamespace(
+            returncode=0, kill=Mock(), communicate=AsyncMock(return_value=(b"", b"")),
+        )
+        handle.control, peer = socket.socketpair()
+        self.addCleanup(handle.control.close)
+        self.addCleanup(peer.close)
+        handle.control.setblocking(False)
+        peer.sendall(boundary._supervision_frame(
+            "cleanup", pid=handle.pid, pgid=handle.pgid,
+            returncode=0, reaped=True, group_absent=True,
+        ))
+        handle._receipt_task = asyncio.create_task(handle._read_receipt())
+        await handle._receipt_task  # Accept the real channel frame before reuse.
+        self.assertTrue(handle.receipt["group_absent"])
+
+        with patch.object(boundary, "_group_absent", return_value=False), \
+                patch.object(boundary, "CLEANUP_SECONDS", .05), \
+                patch.object(boundary.os, "killpg") as signal_group:
+            clean = await handle._collect()
+        self.assertFalse(clean)
+        signal_group.assert_not_called()
+        handle.process.kill.assert_not_called()
+        handle.process.communicate.assert_not_called()
+
+    async def test_receipt_during_last_sleep_prevents_final_kill_of_reused_group(self):
+        from hydra_sdlc import execution_boundary as boundary
+
+        handle = boundary.OwnedProcess(["unused"])
+        handle.linux = True
+        handle.pid = handle.pgid = 41001
+        handle.process = SimpleNamespace(
+            returncode=None, kill=Mock(), communicate=AsyncMock(return_value=(b"", b"")),
+        )
+        handle.control, peer = socket.socketpair()
+        self.addCleanup(handle.control.close)
+        self.addCleanup(peer.close)
+        handle.control.setblocking(False)
+        handle._receipt_task = asyncio.get_running_loop().create_future()
+        real_sleep = asyncio.sleep
+
+        async def late_receipt(seconds):
+            peer.sendall(boundary._supervision_frame(
+                "cleanup", pid=handle.pid, pgid=handle.pgid,
+                returncode=0, reaped=True, group_absent=True,
+            ))
+            receipt = await handle._read_receipt()
+            handle._receipt_task.set_result(receipt)
+            handle.process.returncode = 0
+            # Resume only after the loop deadline, exercising its final guard.
+            await real_sleep(.02)
+
+        with patch.object(boundary, "_group_absent", return_value=False), \
+                patch.object(boundary, "CLEANUP_SECONDS", .01), \
+                patch.object(boundary.asyncio, "sleep", side_effect=late_receipt) as sleep, \
+                patch.object(boundary.os, "killpg") as signal_group:
+            clean = await handle._collect()
+        self.assertFalse(clean)
+        sleep.assert_awaited_once()
+        self.assertTrue(handle.receipt["group_absent"])
+        signal_group.assert_not_called()
+        handle.process.kill.assert_not_called()
+        handle.process.communicate.assert_not_called()
 
 
 class CleanupCancellationTests(unittest.TestCase):

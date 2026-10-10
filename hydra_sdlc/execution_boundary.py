@@ -267,6 +267,8 @@ class OwnedProcess:
                         self._receipt_task.result()
                     except Exception:
                         pass
+                if self.receipt is not None and self.receipt["group_absent"]:
+                    group_gone = True
                 if (self.receipt and self.receipt["reaped"] and self.receipt["group_absent"]
                         and self.process.returncode == 0 and _group_absent(self.pgid)):
                     await asyncio.wait_for(self.process.communicate(), max(0.001, deadline - loop.time()))
@@ -285,6 +287,8 @@ class OwnedProcess:
                             break
                         term_sent = True
                 await asyncio.sleep(min(.01, max(0, deadline - loop.time())))
+            if self.receipt is not None and self.receipt["group_absent"]:
+                group_gone = True
             if self.pgid is not None and not group_gone and not _group_absent(self.pgid):
                 try:
                     os.killpg(self.pgid, signal.SIGKILL)
@@ -386,7 +390,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 control_closed = True
 
         def receive(wait):
-            nonlocal pid, pgid, receipt, buffered, stdout_closed, control_failed
+            nonlocal pid, pgid, receipt, buffered, stdout_closed, control_failed, group_gone
             for key, _ in selector.select(max(0, min(.1, wait))):
                 if key.data == "output":
                     try:
@@ -418,6 +422,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                                 pid, pgid = _validate_ready(frame, process.pid)
                             elif receipt is None:
                                 receipt = _validate_receipt(frame, pid, pgid)
+                                if receipt["group_absent"]:
+                                    group_gone = True
                             else:
                                 raise ProtocolError("Unexpected supervision frame")
                         if len(buffered) >= SUPERVISION_LIMIT:
