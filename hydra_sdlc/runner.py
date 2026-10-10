@@ -47,6 +47,9 @@ def usage_allowed(capabilities):
     for bucket in buckets.values():
         if not isinstance(bucket, dict):
             return False
+        control = bucket.get("spendControlReached")
+        if control is not None and control is not False:
+            return False
         observed = False
         for key in ("primary", "secondary"):
             window = bucket.get(key)
@@ -55,7 +58,7 @@ def usage_allowed(capabilities):
             if not isinstance(window, dict):
                 return False
             used = window.get("usedPercent")
-            if type(used) not in (int, float) or not 0 <= used <= 80:
+            if type(used) not in (int, float) or not 0 <= used <= 100:
                 return False
             observed = True
         if not observed:

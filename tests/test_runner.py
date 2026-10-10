@@ -895,9 +895,22 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_usage_threshold_and_unknown_windows(self):
         self.assertFalse(usage_allowed({'usage': {'status': 'unknown'}}))
-        self.assertTrue(usage_allowed(complete_capabilities(80)))
-        for value in [81, None, True, '10', float('nan'), float('inf')]:
-            self.assertFalse(usage_allowed(complete_capabilities(value)))
+        for value in [0, 80, 93, 100]:
+            with self.subTest(allowed_percent=value):
+                self.assertTrue(usage_allowed(complete_capabilities(value)))
+        for value in [-1, 101, None, True, '10', float('nan'), float('inf')]:
+            with self.subTest(invalid_percent=value):
+                self.assertFalse(usage_allowed(complete_capabilities(value)))
+        for value in [None, False, 1, 'true']:
+            with self.subTest(ordinary_usage_allowed=value):
+                caps = complete_capabilities(93)
+                caps['usage']['data']['ordinaryUsageAllowed'] = value
+                self.assertFalse(usage_allowed(caps))
+        for value, allowed in [(None, True), (False, True), (True, False), (0, False), (1, False), ('false', False)]:
+            with self.subTest(spend_control_reached=value):
+                caps = complete_capabilities(100)
+                caps['usage']['data']['rateLimits']['spendControlReached'] = value
+                self.assertEqual(usage_allowed(caps), allowed)
 
     async def test_incomplete_capabilities_never_dispatch_worker(self):
         for field, value in [('available', False), ('cleanup', 'unknown'), ('sdk_version', None),

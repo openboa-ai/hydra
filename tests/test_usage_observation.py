@@ -76,7 +76,9 @@ class UsageObservationTests(unittest.TestCase):
                 self.assertTrue(usage_allowed(capabilities(normalized)))
 
     def test_present_map_controls_dispatch_over_healthy_legacy(self):
-        data = metering(rateLimits=bucket(10), rateLimitsByLimitId={"codex": bucket(81)})
+        data = metering(rateLimits=bucket(10), rateLimitsByLimitId={
+            "codex": {**bucket(93), "spendControlReached": True},
+        })
         normalized = codex._safe_usage(data)
         self.assertFalse(usage_allowed(capabilities(normalized)))
 
@@ -90,20 +92,36 @@ class UsageObservationTests(unittest.TestCase):
                         "codex": {other: {"usedPercent": 20}, name: {"usedPercent": used}},
                     }))
 
-    def test_valid_percentages_above_dispatch_boundary_remain_known_but_blocked(self):
-        for used in (80.01, 81, 100):
+    def test_native_permission_allows_valid_high_usage_observations(self):
+        for used in (80.01, 81, 93, 100):
             with self.subTest(used=used):
                 data = metering(rateLimitsByLimitId={"healthy": bucket(), "codex": bucket(used)})
                 normalized = codex._safe_usage(data)
                 self.assertEqual(normalized["rateLimitsByLimitId"]["codex"]["primary"]["usedPercent"], used)
-                self.assertFalse(usage_allowed(capabilities(normalized)))
+                self.assertTrue(usage_allowed(capabilities(normalized)))
 
-    def test_every_reported_window_and_bucket_accepts_dispatch_boundary(self):
+    def test_every_reported_window_and_bucket_accepts_full_observation_range(self):
         data = metering(rateLimitsByLimitId={
-            "codex": {"primary": {"usedPercent": 0}, "secondary": {"usedPercent": 80}},
-            "other": bucket(80.0),
+            "codex": {"primary": {"usedPercent": 0}, "secondary": {"usedPercent": 100}},
+            "other": bucket(100.0),
         })
         self.assertTrue(usage_allowed(capabilities(codex._safe_usage(data))))
+
+    def test_native_spend_control_is_checked_in_every_selected_bucket(self):
+        for fields in ({}, {"spendControlReached": None}, {"spendControlReached": False}):
+            snapshot = {**bucket(100), **fields}
+            for limits in ({"rateLimits": snapshot}, {"rateLimitsByLimitId": {"codex": snapshot}}):
+                with self.subTest(limits=limits):
+                    self.assertTrue(usage_allowed(capabilities(codex._safe_usage(metering(**limits)))))
+        for control in (True, 0, 1, "false", "true", [], {}):
+            snapshot = {**bucket(93), "spendControlReached": control}
+            for limits in (
+                {"rateLimits": snapshot},
+                {"rateLimitsByLimitId": {"healthy": bucket(), "codex": snapshot}},
+            ):
+                with self.subTest(control=control, limits=limits):
+                    normalized = codex._safe_usage(metering(**limits))
+                    self.assertFalse(usage_allowed(capabilities(normalized)))
 
     def test_missing_or_null_optional_window_is_not_an_invalid_observation(self):
         for observed in (
@@ -196,10 +214,10 @@ class UsageObservationTests(unittest.TestCase):
         self.assertIsNone(result["usage"]["data"]["rateLimitsByLimitId"]["codex"]["secondary"])
         self.assertTrue(usage_allowed(result))
 
-    def test_probe_keeps_exhausted_valid_usage_known_without_allowing_dispatch(self):
+    def test_probe_keeps_full_usage_known_and_respects_native_permission(self):
         result = self.probe(metering(rateLimitsByLimitId={"codex": bucket(100)}))
         self.assertEqual(result["usage"]["status"], "known")
-        self.assertFalse(usage_allowed(result))
+        self.assertTrue(usage_allowed(result))
 
 
 if __name__ == "__main__":

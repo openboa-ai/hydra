@@ -215,3 +215,13 @@ and nested instructions retain their existing authority boundaries. Startup keep
 one owned reader and the original deadlines; unknown evidence still holds.
 Source acceptance remains separate from actual Linux process evidence, final-head
 CI/provider reviews, native approval and unattended product delivery.
+
+The operator's native-usage decision was independently accepted before dependent
+edits at specification SHA-256
+`ec5b559878112d70a935d17e98887dfbe5e11925da66dfa25d8bd5ed4ad464b8`.
+Bounded source review accepted runner SHA-256
+`6e49ca35e8a1aa744b8c19a5a674593d623063d691d48de79e443bb05ee497c7`.
+Eighteen focused usage regressions passed: native permission allows valid usage
+through 100%, while native denial, reported spend controls and malformed reports
+still hold. Existing credits are permitted by native permission; this adds no
+credit purchase, automatic recharge, account mutation or model API fallback.
