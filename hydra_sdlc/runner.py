@@ -9,7 +9,8 @@ import re
 import uuid
 from pathlib import Path
 
-from .project import gate_delivery, load_project, matches, parse_intake
+from .project import (gate_completed_delivery, gate_delivery, load_project, matches,
+                      parse_intake, terminal_required_checks)
 
 
 def issue_url(value):
@@ -91,7 +92,7 @@ class Runner:
             raise error
         return config
 
-    def _latest(self, repo, number, config, *, include_stop=True):
+    def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True):
         if include_stop and self.stop_requested():
             return "stop_requested"
         issue = self.github.issue(repo, number)
@@ -105,6 +106,14 @@ class Runner:
             return "human_decision"
         if config["labels"]["ready"] not in labels:
             return "not_delegated"
+        # Dependencies belong to the immutable delegated intake. Read them at
+        # every final guard, including recovery of an already-closed Issue.
+        if include_dependencies:
+            intake = parse_intake({**issue, "state": "open"}, config)
+            for dependency in intake.get("dependencies", []):
+                dep_repo, dep_number = issue_url(dependency)
+                if self.github.issue(dep_repo, dep_number).get("state") != "closed":
+                    return "dependency_open"
         if issue.get("state") != "open":
             return "issue_closed"
         if not config.get("_completion_only"):
@@ -243,6 +252,9 @@ class Runner:
                 record = self._record(repo, number, record, head=head, phase="checkpoint",
                                       pending_action=None, checkpoint="interrupted_committed", next_action="publish")
                 paths = self.workspace.changed_paths(path, config["revision"])
+                if phase == "design" and not self._design_checkpoint_valid(repo, number, config, path, paths):
+                    return None, self._wait(repo, number, record, "replan_required", phase="checkpoint",
+                                            next_action="diagnose_spec_artifact")
                 if all(matches(p, config["allowed_paths"]) for p in paths):
                     self._publish(repo, number, config, record, path, head, checkpoint=True)
                     record = self.github.progress(repo, number)
@@ -272,11 +284,22 @@ class Runner:
                          next_action="reconcile", wait_reason=None)
         return candidate, None
 
+    def _design_checkpoint_valid(self, repo, number, config, path, paths):
+        intake = parse_intake(self.github.issue(repo, number), config)
+        return set(paths) == {intake["spec"]} and self.workspace.valid_spec(path, intake["spec"])
+
     def _publish(self, repo, number, config, record, path, head, *, checkpoint=False):
         reason = self._latest(repo, number, config, include_stop=not checkpoint)
         if reason:
             return self._wait(repo, number, record, reason,
                               phase="uncertain" if record.get("pending_action") == "publish" else "waiting")
+        design_base = (record.get("expected_base") or record["contract_revision"]
+                       if record.get("pending_action") == "publish" else config["revision"])
+        if record.get("resume_phase") == "design" and not self._design_checkpoint_valid(
+                repo, number, config, path, self.workspace.changed_paths(path, design_base)):
+            return self._wait(repo, number, record, "replan_required",
+                              phase="uncertain" if record.get("pending_action") == "publish" else "checkpoint",
+                              next_action="diagnose_spec_artifact")
         branch = record["branch"]
         boundary, remote, _ = self._branch_boundary(repo, number, record)
         if boundary:
@@ -370,7 +393,7 @@ class Runner:
         elif not record.get("intake_digest"):
             return self._wait(repo, number, record, "intake_unbound", phase="uncertain")
         config = {**config, "intake_digest": record["intake_digest"]}
-        reason = self._latest(repo, number, config)
+        reason = self._latest(repo, number, config, include_dependencies=False)
         closing_recovery = reason == "issue_closed" and record.get("pending_action") == "close_issue"
         if reason and not closing_recovery:
             if reason == "intake_changed":
@@ -455,6 +478,8 @@ class Runner:
             if pr.get("merged"):
                 if pr["head"]["sha"] != record.get("head"):
                     return self._wait(repo, number, record, "unexpected_merged_head")
+                if gate_completed_delivery(config, observation, record["head"], self._paths(observation)):
+                    return self._wait(repo, number, record, "completion_evidence_missing", phase="observing")
                 from .project import gate_checks
                 merge_sha = pr.get("merge_commit_sha")
                 post = self.github.observe_commit(repo, merge_sha)
@@ -467,6 +492,14 @@ class Runner:
                 record = self._intent(repo, number, config, record, "close_issue", phase="closing") if not closing_recovery else record
                 if record is None:
                     return self._intent_wait(repo, number)
+                current = self.github.observe(repo, pr["number"])
+                if (not self.github.owns_pr(repo, number, current["pr"])
+                        or current["pr"].get("merge_commit_sha") != merge_sha
+                        or gate_completed_delivery(config, current, record["head"], self._paths(current))):
+                    return self._wait(repo, number, record, "completion_evidence_missing", phase="uncertain")
+                boundary = self._latest(repo, number, config)
+                if boundary and not (closing_recovery and boundary == "issue_closed"):
+                    return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
                 if not closing_recovery:
                     try:
                         self.github.close_issue(repo, number)
@@ -502,8 +535,10 @@ class Runner:
                 record, wait = self._resolve_outdated(repo, number, config, record, observation)
                 return wait or {"action": "continue", "repository": repo, "issue": number}
             findings = self._findings(observation)
-            failed_ci = any(c.get("head_sha") == current_head and c.get("conclusion") in {
-                "failure", "timed_out"} for c in observation.get("checks", []))
+            terminal_ci = terminal_required_checks(config, observation, current_head)
+            failed_ci = bool(terminal_ci)
+            if terminal_ci and not all(c["conclusion"] in {"failure", "timed_out"} for c in terminal_ci):
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_ci")
             outdated = self._outdated_provider_threads(observation, config)
             locally_incomplete = (record.get("checkpoint") == "interrupted_committed" or
                                  bool(record.get("resume_phase")) or
@@ -703,9 +738,11 @@ class Runner:
             findings = self._findings(observation)
             if findings:
                 return await self._correct(repo, number, config, record, path, "remote_review_findings", details=json.dumps(findings))
-            if any(c.get("head_sha") == head and c.get("conclusion") in {"failure", "timed_out"}
-                   for c in observation.get("checks", [])):
-                return await self._correct(repo, number, config, record, path, "ci_failure", details=json.dumps(observation.get("runs", [])))
+            terminal_ci = terminal_required_checks(config, observation, head)
+            if terminal_ci:
+                if all(c["conclusion"] in {"failure", "timed_out"} for c in terminal_ci):
+                    return await self._correct(repo, number, config, record, path, "ci_failure", details=json.dumps(observation.get("runs", [])))
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_ci")
             return self._wait(repo, number, record, "remote_delivery_gates", phase="review_wait", next_action="remote_review")
         return self._merge(repo, number, config, record, pr["number"], head, paths)
 
@@ -887,7 +924,10 @@ class Runner:
                                    "progress": progress, "wait_reason": "project_contract_unavailable"})
                     continue
                 bound = {**config, "intake_digest": progress.get("intake_digest")} if progress else config
-                reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(repo, issue["number"], bound)
+                try:
+                    reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(repo, issue["number"], bound)
+                except (ValueError, RuntimeError, OSError):
+                    reason = "intake_unavailable"
                 if reason == "issue_closed" and progress and progress.get("pending_action") == "close_issue":
                     reason = "completion_reconciliation"
                 elif not reason and config.get("_completion_only"):

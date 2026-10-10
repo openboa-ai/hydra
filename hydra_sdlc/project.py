@@ -123,60 +123,102 @@ def parse_intake(issue, config):
     return {"issue_number": issue["number"], "spec": spec, "spec_revision": intake.get("spec_revision"), "dependencies": dependencies, "priority": priority}
 
 
-def _checks(config, observation, sha, *, post_merge):
+def _bound_runs(config, observation, sha, binding, *, post_merge=False, historical=False):
+    raw = observation.get("pr", {})
+    candidates = []
+    for run in observation.get("runs", []):
+        if run.get("workflow_id") != binding["workflow_id"] or run.get("path") != binding["workflow_path"] or run.get("repository", {}).get("id", run.get("repository_id")) != config["repository_id"]:
+            continue
+        event = run.get("event")
+        if event not in binding["events"] or (event == "push") != post_merge:
+            continue
+        if run.get("head_sha") != sha:
+            continue
+        if post_merge:
+            if run.get("head_branch") != config["default_branch"]:
+                continue
+        else:
+            if (run.get("head_branch") != raw.get("head", {}).get("ref")
+                    or raw.get("head", {}).get("sha") != sha
+                    or raw.get("head", {}).get("repo", {}).get("id") != config["repository_id"]
+                    or raw.get("base", {}).get("repo", {}).get("id") != config["repository_id"]):
+                continue
+            associations = run.get("pull_requests")
+            if associations == [] and event == "pull_request_target":
+                # GitHub's observed target-event producer exposes the candidate
+                # head/branch but no PR association. Only a contract-pinned
+                # reusable producer can attest that event's exact candidate.
+                if not _sha(binding.get("reusable_sha")) or not binding.get("reusable_workflow"):
+                    continue
+            elif not isinstance(associations, list) or len(associations) != 1:
+                continue
+            elif not all((associations[0].get("number") == raw.get("number"),
+                          associations[0].get("head", {}).get("sha") == sha,
+                          (_sha(associations[0].get("base", {}).get("sha")) if historical else
+                           associations[0].get("base", {}).get("sha") == observation.get("base_sha")),
+                          associations[0].get("head", {}).get("repo", {}).get("id") == config["repository_id"],
+                          associations[0].get("base", {}).get("repo", {}).get("id") == config["repository_id"])):
+                continue
+        candidates.append(run)
+    return candidates
+
+
+def _run_order(run):
+    return run.get("run_number", 0), run.get("run_attempt", 0), run.get("id", 0)
+
+
+def _reusable_bound(binding, run):
+    if "reusable_sha" not in binding:
+        return True
+    expected = {"path": binding["reusable_workflow"] + "@" + binding["reusable_sha"], "sha": binding["reusable_sha"]}
+    return any(all(x.get(k) == v for k, v in expected.items()) for x in run.get("referenced_workflows", []))
+
+
+def terminal_required_checks(config, observation, sha):
+    """Only authoritative required CI can trigger terminal-failure recovery."""
+    results = []
+    if not _sha(sha) or not isinstance(observation.get("runs"), list) or not isinstance(observation.get("checks"), list):
+        return results
+    for binding in config["required_checks"]:
+        candidates = _bound_runs(config, observation, sha, binding)
+        if not candidates:
+            continue
+        run = max(candidates, key=_run_order)
+        if not _reusable_bound(binding, run):
+            continue
+        if run.get("status") == "completed" and run.get("conclusion") != "success":
+            results.append({"job": binding["job"], "conclusion": run.get("conclusion")})
+            continue
+        jobs = [j for j in run.get("jobs", []) if j.get("name") == binding["job"]]
+        if len(jobs) != 1 or jobs[0].get("head_sha") != sha or jobs[0].get("check_run_url") != f"https://api.github.com/repos/{config['repository']}/check-runs/{jobs[0].get('id')}":
+            continue
+        checks = [c for c in observation["checks"] if c.get("id") == jobs[0].get("id")
+                  and c.get("check_suite", {}).get("id") == run.get("check_suite_id")
+                  and c.get("app", {}).get("id") == binding["app_id"]
+                  and c.get("head_sha") == sha and c.get("name") == binding["job"]]
+        if len(checks) == 1 and checks[0].get("status") == "completed" and checks[0].get("conclusion") != "success":
+            results.append({"job": binding["job"], "conclusion": checks[0].get("conclusion")})
+    return results
+
+
+def _checks(config, observation, sha, *, post_merge, historical=False):
     blockers = []
     runs, checks = observation.get("runs"), observation.get("checks")
     if not isinstance(runs, list) or not isinstance(checks, list):
         return ["checks_unobserved"]
-    raw = observation.get("pr", {})
     for binding in config["required_checks"]:
         label = binding["job"]
-        candidates = []
-        for run in runs:
-            if run.get("workflow_id") != binding["workflow_id"] or run.get("path") != binding["workflow_path"] or run.get("repository", {}).get("id", run.get("repository_id")) != config["repository_id"]:
-                continue
-            event = run.get("event")
-            if event not in binding["events"] or (event == "push") != post_merge:
-                continue
-            if run.get("head_sha") != sha:
-                continue
-            if post_merge:
-                if run.get("head_branch") != config["default_branch"]:
-                    continue
-            else:
-                if (run.get("head_branch") != raw.get("head", {}).get("ref")
-                        or raw.get("head", {}).get("sha") != sha
-                        or raw.get("head", {}).get("repo", {}).get("id") != config["repository_id"]
-                        or raw.get("base", {}).get("repo", {}).get("id") != config["repository_id"]):
-                    continue
-                associations = run.get("pull_requests")
-                if associations == [] and event == "pull_request_target":
-                    # GitHub's observed target-event producer exposes the candidate
-                    # head/branch but no PR association. Only a contract-pinned
-                    # reusable producer can attest that event's exact candidate.
-                    if not _sha(binding.get("reusable_sha")) or not binding.get("reusable_workflow"):
-                        continue
-                elif not isinstance(associations, list) or len(associations) != 1:
-                    continue
-                elif not all((associations[0].get("number") == raw.get("number"),
-                              associations[0].get("head", {}).get("sha") == sha,
-                              associations[0].get("base", {}).get("sha") == observation.get("base_sha"),
-                              associations[0].get("head", {}).get("repo", {}).get("id") == config["repository_id"],
-                              associations[0].get("base", {}).get("repo", {}).get("id") == config["repository_id"])):
-                    continue
-            candidates.append(run)
+        candidates = _bound_runs(config, observation, sha, binding, post_merge=post_merge, historical=historical)
         if not candidates:
             blockers.append(f"check_identity_missing:{label}")
             continue
-        run = max(candidates, key=lambda r: (r.get("run_number", 0), r.get("run_attempt", 0), r.get("id", 0)))
+        run = max(candidates, key=_run_order)
         if run.get("status") != "completed" or run.get("conclusion") != "success":
             blockers.append(f"check_not_successful:{label}")
             continue
-        if "reusable_sha" in binding:
-            expected = {"path": binding["reusable_workflow"] + "@" + binding["reusable_sha"], "sha": binding["reusable_sha"]}
-            if not any(all(x.get(k) == v for k, v in expected.items()) for x in run.get("referenced_workflows", [])):
-                blockers.append(f"check_reusable_identity_missing:{label}")
-                continue
+        if not _reusable_bound(binding, run):
+            blockers.append(f"check_reusable_identity_missing:{label}")
+            continue
         jobs = [j for j in run.get("jobs", []) if j.get("name") == label]
         if len(jobs) != 1 or jobs[0].get("status") != "completed" or jobs[0].get("conclusion") != "success" or jobs[0].get("head_sha") != run["head_sha"]:
             blockers.append(f"check_job_not_successful:{label}")
@@ -245,18 +287,19 @@ def _provider(config, observation, head):
     return []
 
 
-def gate_delivery(config, observation, head, paths):
+def _gate_candidate(config, observation, head, paths, *, historical=False):
     blockers = []
-    if not config["delivery"]["automatic_merge"]:
+    if not historical and not config["delivery"]["automatic_merge"]:
         blockers.append("automatic_merge_disabled")
-    if config["delivery"]["production_effect"]:
+    if not historical and config["delivery"]["production_effect"]:
         blockers.append("production_effect_requires_decision")
     pr = observation.get("pr", {})
     if observation.get("repository", {}).get("id") != config["repository_id"] or observation.get("head_sha") != head or pr.get("head", {}).get("sha") != head or not _sha(head):
         blockers.append("head_or_repository_changed")
-    if observation.get("base_sha") != config["revision"] or pr.get("base", {}).get("sha") != observation.get("base_sha") or pr.get("base", {}).get("ref") != config["default_branch"]:
+    if (pr.get("base", {}).get("ref") != config["default_branch"] or not _sha(pr.get("base", {}).get("sha")) or
+            not historical and (observation.get("base_sha") != config["revision"] or pr.get("base", {}).get("sha") != observation.get("base_sha"))):
         blockers.append("base_or_contract_changed")
-    if pr.get("state") != "open" or pr.get("draft") is not False or pr.get("mergeable") is not True or pr.get("mergeable_state") != "clean":
+    if not historical and (pr.get("state") != "open" or pr.get("draft") is not False or pr.get("mergeable") is not True or pr.get("mergeable_state") != "clean"):
         blockers.append("native_merge_not_ready")
     if pr.get("head", {}).get("repo", {}).get("id") != config["repository_id"] or pr.get("base", {}).get("repo", {}).get("id") != config["repository_id"]:
         blockers.append("foreign_repository_pr")
@@ -274,20 +317,20 @@ def gate_delivery(config, observation, head, paths):
         blockers.append("outside_allowed_paths")
     rules = observation.get("rules", [])
     sources = observation.get("rule_sources", [])
-    if not sources or any(s.get("enforcement") != "active" or s.get("bypass_actors") != [] for s in sources):
+    if not historical and (not sources or any(s.get("enforcement") != "active" or s.get("bypass_actors") != [] for s in sources)):
         blockers.append("native_protection_not_strict")
     by_type = {}
     for r in rules:
         by_type.setdefault(r.get("type"), []).append(r.get("parameters", {}))
     native_checks = by_type.get("required_status_checks", [])
-    if not native_checks or not all(c.get("strict_required_status_checks_policy") is True for c in native_checks):
+    if not historical and (not native_checks or not all(c.get("strict_required_status_checks_policy") is True for c in native_checks)):
         blockers.append("strict_integration_missing")
     expected = {(x["job"], x["app_id"]) for x in config["required_checks"]}
     observed = {(x.get("context"), x.get("integration_id")) for c in native_checks for x in c.get("required_status_checks", [])}
-    if expected != observed:
+    if not historical and expected != observed:
         blockers.append("required_check_policy_mismatch")
     pull_rules = by_type.get("pull_request", [])
-    if not pull_rules or not all(p.get("dismiss_stale_reviews_on_push") is True and p.get("require_code_owner_review") is True and p.get("required_review_thread_resolution") is True for p in pull_rules) or "non_fast_forward" not in by_type:
+    if not historical and (not pull_rules or not all(p.get("dismiss_stale_reviews_on_push") is True and p.get("require_code_owner_review") is True and p.get("required_review_thread_resolution") is True for p in pull_rules) or "non_fast_forward" not in by_type):
         blockers.append("native_review_policy_missing")
     threads, reviews = observation.get("threads"), observation.get("native_reviews")
     if not isinstance(threads, list) or any(t.get("isResolved") is not True for t in threads):
@@ -303,22 +346,35 @@ def gate_delivery(config, observation, head, paths):
                 blockers.append("native_review_author_unknown")
                 continue
             latest[login] = review
-    if any(r.get("state") == "CHANGES_REQUESTED" for r in latest.values()) or observation.get("review_decision") not in {"APPROVED", None}:
+    if (any(r.get("state") == "CHANGES_REQUESTED" for r in latest.values())
+            or not historical and observation.get("review_decision") not in {"APPROVED", None}):
         blockers.append("native_review_not_approved")
     protected = [".hydra.toml", ".github/", "AGENTS.md", "SECURITY.md", "CODEOWNERS", "docs/CODEOWNERS"] + config["protected_paths"]
     if any(matches(p, protected) for p in paths):
         humans = [r for login, r in latest.items() if login in config["human_reviewers"] and login != (pr.get("user") or {}).get("login") and (r.get("user") or {}).get("type") == "User" and r.get("state") == "APPROVED" and r.get("commit_id") == head]
-        if not humans or observation.get("review_decision") != "APPROVED":
+        if not humans or not historical and observation.get("review_decision") != "APPROVED":
             blockers.append("protected_change_needs_current_human_review")
     required_count = max((p.get("required_approving_review_count", 0) for p in pull_rules), default=0)
-    if len([r for r in latest.values() if r.get("state") == "APPROVED" and r.get("commit_id") == head]) < required_count:
+    if not historical and len([r for r in latest.values() if r.get("state") == "APPROVED" and r.get("commit_id") == head]) < required_count:
         blockers.append("native_approval_count_missing")
-    blockers.extend(gate_checks(config, observation, head))
+    blockers.extend(_checks(config, observation, head, post_merge=False, historical=historical))
     if "pr" not in observation:
         blockers.append("provider_evidence_incomplete")
     else:
         blockers.extend(_provider(config, observation, head))
     return list(dict.fromkeys(blockers))
+
+
+def gate_delivery(config, observation, head, paths):
+    return _gate_candidate(config, observation, head, paths)
+
+
+def gate_completed_delivery(config, observation, head, paths):
+    """Actual merged facts plus candidate evidence; this never authorizes an effect."""
+    pr = observation.get("pr", {})
+    if pr.get("merged") is not True or pr.get("state") != "closed" or not _sha(pr.get("merge_commit_sha")):
+        return ["merge_not_observed"]
+    return _gate_candidate(config, observation, head, paths, historical=True)
 
 
 def gate_post_merge(config, observation, merge_sha):

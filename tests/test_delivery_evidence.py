@@ -253,6 +253,7 @@ class DeliveryEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 self.github.cfg['revision'] = 'e' * 40
                 def historical(value):
                     value['base_sha'] = 'e' * 40  # Current main has advanced beyond the candidate's PR run.
+                    value['review_decision'] = 'REVIEW_REQUIRED'  # Current merge policy cannot undo observed delivery.
                     if protected:
                         value['changed_files'] = [{'filename': '.hydra.toml'}]
                         value['native_reviews'] = [{'id': 21, 'state': 'APPROVED', 'commit_id': HEAD,
