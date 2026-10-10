@@ -60,6 +60,12 @@ replacement PR because a response was lost. Unknown executions and foreign-host
 attempts require confirmed shutdown, not heartbeat expiry. Unpushed work cannot be
 recovered after host loss. See [the implementation contract](docs/engineering/github-workflow/spec.md).
 
+The existing OS lock retains only a boot identity and one unresolved launch nonce.
+It blocks restart after an uncertain execution even if its wrapper has disappeared;
+confirmed cleanup clears it. It contains no project/workflow state. Native Codex
+permission governs new turns, including existing credits; native denial and unknown
+usage still hold, without purchases or billing fallback.
+
 ## Status
 
 The GitHub-native implementation replaces the earlier SQLite prototype. Deterministic

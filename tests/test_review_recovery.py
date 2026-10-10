@@ -47,8 +47,9 @@ class ReviewRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def unknown_merge(self):
         await self.opened_pr()
-        def fail_merge(repo, number, head):
+        def fail_merge(repo, number, head, *, commit_message):
             self.github.assert_intent('merge')
+            self.github.merge_message = commit_message
             self.merge_requests.append(head)
             raise RuntimeError('merge response unavailable')
         self.github.merge = fail_merge

@@ -188,21 +188,24 @@ class GitHubTests(unittest.TestCase):
 
     def test_exact_head_merge_readback_and_unknown_result_not_success(self):
         calls, merged = [], False
+        message = 'Hydra-Squash-v1: ' + 'e' * 64
         def transport(method, path, payload):
             nonlocal merged
             calls.append((method, path, payload))
             if method == 'PUT':
-                self.assertEqual(payload, {'sha': HEAD, 'merge_method': 'squash'}); merged = True
+                self.assertEqual(payload, {'sha': HEAD, 'merge_method': 'squash', 'commit_message': message}); merged = True
                 return {'merged': True, 'sha': MERGE}
-            return {**owned_pr(), 'merged': merged, 'merge_commit_sha': MERGE if merged else None}
+            return {**owned_pr(), 'state': 'closed' if merged else 'open', 'merged': merged, 'merge_commit_sha': MERGE if merged else None}
         gh = GitHub(transport=transport)
-        self.assertEqual(gh.merge(REPO, 7, HEAD)['merge_commit_sha'], MERGE)
+        self.assertEqual(gh.merge(REPO, 7, HEAD, commit_message=message)['merge_commit_sha'], MERGE)
         self.assertEqual(len(calls), 3)
-        gh.merge(REPO, 7, HEAD)
+        with self.assertRaises(GitHubError) as caught:
+            gh.merge(REPO, 7, HEAD, commit_message=message)
+        self.assertTrue(caught.exception.uncertain)
         self.assertEqual(len([c for c in calls if c[0] == 'PUT']), 1)
-        with self.assertRaises(GitHubError): gh.merge(REPO, 7, BASE)
+        with self.assertRaises(GitHubError): gh.merge(REPO, 7, BASE, commit_message=message)
         fake = Fake({('GET', f'/repos/{REPO}/pulls/7'): owned_pr(), ('PUT', f'/repos/{REPO}/pulls/7/merge'): {'merged': True}})
-        with self.assertRaises(GitHubError) as caught: GitHub(transport=fake).merge(REPO, 7, HEAD)
+        with self.assertRaises(GitHubError) as caught: GitHub(transport=fake).merge(REPO, 7, HEAD, commit_message=message)
         self.assertTrue(caught.exception.uncertain)
 
     def test_gh_auth_is_per_process_bounded_and_never_added_to_parent_environment(self):

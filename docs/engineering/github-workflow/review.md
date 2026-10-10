@@ -225,3 +225,42 @@ Eighteen focused usage regressions passed: native permission allows valid usage
 through 100%, while native denial, reported spend controls and malformed reports
 still hold. Existing credits are permitted by native permission; this adds no
 credit purchase, automatic recharge, account mutation or model API fallback.
+
+The native-identity/restart-ownership and squash-completion appendices were
+independently accepted before dependent edits at specification SHA-256
+`88d212941d79f37df4713a3cd323d9c590a4d47ef984c887ab0b273179c7ea11`.
+Independent source review accepted runner SHA-256
+`86a520036aec1ce4abf46c0f5e9ff39345c26fa4b9c22417be3b44355f60cb46`,
+project SHA-256
+`2383c6419b282ded0fe1a2c0c042efe8070e6a8a7f4316ee47dbc6866f3246df`,
+GitHub adapter SHA-256
+`fed099b4c2601e2ec23176aac3641abcf09e577db8a469f4493275fc59f7fe27`
+and CLI SHA-256
+`6fb4692fb79fe2531c99a7d38db48809edc8915c9a4b297d17af3c54a06fe46f`.
+Review corrected all ready/paused/decision comparisons and case-equivalent control
+overlap, preserving native spelling and current controls during completion. Ten
+native identity/polling tests and eleven squash adapter/runner tests passed.
+Completion requires a trusted request receipt and immutable result SHA/tree/parent
+facts; topology alone cannot establish the method. Lost responses reconcile the
+existing authenticated intent before any receipt or repeated effect. This evidence
+does not replace current-head CI/provider reviews or native protected approval.
+
+Separate independent source review accepted coordinator SHA-256
+`4975d678c9ffff0ec00ec0bfd81dd6be5321e42ffe518dd763725bbe2cfe8409`
+and execution boundary SHA-256
+`d0f97df87af12e47eedfb1343b060a43a534a09ccb6fd1776a1fb476d7d9fa45`.
+The existing lock inode records resource ownership before spawn and clears only a
+matching live ticket after the existing supervisor confirms cleanup. Unknown startup
+or cleanup retains ownership through context exit; wrappers disappearing cannot
+authorize restart. Verified boot change retires old resource ownership. This does
+not strengthen the existing live process-group boundary into universal tracking of
+detached sessions or hostile workers, nor prove unattended product operation.
+
+Standalone-loader compatibility was independently accepted at execution boundary
+SHA-256 `4a180bceeef8a547533ba6f7dbff6c7c737886b245e04c5f25a233ac93c7a7c5`.
+An alias-loaded boundary reuses the already loaded canonical coordinator and its
+active ContextVar; it never imports a second owner or ignores registration failure.
+True standalone calls retain their no-lock API outside CLI execution. Thirty-nine
+focused boundary/restart tests collected: 38 passed, one Linux-only case skipped.
+The original isolated startup case and both active-owner facades passed without
+changing deadlines or accepting unknown cleanup.

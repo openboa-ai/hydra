@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from hydra_sdlc.runner import Runner
 from hydra_sdlc.workspace import WorkspaceWait
-from test_project import HEAD, MERGE, summary
+from test_project import BASE, HEAD, MERGE, summary
 from test_runner import GitHub, Workspace, complete_capabilities
 
 
@@ -122,6 +122,7 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
                     self.reset()
                     await self.opened_pr()
                     self.github.pr.update(merged=True, state='closed', merge_commit_sha=MERGE)
+                    self.github.note.update(checkpoint='squash_' + MERGE, expected_head=HEAD, expected_base=BASE)
                     if recovery:
                         self.github.note.update(pending_action='close_issue', phase='closing')
                         self.github.work['state'] = 'closed'
@@ -191,6 +192,7 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
                     self.github.issue = issue
                     await self.opened_pr()
                     self.github.pr.update(merged=True, state='closed', merge_commit_sha=MERGE)
+                    self.github.note.update(checkpoint='squash_' + MERGE, expected_head=HEAD, expected_base=BASE)
                     if recovery:
                         self.github.note.update(pending_action='close_issue', phase='closing')
                         self.github.work['state'] = 'closed'
@@ -471,7 +473,7 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
             self.stopped = False
             if attempt < 3:
                 async def low_usage(cwd):
-                    return complete_capabilities(used=95)
+                    return complete_capabilities(used=95, allowed=False)
                 runner.capabilities = low_usage
                 self.assertEqual((await runner.step(REPO, NUMBER))['reason'], 'usage_unavailable_or_low')
                 self.assertEqual(self.github.note['checkpoint'], 'verification_mutation_pending')

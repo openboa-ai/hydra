@@ -18,6 +18,7 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.workspace = Workspace(self.directory.name, self.github)
         self.prompts = []
         self.used = 10
+        self.usage_allowed = True
         self.integrated = True
         self.paths = ['src/main.py']
         self.restore_scope = True
@@ -28,7 +29,7 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(load.stop)
 
     async def capabilities(self, cwd):
-        return complete_capabilities(self.used)
+        return complete_capabilities(self.used, allowed=self.usage_allowed)
 
     async def execute(self, assignment, **kwargs):
         prompt = assignment['prompt']
@@ -68,9 +69,11 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_low_usage_before_first_implementation_survives_later_integration(self):
         self.used = 90
+        self.usage_allowed = False
         self.assertEqual((await self.step())['reason'], 'usage_unavailable_or_low')
         self.assertEqual(self.prompts, [])
         self.used = 10
+        self.usage_allowed = True
         self.github.cfg['revision'] = 'e' * 40
         self.integrated = False
         self.assertEqual((await self.step())['action'], 'continue')
@@ -212,11 +215,13 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await runner.step('example/product', 4)
         self.paths.append('unintended.txt')
         self.used = 90
+        self.usage_allowed = False
         for _ in range(3):
             self.assertEqual((await runner.step('example/product', 4))['reason'], 'usage_unavailable_or_low')
             self.assertEqual(self.github.note['correction_reason'], 'scope_changed')
             self.assertIsNone(self.github.note['correction_attempt'])
         self.used = 10
+        self.usage_allowed = True
         self.assertEqual((await self.step())['action'], 'continue')
         self.assertTrue(self.prompts[-1].startswith('Resolve scope_changed'))
         self.assertIn('unintended.txt', self.prompts[-1])

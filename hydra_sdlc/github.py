@@ -181,7 +181,7 @@ class GitHub:
         labels = issue.get("labels")
         if not isinstance(labels, list) or any(not isinstance(x, dict) or not isinstance(x.get("name"), str) for x in labels):
             raise GitHubError("Incomplete Issue labels")
-        return {x["name"] for x in labels}
+        return {x["name"].casefold() for x in labels}
 
     def _active(self, repo, n, active):
         prefix = f"/repos/{_repo(repo)}"
@@ -372,13 +372,23 @@ class GitHub:
                 raise GitHubError("Unknown protection source")
             prefix = f"/repos/{_repo(source)}" if kind == "Repository" else f"/orgs/{quote(source, safe='')}"
             sources.append(self.api("GET", f"{prefix}/rulesets/{rid}"))
+        commits = {}
+        if raw.get("merged") is True:
+            # Immutable Git objects bind the historical result, independent of
+            # the current default branch advancing after the merge.
+            commits = {"head_commit": self.commit(repo, head),
+                       "merge_commit": self.commit(repo, raw["merge_commit_sha"])}
         return {"repository": info, "pr": raw, "checks": checks, "runs": expanded,
                 "native_reviews": self._pages(f"/repos/{repo}/pulls/{pr}/reviews"),
                 "threads": threads, "review_decision": decision, "provider_comments": self.comments(repo, pr),
                 "base_sha": base, "head_sha": head, "rules": rules, "rule_sources": sources,
                 "changed_files": files,
                 "commits": self._pages(f"/repos/{repo}/pulls/{pr}/commits"),
-                "inline_comments": self._pages(f"/repos/{repo}/pulls/{pr}/comments")}
+                "inline_comments": self._pages(f"/repos/{repo}/pulls/{pr}/comments"), **commits}
+
+    def commit(self, repo, sha):
+        """Read immutable Git data; completion gates validate the returned shape."""
+        return self.api("GET", f"/repos/{_repo(repo)}/git/commits/{_sha(sha)}")
 
     def observe_commit(self, repo, sha):
         _sha(sha)
@@ -537,21 +547,30 @@ class GitHub:
             return actual[0]
         raise GitHubError("Thread resolution requires reconciliation", uncertain=True) from failure
 
-    def merge(self, repo, pr, head):
+    def merge(self, repo, pr, head, *, commit_message):
         _sha(head)
+        if not isinstance(commit_message, str) or not re.fullmatch(r"Hydra-Squash-v1: [0-9a-f]{64}", commit_message):
+            raise GitHubError("Squash correlation message missing")
         raw = self.api("GET", f"/repos/{_repo(repo)}/pulls/{_number(pr)}")
-        if raw.get("head", {}).get("sha") != head:
+        if not isinstance(raw, dict) or not isinstance(raw.get("head"), dict) or raw["head"].get("sha") != head:
             raise GitHubError("PR head changed before merge")
         if raw.get("merged") is True:
-            _sha(raw.get("merge_commit_sha"))
-            return raw
+            raise GitHubError("Merged PR requires squash receipt reconciliation", uncertain=True)
         if raw.get("state") != "open" or raw.get("draft") is not False or raw.get("mergeable") is not True or raw.get("mergeable_state") != "clean":
             raise GitHubError("Native merge requirements are not satisfied")
-        self.api("PUT", f"/repos/{repo}/pulls/{pr}/merge", {"sha": head, "merge_method": "squash"})
-        actual = self.api("GET", f"/repos/{repo}/pulls/{pr}")
-        if actual.get("merged") is not True or actual.get("head", {}).get("sha") != head:
+        result = self.api("PUT", f"/repos/{repo}/pulls/{pr}/merge", {
+            "sha": head, "merge_method": "squash", "commit_message": commit_message})
+        if (not isinstance(result, dict) or result.get("merged") is not True
+                or not isinstance(result.get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", result["sha"])):
+            raise GitHubError("Squash response requires reconciliation", uncertain=True)
+        try:
+            actual = self.api("GET", f"/repos/{repo}/pulls/{pr}")
+        except GitHubError as exc:
+            raise GitHubError("Merge read-back unavailable", uncertain=True) from exc
+        if (not isinstance(actual, dict) or actual.get("merged") is not True or actual.get("state") != "closed"
+                or not isinstance(actual.get("head"), dict) or actual["head"].get("sha") != head
+                or actual.get("merge_commit_sha") != result["sha"]):
             raise GitHubError("Merge outcome requires reconciliation", uncertain=True)
-        _sha(actual.get("merge_commit_sha"))
         return actual
 
     def close_issue(self, repo, n):

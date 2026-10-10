@@ -165,6 +165,7 @@ class DeliveryEvidenceTests(unittest.IsolatedAsyncioTestCase):
                         await self.opened_pr()
                     if action == 'close_issue':
                         self.github.pr.update(merged=True, state='closed', merge_commit_sha=MERGE)
+                        self.github.note.update(checkpoint='squash_' + MERGE, expected_head=HEAD, expected_base=BASE)
                     execute = None
                     if boundary == 'after_intent':
                         def reopen(record):
@@ -191,12 +192,14 @@ class DeliveryEvidenceTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.effects(writes), [])
                     self.assertEqual(self.github.work['state'], 'open')
 
-    async def external_merge(self):
+    async def observed_squash(self):
         await self.opened_pr()
         self.github.pr.update(merged=True, state='closed', merge_commit_sha=MERGE,
                               mergeable=None, mergeable_state='unknown')
+        # Historical authenticated service receipt; these tests vary candidate gates.
+        self.github.note.update(checkpoint='squash_' + MERGE, expected_head=HEAD, expected_base=BASE)
 
-    async def test_external_merge_cannot_complete_without_preserved_candidate_evidence(self):
+    async def test_observed_squash_cannot_complete_without_preserved_candidate_evidence(self):
         cases = ('code_missing', 'security_missing', 'provider_stale', 'ci_missing', 'ci_stale',
                  'ci_wrong_workflow', 'ci_invalid_historical_base', 'target_without_pin',
                  'unresolved_thread', 'protected_approval_missing', 'protected_approval_stale')
@@ -205,7 +208,7 @@ class DeliveryEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 self.reset()
                 if case == 'target_without_pin':
                     self.github.cfg['required_checks'][0]['events'] = ['pull_request_target', 'push']
-                await self.external_merge()
+                await self.observed_squash()
                 def missing(value):
                     if case in {'code_missing', 'security_missing'}:
                         name = 'Code Review' if case == 'code_missing' else 'Security Review'
@@ -244,12 +247,12 @@ class DeliveryEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(self.calls), calls)
                 self.assertEqual(self.effects(writes), [])
 
-    async def test_external_merge_with_historical_base_and_disabled_auto_merge_can_complete(self):
+    async def test_observed_squash_with_historical_base_and_disabled_auto_merge_can_complete(self):
         for protected in (False, True):
             with self.subTest(protected=protected):
                 self.reset()
                 self.github.cfg['delivery'].update(automatic_merge=False, production_effect=True)
-                await self.external_merge()
+                await self.observed_squash()
                 self.github.cfg['revision'] = 'e' * 40
                 def historical(value):
                     value['base_sha'] = 'e' * 40  # Current main has advanced beyond the candidate's PR run.

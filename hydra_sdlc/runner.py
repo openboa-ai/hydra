@@ -9,8 +9,9 @@ import re
 import uuid
 from pathlib import Path
 
-from .project import (_provider, gate_completed_delivery, gate_delivery, load_project, matches,
-                      parse_intake, terminal_required_checks)
+from .project import (_provider, gate_completed_delivery, gate_delivery, gate_squash_result,
+                      load_project, matches, parse_intake, squash_message,
+                      squash_message_matches, terminal_required_checks)
 
 
 def issue_url(value):
@@ -120,13 +121,20 @@ class Runner:
         issue = self.github.issue(repo, number)
         if config.get("intake_digest") and intake_digest(issue) != config["intake_digest"]:
             return "intake_changed"
-        labels = {item["name"] if isinstance(item, dict) else item for item in issue.get("labels", [])}
+        names = [item.get("name") if isinstance(item, dict) else item for item in issue.get("labels", [])]
+        if not all(isinstance(name, str) for name in names):
+            return "intake_unavailable"
+        labels = {name.casefold() for name in names}
         controls = config.get("_completion_controls", {})
-        if labels.intersection({config["labels"]["paused"], controls.get("paused")}):
+        paused = {value.casefold() for value in (config["labels"]["paused"], controls.get("paused"))
+                  if isinstance(value, str)}
+        decision = {value.casefold() for value in (config["labels"]["decision"], controls.get("decision"))
+                    if isinstance(value, str)}
+        if labels.intersection(paused):
             return "paused"
-        if labels.intersection({config["labels"]["decision"], controls.get("decision")}):
+        if labels.intersection(decision):
             return "human_decision"
-        if config["labels"]["ready"] not in labels:
+        if config["labels"]["ready"].casefold() not in labels:
             return "not_delegated"
         # Dependencies belong to the immutable delegated intake. Read them at
         # every final guard, including recovery of an already-closed Issue.
@@ -478,7 +486,9 @@ class Runner:
             origin = record.get("resume_phase")
             review_reconcile = (record.get("next_action") in {"diagnose_review", "diagnose_review_request"}
                                 and record.get("phase") != "executing")
-            record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()), checkpoint=None,
+            receipt = record.get("checkpoint")
+            record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()),
+                                  checkpoint=receipt if re.fullmatch(r"squash_[0-9a-f]{40}", receipt or "") else None,
                                   pending_action=record.get("pending_action") if service_retry else None,
                                   delivery_action=None, delivery_attempt=None, delivery_head=None,
                                   pending_review_kind=record.get("pending_review_kind") if service_retry else None,
@@ -542,7 +552,14 @@ class Runner:
             if pr.get("merged"):
                 if pr["head"]["sha"] != record.get("head"):
                     return self._wait(repo, number, record, "unexpected_merged_head")
-                if gate_completed_delivery(config, observation, record["head"], self._paths(observation)):
+                if record.get("pending_action") == "merge":
+                    recovered = self._recover_squash(repo, number, config, record, observation)
+                    if recovered is None:
+                        return self._wait(repo, number, record,
+                                          "squash_method_unknown", phase="uncertain", next_action="diagnose_merge")
+                    record = recovered
+                if gate_completed_delivery(config, observation, record["head"], self._paths(observation),
+                                           expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint")):
                     return self._wait(repo, number, record, "completion_evidence_missing", phase="observing")
                 from .project import gate_checks
                 merge_sha = pr.get("merge_commit_sha")
@@ -559,7 +576,8 @@ class Runner:
                 current = self.github.observe(repo, pr["number"])
                 if (not self.github.owns_pr(repo, number, current["pr"])
                         or current["pr"].get("merge_commit_sha") != merge_sha
-                        or gate_completed_delivery(config, current, record["head"], self._paths(current))):
+                        or gate_completed_delivery(config, current, record["head"], self._paths(current),
+                                                   expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint"))):
                     return self._wait(repo, number, record, "completion_evidence_missing", phase="uncertain")
                 # A push rerun can start while publishing the close intent.
                 # Candidate evidence does not substitute for current merge CI.
@@ -576,7 +594,7 @@ class Runner:
                         if self.github.issue(repo, number).get("state") != "closed":
                             return self._wait(repo, number, record, "close_unknown", phase="uncertain")
                 self._record(repo, number, record, phase="completed", pending_action=None,
-                             checkpoint="merged_observed", next_action="completed", wait_reason=None)
+                             checkpoint=record["checkpoint"], next_action="completed", wait_reason=None)
                 return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
             if closing_recovery or config.get("_completion_only"):
                 return self._wait(repo, number, record, "completion_merge_unconfirmed", phase="uncertain")
@@ -873,6 +891,20 @@ class Runner:
                 result.append(t)
         return result
 
+    def _recover_squash(self, repo, number, config, record, observation):
+        """Correlate an uncertain trusted request; never infer method from topology."""
+        pr = observation["pr"]
+        base = record.get("expected_base")
+        if (record.get("pending_action") != "merge" or record.get("expected_head") != record.get("head")
+                or gate_squash_result(observation, record.get("head"), base)):
+            return None
+        message = squash_message(config["repository_id"], number, pr["number"],
+                                 record["head"], base, record["intake_digest"])
+        if not squash_message_matches(observation.get("merge_commit", {}).get("message"), message):
+            return None
+        return self._record(repo, number, record, checkpoint="squash_" + pr["merge_commit_sha"],
+                            pending_action=None, phase="observing", wait_reason=None, next_action="post_merge")
+
     def _merge(self, repo, number, config, record, pr_number, head, paths):
         if self._latest(repo, number, config):
             return self._wait(repo, number, record, "delivery_boundary_changed")
@@ -888,13 +920,25 @@ class Runner:
                               expected_head=head, expected_base=latest["base_sha"])
         if record is None:
             return self._intent_wait(repo, number)
+        message = squash_message(config["repository_id"], number, pr_number, head,
+                                 record["expected_base"], record["intake_digest"])
         try:
-            self.github.merge(repo, pr_number, head)
+            receipt = self.github.merge(repo, pr_number, head, commit_message=message)
         except Exception:
-            actual = self.github.observe(repo, pr_number)["pr"]
-            if not actual.get("merged") or actual.get("head", {}).get("sha") != head:
+            observed = self.github.observe(repo, pr_number)
+            if not self.github.owns_pr(repo, number, observed["pr"]):
+                return self._wait(repo, number, record, "foreign_pr", phase="uncertain")
+            recovered = self._recover_squash(repo, number, config, record, observed)
+            if recovered is None:
                 return self._wait(repo, number, record, "merge_unknown", phase="uncertain")
-        self._record(repo, number, record, pending_action=None, phase="observing", next_action="post_merge")
+            return {"action": "continue", "repository": repo, "issue": number}
+        observed = self.github.observe(repo, pr_number)
+        if (not self.github.owns_pr(repo, number, observed["pr"])
+                or receipt.get("merge_commit_sha") != observed["pr"].get("merge_commit_sha")
+                or gate_squash_result(observed, head, record["expected_base"])):
+            return self._wait(repo, number, record, "merge_unknown", phase="uncertain")
+        self._record(repo, number, record, checkpoint="squash_" + observed["pr"]["merge_commit_sha"],
+                     pending_action=None, phase="observing", wait_reason=None, next_action="post_merge")
         return {"action": "continue", "repository": repo, "issue": number}
 
     def _request_missing_review(self, repo, number, config, record, observation):
@@ -1119,8 +1163,9 @@ class Runner:
                     if reason and not (reason == "issue_closed" and closing):
                         continue
                     intake = parse_intake({**issue, "state": "open"} if closing else issue, config)
-                    for dependency in intake.get("dependencies", []):
-                        key = issue_url(dependency)
+                    dependency_keys = {(dep_repo.casefold(), dep_number)
+                                       for dep_repo, dep_number in map(issue_url, intake.get("dependencies", []))}
+                    for key in dependency_keys:
                         dependents[key] = dependents.get(key, 0) + 1
                     reason = self._latest(repo, issue["number"], {**config, "intake_digest": intake_digest(issue)})
                     if reason and not (reason == "issue_closed" and closing):
@@ -1128,7 +1173,7 @@ class Runner:
                     ready.append((repo, issue["number"], intake, progress, issue.get("created_at", "")))
                 except (ValueError, RuntimeError, OSError):
                     results.append({"repository": repo, "issue": issue["number"], "action": "waiting", "reason": "intake_unavailable"})
-        ready.sort(key=lambda item: (0 if item[3] else 1, -dependents.get(item[:2], 0),
+        ready.sort(key=lambda item: (0 if item[3] else 1, -dependents.get((item[0].casefold(), item[1]), 0),
                                     -item[2].get("priority", 0), item[4], item[0], item[1]))
         for repo, number, *_ in ready:
             if self.stop_requested():

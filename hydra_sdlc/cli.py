@@ -111,7 +111,7 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
                         await asyncio.sleep(0)
                         continue
                     active = any(r.get("action") == "continue" or r.get("reason") in {
-                        "remote_delivery_gates", "post_merge_checks"} for r in result)
+                        "remote_delivery_gates", "post_merge_checks", "delivery_facts_changed"} for r in result)
                     delay = 60 if active else 300
                     until = min(loop.time() + delay, deadline)
                     while loop.time() < until and not stopped:

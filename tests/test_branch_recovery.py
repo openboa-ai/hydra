@@ -31,6 +31,7 @@ class BranchRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.model_calls = []
         self.capability_calls = []
         self.used_percent = 10
+        self.usage_allowed = True
         self.dependency_state = 'open'
         original_issue = self.github.issue
 
@@ -53,7 +54,7 @@ class BranchRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def capabilities(self, cwd):
         self.capability_calls.append(cwd)
-        return complete_capabilities(self.used_percent)
+        return complete_capabilities(self.used_percent, allowed=self.usage_allowed)
 
     def runner(self):
         return Runner(self.github, self.workspace, host_alias='host-a',
@@ -115,7 +116,7 @@ class BranchRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await self.assert_foreign_untouched()
 
     async def test_branch_appearing_during_usage_wait_is_not_prepared(self):
-        self.used_percent = 81
+        self.usage_allowed = False
         result = await self.runner().step(REPO, NUMBER)
         self.assertEqual(result['reason'], 'usage_unavailable_or_low')
         self.assertIsNone(self.github.note['head'])
@@ -123,7 +124,7 @@ class BranchRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.model_calls, [])
         self.assertEqual(self.workspace.head, BASE)
         self.github.branch = HEAD
-        self.used_percent = 10
+        self.usage_allowed = True
         await self.assert_foreign_untouched()
 
     async def test_foreign_pr_appearing_during_dependency_wait_is_preserved(self):

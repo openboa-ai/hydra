@@ -29,7 +29,8 @@ class PolicyGitHub(GitHub):
                          attempt_id='12345678-1234-1234-1234-123456789abc', host_alias='host-a',
                          contract_revision=BASE, spec_revision=HEAD, head=HEAD,
                          branch='hydra/issue-4', pr_number=7, phase='observing',
-                         pending_action=None, intake_digest=intake_digest(self.work))
+                         pending_action=None, expected_head=HEAD, expected_base=BASE,
+                         checkpoint='squash_' + MERGE, intake_digest=intake_digest(self.work))
 
     def api(self, method, path):
         return {'user': {'login': path.split('/')[-2]}, 'permission': 'write'}

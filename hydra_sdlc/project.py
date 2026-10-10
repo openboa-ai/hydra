@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import re
 import tomllib
@@ -61,7 +62,7 @@ def load_project(github, repo, *, revision=None):
     ui_paths = config.setdefault("ui_paths", [])
     _require(isinstance(ui_paths, list) and all(_path(p, glob=True) for p in ui_paths), "Invalid UI path policy")
     labels = config.get("labels")
-    _require(isinstance(labels, dict) and set(labels) == {"ready", "paused", "decision"} and all(isinstance(x, str) and x.strip() and len(x) < 100 for x in labels.values()) and len(set(labels.values())) == 3, "Invalid intake labels")
+    _require(isinstance(labels, dict) and set(labels) == {"ready", "paused", "decision"} and all(isinstance(x, str) and x.strip() and len(x) < 100 for x in labels.values()) and len({x.casefold() for x in labels.values()}) == 3, "Invalid intake labels")
     _require(all(x.casefold() != "hydra:active" for x in labels.values()), "hydra:active is reserved for service recovery")
     commands = config.get("verification")
     _require(isinstance(commands, list) and commands, "Verification policy is empty")
@@ -100,8 +101,9 @@ def parse_intake(issue, config):
     _require(isinstance(issue, dict) and "pull_request" not in issue and type(issue.get("number")) is int, "Expected a product Issue")
     _require(issue.get("state") == "open", "Issue is closed")
     _require((issue.get("user") or {}).get("login") in config["authorized_actors"] and config.get("actor_permissions", {}).get((issue.get("user") or {}).get("login")) in {"admin", "write", "maintain"}, "Issue author is not an authorized repository writer")
-    labels = {x.get("name") if isinstance(x, dict) else x for x in issue.get("labels", [])}
-    policy = config["labels"]
+    labels = {name.casefold() for x in issue.get("labels", [])
+              if isinstance(name := x.get("name") if isinstance(x, dict) else x, str)}
+    policy = {role: name.casefold() for role, name in config["labels"].items()}
     _require(policy["ready"] in labels and not labels.intersection({policy["paused"], policy["decision"]}), "Issue is not ready")
     body = issue.get("body") or ""
     _require(isinstance(issue.get("title"), str) and issue["title"].strip(), "Issue goal title missing")
@@ -380,12 +382,66 @@ def gate_delivery(config, observation, head, paths):
     return _gate_candidate(config, observation, head, paths)
 
 
-def gate_completed_delivery(config, observation, head, paths):
+def squash_message(repository_id, issue, pr, head, base, intake_digest):
+    """Correlate one logical trusted squash request across retries and restarts."""
+    _require(all(type(n) is int and n > 0 for n in (repository_id, issue, pr))
+             and _sha(head) and _sha(base) and isinstance(intake_digest, str)
+             and re.fullmatch(r"[0-9a-f]{64}", intake_digest), "Squash intent binding incomplete")
+    binding = {"version": 1, "operation": "squash", "repository_id": repository_id,
+               "issue": issue, "pr": pr, "head": head, "base": base,
+               "intake_digest": intake_digest}
+    digest = hashlib.sha256(json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return "Hydra-Squash-v1: " + digest
+
+
+def squash_message_matches(message, marker):
+    """The API prepends a commit title; match one exact body line, not all text."""
+    if (not isinstance(message, str) or not isinstance(marker, str)
+            or not re.fullmatch(r"Hydra-Squash-v1: [0-9a-f]{64}", marker)):
+        return False
+    return [line for line in message.splitlines() if line.startswith("Hydra-Squash-v1:")] == [marker]
+
+
+def gate_squash_result(observation, head, base):
+    """Check immutable result integrity; topology alone never proves squash."""
+    if not isinstance(observation, dict):
+        return ["squash_commit_facts_unknown"]
+    pr = observation.get("pr")
+    if (not isinstance(pr, dict) or pr.get("merged") is not True or pr.get("state") != "closed"
+            or not _sha(pr.get("merge_commit_sha"))):
+        return ["merge_not_observed"]
+    if not _sha(base):
+        return ["squash_expected_base_unknown"]
+    if (not _sha(head) or observation.get("head_sha") != head
+            or not isinstance(pr.get("head"), dict) or pr["head"].get("sha") != head):
+        return ["squash_candidate_changed"]
+    candidate, result = observation.get("head_commit"), observation.get("merge_commit")
+    if (not isinstance(candidate, dict) or not isinstance(result, dict)
+            or not isinstance(candidate.get("tree"), dict) or not _sha(candidate["tree"].get("sha"))
+            or not isinstance(result.get("tree"), dict) or not _sha(result["tree"].get("sha"))
+            or not isinstance(result.get("parents"), list)
+            or any(not isinstance(p, dict) or not _sha(p.get("sha")) for p in result["parents"])):
+        return ["squash_commit_facts_unknown"]
+    blockers = []
+    if candidate.get("sha") != head or result.get("sha") != pr["merge_commit_sha"]:
+        blockers.append("squash_commit_identity_mismatch")
+    if [p["sha"] for p in result["parents"]] != [base]:
+        blockers.append("squash_parent_mismatch")
+    if result["tree"]["sha"] != candidate["tree"]["sha"]:
+        blockers.append("squash_tree_mismatch")
+    return blockers
+
+
+def gate_completed_delivery(config, observation, head, paths, *, expected_base=None, checkpoint=None):
     """Actual merged facts plus candidate evidence; this never authorizes an effect."""
     pr = observation.get("pr", {})
     if pr.get("merged") is not True or pr.get("state") != "closed" or not _sha(pr.get("merge_commit_sha")):
         return ["merge_not_observed"]
-    return _gate_candidate(config, observation, head, paths, historical=True)
+    blockers = gate_squash_result(observation, head, expected_base)
+    if checkpoint != "squash_" + pr["merge_commit_sha"]:
+        blockers.append("squash_method_unknown")
+    blockers.extend(_gate_candidate(config, observation, head, paths, historical=True))
+    return list(dict.fromkeys(blockers))
 
 
 def gate_post_merge(config, observation, merge_sha):

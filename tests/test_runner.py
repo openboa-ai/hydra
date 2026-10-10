@@ -13,12 +13,12 @@ from hydra_sdlc.runner import Runner, usage_allowed
 from test_project import BASE, HEAD, MERGE, config, observation, summary
 
 
-def complete_capabilities(used=10):
+def complete_capabilities(used=10, *, allowed=True):
     from hydra_sdlc.codex import SDK_VERSION
     return {'available': True, 'sdk_version': SDK_VERSION, 'runtime_version': SDK_VERSION,
             'account': {'status': 'known', 'type': 'chatgpt', 'authenticated': True},
             'models': {'status': 'known', 'ids': ['configured-default']},
-            'usage': {'status': 'known', 'data': {'ordinaryUsageAllowed': True,
+            'usage': {'status': 'known', 'data': {'ordinaryUsageAllowed': allowed,
                       'rateLimits': {'primary': {'usedPercent': used}}}}}
 
 
@@ -41,6 +41,7 @@ class GitHub:
         self.on_record = lambda record: None
         self.transform_observation = lambda value: value
         self.closed_response_lost = False
+        self.merge_message = "External merge without a service request"
 
     def issue(self, repo, n):
         return copy.deepcopy(self.work)
@@ -115,6 +116,11 @@ class GitHub:
             r['jobs'][0]['check_run_url'] = r['jobs'][0]['check_run_url'].replace('example/product', repo)
         if self.remote_pending:
             value['runs'][0]['status'] = 'in_progress'
+        if value['pr'].get('merged'):
+            tree = {'sha': 'd' * 40}
+            value['head_commit'] = {'sha': head, 'tree': tree}
+            value['merge_commit'] = {'sha': value['pr']['merge_commit_sha'], 'tree': tree,
+                                     'parents': [{'sha': BASE}], 'message': self.merge_message}
         return self.transform_observation(value)
 
     def observe_commit(self, repo, sha):
@@ -129,13 +135,15 @@ class GitHub:
         value['runs'][0]['jobs'][0]['check_run_url'] = value['runs'][0]['jobs'][0]['check_run_url'].replace('example/product', repo)
         return value
 
-    def merge(self, repo, pr, head):
+    def merge(self, repo, pr, head, *, commit_message):
         self.assert_intent('merge')
         self.writes.append(('merge', head))
+        self.merge_message = commit_message
         self.pr.update(merged=True, state='closed', merge_commit_sha=MERGE)
         if self.lose_merge:
             self.lose_merge = False
             raise RuntimeError('response lost')
+        return copy.deepcopy(self.pr)
 
     def close_issue(self, repo, n):
         self.assert_intent('close_issue')
@@ -523,7 +531,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             return value
         self.github.transform_observation = failed
         async def low_usage(cwd):
-            return complete_capabilities(81)
+            return complete_capabilities(81, allowed=False)
         runner.capabilities = low_usage
         count = len(self.calls)
         for _ in range(4):
@@ -726,7 +734,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.github.note.update(head='f' * 40, expected_head=HEAD, phase='implementation_done')
         runner = self.runner()
         async def low_usage(cwd):
-            return complete_capabilities(81)
+            return complete_capabilities(81, allowed=False)
         runner.capabilities = low_usage
         self.assertEqual((await runner.step('example/product', 4))['reason'], 'usage_unavailable_or_low')
         self.assertEqual(self.github.note['head'], 'f' * 40)

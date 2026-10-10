@@ -30,6 +30,15 @@ class ProtocolError(RuntimeError):
     pass
 
 
+def _ownership_coordinator():
+    if __package__:
+        from . import coordinator
+        return coordinator
+    # A standalone file import has no CLI lock of its own. Reuse the canonical
+    # module if the CLI loaded it; never create another ContextVar owner copy.
+    return sys.modules.get("hydra_sdlc.coordinator")
+
+
 def worker_environment():
     """Preserve host Codex configuration without service publishing tokens."""
     return {key: value for key, value in os.environ.items() if key not in PUBLISHING_TOKEN_VARIABLES}
@@ -142,6 +151,7 @@ class OwnedProcess:
         self.process = self.control = self._peer = self._launch = self._receipt_task = None
         self._ready_task = None
         self._launch_sent = False
+        self._ownership_ticket = None
         self._cleanup_task = None
         self._buffer = b""
         self.pid = self.pgid = self._returncode = None
@@ -180,6 +190,10 @@ class OwnedProcess:
             self.control.setblocking(False)
             command = _helper_command(command, self._peer.fileno(), deadline)
             options["pass_fds"] = (self._peer.fileno(),)
+        # These hooks run only in the parent-side supervisor. The
+        # isolated helper entry point needs no package import or lock descriptor.
+        coordinator = _ownership_coordinator()
+        self._ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
         self._launch = asyncio.create_task(asyncio.create_subprocess_exec(*command, **options))
         self._launch.add_done_callback(self._registered)
         if self.linux:
@@ -238,7 +252,7 @@ class OwnedProcess:
 
     async def cleanup(self):
         if self._cleanup_task is None:
-            self._cleanup_task = asyncio.create_task(self._collect())
+            self._cleanup_task = asyncio.create_task(self._collect_owned())
         while True:
             try:
                 return await asyncio.shield(self._cleanup_task)
@@ -247,6 +261,17 @@ class OwnedProcess:
                     return False
                 # Repeated caller cancellation cannot abandon the owned cleanup.
                 continue
+
+    async def _collect_owned(self):
+        if not await self._collect():
+            return False
+        try:
+            if self._ownership_ticket is not None:
+                _ownership_coordinator().confirm_owned_cleanup(self._ownership_ticket)
+        except Exception:
+            return False
+        self._ownership_ticket = None
+        return True
 
     async def _collect(self):
         loop = asyncio.get_running_loop()
@@ -380,6 +405,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
     deadline = time.monotonic() + timeout
     linux = sys.platform.startswith("linux")
     process = control = peer = None
+    ownership_ticket = None
     pid = pgid = receipt = None
     buffered = b""
     data = bytearray()
@@ -471,6 +497,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 control.setblocking(False)
                 command = _helper_command(command, peer.fileno(), deadline)
                 options["pass_fds"] = (peer.fileno(),)
+            coordinator = _ownership_coordinator()
+            ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
             process = subprocess.Popen(command, **options)
             if peer is not None:
                 peer.close()
@@ -499,7 +527,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             if peer is not None:
                 peer.close()
 
-        clean = process is None
+        clean = process is None and ownership_ticket is None
         if process is not None:
             cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
             kill_at = cleanup_deadline - 1.0
@@ -548,6 +576,12 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
         elif control is not None:
             control.close()
 
+    if clean and reason != "cleanup_unknown":
+        try:
+            if ownership_ticket is not None:
+                _ownership_coordinator().confirm_owned_cleanup(ownership_ticket)
+        except Exception:
+            clean = False
     if not clean or reason == "cleanup_unknown":
         raise OwnedCommandError("cleanup_unknown")
     if reason in {"stopped", "output_limit", "unavailable"}:

@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 413 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 394 passed, 17 Linux-only process tests and
+On 2026-10-10 the final local suite collected 452 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 432 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -81,6 +81,31 @@ process tests cover cancellation and no signaling after observed group disappear
 One focused macOS capability run reported unknown cleanup; the cause remains
 unexplained. Its exact test passed ten instrumented repetitions with actual reaping,
 and the final full suite passed. Cleanup deadlines were not relaxed.
+
+Native identity cases cover stored label casing, configured control casing,
+canonical dependency aliases counted once per dependent Issue, and matching active
+polling in `run` and `serve`. Reported native usage permission permits valid windows
+through 100%, including existing credits; denial, spend controls and malformed
+reports still hold without purchases or a paid API fallback.
+
+Restart cases confirm that the same-boot unresolved marker blocks both CLIs before
+capability/model dispatch even after every recognizable wrapper has disappeared.
+An actual macOS leaf remained alive during that rejection and was collected by the
+fixture afterward. The non-reaping Linux variant requires current-head Linux CI.
+Pre-spawn fsync, partial writes, invalid markers, verified boot changes, stale
+tickets and failed cleanup/clearing are covered. Standalone loading and aliases
+reuse the canonical active owner without changing the existing deadlines.
+
+Squash fixtures require immutable result SHA/tree/parent integrity and a validated
+request receipt; topology alone and external merges without receipt hold. Pending
+request recovery rejects missing, wrong and duplicate logical markers, including
+after lost response and restart. Changed final commit facts prevent Issue close.
+These fixtures do not establish an actual unattended GitHub merge.
+
+One actual non-generative pinned-SDK capability read reported known native usage,
+ordinary permission allowed, and the dispatch guard allowed. Its owned process
+cleanup cleared the host marker. No model turn, credit purchase, account mutation
+or billing fallback was performed by this read.
 
 ## Actual edit and remaining acceptance
 

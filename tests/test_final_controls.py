@@ -63,6 +63,8 @@ class FinalControlsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'continue')
         self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'remote_delivery_gates')
         self.github.remote_pending = False
+        # Establish the trusted service receipt before testing later controls.
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'continue')
         self.github.pr.update(merged=True, state='closed', merge_commit_sha=MERGE,
                               mergeable=None, mergeable_state='unknown')
 

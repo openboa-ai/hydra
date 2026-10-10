@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import json
 import os
 import subprocess
@@ -9,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from hydra_sdlc import execution_boundary as boundary
+from hydra_sdlc import coordinator, execution_boundary as boundary
 
 
 WORKER = r'''
@@ -355,6 +356,84 @@ print(json.dumps(asyncio.run(b.execute_worker({},lambda **x:None,lambda *x:None,
                                 capture_output=True, text=True, timeout=5, check=True)
         self.assertEqual(json.loads(result.stdout)['status'], 'failed')
         self.assert_pids_gone()
+
+    def test_standalone_sync_facade_needs_no_package_import(self):
+        script = '''
+import importlib.util, json, os, sys
+spec=importlib.util.spec_from_file_location('boundary',sys.argv[1]); b=importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+assert 'hydra_sdlc.coordinator' not in sys.modules
+result=b.run_owned_sync([sys.executable,'-I','-c','print("standalone")'],cwd=sys.argv[2],env=os.environ.copy(),timeout=2,max_output_bytes=1024)
+assert 'hydra_sdlc.coordinator' not in sys.modules
+print(json.dumps({'returncode':result.returncode,'stdout':result.stdout.decode()}))
+'''
+        result = subprocess.run([sys.executable, '-I', '-c', script, self.module, str(self.root)],
+                                capture_output=True, text=True, timeout=5, check=True)
+        self.assertEqual(json.loads(result.stdout), {'returncode': 0, 'stdout': 'standalone\n'})
+
+    def alias_boundary(self):
+        spec = importlib.util.spec_from_file_location('boundary_alias', self.module)
+        alias = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(alias)
+        self.assertFalse(alias.__package__)
+        self.assertIs(alias._ownership_coordinator(), coordinator)
+        return alias
+
+    async def test_standalone_alias_uses_active_cli_owner_for_both_facades(self):
+        alias = self.alias_boundary()
+        lock = self.root / 'host.lock'
+        command = [sys.executable, '-I', '-c', 'pass']
+        real_spawn, real_popen = asyncio.create_subprocess_exec, subprocess.Popen
+
+        async def async_spawn(*args, **kwargs):
+            self.assertTrue(lock.read_bytes(), 'active CLI marker missing before spawn')
+            return await real_spawn(*args, **kwargs)
+
+        def sync_spawn(*args, **kwargs):
+            self.assertTrue(lock.read_bytes(), 'active CLI marker missing before spawn')
+            return real_popen(*args, **kwargs)
+
+        with coordinator.coordinator_lock(lock):
+            process = alias.OwnedProcess(command, stdout=asyncio.subprocess.DEVNULL)
+            try:
+                with patch.object(alias.asyncio, 'create_subprocess_exec', side_effect=async_spawn):
+                    await process.start(asyncio.get_running_loop().time() + 3)
+                await process.wait()
+                self.assertTrue(lock.read_bytes())
+                self.assertTrue(await process.cleanup())
+                self.assertEqual(lock.read_bytes(), b'')
+            finally:
+                await process.cleanup()
+            with patch.object(alias.subprocess, 'Popen', side_effect=sync_spawn):
+                result = alias.run_owned_sync(command, cwd=self.root, env=os.environ.copy(),
+                                              timeout=2, max_output_bytes=1024)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(lock.read_bytes(), b'')
+        self.assertIs(sys.modules['hydra_sdlc.coordinator'], coordinator)
+        self.assertNotIn('coordinator', sys.modules)
+
+    async def test_standalone_alias_cannot_bypass_active_registration_failure(self):
+        alias = self.alias_boundary()
+        lock = self.root / 'host.lock'
+        command = [sys.executable, '-I', '-c', 'pass']
+        with coordinator.coordinator_lock(lock):
+            ticket = coordinator.register_owned_process()
+            marker = lock.read_bytes()
+            process = alias.OwnedProcess(command)
+            try:
+                with patch.object(alias.asyncio, 'create_subprocess_exec', new_callable=AsyncMock) as spawn:
+                    with self.assertRaises(coordinator.HostBusy):
+                        await process.start(asyncio.get_running_loop().time() + 3)
+                    spawn.assert_not_called()
+            finally:
+                await process.cleanup()
+            with patch.object(alias.subprocess, 'Popen') as spawn:
+                with self.assertRaises(alias.OwnedCommandError) as raised:
+                    alias.run_owned_sync(command, cwd=self.root, env=os.environ.copy(),
+                                         timeout=2, max_output_bytes=1024)
+                self.assertEqual(raised.exception.reason, 'unavailable')
+                spawn.assert_not_called()
+            self.assertEqual(lock.read_bytes(), marker)
+            coordinator.confirm_owned_cleanup(ticket)
 
     def test_launcher_ignores_candidate_pythonpath_and_cwd(self):
         source = Path(boundary.__file__).with_name('codex.py')
