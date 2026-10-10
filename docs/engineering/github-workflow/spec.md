@@ -419,3 +419,27 @@ interrupted verification/checkpoint-record failures and bounded mutation correct
 real Linux verification stop/timeout/EOF/resistant descendants under a nonreaping
 ancestor, and actual invalid-UTF-8 tracked/untracked filenames. Existing product
 delivery, native protected approvals and final-head provider reviews remain required.
+
+## Review corrections: undispatched work and ambiguous reviews
+
+If the final guard rejects a newly recorded model or verification intent before
+dispatch, restore its prior non-executing checkpoint and continuation. No worker
+started, so clearing the stop, pause or dependency boundary must permit ordinary
+reconciliation without a stopped-worker handover. Preserve the original attempt,
+head, scope, correction budget and any continuation marker. If the compensating
+progress write is unavailable, retain the durable intent as unresolved; never
+claim that an actually dispatched or unknown execution did not start. Existing
+uncertain external publication/merge/review requests keep their reconciliation.
+
+Multiple authenticated provider summaries or repeated rows for a review kind enter
+the existing durable diagnosis/replan path. Do not pick a favorable row, request
+repeated reviews, or silently wait forever. Preserve an uncertain review request
+and its original head/kind until authentic evidence settles it. An authorized
+replan resumes review reconciliation for the unchanged candidate, not unnecessary
+implementation; ambiguity still blocks delivery until the provider facts are
+unambiguous. Existing evidence authentication and native protection remain intact.
+
+Acceptance adds final-guard rejection before every model/verification phase and
+ordinary restart after the boundary clears, preservation of pending correction
+and genuine unknown execution, duplicate authenticated summaries/rows with and
+without an uncertain request, and authorized replan after evidence repair.
