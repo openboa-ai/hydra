@@ -15,7 +15,10 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 SOURCE = Path(__file__).resolve()
@@ -421,6 +424,78 @@ print(json.dumps(asyncio.run(exercise())))
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout), {"clean": False, "launched": False})
+
+
+class HelperGroupOwnershipTests(unittest.TestCase):
+    def simulate_reused_group(self, *, control_failure):
+        from hydra_sdlc import execution_boundary as boundary
+
+        child = SimpleNamespace(pid=41001, returncode=None)
+        control = Mock()
+        control.recv.return_value = boundary._supervision_frame("launch")
+        clock = [100.0]
+        groups = []
+        waits = []
+        polls = []
+
+        def waitpid(pid, options):
+            self.assertEqual((pid, options), (-1, os.WNOHANG))
+            # Reap the direct worker once. An adopted descendant that escaped
+            # its group stays alive, so subsequent calls never report ECHILD.
+            observed = (child.pid, 0) if not waits else (0, 0)
+            waits.append(observed)
+            return observed
+
+        def group_absent(pgid):
+            absent = not groups
+            groups.append((pgid, absent))
+            return absent  # A different process later reuses this numeric PGID.
+
+        def poll(*args):
+            polls.append(clock[0])
+            if control_failure and len(polls) == 2:
+                raise OSError("synthetic control failure after PGID reuse")
+            clock[0] += .5
+            return ([], [], [])
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(boundary.socket, "socket", return_value=control))
+            stack.enter_context(patch.object(boundary, "_enable_subreaper"))
+            stack.enter_context(patch.object(boundary.signal, "signal"))
+            stack.enter_context(patch.object(boundary.subprocess, "Popen", return_value=child))
+            stack.enter_context(patch.object(boundary.os, "close"))
+            stack.enter_context(patch.object(boundary.os, "waitpid", side_effect=waitpid))
+            killpg = stack.enter_context(patch.object(boundary.os, "killpg"))
+            stack.enter_context(patch.object(boundary, "_group_absent", side_effect=group_absent))
+            stack.enter_context(patch.object(boundary.time, "monotonic", side_effect=lambda: clock[0]))
+            stack.enter_context(patch.object(boundary.time, "sleep", side_effect=sleep))
+            stack.enter_context(patch("select.select", side_effect=poll))
+            result = boundary._supervisor_main(123, 110.0, ["synthetic-worker"])
+
+        self.assertEqual(result, 2)
+        self.assertEqual(child.returncode, 0)
+        self.assertEqual(waits[0], (child.pid, 0))
+        self.assertTrue(all(observed == (0, 0) for observed in waits[1:]))
+        self.assertGreaterEqual(len(groups), 2)
+        self.assertEqual(groups[0], (child.pid, True))
+        self.assertTrue(all(observed == (child.pid, False) for observed in groups[1:]))
+        killpg.assert_not_called()
+        frames = [json.loads(call.args[0]) for call in control.sendall.call_args_list]
+        self.assertEqual([frame["kind"] for frame in frames], ["ready"])
+        control.close.assert_called_once()
+        if control_failure:
+            self.assertEqual(len(polls), 2)
+        else:
+            self.assertGreaterEqual(clock[0], 101.8)
+
+    def test_reused_group_is_not_signaled_during_bounded_cleanup_timeout(self):
+        self.simulate_reused_group(control_failure=False)
+
+    def test_reused_group_is_not_signaled_after_control_failure(self):
+        self.simulate_reused_group(control_failure=True)
 
 
 if __name__ == "__main__":
