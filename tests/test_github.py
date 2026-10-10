@@ -205,6 +205,58 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual(observed['head_sha'], MERGE)
         self.assertEqual(observed['runs'][0]['jobs'], [{'id': 91}])
 
+    def thread_transport(self, *, outdated=True, author=None, app=None, lose_response=False, change_head=False, extra_thread_comment=False, human_reply=False):
+        provider = {'login': 'chatgpt-codex-connector[bot]', 'user_id': 199175422, 'app_id': 1144995}
+        state = {'resolved': False, 'mutations': 0}
+        def transport(method, path, payload):
+            if path.endswith('/pulls/7'):
+                return {**owned_pr(), 'head': {'sha': BASE if change_head and state['resolved'] else HEAD}}
+            if '/pulls/7/comments?' in path:
+                return [{'id': 81, 'user': author or {'id': provider['user_id'], 'login': provider['login']}, 'performed_via_github_app': app}] + ([{'id': 82, 'user': {'id': 8, 'login': 'human'}}] if human_reply else [])
+            if payload['query'].startswith('mutation'):
+                self.assertEqual(payload['variables'], {'thread': 'PRRT_known'})
+                self.assertIn('resolveReviewThread', payload['query'])
+                state.update(resolved=True, mutations=state['mutations'] + 1)
+                if lose_response: raise GitHubError('response lost', uncertain=True)
+                return {'data': {'resolveReviewThread': {'thread': {'id': 'PRRT_known', 'isResolved': True}}}}
+            nodes = [{'databaseId': 81}]
+            if human_reply or extra_thread_comment and state['resolved']: nodes.append({'databaseId': 82})
+            thread = {'id': 'PRRT_known', 'isOutdated': outdated, 'isResolved': state['resolved'],
+                      'comments': {'nodes': nodes, 'pageInfo': {'hasNextPage': False}}}
+            return {'data': {'repository': {'pullRequest': {'reviewDecision': None,
+                    'reviewThreads': {'nodes': [thread], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}}
+        return GitHub(transport=transport), provider, state
+
+    def test_resolve_only_owned_outdated_provider_thread_and_read_back(self):
+        for lose_response in [False, True]:
+            with self.subTest(lose_response=lose_response):
+                gh, provider, state = self.thread_transport(lose_response=lose_response)
+                result = gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                self.assertTrue(result['isResolved']); self.assertEqual(state['mutations'], 1)
+                gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                self.assertEqual(state['mutations'], 1)
+
+    def test_thread_resolution_preserves_current_human_foreign_unknown_threads(self):
+        for kwargs in [{'outdated': False}, {'author': {'id': 8, 'login': 'human'}},
+                       {'author': {'id': 8, 'login': 'chatgpt-codex-connector[bot]'}},
+                       {'app': {'id': 999}}, {'human_reply': True}]:
+            with self.subTest(kwargs=kwargs):
+                gh, provider, state = self.thread_transport(**kwargs)
+                with self.assertRaises(GitHubError): gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                self.assertEqual(state['mutations'], 0)
+        for tid, head in [('PRRT_foreign', HEAD), ('PRRT_known', BASE)]:
+            gh, provider, state = self.thread_transport()
+            with self.assertRaises(GitHubError): gh.resolve_thread(REPO, 7, tid, head, provider)
+            self.assertEqual(state['mutations'], 0)
+
+    def test_concurrent_head_or_comment_change_after_resolution_is_uncertain(self):
+        for kwargs in [{'change_head': True}, {'extra_thread_comment': True}]:
+            with self.subTest(kwargs=kwargs):
+                gh, provider, state = self.thread_transport(**kwargs)
+                with self.assertRaises(GitHubError) as caught: gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                self.assertTrue(caught.exception.uncertain)
+                self.assertEqual(state['mutations'], 1)
+
     def test_observe_collects_server_facts_and_thread_pagination(self):
         requests = []
         raw = {**owned_pr(), 'changed_files': 1, 'commits': 1}

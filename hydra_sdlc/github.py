@@ -370,6 +370,66 @@ class GitHub:
                 return recovered
             raise
 
+    def resolve_thread(self, repo, pr, thread_id, expected_head, provider):
+        """Resolve only an observed outdated provider-only thread after runner review.
+
+        GitHub has no head-conditioned thread mutation. Recheck the head before
+        and after; a concurrent change remains uncertain, never delivery evidence.
+        """
+        _repo(repo); _number(pr); _sha(expected_head)
+        if (not isinstance(thread_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", thread_id)
+                or not isinstance(provider, dict) or provider.get("login") != "chatgpt-codex-connector[bot]"
+                or type(provider.get("user_id")) is not int or provider["user_id"] < 1
+                or type(provider.get("app_id")) is not int or provider["app_id"] < 1):
+            raise GitHubError("Unknown review thread or provider identity")
+
+        def head_current():
+            raw = self.api("GET", f"/repos/{repo}/pulls/{pr}")
+            return raw.get("state") == "open" and raw.get("head", {}).get("sha") == expected_head
+
+        if not head_current():
+            raise GitHubError("PR head changed before thread resolution")
+        threads, _ = self._threads(repo, pr)
+        selected = [t for t in threads if t.get("id") == thread_id]
+        if len(selected) != 1 or selected[0].get("isOutdated") is not True:
+            raise GitHubError("Thread is not an outdated member of this PR")
+        comment_ids = [c.get("databaseId") for c in selected[0].get("comments", {}).get("nodes", [])]
+        comments = self._pages(f"/repos/{repo}/pulls/{pr}/comments")
+        if not comment_ids or any(type(cid) is not int for cid in comment_ids) or len(set(comment_ids)) != len(comment_ids):
+            raise GitHubError("Thread comment ownership unobserved")
+        for cid in comment_ids:
+            matching = [c for c in comments if c.get("id") == cid]
+            if (len(matching) != 1 or matching[0].get("user", {}).get("id") != provider["user_id"]
+                    or matching[0].get("user", {}).get("login") != provider["login"]
+                    or (matching[0].get("performed_via_github_app") is not None
+                        and matching[0]["performed_via_github_app"].get("id") != provider["app_id"])):
+                raise GitHubError("Human or unknown review comment must be preserved")
+        if selected[0].get("isResolved") is True:
+            return selected[0]
+        if selected[0].get("isResolved") is not False or not head_current():
+            raise GitHubError("Review thread state changed")
+        query = "mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id isResolved}}}"
+        try:
+            result = self.api("POST", "/graphql", {"query": query, "variables": {"thread": thread_id}})
+            if not isinstance(result, dict) or result.get("errors"):
+                raise GitHubError("Review thread mutation outcome unknown", uncertain=True)
+        except GitHubError as exc:
+            failure = exc
+        else:
+            failure = None
+        try:
+            actual, _ = self._threads(repo, pr)
+            current_head_matches = head_current()
+        except GitHubError as exc:
+            raise GitHubError("Thread resolution read-back unavailable", uncertain=True) from exc
+        actual = [t for t in actual if t.get("id") == thread_id]
+        if (len(actual) == 1 and actual[0].get("isResolved") is True
+                and actual[0].get("isOutdated") is True
+                and actual[0].get("comments", {}).get("nodes") == selected[0]["comments"]["nodes"]
+                and current_head_matches):
+            return actual[0]
+        raise GitHubError("Thread resolution requires reconciliation", uncertain=True) from failure
+
     def merge(self, repo, pr, head):
         _sha(head)
         raw = self.api("GET", f"/repos/{_repo(repo)}/pulls/{_number(pr)}")
