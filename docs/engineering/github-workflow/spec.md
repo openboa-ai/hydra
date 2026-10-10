@@ -94,7 +94,8 @@ The login service executes this same CLI and is enabled only after real qualific
 ## Execution, delivery and recovery
 
 Before model start, record attempt and action in GitHub; failure to record prevents
-dispatch. State during execution is memory-only. Reuse existing process-group
+dispatch. Workflow state during execution is memory-only. The existing host lock
+retains only bounded native resource ownership as described below. Reuse process-group
 supervision, bounded startup/shutdown and explicit uncertain outcome. Confirm no
 residual owned worker before starting after restart. A previously running attempt
 on another host waits for explicit confirmed-stop handover in an authorized Issue
@@ -540,3 +541,75 @@ label variants, nested instruction changes with absent/stale/current human appro
 case-variant self-dependencies with valid other-Issue controls, and terminal malformed
 provider envelopes versus running/valid completion. Native protection and actual
 two-project delivery remain required; no new authority or host-isolation claim.
+
+### Review corrections: native identities and restart ownership
+
+Normalize GitHub label names only for comparison, preserving native stored spelling
+and unrelated labels. Count dependency identities by casefolded owner/repository and
+Issue number, once per dependent Issue. Keep existing delegated-intake validation and
+recovery-first ordering. Both `run` and `serve` treat changed delivery facts as an
+active external wait with the existing 60-second polling interval.
+
+Use the existing flock-held host lock inode to retain exactly one bounded fixed-format
+resource ownership marker: version, native boot UUID and launch nonce. This is not
+workflow state, a journal, a lease, a queue or another file. The marker is written and
+fsynced synchronously before any owned execution, capability or verification process
+spawn. A second registration cannot replace an unresolved marker. Only that live
+handle's confirmed cleanup may clear its matching nonce; a generic finally, vanished
+wrapper, absent group or stale time cannot clear it. Failure to write/clear holds.
+
+Restart under the same OS lock rejects a same-boot pending marker even when every
+recognizable wrapper has exited. Corrupt/truncated/unknown ownership or unavailable
+boot identity also holds. A verified changed boot UUID establishes that old host
+processes cannot survive and permits retirement. Resource markers never authorize
+signaling or adopting a prior process. Bind the marker to the lock context used by
+the existing async and synchronous supervisors, with no new public command. First
+activation of an empty legacy lock still requires the existing quiescent-host
+qualification; it cannot retroactively detect unmarked old descendants. Explicit
+stopped-owner recovery must verify host quiescence before clearing an uncertain
+marker. Do not replace or unlink the lock inode while using it.
+
+Acceptance covers case-preserving labels and cleanup, canonical/deduplicated
+unblocker ordering, both polling commands, confirmed cleanup and normal restart,
+unknown pre-ready launch, refusal to overwrite ownership, corrupt/unknown/current
+boot holds and verified boot change. An actual platform-binary descendant with dead
+wrappers must block a fresh runtime before capability inspection or model dispatch;
+Linux process evidence remains a CI requirement. Existing process supervision,
+public/private boundaries and single trusted-host limitations remain unchanged.
+
+### Review corrections: exact squash completion evidence
+
+Keep the required exact-head squash request. An already-merged PR alone does not
+prove that method. For merged PRs observe immutable result and candidate commit SHA,
+tree SHA and result parents. Require the actual result SHA to match the PR, exactly
+one result parent equal to the preserved pre-merge expected base, and a result tree
+equal to the reviewed candidate tree. Current main or current policy revision never
+substitutes for that historical expected base. Topology proves result integrity, not
+the merge method: a single-commit rebase can have the same shape.
+
+Use the existing public progress checkpoint to retain `squash_<result SHA>` after
+the trusted squash PUT response is validated against actual merged facts. Preserve
+it through close/completed progress, restart, replan and handover. A bare merged GET
+or exception does not create this receipt. For response loss, the squash request's
+commit message includes a deterministic correlation marker bound to repository ID,
+Issue, PR, exact head/base and delegated intake digest. Create it only after durable
+merge intent; retries of that logical merge use the same marker. An authenticated
+pending merge intent plus that exact actual result message and commit integrity may
+recover the checkpoint without repeating the irreversible merge. A message without
+that intent cannot create a receipt.
+
+Both completion observations require the matching checkpoint and immutable commit
+facts in addition to all existing candidate, review, native and post-merge CI gates.
+Missing/malformed facts, lost historical base, an external merge without a supported
+receipt, or incompatible topology/tree holds completion and does not close/remerge.
+The correlation receipt attributes a trusted service request in the existing single
+host environment; it is not a cryptographic guarantee against another authorized
+publisher deliberately reproducing that message. No new security principal, record
+field, database, journal, command or approval is introduced.
+
+Acceptance covers service squash success and lost-response restart, later main
+advancement, response/commit SHA mismatch, wrong tree, two-parent merge, multi-commit
+and single-commit external rebase, malformed/missing facts/base/receipt, close-intent
+and already-closed recovery. Rejected cases cause no close, model turn, publication
+or repeated merge. The same current-head gates and protected deployment boundaries
+remain required.
