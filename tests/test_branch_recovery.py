@@ -175,6 +175,63 @@ class BranchRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.github.pr)
         self.assertFalse(any(item[0] in EFFECTS for item in self.github.writes))
 
+    async def late_owned_ref_change(self, *, recovery, advanced):
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'continue')
+        self.github.remote_pending = True
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'remote_delivery_gates')
+        self.assertTrue(self.github.owns_pr(REPO, NUMBER, self.github.pr))
+        previous = self.github.branch
+        self.github.note.update(phase='executing' if recovery else 'implementation_done',
+                                pending_action='implementation' if recovery else None,
+                                expected_head=previous)
+        if recovery:
+            self.workspace.dirty = True
+            pending = self.workspace.path / 'src/main.py'
+            pending.parent.mkdir(parents=True, exist_ok=True)
+            pending.write_bytes(b'preserve stopped implementation\n')
+            self.github.extra_comments.append({'user': {'login': 'operator'},
+                'body': f"hydra: handover {self.github.note['attempt_id']} stopped"})
+        files = {str(path.relative_to(self.workspace.path)): path.read_bytes()
+                 for path in self.workspace.path.rglob('*') if path.is_file()}
+        reads = []
+
+        def ref(repo, branch):
+            reads.append(branch)
+            # The initial acquisition and existing-head checks both see the
+            # recorded ref. Only the final pre-prepare observation changes.
+            if len(reads) == 3:
+                self.github.branch = advanced
+                if advanced is not None:
+                    self.github.pr['head']['sha'] = advanced
+            return self.github.branch
+
+        self.github.ref = ref
+        calls, models, capabilities = self.call_counts(), len(self.model_calls), len(self.capability_calls)
+        writes = len(self.github.writes)
+        result = await self.runner().step(REPO, NUMBER)
+        self.assertEqual(result['reason'], 'remote_head_changed')
+        self.assertEqual(len(reads), 3)
+        self.assertEqual(self.call_counts(), calls)
+        self.assertEqual(len(self.model_calls), models)
+        self.assertEqual(len(self.capability_calls), capabilities)
+        self.assertEqual(self.github.note['head'], previous)
+        self.assertEqual(self.github.note['expected_head'], previous)
+        self.assertEqual(self.workspace.head, previous)
+        self.assertEqual(self.workspace.dirty, recovery)
+        self.assertEqual(self.github.branch, advanced)
+        self.assertEqual({str(path.relative_to(self.workspace.path)): path.read_bytes()
+                          for path in self.workspace.path.rglob('*') if path.is_file()}, files)
+        self.assertFalse(any(item[0] in EFFECTS for item in self.github.writes[writes:]))
+
+    async def test_owned_pr_late_ref_advance_is_rejected_before_prepare(self):
+        await self.late_owned_ref_change(recovery=False, advanced=HEAD)
+
+    async def test_stopped_recovery_late_ref_advance_is_not_prepared_or_stamped(self):
+        await self.late_owned_ref_change(recovery=True, advanced=HEAD)
+
+    async def test_stopped_recovery_late_ref_disappearance_is_not_prepared_or_stamped(self):
+        await self.late_owned_ref_change(recovery=True, advanced=None)
+
 
 if __name__ == '__main__':
     unittest.main()
