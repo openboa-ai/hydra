@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from hydra_sdlc.workspace import Workspace, WorkspaceWait, _environment, _run
 
@@ -80,6 +80,85 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceWait, "foreign_workspace"):
             self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
 
+    def test_explicit_dirty_recovery_preserves_staged_unstaged_and_untracked_bytes(self):
+        (self.path / "README.md").write_bytes(b"staged\x00bytes\n")
+        git(self.path, "add", "README.md")
+        (self.path / "README.md").write_bytes(b"unstaged\x00bytes\n")
+        (self.path / "draft").write_bytes(b"private\x00draft\n")
+        (self.path / "link").symlink_to("draft")
+        index = (self.path / ".git/index").read_bytes()
+        status = git(self.path, "status", "--porcelain=v1")
+        lifecycle = Mock()
+        lifecycle.prepare.return_value = self.path
+        self.workspace.lifecycle_provider = lifecycle
+        self.assertEqual(self.workspace.prepare("example/project", 1, "hydra/issue-1", None,
+                                                recover_dirty=True), self.path)
+        lifecycle.prepare.assert_called_once_with("example/project", 1, "hydra/issue-1", None, self.path)
+        self.assertEqual(git(self.path, "status", "--porcelain=v1"), status)
+        self.assertEqual(git(self.path, "rev-parse", "HEAD"), self.base)
+        self.assertEqual((self.path / ".git/index").read_bytes(), index)
+        self.assertEqual((self.path / "README.md").read_bytes(), b"unstaged\x00bytes\n")
+        self.assertEqual((self.path / "draft").read_bytes(), b"private\x00draft\n")
+        self.assertEqual(os.readlink(self.path / "link"), "draft")
+
+    def test_recovery_still_rejects_changed_remote_and_foreign_branch_or_identity(self):
+        (self.path / "draft").write_text("keep")
+        git(self.seed, "push", "origin", "main:hydra/issue-1")
+        with self.assertRaisesRegex(WorkspaceWait, "remote_head_changed"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None, recover_dirty=True)
+        git(self.path, "remote", "set-url", "origin", "https://github.com/foreign/repo.git")
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_remote"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", self.base, recover_dirty=True)
+        git(self.path, "remote", "set-url", "origin", str(self.remote))
+        git(self.path, "checkout", "-b", "another-owner")
+        with self.assertRaisesRegex(WorkspaceWait, "workspace_branch_changed"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", self.base, recover_dirty=True)
+        git(self.path, "checkout", "hydra/issue-1")
+        git(self.path, "config", "--unset", self.workspace._marker(self.path, "owner"))
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_workspace"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", self.base, recover_dirty=True)
+        self.assertEqual((self.path / "draft").read_text(), "keep")
+
+    def test_recovery_cannot_allocate_adopt_or_follow_alias(self):
+        second = self.root / "work/example/project/issue-2"
+        with self.assertRaisesRegex(WorkspaceWait, "recovery_workspace_missing"):
+            self.workspace.prepare("example/project", 2, "hydra/issue-2", None, recover_dirty=True)
+        self.assertFalse(second.exists())
+        git(self.root, "clone", str(self.remote), str(second))
+        git(second, "checkout", "-b", "hydra/issue-2")
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_workspace"):
+            self.workspace.prepare("example/project", 2, "hydra/issue-2", None, recover_dirty=True)
+        alias = self.root / "work/example/project/issue-3"
+        alias.symlink_to(self.path, target_is_directory=True)
+        with self.assertRaisesRegex(WorkspaceWait, "workspace_missing_or_aliased"):
+            self.workspace.prepare("example/project", 3, "hydra/issue-3", None, recover_dirty=True)
+
+    def test_existing_workspace_requires_lifecycle_validation_before_reuse(self):
+        lifecycle = Mock()
+        lifecycle.prepare.return_value = self.path
+        self.workspace.lifecycle_provider = lifecycle
+        self.assertEqual(self.workspace.prepare("example/project", 1, "hydra/issue-1", None), self.path)
+        lifecycle.prepare.assert_called_once_with("example/project", 1, "hydra/issue-1", None, self.path)
+        (self.path / "draft").write_text("keep")
+        lifecycle.prepare.side_effect = WorkspaceWait("resources_unavailable")
+        with self.assertRaisesRegex(WorkspaceWait, "resources_unavailable"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None, recover_dirty=True)
+        self.assertEqual((self.path / "draft").read_text(), "keep")
+        lifecycle.prepare.side_effect = None
+        lifecycle.prepare.return_value = self.path.parent
+        with self.assertRaisesRegex(WorkspaceWait, "lifecycle_provider_path_mismatch"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None, recover_dirty=True)
+
+    def test_lifecycle_validation_cannot_change_workspace_before_reuse(self):
+        def changed(*args):
+            (self.path / "draft").write_text("unexpected change")
+            return self.path
+        lifecycle = Mock()
+        lifecycle.prepare.side_effect = changed
+        self.workspace.lifecycle_provider = lifecycle
+        with self.assertRaisesRegex(WorkspaceWait, "workspace_changed_during_validation"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None)
+
     def test_invalid_repository_branch_actor_and_commit_reject(self):
         for repo in ("../project", "example/..", "https://token@github.com/owner/repo", "x/repo.git"):
             with self.subTest(repo=repo), self.assertRaises(WorkspaceWait):
@@ -89,6 +168,9 @@ class WorkspaceTests(unittest.TestCase):
                 self.workspace.prepare("example/project", number, branch, sha)
         with self.assertRaises(WorkspaceWait):
             Workspace(self.root, user="SonSangjoon")
+        for flag in (None, 1, "true"):
+            with self.assertRaisesRegex(WorkspaceWait, "invalid_recovery_flag"):
+                self.workspace.prepare("example/project", 1, "hydra/issue-1", None, recover_dirty=flag)
 
     def test_changed_paths_include_renames_staged_and_untracked(self):
         git(self.path, "mv", "README.md", "renamed file.md")
@@ -270,6 +352,11 @@ class WorkspaceTests(unittest.TestCase):
         (self.root / ".workspace/storage.json").write_text("{}")
         with self.assertRaisesRegex(WorkspaceWait, "lifecycle_provider_required"):
             self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
+        with self.assertRaisesRegex(WorkspaceWait, "lifecycle_provider_required"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None)
+        (self.path / "draft").write_text("keep")
+        with self.assertRaisesRegex(WorkspaceWait, "lifecycle_provider_required"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None, recover_dirty=True)
         with self.assertRaisesRegex(WorkspaceWait, "storage_provider_required"):
             self.workspace.verify(self.path, [{"argv": ["true"]}])
 

@@ -98,8 +98,9 @@ class Workspace:
 
     lifecycle_provider.prepare(repo, number, branch, expected_remote_sha, path)
     must create/register exactly path, or raise when resources/ownership are not
-    available. storage_provider.run(path, argv, cwd, timeout) returns a
-    CompletedProcess (combined private output in stdout), or raises. Managed
+    available. For an existing path it must validate the registered resources
+    without changing checkout contents. storage_provider.run(path, argv, cwd,
+    timeout) returns a CompletedProcess (combined private output in stdout), or raises. Managed
     OpenBoa roots require these providers; the standalone fallback is explicit.
     """
 
@@ -224,19 +225,37 @@ class Workspace:
         identity = hashlib.sha256(os.fsencode(path)).hexdigest()
         return "hydra.workspace-" + identity + "." + key
 
-    def prepare(self, repo, number, branch, expected_remote_sha):
+    def prepare(self, repo, number, branch, expected_remote_sha, *, recover_dirty=False):
+        """Prepare an owned checkout, optionally preserving a stopped worker's edits.
+
+        The caller may enable recovery only for an authorized stopped-worker
+        handover or a locally supervised stopped checkpoint. This flag supplies
+        no takeover or adoption authority.
+        """
         repo = self._repository(repo)
         if type(number) is not int or number <= 0 or branch != "hydra/issue-" + str(number):
             raise WorkspaceWait("invalid_issue_branch")
+        if type(recover_dirty) is not bool:
+            raise WorkspaceWait("invalid_recovery_flag")
         _sha(expected_remote_sha, absent=True)
         path = self.root / repo / ("issue-" + str(number))
         if path.exists() or path.is_symlink():
             observed = self.inspect(path)
-            if observed["dirty"]:
+            if observed["dirty"] and not recover_dirty:
                 raise WorkspaceWait("dirty_workspace")
             if observed["remote_sha"] != expected_remote_sha:
                 raise WorkspaceWait("remote_head_changed")
+            if self._managed() and self.lifecycle_provider is None:
+                raise WorkspaceWait("lifecycle_provider_required")
+            if self.lifecycle_provider is not None:
+                provided = self.lifecycle_provider.prepare(repo, number, branch, expected_remote_sha, path)
+                if Path(provided).absolute() != path:
+                    raise WorkspaceWait("lifecycle_provider_path_mismatch")
+                if self.inspect(path) != observed:
+                    raise WorkspaceWait("workspace_changed_during_validation")
             return path
+        if recover_dirty:
+            raise WorkspaceWait("recovery_workspace_missing")
         if path != path.resolve():
             raise WorkspaceWait("workspace_missing_or_aliased")
         if self._managed() and self.lifecycle_provider is None:
