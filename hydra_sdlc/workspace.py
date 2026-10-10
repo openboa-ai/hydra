@@ -103,7 +103,7 @@ def _environment():
         if key.startswith("GIT_"):
             env.pop(key)
     env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never",
-               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_NO_REPLACE_OBJECTS="1")
     return env
 
 
@@ -194,11 +194,11 @@ class Workspace:
     lifecycle_provider.prepare(repo, number, branch, expected_remote_sha, path)
     must create/register exactly path, or raise when resources/ownership are not
     available. For an existing path it must validate the registered resources
-    without changing checkout contents. storage_provider.run(path, argv, cwd,
-    timeout, *, stop_requested) must poll stop/deadline at most every 100ms,
-    terminate its owned process group, and raise verification_stopped on stop.
-    It returns a CompletedProcess (combined private output in stdout), or raises;
-    timeout kills have a negative signal return code. Managed
+    without changing checkout contents. storage_provider.wrap_command(path, argv,
+    cwd) purely constructs a nonempty list of command arguments; it never executes
+    commands or returns verification evidence. The runtime executes that wrapper
+    at the owned worktree with its sanitized environment, original timeout, stop
+    callback, output bound and owned-process cleanup. Managed
     OpenBoa roots require these providers; the standalone fallback is explicit.
     """
 
@@ -279,7 +279,7 @@ class Workspace:
         raw = _git_file(common / "config")
         snapshot = directory / "config-snapshot"
         snapshot.write_bytes(raw)
-        result = _run(["git", "config", "--file", str(snapshot), "--no-includes", "--null", "--list"],
+        result = _run(["git", "--no-replace-objects", "config", "--file", str(snapshot), "--no-includes", "--null", "--list"],
                       directory, GIT_TIMEOUT, _environment())
         if result.returncode:
             raise WorkspaceWait("invalid_git_config")
@@ -313,7 +313,7 @@ class Workspace:
                                                (found[0] + "\n").encode() if len(found) == 1 else b"")
         if len(args) != 4:
             raise WorkspaceWait("invalid_git_config_operation")
-        result = _run(["git", "config", "--file", str(snapshot), "--no-includes", "--replace-all", key, args[3]],
+        result = _run(["git", "--no-replace-objects", "config", "--file", str(snapshot), "--no-includes", "--replace-all", key, args[3]],
                       directory, GIT_TIMEOUT, _environment())
         if result.returncode:
             return result
@@ -373,7 +373,7 @@ class Workspace:
                 (directory / "config").write_text("[core]\nrepositoryformatversion=0\nbare=false\nfsmonitor=false\n")
                 env["GIT_COMMON_DIR"] = str(directory)
                 options[:0] = ["--git-dir=" + str(gitdir), "--work-tree=" + str(path)]
-                index = _run(["git", *options, "ls-files", "--stage", "-z"], path, GIT_TIMEOUT, env)
+                index = _run(["git", "--no-replace-objects", *options, "ls-files", "--stage", "-z"], path, GIT_TIMEOUT, env)
                 if index.returncode:
                     raise WorkspaceWait("git_operation_failed")
                 if any(item.startswith(b"160000 ") for item in index.stdout.split(b"\0")):
@@ -419,7 +419,7 @@ class Workspace:
                     "  count=$((count + 1))\ndone\ntest \"$count\" = 1\n")
                 hook.chmod(0o700)
                 options += ["-c", "core.hooksPath=" + str(hooks)]
-            result = _run(["git", *options, *args], directory if clone else path, GIT_TIMEOUT, env)
+            result = _run(["git", "--no-replace-objects", *options, *args], directory if clone else path, GIT_TIMEOUT, env)
         if check and result.returncode:
             raise WorkspaceWait("git_operation_failed", uncertain=remote)
         return result
@@ -697,8 +697,19 @@ class Workspace:
         for argv, cwd, timeout in prepared:
             _check_stop(stop_requested)
             try:
-                result = (self.storage_provider.run(path, argv, cwd, timeout, stop_requested=stop_requested)
-                          if self.storage_provider else _run(argv, cwd, timeout, stop_requested=stop_requested))
+                execution_argv, execution_cwd = argv, cwd
+                if self.storage_provider is not None:
+                    wrap = getattr(self.storage_provider, "wrap_command", None)
+                    if not callable(wrap):
+                        raise WorkspaceWait("invalid_storage_provider_contract")
+                    execution_argv = wrap(path, list(argv), cwd)
+                    if (not isinstance(execution_argv, list) or not execution_argv
+                            or not all(isinstance(arg, str) and arg and "\0" not in arg for arg in execution_argv)):
+                        raise WorkspaceWait("invalid_storage_provider_contract")
+                    execution_argv, execution_cwd = list(execution_argv), path
+                _check_stop(stop_requested)
+                result = _run(execution_argv, execution_cwd, timeout, env=_environment(),
+                              stop_requested=stop_requested)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise WorkspaceWait("verification_unavailable") from exc
             _check_stop(stop_requested)

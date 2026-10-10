@@ -264,3 +264,53 @@ True standalone calls retain their no-lock API outside CLI execution. Thirty-nin
 focused boundary/restart tests collected: 38 passed, one Linux-only case skipped.
 The original isolated startup case and both active-owner facades passed without
 changing deadlines or accepting unknown cleanup.
+
+The one-verification-executor/native-artifact appendix was independently accepted
+before dependent edits at specification SHA-256
+`f8a8430947cc73d073413bb3b94ba8ef74a21ba8484f1c50d060bdbb94a95059`.
+It routes host-wrapped verification through the existing owned executor, rejects
+replacement Git objects, qualifies definitive native launch rejection, preserves
+invalid pinned specifications for diagnosis, and binds work to canonical GitHub
+identity. This acceptance authorizes the bounded corrections, not installation,
+current-head delivery acceptance or autonomous product operation.
+
+Independent source review accepted workspace SHA-256
+`9c509a86b33d15bac811682ca2e0a7c6527d7dae7b465b891a10dd29bf4ac675`,
+project SHA-256
+`10e999c73fec14bc07374eb5d3d9dbcac6690aa9f16d6fb0fc978f2f4164859a`
+and runner SHA-256
+`cf5c4889e5d616ef65fbbdd41937536718e5207ba69b2777b965460396ab8301`.
+Two actual Git replacement tests exercised four repository layouts and held
+out-of-scope publication; seven actual wrapper tests checked ownership, sanitized
+environment, stop, timeout and uncertain-cleanup holds. Seven intake/identity
+tests covered canonical CI/provider binding and durable encoding diagnosis.
+The verifier-to-runner connection was separately checked: unavailable launch
+enters diagnosis, while unknown cleanup preserves executing intent and holds.
+These are bounded local and source results, separate from final-head CI/reviews.
+
+Independent source review also accepted execution boundary SHA-256
+`a47da2d4a883527707cc33d8bd3ee4ad306fd528ded7185ea67f28095915e10c`.
+Definitive native rejection requires captured spawn-code provenance and exact
+arguments; helper rejection additionally requires a validated first receipt,
+reaped helper exit zero and EOF. Unknown startup/cleanup and failed ownership
+clearing remain holds. No supervisor or cleanup deadline was extended.
+
+Actual launch regressions exposed loss of native exception traceback after a
+second async await. A separate instrumented macOS run reproduced the earlier
+startup-cleanup failure: a successful SIGTERM was followed by a transient EPERM
+group probe before native reaping. Final independent source review accepted
+execution boundary SHA-256
+`dc8ddfdad5b77af6ce5c533a5a70522a24edaed44b9cd6dfa3ad01b3166c3a2c`.
+It retains native rejection proof at the first completed launch result, revokes
+signal escalation on an uncertain group probe, and requires fresh observed group
+absence plus collection. Observed absence permanently forbids further signals.
+The original cleanup deadline and failed-clear/unknown holds remain unchanged.
+Forty actual focused launch/boundary tests passed, including transient/persistent
+probe errors, traceback removal, failed/stale clearing and malformed/lost helper
+receipts. Actual Linux helper rejection remains a current-head CI requirement.
+
+The provider stop fixture was independently corrected at test-file SHA-256
+`f0f07c876de5facebf1f2e69e08d06474e340695a6bfd43e05ae613dc796a484`.
+Its execution spy preserves actual Git identity preflight, while still requiring
+the stop exception, exactly one wrapper construction and zero verifier launches.
+The two related tests passed; no runtime source or stop condition was relaxed.

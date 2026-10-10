@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import os
@@ -21,6 +22,8 @@ MAX_FRAME_BYTES = 1024 * 1024
 PROTOCOL_VERSION = 1
 SUPERVISION_LIMIT = 4096
 CLEANUP_SECONDS = 2.0
+_REJECTED_LAUNCH_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EACCES, errno.ENOEXEC})
+_NATIVE_EXECUTE_CHILD = getattr(subprocess.Popen._execute_child, "__code__", None)
 PUBLISHING_TOKEN_VARIABLES = frozenset({
     "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
 })
@@ -139,6 +142,33 @@ def _validate_receipt(receipt, pid, pgid):
     return receipt
 
 
+def _native_launch_rejected(exc, command, cwd):
+    """Recognize only CPython's collected pre-exec/cwd error, not transport loss."""
+    if not isinstance(exc, OSError) or exc.errno not in _REJECTED_LAUNCH_ERRNOS:
+        return False
+    traceback = exc.__traceback__
+    while traceback is not None and traceback.tb_next is not None:
+        traceback = traceback.tb_next
+    if (_NATIVE_EXECUTE_CHILD is None or traceback is None
+            or traceback.tb_frame.f_code is not _NATIVE_EXECUTE_CHILD):
+        return False
+    try:
+        attempted = [os.fsencode(command[0])]
+        if cwd is not None:
+            attempted.append(os.fsencode(cwd))
+        return exc.filename is not None and os.fsencode(exc.filename) in attempted
+    except (IndexError, TypeError, ValueError):
+        return False
+
+
+def _validate_launch_rejected(frame):
+    if (set(frame) != {"version", "kind", "errno", "reaped"}
+            or frame["kind"] != "launch_rejected" or type(frame["errno"]) is not int
+            or frame["errno"] not in _REJECTED_LAUNCH_ERRNOS or frame["reaped"] is not True):
+        raise ProtocolError("Invalid launch rejection receipt")
+    return frame
+
+
 class OwnedProcess:
     """One live-owned SDK group; Linux reaping never changes host-wide child ownership."""
 
@@ -151,6 +181,9 @@ class OwnedProcess:
         self.process = self.control = self._peer = self._launch = self._receipt_task = None
         self._ready_task = None
         self._launch_sent = False
+        self._launch_command = None
+        self._rejected_launch = None
+        self._rejection = None
         self._ownership_ticket = None
         self._cleanup_task = None
         self._buffer = b""
@@ -174,8 +207,12 @@ class OwnedProcess:
             self.process = task.result()
             if not self.linux:
                 self.pid = self.pgid = self.process.pid
-        except BaseException:
-            pass
+        except BaseException as exc:
+            # A later await can replace an exception's traceback. Keep only the
+            # qualified native proof observed at this exact task's first result.
+            if (not task.cancelled()
+                    and _native_launch_rejected(exc, self._launch_command, self.options["cwd"])):
+                self._rejected_launch = task
         finally:
             if self._peer is not None:
                 self._peer.close()
@@ -194,6 +231,7 @@ class OwnedProcess:
         # isolated helper entry point needs no package import or lock descriptor.
         coordinator = _ownership_coordinator()
         self._ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
+        self._launch_command = tuple(command)
         self._launch = asyncio.create_task(asyncio.create_subprocess_exec(*command, **options))
         self._launch.add_done_callback(self._registered)
         if self.linux:
@@ -218,6 +256,9 @@ class OwnedProcess:
         await asyncio.get_running_loop().sock_sendall(self.control, _supervision_frame("launch"))
         self._launch_sent = True
         ready = await self._read_control()
+        if ready.get("kind") == "launch_rejected":
+            self._rejection = _validate_launch_rejected(ready)
+            raise OwnedCommandError("unavailable")
         self.pid, self.pgid = _validate_ready(ready, self.process.pid)
         self._receipt_task = asyncio.create_task(self._read_receipt())
 
@@ -282,6 +323,9 @@ class OwnedProcess:
                     self.process = await asyncio.wait_for(asyncio.shield(self._launch),
                                                          max(0.001, deadline - loop.time()))
                 except (Exception, asyncio.CancelledError):
+                    if (self._launch is self._rejected_launch and self._launch.done()
+                            and not self._launch.cancelled()):
+                        return True
                     self._launch.cancel()
                     return False
             if self.process is None:
@@ -295,7 +339,7 @@ class OwnedProcess:
             group_gone = False
             kill_at = min(deadline, loop.time() + 1.0)
             while loop.time() < deadline:
-                if self._launch_sent and not control_sent:
+                if self._launch_sent and not control_sent and self._rejection is None:
                     try:
                         await loop.sock_sendall(self.control, _supervision_frame("terminate"))
                     except (OSError, RuntimeError):
@@ -306,6 +350,13 @@ class OwnedProcess:
                         self._ready_task.result()
                     except Exception:
                         pass
+                if self._rejection is not None and self.process.returncode == 0:
+                    await asyncio.wait_for(self.process.communicate(), max(.001, deadline - loop.time()))
+                    if self._buffer:
+                        return False
+                    tail = await asyncio.wait_for(loop.sock_recv(self.control, 1),
+                                                  max(.001, deadline - loop.time()))
+                    return tail == b""
                 if self.pgid is not None and _group_absent(self.pgid):
                     group_gone = True
                 receipt_done = self._receipt_task is not None and self._receipt_task.done()
@@ -365,25 +416,34 @@ class OwnedProcess:
 
 async def _collect_direct(process, deadline):
     loop = asyncio.get_running_loop()
+    signal_allowed, group_gone = True, False
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            return False
+        if signal_allowed and not group_gone:
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                signal_allowed, group_gone = False, True
+            except OSError:
+                return False
         until = min(deadline, loop.time() + 1.0)
         while loop.time() < until:
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
+            if not group_gone:
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    signal_allowed, group_gone = False, True
+                except OSError:
+                    # A dying native group may transiently reject the probe.
+                    # Observe again, but never infer absence or permit escalation.
+                    signal_allowed = False
+                else:
+                    signal_allowed = True
+            if group_gone:
                 try:
                     await asyncio.wait_for(process.communicate(), max(0.001, until - loop.time()))
                     return True
                 except TimeoutError:
-                    break
-            except OSError:
-                return False
+                    return False
             await asyncio.sleep(0.02)
     return False
 
@@ -406,7 +466,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
     linux = sys.platform.startswith("linux")
     process = control = peer = None
     ownership_ticket = None
-    pid = pgid = receipt = None
+    pid = pgid = receipt = rejection = None
+    native_rejected = False
     buffered = b""
     data = bytearray()
     reason = None
@@ -443,7 +504,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 control_closed = True
 
         def receive(wait):
-            nonlocal pid, pgid, receipt, buffered, stdout_closed, control_failed, group_gone
+            nonlocal pid, pgid, receipt, rejection, buffered, stdout_closed, control_failed, group_gone
             for key, _ in selector.select(max(0, min(.1, wait))):
                 if key.data == "output":
                     try:
@@ -461,7 +522,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                     try:
                         chunk = control.recv(SUPERVISION_LIMIT + 1)
                         if not chunk:
-                            if receipt is None or buffered:
+                            if (receipt is None and rejection is None) or buffered:
                                 raise ProtocolError("Missing cleanup receipt")
                             close_control()
                             continue
@@ -471,8 +532,14 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                             if len(line) >= SUPERVISION_LIMIT:
                                 raise ProtocolError("Supervision frame too large")
                             frame = _decode_supervision(line)
-                            if pid is None:
-                                pid, pgid = _validate_ready(frame, process.pid)
+                            if pid is None and rejection is None:
+                                if frame.get("kind") == "launch_rejected":
+                                    rejection = _validate_launch_rejected(frame)
+                                    fail("unavailable")
+                                else:
+                                    pid, pgid = _validate_ready(frame, process.pid)
+                            elif rejection is not None:
+                                raise ProtocolError("Unexpected frame after launch rejection")
                             elif receipt is None:
                                 receipt = _validate_receipt(frame, pid, pgid)
                                 if receipt["group_absent"]:
@@ -499,7 +566,11 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 options["pass_fds"] = (peer.fileno(),)
             coordinator = _ownership_coordinator()
             ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
-            process = subprocess.Popen(command, **options)
+            try:
+                process = subprocess.Popen(command, **options)
+            except OSError as exc:
+                native_rejected = _native_launch_rejected(exc, command, cwd)
+                raise
             if peer is not None:
                 peer.close()
                 peer = None
@@ -527,12 +598,12 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             if peer is not None:
                 peer.close()
 
-        clean = process is None and ownership_ticket is None
+        clean = process is None and (ownership_ticket is None or native_rejected)
         if process is not None:
             cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
             kill_at = cleanup_deadline - 1.0
             term_sent = False
-            if linux and receipt is None and not control_closed:
+            if linux and receipt is None and rejection is None and not control_closed:
                 try:
                     control.sendall(_supervision_frame("terminate"))
                 except OSError:
@@ -546,6 +617,10 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                     except BaseException:
                         fail("cleanup_unknown")
                     outer_code = process.poll()  # Collect only this direct child.
+                    if (rejection is not None and stdout_closed and control_closed
+                            and outer_code == 0 and not control_failed):
+                        clean = True
+                        break
                     absent = pgid is not None and _group_absent(pgid)
                     if absent:
                         group_gone = True
@@ -633,7 +708,20 @@ def _supervisor_main(fd, deadline, command):
         initial, buffered = buffered.split(b"\n", 1)
         if json.loads(initial) != {"version": 1, "kind": "launch"} or stopping or time.monotonic() >= deadline:
             raise ProtocolError("Launch refused")
-        child = subprocess.Popen(command, close_fds=True, start_new_session=True)
+        try:
+            child = subprocess.Popen(command, close_fds=True, start_new_session=True)
+        except OSError as exc:
+            if not _native_launch_rejected(exc, command, None):
+                raise
+            try:
+                os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                for descriptor in (0, 1):
+                    os.close(descriptor)
+                control.settimeout(.05)
+                control.sendall(_supervision_frame("launch_rejected", errno=exc.errno, reaped=True))
+                return 0
+            raise ProtocolError("Launch rejection left uncollected children")
         # Inherited SDK stdio is untouched; the private socket is CLOEXEC and is
         # deliberately absent from the child's pass_fds. Release helper copies.
         for descriptor in (0, 1):

@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import importlib.util
 import json
 import os
@@ -8,6 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hydra_sdlc import coordinator, execution_boundary as boundary
@@ -307,6 +309,59 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             result = await self.run_worker()
         self.assertEqual(result['status'], 'transport_unknown')
         self.assertEqual(result['detail']['cleanup'], 'unknown')
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'native macOS direct collection')
+    async def test_transient_group_probe_error_waits_for_actual_collection(self):
+        self.mode = 'startup_hang'
+        real_killpg = os.killpg
+        injected, observed_absence = [], []
+
+        def probe(pgid, sig):
+            if sig == 0 and not injected:
+                injected.append(pgid)
+                raise PermissionError(errno.EPERM, 'transient fixture group probe')
+            try:
+                return real_killpg(pgid, sig)
+            except ProcessLookupError:
+                observed_absence.append(pgid)
+                raise
+
+        with patch.object(boundary.os, 'killpg', side_effect=probe):
+            result = await self.run_worker(timeout=.2)
+        self.assertEqual(result['status'], 'failed')
+        self.assertTrue(injected)
+        self.assertIn(injected[0], observed_absence)
+        self.assertNotIn('cleanup', result['detail'])
+        self.assert_pids_gone()
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'native macOS direct collection')
+    async def test_persistent_group_probe_error_keeps_unknown_without_escalation(self):
+        self.mode = 'startup_hang'
+        real_killpg = os.killpg
+        signals, probes = [], []
+
+        def probe(pgid, sig):
+            if sig == 0:
+                probes.append(pgid)
+                raise PermissionError(errno.EPERM, 'persistent fixture group probe')
+            signals.append(sig)
+            return real_killpg(pgid, sig)
+
+        with patch.object(boundary.os, 'killpg', side_effect=probe):
+            result = await self.run_worker(timeout=.2)
+        self.assertEqual(result['status'], 'transport_unknown')
+        self.assertEqual(result['detail']['cleanup'], 'unknown')
+        self.assertGreater(len(probes), 1)
+        self.assertEqual(signals, [boundary.signal.SIGTERM])
+        self.assert_pids_gone()
+
+    async def test_observed_group_absence_never_signals_again_after_collection_timeout(self):
+        process = SimpleNamespace(pid=12345, communicate=AsyncMock(side_effect=TimeoutError))
+        with patch.object(boundary.os, 'killpg', side_effect=[None, ProcessLookupError]) as signal_group:
+            clean = await boundary._collect_direct(process, asyncio.get_running_loop().time() + 2)
+        self.assertFalse(clean)
+        self.assertEqual([call.args[1] for call in signal_group.call_args_list],
+                         [boundary.signal.SIGTERM, 0])
 
     async def test_bad_frames_and_unbacked_completion_fail_closed(self):
         for mode in ('oversized', 'wrong_seq', 'false_completed'):

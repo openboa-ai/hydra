@@ -591,32 +591,36 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_storage_provider_receives_owned_path_and_validated_arguments(self):
         class Storage:
-            def run(inner, path, argv, cwd, timeout, *, stop_requested):
+            def wrap_command(inner, path, argv, cwd):
                 self.assertEqual(path, self.path)
                 self.assertEqual(cwd, self.path)
-                self.assertEqual(timeout, 20)
-                self.assertFalse(stop_requested())
-                return _run(argv, cwd, timeout, stop_requested=stop_requested)
+                return argv
         self.workspace.storage_provider = Storage()
-        self.assertTrue(self.workspace.verify(self.path, [{"argv": [sys.executable, "-c", "pass"], "timeout": 20}])[0]["passed"])
+        with patch("hydra_sdlc.workspace._run", wraps=_run) as execute:
+            self.assertTrue(self.workspace.verify(self.path, [{"argv": [sys.executable, "-c", "pass"], "timeout": 20}])[0]["passed"])
+        self.assertEqual(execute.call_args.args[1:], (self.path, 20))
+        self.assertTrue(callable(execute.call_args.kwargs["stop_requested"]))
 
     def test_storage_stop_cannot_return_success_or_dispatch_later_command(self):
         stopped = False
         def stop_requested():
             return stopped
         class Storage:
-            def run(inner, path, argv, cwd, timeout, *, stop_requested):
+            def wrap_command(inner, path, argv, cwd):
                 nonlocal stopped
                 self.assertFalse(stop_requested())
                 stopped = True
-                return subprocess.CompletedProcess(argv, 0, b"finished during stop")
+                return argv
         storage = Storage()
         self.workspace.storage_provider = storage
-        with patch.object(storage, "run", wraps=storage.run) as calls:
+        with patch.object(storage, "wrap_command", wraps=storage.wrap_command) as calls, patch(
+            "hydra_sdlc.workspace._run", wraps=_run
+        ) as execute:
             with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"):
                 self.workspace.verify(self.path, [{"argv": ["true"]}, {"argv": ["true"]}],
                                       stop_requested=stop_requested)
         self.assertEqual(calls.call_count, 1)
+        self.assertFalse(any(call.args[0] == ["true"] for call in execute.call_args_list))
 
     def test_lifecycle_provider_can_register_independent_linked_worktrees(self):
         class Lifecycle:

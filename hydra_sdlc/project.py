@@ -51,6 +51,10 @@ def load_project(github, repo, *, revision=None):
     _require(not set(config) - keys, "Unknown project configuration fields")
     _require(config.get("version") == 1 and type(config.get("version")) is int, "Unknown project version")
     _require(type(config.get("repository_id")) is int and config["repository_id"] == identity["id"], "Repository identity mismatch")
+    canonical = identity.get("full_name")
+    _require(isinstance(canonical, str) and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", canonical)
+             and canonical.casefold() == repo.casefold(), "Repository full name mismatch")
+    repo = canonical
     for name in ["authorized_actors", "human_reviewers"]:
         values = config.get(name)
         _require(isinstance(values, list) and values and all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9_-]+", x) for x in values), f"Missing {name}")

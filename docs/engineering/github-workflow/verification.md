@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 452 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 432 passed, 18 Linux-only process tests and
+On 2026-10-10 the final local suite collected 484 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 464 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -78,9 +78,13 @@ including a reused PGID observation. Linux-specific
 cases run below a deliberately non-reaping ancestor and observe remaining children
 before test cleanup, including a negative control; they must run on Linux CI. Native
 process tests cover cancellation and no signaling after observed group disappearance.
-One focused macOS capability run reported unknown cleanup; the cause remains
-unexplained. Its exact test passed ten instrumented repetitions with actual reaping,
-and the final full suite passed. Cleanup deadlines were not relaxed.
+One earlier focused macOS startup run reported unknown cleanup. A later instrumented
+run reproduced a transient EPERM group probe immediately after successful SIGTERM,
+before native reaping. Probe errors now revoke escalation and remain unknown until
+fresh actual group-absence and collection evidence is obtained within the existing
+deadline. Permanent errors still hold; observed absence forbids further signals.
+Actual transient/permanent error and collection-timeout regressions passed.
+Cleanup deadlines were not relaxed.
 
 Native identity cases cover stored label casing, configured control casing,
 canonical dependency aliases counted once per dependent Issue, and matching active
@@ -101,6 +105,26 @@ request receipt; topology alone and external merges without receipt hold. Pendin
 request recovery rejects missing, wrong and duplicate logical markers, including
 after lost response and restart. Changed final commit facts prevent Issue close.
 These fixtures do not establish an actual unattended GitHub merge.
+
+Actual service Git replacement regressions cover standalone/linked layouts with
+loose/packed refs. The real replacement trick is reproduced, candidate refs remain
+unchanged, and the runner holds out-of-scope publication before any remote branch
+or model action. Every service Git subprocess disables replacement objects.
+Actual provider-wrapped verification uses the same owned executor and sanitized
+environment as standalone commands. Wrapper and candidate observations exclude
+publishing tokens and inherited Git redirects without mutating parent credentials;
+nested working directory/cache, stop, timeout and unknown-cleanup holds are covered.
+Legacy providers and fake or malformed result-producing adapters are rejected
+before verifier launch.
+
+Native async/sync launch rejection covers missing executables/directories, denied
+execution, non-directory cwd and invalid executable format. First-result native
+proof survives later traceback removal. Generic/post-spawn errors, malformed/lost
+helper receipts and failed/stale ticket clearing preserve ownership. Forty focused
+boundary/launch tests passed. The actual Linux helper variant requires remote CI.
+Canonical repository binding and invalid UTF-8 accepted-spec diagnosis have seven
+intake/evidence regressions; restored bytes still require authorized replan and
+independent design review. Actual product operation remains separate.
 
 One actual non-generative pinned-SDK capability read reported known native usage,
 ordinary permission allowed, and the dispatch guard allowed. Its owned process

@@ -424,6 +424,7 @@ class Runner:
         issue = self.github.issue(repo, number)
         record = self.github.progress(repo, number)
         config = self._work_config(repo, number, record)
+        repo = config["repository"]
         previously_owned = record is not None
         branch = f"hydra/issue-{number}"
         if record is None:
@@ -702,7 +703,13 @@ class Runner:
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         if intake.get("spec_revision"):
             accepted_content = self.github.file(repo, intake["spec"], intake["spec_revision"])["content"]
-            if not self.workspace.valid_spec(path, intake["spec"]) or self.workspace.read_spec(path, intake["spec"]).decode("utf-8") != accepted_content:
+            if not self.workspace.valid_spec(path, intake["spec"]):
+                return self._wait(repo, number, record, "accepted_spec_content_changed")
+            try:
+                candidate_content = self.workspace.read_spec(path, intake["spec"]).decode("utf-8")
+            except UnicodeDecodeError:
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
+            if candidate_content != accepted_content:
                 return self._wait(repo, number, record, "accepted_spec_content_changed")
         if not safe_spec or record.get("resume_phase") == "design":
             task = f"Prepare ONLY the scoped specification at {intake['spec']} for Issue {number}.\n" + issue["body"]
@@ -1111,7 +1118,11 @@ class Runner:
 
     def status(self, repos):
         result = []
+        seen = set()
         for repo in repos:
+            if repo.casefold() in seen:
+                continue
+            seen.add(repo.casefold())
             for issue in self.github.issues(repo):
                 if "pull_request" in issue:
                     continue
@@ -1123,8 +1134,9 @@ class Runner:
                                    "progress": progress, "wait_reason": "project_contract_unavailable"})
                     continue
                 bound = {**config, "intake_digest": progress.get("intake_digest")} if progress else config
+                target = config["repository"]
                 try:
-                    reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(repo, issue["number"], bound)
+                    reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(target, issue["number"], bound)
                 except (ValueError, RuntimeError, OSError):
                     reason = "intake_unavailable"
                 if reason == "issue_closed" and progress and (progress.get("pending_action") == "close_issue"
@@ -1132,7 +1144,7 @@ class Runner:
                     reason = "completion_reconciliation"
                 elif not reason and config.get("_completion_only"):
                     reason = "completion_reconciliation"
-                result.append({"repository": repo, "issue": issue["number"], "state": issue["state"],
+                result.append({"repository": target, "issue": issue["number"], "state": issue["state"],
                                "progress": progress,
                                "wait_reason": reason or (progress.get("wait_reason") if progress else None)})
         return result
@@ -1143,7 +1155,11 @@ class Runner:
         ready = []
         results = []
         dependents = {}
+        seen = set()
         for repo in repos:
+            if repo.casefold() in seen:
+                continue
+            seen.add(repo.casefold())
             try:
                 issues = self.github.issues(repo)
             except (ValueError, RuntimeError, OSError):
@@ -1152,14 +1168,16 @@ class Runner:
             for issue in issues:
                 if "pull_request" in issue:
                     continue
+                target = repo
                 try:
                     progress = self.github.progress(repo, issue["number"])
                     config = self._work_config(repo, issue["number"], progress)
+                    target = config["repository"]
                     if progress:
                         config = {**config, "intake_digest": progress.get("intake_digest")}
                     closing = issue.get("state") == "closed" and progress and (progress.get("pending_action") == "close_issue"
                                                                               or progress.get("phase") == "completed")
-                    reason = self._latest(repo, issue["number"], config, include_dependencies=False)
+                    reason = self._latest(target, issue["number"], config, include_dependencies=False)
                     if reason and not (reason == "issue_closed" and closing):
                         continue
                     intake = parse_intake({**issue, "state": "open"} if closing else issue, config)
@@ -1167,12 +1185,12 @@ class Runner:
                                        for dep_repo, dep_number in map(issue_url, intake.get("dependencies", []))}
                     for key in dependency_keys:
                         dependents[key] = dependents.get(key, 0) + 1
-                    reason = self._latest(repo, issue["number"], {**config, "intake_digest": intake_digest(issue)})
+                    reason = self._latest(target, issue["number"], {**config, "intake_digest": intake_digest(issue)})
                     if reason and not (reason == "issue_closed" and closing):
                         continue
-                    ready.append((repo, issue["number"], intake, progress, issue.get("created_at", "")))
+                    ready.append((target, issue["number"], intake, progress, issue.get("created_at", "")))
                 except (ValueError, RuntimeError, OSError):
-                    results.append({"repository": repo, "issue": issue["number"], "action": "waiting", "reason": "intake_unavailable"})
+                    results.append({"repository": target, "issue": issue["number"], "action": "waiting", "reason": "intake_unavailable"})
         ready.sort(key=lambda item: (0 if item[3] else 1, -dependents.get((item[0].casefold(), item[1]), 0),
                                     -item[2].get("priority", 0), item[4], item[0], item[1]))
         for repo, number, *_ in ready:
