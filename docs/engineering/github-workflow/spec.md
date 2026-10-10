@@ -183,3 +183,38 @@ Acceptance adds real origin-phase dispatch after a decision, partial-edit retent
 actual new implementation after replan, exact spec-only edits, missing unpublished
 checkpoint refusal, successful-output review without public disclosure, three failed
 review requests followed by diagnosis, and closed-Issue recovery through serve/status.
+
+## Review corrections: integration, verification stop and completion policy
+
+Before scope verification of unpublished work, check that its owned head includes
+current default-branch revision. Fetch alone is not integration. If it does not,
+perform a bounded correction to integrate that exact base while retaining normal
+non-force ancestry; checkpoint and verify the new head. Reconcile pending publish
+intent first, using its original pinned base to distinguish real candidate scope
+from unrelated upstream-only differences; do not overwrite an uncertain effect.
+
+Registered verification honors the same stop predicate as the CLI deadline and
+signals. The owned active process group is terminated within the bounded polling
+interval, and no later verification command or correction is dispatched after stop.
+The trusted storage provider receives this predicate and must enforce it together
+with its timeout. A cancelled check is a wait, never a passing receipt.
+
+Design readiness requires the requested spec to be an actual non-symlink regular
+file tracked by the owned Git worktree. Missing, untracked/special/aliased or empty
+artifacts enter bounded diagnosis instead of another unbounded design turn. Check
+regular-file identity before reading or hashing the spec; candidate_ready is not
+proof that the artifact exists. Only its exact path is allowed during design.
+
+If an authorized owned PR has actually merged at the recorded head and changed the
+project policy, completion-only reconciliation uses the original pinned contract
+for its post-merge checks and Issue finalization. This applies even if the new policy
+is missing or invalid. Actual ownership/merge/head facts establish this narrow path;
+labels or progress prose cannot establish it. It never starts a model, publishes,
+creates a PR, adopts a new policy or performs another merge. Current Issue stop,
+pause, decision and bound-intake controls remain enforced. Unmerged work still holds
+on changed policy; later work must use the newly accepted current contract.
+
+Acceptance adds advanced-base unpublished integration, verification process-group
+shutdown on deadline/signal without later commands, missing/FIFO/symlink/untracked
+spec refusal, and merged policy-change completion through step/serve/status with
+no model or repeat merge. Pending or unowned policy changes cannot use this path.

@@ -189,7 +189,7 @@ class Workspace:
             self.dirty = False
         return self.head
 
-    def verify(self, path, commands):
+    def verify(self, path, commands, *, stop_requested=lambda: False):
         self.verification_calls += 1
         return [{'passed': True, 'exit_code': 0, 'argv': ['true'], 'cwd': '.', 'output_digest': 'e' * 64}]
 
@@ -212,6 +212,16 @@ class Workspace:
 
     def fetch_base(self, *args):
         self.fetch_calls += 1
+
+    def contains_base(self, path, sha):
+        return True
+
+    def valid_spec(self, path, relative, *, require_tracked=True):
+        candidate = Path(path) / relative
+        return not candidate.is_symlink() and candidate.is_file() and candidate.stat().st_size > 0
+
+    def read_spec(self, path, relative):
+        return (Path(path) / relative).read_bytes()
 
 
 class RunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -854,7 +864,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             def prepare(self, repo, *args, **kwargs):
                 return (self_outer.workspace if repo == 'example/product' else workspace2).prepare(repo, *args, **kwargs)
             def __getattr__(self, name):
-                return lambda path, *args: getattr(self_outer.workspace if Path(path) == self_outer.workspace.path else workspace2, name)(path, *args)
+                return lambda path, *args, **kwargs: getattr(self_outer.workspace if Path(path) == self_outer.workspace.path else workspace2, name)(path, *args, **kwargs)
         self_outer = self
         async def execute(assignment, **kwargs):
             if assignment['mode'] == 'workspace_write':
@@ -912,6 +922,125 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.workspace.changed_paths = diff
         self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
         self.assertEqual(fetched, {'a' * 40})
+
+    async def test_advanced_base_is_integrated_before_unpublished_scope_check(self):
+        runner = await self.publish()
+        self.github.cfg['revision'] = 'a' * 40
+        integrated = False
+        self.workspace.contains_base = lambda path, sha: integrated
+        self.workspace.changed_paths = lambda path, sha: ['src/main.py'] if integrated else ['upstream-only.txt', 'src/main.py']
+        async def integrate(assignment, **kwargs):
+            nonlocal integrated
+            self.assertIn('a' * 40, assignment['prompt'])
+            integrated = True
+            self.workspace.dirty = True
+            self.calls.append(assignment['mode'])
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'candidate_ready'}}}
+        runner.execute = integrate
+        self.calls.clear()
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.github.note['correction_reason'], 'integration_changed')
+        self.assertEqual(self.calls, ['workspace_write'])
+        self.assertFalse(any(x[0] == 'push' for x in self.github.writes))
+        runner.execute = self.execute
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(len([x for x in self.github.writes if x[0] == 'push']), 1)
+
+    async def test_pending_publish_uses_original_base_before_advanced_base_integration(self):
+        runner = await self.publish()
+        self.github.note.update(pending_action='publish', expected_head=None)
+        self.github.cfg['revision'] = 'a' * 40
+        self.workspace.contains_base = lambda *args: False
+        bases = []
+        def diff(path, base):
+            bases.append(base)
+            return ['src/main.py'] if base == BASE else ['upstream-only.txt']
+        self.workspace.changed_paths = diff
+        self.calls.clear()
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(bases, [BASE])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.github.branch, HEAD)
+        self.assertIsNone(self.github.note['pending_action'])
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.github.note['correction_reason'], 'integration_changed')
+
+    async def test_cancelled_verification_does_not_review_or_correct(self):
+        from hydra_sdlc.workspace import WorkspaceWait
+        runner = await self.publish()
+        self.calls.clear()
+        def verify(path, commands, *, stop_requested):
+            self.stop = True
+            self.assertTrue(stop_requested())
+            raise WorkspaceWait('verification_stopped')
+        self.workspace.verify = verify
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'stop_requested')
+        self.assertEqual(self.calls, [])
+        self.assertFalse(any(x[0] == 'push' for x in self.github.writes))
+
+    async def test_verification_success_racing_stop_is_not_accepted(self):
+        runner = await self.publish()
+        self.calls.clear()
+        original = self.workspace.verify
+        def verify(*args, **kwargs):
+            self.stop = True
+            return original(*args, **kwargs)
+        self.workspace.verify = verify
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'stop_requested')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(runner.verified_heads, set())
+
+    async def test_design_without_actual_spec_enters_diagnosis_once(self):
+        spec = self.workspace.path / 'docs/engineering/task/spec.md'
+        spec.unlink()
+        self.workspace.changed_paths = lambda *args: []
+        runner = self.runner()
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'replan_required')
+        self.assertEqual(self.workspace.head, BASE)
+        self.assertEqual(self.calls, ['workspace_write'])
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'replan_required')
+        self.assertEqual(self.calls, ['workspace_write'])
+
+    async def test_special_and_untracked_existing_specs_are_not_read_or_reviewed(self):
+        for kind in ['fifo', 'symlink', 'empty', 'untracked']:
+            with self.subTest(kind=kind):
+                self.github = GitHub()
+                self.workspace = Workspace(self.directory.name, self.github)
+                self.calls.clear()
+                spec = self.workspace.path / 'docs/engineering/task/spec.md'
+                spec.unlink()
+                if kind == 'fifo':
+                    os.mkfifo(spec)
+                elif kind == 'symlink':
+                    spec.symlink_to('missing-spec')
+                else:
+                    spec.write_text('Untracked spec' if kind == 'untracked' else '')
+                if kind == 'untracked':
+                    self.workspace.valid_spec = lambda *args, require_tracked=True: not require_tracked
+                self.workspace.read_spec = lambda *args: self.fail('Invalid spec was read')
+                self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'replan_required')
+                self.assertEqual(self.calls, [])
+                spec.unlink()
+
+    async def test_new_regular_design_is_checkpointed_before_tracked_readiness(self):
+        spec = self.workspace.path / 'docs/engineering/task/spec.md'
+        spec.unlink()
+        self.workspace.changed_paths = lambda *args: ['docs/engineering/task/spec.md']
+        checked = []
+        def valid(path, relative, *, require_tracked=True):
+            checked.append((require_tracked, self.workspace.head))
+            return spec.is_file() and (not require_tracked or self.workspace.head == HEAD)
+        self.workspace.valid_spec = valid
+        async def design(assignment, **kwargs):
+            spec.write_text('Requirement-linked design')
+            self.workspace.dirty = True
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'candidate_ready'}}}
+        runner = self.runner()
+        runner.execute = design
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.github.note['phase'], 'design_done')
+        self.assertIn((False, BASE), checked)
+        self.assertEqual(checked[-1], (True, HEAD))
 
     async def test_lost_pr_response_cannot_adopt_foreign_same_head_pr(self):
         runner = await self.publish()

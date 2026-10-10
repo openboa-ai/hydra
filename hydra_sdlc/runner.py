@@ -387,23 +387,30 @@ class Runner:
         if record.get("pending_action") == "publish":
             # Reconcile a recorded external request before any model or ordinary
             # wait can replace it. A retry republishes only the same owned commit.
+            # The request was scoped against its original base. New upstream
+            # files must not be misclassified as deletions from that candidate.
+            self.workspace.fetch_base(path, record["contract_revision"])
             if any(not matches(p, config["allowed_paths"])
-                   for p in self.workspace.changed_paths(path, config["revision"])):
+                   for p in self.workspace.changed_paths(path, record["contract_revision"])):
                 return self._wait(repo, number, record, "scope_changed", phase="uncertain")
             wait = self._publish(repo, number, config, record, path, head)
             return wait or {"action": "continue", "repository": repo, "issue": number}
-        if pulls and observation["pr"].get("mergeable_state") == "behind" and head == remote and not correcting:
+        if (not self.workspace.contains_base(path, config["revision"]) or
+                pulls and observation["pr"].get("mergeable_state") == "behind" and head == remote and not correcting):
             return await self._correct(repo, number, config, record, path, "integration_changed",
                 details=f"Merge the observed default-branch commit {config['revision']} into the owned Issue branch. "
                         "Preserve the branch's published ancestry; normal non-force publication is required. Resolve conflicts within the accepted spec.")
         if self.stop_requested():
             return self._wait(repo, number, record, "stop_requested")
         spec_path = Path(path) / intake["spec"]
+        safe_spec = self.workspace.valid_spec(path, intake["spec"], require_tracked=False)
+        if not safe_spec and (spec_path.exists() or spec_path.is_symlink()):
+            return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         if intake.get("spec_revision"):
             accepted_content = self.github.file(repo, intake["spec"], intake["spec_revision"])["content"]
-            if not spec_path.is_file() or spec_path.read_text() != accepted_content:
+            if not self.workspace.valid_spec(path, intake["spec"]) or self.workspace.read_spec(path, intake["spec"]).decode("utf-8") != accepted_content:
                 return self._wait(repo, number, record, "accepted_spec_content_changed")
-        if not spec_path.exists() or record.get("resume_phase") == "design":
+        if not safe_spec or record.get("resume_phase") == "design":
             task = f"Prepare ONLY the scoped specification at {intake['spec']} for Issue {number}.\n" + issue["body"]
             result, wait = await self._model(repo, number, config, record, path, "design", task)
             if wait:
@@ -413,10 +420,16 @@ class Runner:
             changed = self.workspace.changed_paths(path, config["revision"])
             if any(name != intake["spec"] for name in changed):
                 return self._wait(repo, number, record, "implementation_before_design_acceptance")
+            if set(changed) != {intake["spec"]} or not self.workspace.valid_spec(path, intake["spec"], require_tracked=False):
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
             head = self.workspace.checkpoint(path, f"Specify Issue {number}")
+            if not self.workspace.valid_spec(path, intake["spec"]):
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
             self._record(repo, number, record, head=head, phase="design_done", resume_phase=None, next_action="spec_review")
             return {"action": "continue", "repository": repo, "issue": number}
-        spec_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+        if not self.workspace.valid_spec(path, intake["spec"]):
+            return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
+        spec_digest = hashlib.sha256(self.workspace.read_spec(path, intake["spec"])).hexdigest()
         key = (repo, number, spec_digest)
         if key not in self.accepted_specs:
             result, wait = await self._model(repo, number, config, record, path, "spec_review",
@@ -458,7 +471,15 @@ class Runner:
             return self._wait(repo, number, record, "scope_changed")
         evidence_key = (repo, number, head, config["blob_sha"])
         if evidence_key not in self.verified_heads:
-            verification = self.workspace.verify(path, config["verification"])
+            from .workspace import WorkspaceWait
+            try:
+                verification = self.workspace.verify(path, config["verification"], stop_requested=self.stop_requested)
+            except WorkspaceWait as exc:
+                if exc.reason != "verification_stopped":
+                    raise
+                return self._wait(repo, number, record, "stop_requested", next_action="verification")
+            if self.stop_requested():
+                return self._wait(repo, number, record, "stop_requested", next_action="verification")
             private_outputs = "\n".join(self.workspace.verification_output(v["output_digest"]) for v in verification)[:24000]
             if not verification or not all(v["passed"] for v in verification):
                 return await self._correct(repo, number, config, record, path, "verification_failure", details=private_outputs)
@@ -653,7 +674,14 @@ class Runner:
         if spec_only and any(p != parse_intake(self.github.issue(repo, number), config)["spec"]
                              for p in self.workspace.changed_paths(path, config["revision"])):
             return self._wait(repo, number, record, "implementation_before_design_acceptance")
+        if spec_only:
+            spec = parse_intake(self.github.issue(repo, number), config)["spec"]
+            if (set(self.workspace.changed_paths(path, config["revision"])) != {spec} or
+                    not self.workspace.valid_spec(path, spec, require_tracked=False)):
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         head = self.workspace.checkpoint(path, f"Correct Issue {number}")
+        if spec_only and not self.workspace.valid_spec(path, spec):
+            return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         if head == record.get("head") or result["outcome"] != "candidate_ready":
             record = self._record(repo, number, record, head=head, expected_head=remote_before)
             return self._wait(repo, number, record, "replan_required", next_action="diagnose")
