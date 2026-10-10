@@ -168,6 +168,8 @@ class Runner:
         reason = self._latest(repo, number, config)
         if reason or self.stop_requested():
             return None, self._wait(repo, number, record, reason or "stop_requested")
+        if phase == "design" and not record.get("resume_phase"):
+            record = {**record, "resume_phase": "design"}
         self.knowledge_revision()  # Private read-only refresh; never goes in public progress.
         capabilities = await self.capabilities(str(path))
         if capabilities.get("cleanup") == "unknown":
