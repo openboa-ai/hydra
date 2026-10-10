@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 527 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 507 passed, 18 Linux-only process tests and
+On 2026-10-10 the final local suite collected 560 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 540 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -171,6 +171,23 @@ cleanup cleared the host marker. No model turn, credit purchase, account mutatio
 or billing fallback was performed by this read.
 
 ## Actual edit and remaining acceptance
+
+The final revised-spec regressions use the accepted Git commit as the content
+anchor, including an actual Git repository with unchanged source-only commits,
+dirty and committed spec changes, and an unavailable anchor. Read-only acceptance
+requires stable bytes, head and clean state. Implementation, correction, verifier
+mutation, stopped recovery, decisions and existing-PR restart retain required
+reimplementation after design acceptance. The existing correction count keeps its
+high-water value until authorized replan; unchanged-spec controls preserve ordinary
+continuation. The related focused suite passed all 160 tests without skips.
+
+Completed duplicate required-job collections enter durable CI diagnosis, while
+active collections and precisely bound newer reruns retain their existing gates.
+Authenticated additional provider finding comments enter durable review diagnosis
+at both existing-PR and just-published guards, preserving unknown request kind,
+head and budget without another model, review request or merge. The corresponding
+focused suites passed 32 and 25 tests respectively without skips. These focused
+results overlap the final full suite rather than adding to its count.
 
 On 2026-10-10 a fresh authenticated pinned-SDK workspace-write turn created exactly
 its requested file, with two identity observations, 105 lifecycle events and

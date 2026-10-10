@@ -743,3 +743,52 @@ recovery behavior unchanged. Never include exception payloads, mutate GitHub or
 workspace state, or dispatch capability/model work from status. Base exceptions
 still propagate. Test partial failures, healthy results before/after failures,
 deduplication, private error omission and read-only behavior.
+
+### Review corrections: revised specifications and terminal delivery diagnosis
+
+The existing `spec_revision` commit is the durable accepted-spec content anchor.
+Use the trusted workspace diff against that commit for the scoped spec only;
+ordinary source changes and unchanged-spec restarts do not create new implementation
+work. Do not add a store, progress field or alternate state machine. If accepted
+spec bytes change during implementation, correction, verification or confirmed
+stopped recovery, preserve the old anchor and the owned checkpoint, and record
+remaining implementation with the existing `resume_phase`. Independently review
+the revised spec before another implementation turn; that actual turn is required
+before verification, change review or new delivery. Preserve this remaining work
+across restart, usage waits, decisions and existing-PR paths. Reconcile pre-existing
+uncertain external requests against their exact recorded head before replacing them.
+An unavailable accepted commit must hold, never be treated as unchanged.
+
+Accept a reviewed spec only when its bytes, head and clean state remain identical
+before and after the read-only review. An old in-memory acceptance cannot accept a
+changed durable anchor. Keep explicitly pinned intake-spec mismatches blocked.
+When revising a rejected spec after implementation exists, limit that correction's
+delta against its pre-correction head to the scoped spec; preserve the initial
+design rule forbidding implementation before first acceptance. Use the existing
+bounded correction counter for newly checkpointed accepted-spec mutations. Retain
+its high-water count across correction reasons and unknown execution recovery until
+authorized replan; a different reason must not reset the budget. This shared count
+may conservatively reach diagnosis earlier after other corrections. Mere
+observations or review retries do not consume attempts. Repeated mutations enter
+the existing durable replan diagnosis. Tests exercise actual turn ordering across
+normal implementation, correction, verifier mutation, confirmed interruption,
+decision and restart, including existing PRs, plus unchanged-spec controls.
+
+An authenticated separate provider finding comment accompanying completed current
+Code and Security Review enters existing `replan_required` / `diagnose_review`.
+Apply this at both existing-PR and just-published delivery guards, before settling
+an uncertain review request. Preserve its kind, head and request budget. Do not
+infer resolution from free text, erase the comment, dispatch another model or
+request, or merge. Existing inline findings, active reviews, stale-head binding
+and provider identity validation keep their existing behavior. Test diagnosed
+restart and authorized replan without an automatic request or model loop.
+
+A completed, precisely bound latest workflow run with more than one job of a
+required name returns `ambiguous_required_job` in the existing terminal-check
+result schema. The existing Runner routes that result to `diagnose_ci`; no new
+Runner interface is needed. Active duplicate collections still wait. Unique
+required failures may remain actionable while optional jobs run. Preserve all
+workflow, event, head, repository, reusable revision and job/check identity gates;
+neither ambiguity nor a progress record is passing evidence. Test completed
+duplicate success/mixed results, active and foreign controls, newer reruns and
+durable Runner diagnosis with no model, new request or merge.

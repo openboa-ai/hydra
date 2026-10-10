@@ -351,7 +351,7 @@ class ReviewRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(write[0] != 'record' for write in self.github.writes[writes:]))
         self.assertFalse(self.github.pr['merged'])
 
-    async def test_valid_terminal_envelope_with_additional_provider_comment_does_not_become_format_error(self):
+    async def test_valid_terminal_envelope_with_additional_provider_comment_enters_diagnosis(self):
         await self.opened_pr()
         def comment(value):
             value['provider_comments'].append({**value['provider_comments'][0], 'id': 61,
@@ -360,8 +360,8 @@ class ReviewRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.github.transform_observation = comment
         calls, writes = len(self.calls), len(self.github.writes)
         for _ in range(2):
-            self.assertEqual((await self.step())['reason'], 'remote_delivery_gates')
-            self.assertNotEqual(self.github.note.get('next_action'), 'diagnose_review')
+            self.assertEqual((await self.step())['reason'], 'replan_required')
+            self.assertEqual(self.github.note.get('next_action'), 'diagnose_review')
         self.assertEqual(len(self.calls), calls)
         self.assertFalse(any(write[0] != 'record' for write in self.github.writes[writes:]))
         self.assertFalse(self.github.pr['merged'])

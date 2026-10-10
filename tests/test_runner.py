@@ -674,6 +674,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_partial_design_resumes_design_before_spec_acceptance(self):
         runner = await self.publish()
+        self.github.note['spec_revision'] = None  # This fixture resumes initial, unaccepted design.
         self.workspace.changed_paths = lambda *args: ['docs/engineering/task/spec.md']
         config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
         async def needs_decision(assignment, **kwargs):

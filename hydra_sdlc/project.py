@@ -200,11 +200,11 @@ def terminal_required_checks(config, observation, sha):
         if not _reusable_bound(binding, run):
             continue
         jobs = [j for j in run.get("jobs", []) if j.get("name") == binding["job"]]
-        if not jobs:
+        if len(jobs) != 1:
             if run.get("status") == "completed":
-                results.append({"job": binding["job"], "conclusion": "missing_required_job"})
+                results.append({"job": binding["job"], "conclusion": "missing_required_job" if not jobs else "ambiguous_required_job"})
             continue
-        if len(jobs) != 1 or jobs[0].get("head_sha") != sha or jobs[0].get("check_run_url") != f"https://api.github.com/repos/{config['repository']}/check-runs/{jobs[0].get('id')}":
+        if jobs[0].get("head_sha") != sha or jobs[0].get("check_run_url") != f"https://api.github.com/repos/{config['repository']}/check-runs/{jobs[0].get('id')}":
             continue
         checks = [c for c in observation["checks"] if c.get("id") == jobs[0].get("id")
                   and c.get("check_suite", {}).get("id") == run.get("check_suite_id")

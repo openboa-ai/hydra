@@ -430,3 +430,40 @@ alive until cleanup. Runtime cleanup and failure rules were not relaxed. The
 Linux fixture requires actual EOF before the original probe deadline and actual
 receipt/reaping afterward, with no remaining descendants; current-head matrix CI
 must establish that platform result. Supervisor revision `5fdd6efc` is unchanged.
+
+The revised-spec and terminal-diagnosis correction contract was independently
+accepted before dependent edits at specification SHA-256
+`4a133ef9c94159dabf7cbdd0075cad1074248f8d04c121c3186b5dc0fe8c9fe5`.
+It reuses the accepted Git commit, remaining implementation phase and bounded
+diagnosis paths. It adds no workflow store, progress schema or authority. Source
+review, actual regression evidence and fresh-head delivery gates remain required.
+
+The counter-retention clarification was independently accepted before its
+dependent edits at specification SHA-256
+`237c37d55edd45c50994263f1334cd97a7afcc86615c8e252a338fe1fa8c223d`.
+The existing correction count cannot fall when the reason changes or execution
+is recovered. Only authorized replan resets it; observations consume no attempts.
+This can conservatively require diagnosis earlier after other corrections.
+
+Independent final source review accepted Runner SHA-256
+`663b1f245e0e6c8f2028675b9ab814606c4c84ac1b918729c9bc137bfa2a30b5`
+and revised-spec regression SHA-256
+`44228372597c76d265db60683d449e758bd27e8fdecbc92f9553886a56779406`.
+Revised-spec acceptance precedes an actual implementation turn; stopped and
+decision recovery preserve remaining work and the bounded correction high-water
+count. All 160 related focused tests passed without skips.
+
+Independent CI-diagnosis source review accepted project SHA-256
+`4ac1b1f31059c4f81a6629dc7b8b3b4f0b8599ccc26afe7f75e69c1d15a8a301`
+and ambiguity-regression SHA-256
+`2418dc7453a7c25d6c2538e8fe45ff5fe107e8a7961720432285d4f073f13354`.
+Thirty-two related tests passed without skips. Completed duplicate required-job
+collections diagnose rather than wait indefinitely, preserving formal producer
+and commit binding. The final Runner's additional-provider-comment diagnosis and
+just-published guard were independently accepted; its regression at SHA-256
+`98fdca6d7b4a9b9a9f996d3f525f27c1f976c53d99ea636cf1496e56744d9227`
+and related suite passed all 25 tests without skips. Durable diagnosis retains
+uncertain request identity and budget without a new model/request/merge loop.
+The final macOS suite collected 560 tests: 540 passed and 20 platform-specific
+cases skipped. Fresh-head remote CI, native review and protected-change approval
+remain separate delivery requirements.

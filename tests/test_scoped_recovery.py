@@ -124,6 +124,18 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         spec_path = self.workspace.path / spec
         spec_path.unlink()
         self.paths = [spec]
+        spec_snapshots = {BASE: None}
+        checkpoint = self.workspace.checkpoint
+        def checkpoint_spec(path, message):
+            head = checkpoint(path, message)
+            spec_snapshots[head] = spec_path.read_bytes() if spec_path.exists() else None
+            return head
+        def changed_paths(path, base):
+            current = spec_path.read_bytes() if spec_path.exists() else None
+            return [name for name in self.paths
+                    if name != spec or base not in spec_snapshots or spec_snapshots[base] != current]
+        self.workspace.checkpoint = checkpoint_spec
+        self.workspace.changed_paths = changed_paths
         phases = []
         original_execute = self.execute
         async def design_then_implement(assignment, **kwargs):
