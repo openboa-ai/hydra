@@ -156,7 +156,21 @@ class GitHub:
         return {"content": content, "sha": _sha(value.get("sha"))}
 
     def issues(self, repo):
-        return [x for x in self._pages(f"/repos/{_repo(repo)}/issues?state=open&sort=created&direction=asc") if "pull_request" not in x]
+        result = []
+        for issue in self._pages(f"/repos/{_repo(repo)}/issues?state=all&sort=created&direction=asc"):
+            if not isinstance(issue, dict) or issue.get("state") not in {"open", "closed"}:
+                raise GitHubError("Incomplete Issue state")
+            if "pull_request" in issue:
+                continue
+            if issue["state"] == "open":
+                result.append(issue)
+            elif issue.get("comments") != 0:
+                # A close response may be lost after GitHub closes the Issue.
+                # Only our authenticated pending intention admits recovery.
+                record = self.progress(repo, _number(issue.get("number")))
+                if record and record.get("pending_action") == "close_issue":
+                    result.append(issue)
+        return result
 
     def issue(self, repo, n):
         value = self.api("GET", f"/repos/{_repo(repo)}/issues/{_number(n)}")
@@ -169,7 +183,7 @@ class GitHub:
 
     def _progress_comment(self, repo, n):
         identity = self._identity()
-        own = [c for c in self.comments(repo, n) if c.get("user", {}).get("id") == identity["id"] and c.get("user", {}).get("login") == identity["login"] and "<!-- hydra-progress:v1 " in (c.get("body") or "")]
+        own = [c for c in self.comments(repo, n) if (c.get("user") or {}).get("id") == identity["id"] and (c.get("user") or {}).get("login") == identity["login"] and "<!-- hydra-progress:v1 " in (c.get("body") or "")]
         if len(own) > 1:
             raise GitHubError("Duplicate service progress comments")
         return own[0] if own else None

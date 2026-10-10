@@ -38,11 +38,52 @@ class Fake:
 
 class GitHubTests(unittest.TestCase):
     def test_reads_all_pages_without_treating_pull_requests_as_intake(self):
-        first = [{'number': n} for n in range(100)]
-        fake = Fake({('GET', f'/repos/{REPO}/issues?state=open&sort=created&direction=asc&per_page=100&page=1'): first,
-                     ('GET', f'/repos/{REPO}/issues?state=open&sort=created&direction=asc&per_page=100&page=2'): [{'number': 101}, {'number': 102, 'pull_request': {}}]})
+        first = [{'number': n, 'state': 'open'} for n in range(1, 101)]
+        fake = Fake({('GET', f'/repos/{REPO}/issues?state=all&sort=created&direction=asc&per_page=100&page=1'): first,
+                     ('GET', f'/repos/{REPO}/issues?state=all&sort=created&direction=asc&per_page=100&page=2'): [
+                         {'number': 101, 'state': 'open'}, {'number': 102, 'state': 'closed', 'pull_request': {}}]})
         self.assertEqual(len(GitHub(transport=fake).issues(REPO)), 101)
         self.assertEqual(len(fake.calls), 2)
+
+    def test_closed_issue_is_acquired_only_for_authenticated_pending_close(self):
+        opened = {'number': 1, 'state': 'open'}
+        closed = {'number': 4, 'state': 'closed', 'comments': 1}
+        listing = ('GET', f'/repos/{REPO}/issues?state=all&sort=created&direction=asc&per_page=100&page=1')
+        metadata = {'version': 1, 'repository_id': 123, 'issue_number': 4,
+                    'phase': 'closing', 'pending_action': 'close_issue', 'head': HEAD}
+        for user, changes, include in [
+            (IDENTITY, {}, True),
+            (IDENTITY, {'phase': 'uncertain'}, True),
+            ({'id': 999, 'login': 'openboa'}, {}, False),
+            ({'id': 11, 'login': 'foreign'}, {}, False),
+            (None, {}, False),
+            (IDENTITY, {'phase': 'completed', 'pending_action': None}, False),
+            (IDENTITY, {'pending_action': 'merge'}, False),
+            (IDENTITY, {'pending_action': None, 'next_action': 'completed'}, False),
+        ]:
+            with self.subTest(user=user, changes=changes):
+                comment = {'id': 77, 'user': user, 'body': '<!-- hydra-progress:v1 '
+                           + json.dumps({**metadata, **changes}) + ' -->'}
+                fake = self.progress_fake([comment])
+                fake.replies[listing] = [opened, closed, {'number': 9, 'state': 'closed', 'comments': 0}]
+                self.assertEqual(GitHub(transport=fake).issues(REPO), [opened, closed] if include else [opened])
+                self.assertTrue(all(method == 'GET' for method, _, _ in fake.calls))
+        fake = self.progress_fake([])
+        fake.replies[listing] = [closed]
+        self.assertEqual(GitHub(transport=fake).issues(REPO), [])
+
+    def test_closed_recovery_rejects_conflicting_or_mismatched_progress(self):
+        listing = ('GET', f'/repos/{REPO}/issues?state=all&sort=created&direction=asc&per_page=100&page=1')
+        metadata = {'version': 1, 'repository_id': 123, 'issue_number': 4, 'pending_action': 'close_issue'}
+        for changes, duplicate in [({'repository_id': 999}, False), ({'issue_number': 5}, False), ({}, True)]:
+            with self.subTest(changes=changes, duplicate=duplicate):
+                comment = {'id': 77, 'user': IDENTITY, 'body': '<!-- hydra-progress:v1 '
+                           + json.dumps({**metadata, **changes}) + ' -->'}
+                fake = self.progress_fake([comment] * (2 if duplicate else 1))
+                fake.replies[listing] = [{'number': 4, 'state': 'closed', 'comments': 1}]
+                with self.assertRaises(GitHubError):
+                    GitHub(transport=fake).issues(REPO)
+                self.assertTrue(all(method == 'GET' for method, _, _ in fake.calls))
 
     def test_authentication_failure_is_not_absent_branch(self):
         path = f'/repos/{REPO}/git/ref/heads/hydra%2Fissue-4'
