@@ -613,3 +613,60 @@ and single-commit external rebase, malformed/missing facts/base/receipt, close-i
 and already-closed recovery. Rejected cases cause no close, model turn, publication
 or repeated merge. The same current-head gates and protected deployment boundaries
 remain required.
+
+### Review corrections: one verification executor and native artifact facts
+
+All identity/scope-sensitive service Git calls disable replacement objects with
+the global `--no-replace-objects` option and forced `GIT_NO_REPLACE_OBJECTS=1` after
+environment sanitization. This includes metadata/config reads, index preflight,
+ordinary and remote commands. Preserve candidate replacement refs and other Git
+data; never trust a replaced object to explain the actual commit sent to GitHub.
+
+The host storage adapter supplies only
+`wrap_command(path, argv, cwd) -> list[str]`: a pure, trusted construction of the
+existing resource wrapper's argv, without process/network/preflight execution.
+It returns no environment, timeout, callback or verification result. Validate the
+returned nonempty string argv without NULs; missing/legacy `.run` or malformed
+adapters hold before verification. Execute that argv at the owned worktree through
+the same runtime `_run`/owned supervisor as standalone verification, with the
+original timeout, sanitized environment, stop callback and output limit. Recheck
+stop after command construction and execution. The storage wrapper performs its
+normal resource/SSD checks and cache setup inside that owned process. Thus one
+runtime owns registration, descendant cleanup and receipts, including custom
+storage. The host adapter remains trusted installation code; this does not create
+credential isolation from a malicious host extension.
+
+A definitive rejected launch is distinct from lost startup. Retire only the exact
+live ticket after a completed, uncancelled native exec/cwd rejection with restricted
+errno (ENOENT, ENOTDIR, EACCES or ENOEXEC), exact attempted executable/cwd filename
+and verified native spawn provenance. For current supported CPython this is the
+final traceback frame from the trusted Popen `_execute_child` code, not matching
+an exception message, pathname string or class alone. Unknown provenance holds.
+An existing process, cancellation, generic/post-spawn transport error, or absent
+handle alone never proves absence. For Linux helper launches, the trusted helper
+may send a bounded exact `launch_rejected` first frame with restricted errno and
+confirmed reaping only after that native rejection and verified no children.
+Both parents additionally require collected helper exit zero and EOF within the
+existing cleanup budget; missing/malformed receipt or helper loss holds. Confirmed
+rejection reports failed/unavailable, never a passing verifier or completed turn.
+Failed/stale ownership clearing still holds. No cleanup deadline is extended.
+
+Invalid UTF-8 in a pinned accepted spec enters existing durable
+`replan_required`/`diagnose_spec_artifact`, preserving its revision and bytes.
+Do not silently decode with replacement, rewrite or accept the artifact. Ordinary
+valid text mismatches retain their existing accepted-content hold.
+
+After validating numeric repository identity, require a valid GitHub full name
+case-equivalent to the requested owner/repository and bind policy, evidence and
+subsequent work to that canonical name. Deduplicate case-equivalent registered
+repositories before intake/selection; use the canonical identity for ready work,
+status and runner ownership/effect keys. Do not rename or adopt pre-existing
+case-aliased/foreign workspaces to repair identity implicitly.
+
+Acceptance covers real loose/packed replacement traps in standalone/linked Git,
+out-of-scope hold before publication, provider-wrapped actual token-free verifier
+execution and existing cancellation/timeout/cleanup ownership, rejected old/fake
+providers, direct/helper native launch rejection and malformed/lost/unknown
+controls, invalid-encoding diagnosis/restart/restoration, canonical real CI/provider
+binding and duplicate intake aliases. Current-head review, CI, native protected
+approval and actual product/host operation remain separate delivery gates.
