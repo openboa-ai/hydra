@@ -65,6 +65,14 @@ async def execute(assignment, identity, event, stopped, resume_thread_id=None, o
     identity(turn_id='turn-1')
     if mode == 'result_loss':
         os._exit(8)
+    items = {}
+    if mode == 'accumulated_items':
+        for index in range(3):
+            item = {'id': 'item-' + str(index), 'type': 'commandExecution',
+                    'aggregatedOutput': 'x' * (b.MAX_FRAME_BYTES // 2)}
+            event(item['id'], {'method': 'item/completed', 'params': {
+                'threadId': 'thread-1', 'turnId': 'turn-1', 'item': item}})
+            items[item['id']] = item
     status = 'completed'
     if mode in ('silent', 'slow_silent'):
         while not stopped():
@@ -78,7 +86,9 @@ async def execute(assignment, identity, event, stopped, resume_thread_id=None, o
         await asyncio.sleep(.01)
     return {'status': status, 'thread_id': 'thread-1', 'turn_id': 'turn-1',
             'detail': {'reason': 'provider_terminal', 'terminal': terminal,
-                       'result': {'outcome': 'candidate_ready'}}}
+                       'items': items,
+                       'result': {'outcome': 'candidate_ready', 'summary': 'Candidate checked',
+                                  'next_action': 'review', 'evidence': ['local check']}}}
 if mode == 'slow_silent':
     time.sleep(.25)
 b.worker_main(execute)
@@ -148,6 +158,46 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed['token_names'], [])
         self.assertEqual(observed['harmless'], 'retained')
         self.assert_pids_gone()
+
+    async def test_legal_events_over_final_frame_limit_preserve_completed_outcome(self):
+        self.mode = 'accumulated_items'
+        result = await self.run_worker()
+        items = [(event_id, payload) for event_id, payload in self.events if payload['method'] == 'item/completed']
+        self.assertEqual(len(items), 3)
+        self.assertTrue(all(payload['params']['item']['aggregatedOutput'] == 'x' * (boundary.MAX_FRAME_BYTES // 2)
+                            for _, payload in items))
+        sizes = [len(boundary._encode(boundary._frame('event', index, {
+            'event_id': event_id, 'payload': payload,
+        }))) for index, (event_id, payload) in enumerate(items, 1)]
+        self.assertGreater(sum(sizes), boundary.MAX_FRAME_BYTES)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual((result['thread_id'], result['turn_id']), ('thread-1', 'turn-1'))
+        self.assertEqual(result['detail']['terminal'], {'id': 'turn-1', 'status': 'completed'})
+        self.assertEqual(result['detail']['result'], {
+            'outcome': 'candidate_ready', 'summary': 'Candidate checked',
+            'next_action': 'review', 'evidence': ['local check'],
+        })
+        self.assertEqual(result['detail']['items'], {})
+        self.assertEqual(result['detail']['items_omitted'], 3)
+        self.assertNotIn('cleanup', result['detail'])
+        self.assert_pids_gone()
+
+    def test_result_compaction_preserves_cleanup_receipt_and_original_data(self):
+        detail = {'items': {'large': {'text': 'x' * boundary.MAX_FRAME_BYTES}},
+                  'result': {'outcome': 'needs_decision'}, 'cleanup': 'unknown',
+                  'terminal': {'id': 'turn-1', 'status': 'completed'}, 'usage': {'totalTokens': 12}}
+        result = {'status': 'completed', 'thread_id': 'thread-1', 'turn_id': 'turn-1', 'detail': detail}
+        frame = boundary._decode(boundary._encode_result(7, result))
+        self.assertEqual(frame['seq'], 7)
+        self.assertEqual(frame['data'], {**result, 'detail': {**detail, 'items': {}, 'items_omitted': 1}})
+        self.assertIn('large', detail['items'])
+        self.assertNotIn('items_omitted', detail)
+
+    def test_oversized_structured_result_still_fails_without_truncation(self):
+        result = {'detail': {'items': {'item-1': {'text': 'duplicate'}},
+                             'result': {'summary': 'x' * boundary.MAX_FRAME_BYTES}}}
+        with self.assertRaises(boundary.ProtocolError):
+            boundary._encode_result(1, result)
 
     async def test_identity_and_event_ack_follow_successful_callbacks(self):
         def identity(**values):

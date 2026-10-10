@@ -783,6 +783,40 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("cleanup", result)
         self.assertNotIn("must not propagate", json.dumps(result))
 
+    async def test_probe_excludes_publishing_tokens_and_preserves_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            captured = Path(directory) / "environment.json"
+            publishing = {
+                name: "synthetic-" + name for name in (
+                    "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+                )
+            }
+            configuration = {
+                "CODEX_HOME": str(Path(directory) / "synthetic-codex-home"),
+                "HOME": str(Path(directory) / "synthetic-home"),
+                "HYDRA_TEST_HARMLESS": "retained",
+            }
+            synthetic = {**publishing, **configuration}
+            worker = (
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "keys = " + repr(list(synthetic)) + "\n"
+                "Path(sys.argv[1]).write_text(json.dumps({key: os.environ.get(key) for key in keys}))\n"
+                "print(json.dumps({'available': True}))\n"
+            )
+            with patch.dict(os.environ, synthetic, clear=True), patch.object(
+                codex, "_capability_command", return_value=[
+                    sys.executable, "-I", "-c", worker, str(captured),
+                ],
+            ):
+                result = await codex.capabilities(directory)
+                self.assertEqual(dict(os.environ), synthetic)
+            self.assertTrue(result["available"])
+            self.assertNotIn("cleanup", result)
+            self.assertEqual(json.loads(captured.read_text()), {
+                **{name: None for name in publishing}, **configuration,
+            })
+
     async def test_unconfirmed_cleanup_is_unavailable(self):
         payload = codex._unknown_capabilities()
         payload["available"] = True
@@ -800,10 +834,10 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         # cancelling a to_thread wrapper alone would still hang this process.
         adapter = str(Path(codex.__file__).resolve())
         load = (
-            "import importlib.util, sys\n"
-            "spec = importlib.util.spec_from_file_location('adapter', sys.argv[1])\n"
-            "codex = importlib.util.module_from_spec(spec)\n"
-            "spec.loader.exec_module(codex)\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, str(Path(sys.argv[1]).resolve().parent.parent))\n"
+            "from hydra_sdlc import codex\n"
         )
         worker = load + """
 import json, os, signal, threading

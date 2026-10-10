@@ -24,6 +24,11 @@ class ProtocolError(RuntimeError):
     pass
 
 
+def worker_environment():
+    """Preserve host Codex configuration without service publishing tokens."""
+    return {key: value for key, value in os.environ.items() if key not in PUBLISHING_TOKEN_VARIABLES}
+
+
 def _encode(frame):
     data = json.dumps(frame, separators=(",", ":"), allow_nan=False).encode() + b"\n"
     if len(data) > MAX_FRAME_BYTES:
@@ -45,6 +50,20 @@ def _decode(data):
 
 def _frame(kind, seq, data):
     return {"version": PROTOCOL_VERSION, "kind": kind, "seq": seq, "data": data}
+
+
+def _encode_result(seq, data):
+    try:
+        return _encode(_frame("result", seq, data))
+    except ProtocolError:
+        detail = data.get("detail")
+        if not isinstance(detail, dict) or not isinstance(detail.get("items"), dict) or not detail["items"]:
+            raise
+        # Every item already crossed the acknowledged event channel intact.
+        # Omit only this duplicate snapshot; never trim the structured outcome,
+        # terminal identity or cleanup receipt to fit a result frame.
+        compact = {**data, "detail": {**detail, "items": {}, "items_omitted": len(detail["items"])}}
+        return _encode(_frame("result", seq, compact))
 
 
 def _worker_command(source):
@@ -108,7 +127,7 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
             *_worker_command(worker_source), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             limit=MAX_FRAME_BYTES, start_new_session=True,
-            env={key: value for key, value in os.environ.items() if key not in PUBLISHING_TOKEN_VARIABLES},
+            env=worker_environment(),
         )
         audit("hydra/workerStarted", {
             "pid": process.pid, "pgid": process.pid,
@@ -311,7 +330,7 @@ class _WorkerChannel:
 
     def result(self, data):
         self.seq += 1
-        sys.stdout.buffer.write(_encode(_frame("result", self.seq, data)))
+        sys.stdout.buffer.write(_encode_result(self.seq, data))
         sys.stdout.buffer.flush()
 
 

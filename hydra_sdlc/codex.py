@@ -352,6 +352,8 @@ async def capabilities(cwd: str) -> dict:
     asyncio.to_thread would let its thread hold up asyncio.run shutdown after
     timeout, so the entire probe (including close) lives in a killable process.
     """
+    from .execution_boundary import worker_environment
+
     output = _unknown_capabilities()
     process = None
     try:
@@ -361,6 +363,7 @@ async def capabilities(cwd: str) -> dict:
         process = await asyncio.create_subprocess_exec(
             *_capability_command(cwd), stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+            env=worker_environment(),
         )
         stdout, _ = await asyncio.wait_for(
             process.communicate(), CAPABILITIES_TIMEOUT_SECONDS,
