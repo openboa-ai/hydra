@@ -6,7 +6,7 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 591 tests on macOS with Python 3.14.2
+On 2026-10-10 the full-suite checkpoint `8ee4f3d` collected 591 tests on macOS with Python 3.14.2
 and pinned SDK/CLI 0.162.0 installed: 571 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
@@ -18,6 +18,13 @@ topology fixtures. Missing and denied interfaces skip before temporary allocatio
 or child creation at every entry point; unexpected read errors still fail.
 Portable controls exercise all three paths. Supported Linux topology assertions
 and the native macOS restart path remain unchanged.
+
+The subsequent isolated retry-count fixture correction passed all 55 adapter
+tests. Its one-second grace separates the exact three-attempt cap from the other
+short-grace deadline tests. A simulated 20-millisecond second response reproduced
+two calls with the old 30-millisecond grace and three with the revised fixture;
+the production adapter and its deadlines are unchanged. The timing of the CI
+failure itself was not instrumented. Final-head Linux CI remains separate evidence.
 
 ```sh
 python3 -B -m unittest discover -s tests

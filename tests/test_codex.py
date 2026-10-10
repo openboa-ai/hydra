@@ -439,12 +439,18 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_active_turn_retries_are_bounded_to_two(self):
         self.turn.silent = True
         self.turn.interrupt_errors = [NoActiveTurn() for _ in range(4)]
-        with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
+        # Isolate the attempt cap from the separate short-grace deadline tests.
+        with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)), \
+                patch.object(codex, "INTERRUPT_GRACE_SECONDS", 1.0):
             result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(self.turn.interrupts, 3)
+        self.assertEqual(len(self.turn.interrupt_errors), 1)
         self.assertEqual(result["detail"]["interrupt"]["attempt"], 3)
         self.assertEqual(result["detail"]["interrupt"]["reason_code"], "no_active_turn")
+        requests = [payload["params"] for _, payload in self.events if payload["method"] == "hydra/interruptRequested"]
+        self.assertEqual([item["attempt"] for item in requests], [1, 2, 3])
+        self.assertEqual({(item["threadId"], item["turnId"]) for item in requests}, {("thread-1", "turn-1")})
 
     async def test_terminal_cancels_pending_interrupt_retry(self):
         self.turn.silent = True

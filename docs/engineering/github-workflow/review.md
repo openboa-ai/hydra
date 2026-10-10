@@ -521,3 +521,11 @@ All three proc-dependent entry points check before temporary allocation or child
 creation, under the same accepted specification. Existing missing, denied and
 unexpected-error controls now cover every entry point. The macOS restart path,
 production supervisor and supported Linux topology assertions are unchanged.
+
+Independent fixture review accepted the isolated retry-count correction at SHA-256
+`f91ce16bb98c9439d163e6a394c6a220bed4add80e9f902cb4330a3b1a55a151`.
+Only this fixture's grace becomes one second; the runtime and other short-grace
+tests are unchanged. Exactly three requests, one unused fourth rejection and
+same-thread/turn audit attempts preserve the retry bound. All 55 adapter tests
+passed. A simulated delayed response reproduced the old short-budget failure;
+the CI trace itself does not establish the exact scheduler delay.
