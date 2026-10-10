@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 485 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 465 passed, 18 Linux-only process tests and
+On 2026-10-10 the final local suite collected 509 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 489 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -69,6 +69,23 @@ tests cover reserved active-label variants, canonical self-dependencies and nest
 instruction edits/renames with absent, stale or current human approval. Independent
 review-recovery regressions cover malformed/truncated terminal envelopes, preserved
 unknown-request budgets, ordinary prior-head renewal, active waits and findings.
+
+Expired startup admission and initial or coalesced terminate controls cannot spawn
+a worker. The actual helper must prove ECHILD, emit an exact no-child cancellation
+receipt and exit zero; the parent also requires EOF and matching ownership within
+the unchanged cleanup budget. Thirteen actual cancellation regressions cover lost,
+malformed and trailing receipts, uncertain collection, stale tickets and failed
+ownership clearing. Observed startup cancellation and decoded-result shutdown
+fixtures preserve their lifecycle assertions. Actual Linux subreaper execution is
+required on both Python 3.11 and 3.14.2 CI; macOS control-flow checks are separate.
+
+Three actual Git control-character path tests preserve newline/tab filenames and
+route them to existing scope correction before publication; ordinary UTF-8, spaces
+and DEL remain allowed. Nested review comments use a shared 100-request bound and
+scoped PR identity. Twenty-nine GitHub-client tests cover complete 101-plus comment
+collections, resolved threads, multiple outer pages and late human replies; cursor
+cycles, duplicate identities and incomplete evidence remain failures without
+partial acceptance.
 
 The shared SDK/capability/verification process owner requires actual cleanup. A
 synchronous verification facade reuses the isolated helper and receipt contract;

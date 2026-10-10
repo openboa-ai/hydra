@@ -294,15 +294,57 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'interrupted')
         self.assert_pids_gone()
 
-    async def test_blocked_sdk_startup_and_shutdown_are_bounded(self):
-        for mode in ('startup_hang', 'late_start', 'shutdown_hang'):
+    async def test_startup_deadline_is_bounded_even_before_helper_admission(self):
+        for mode in ('startup_hang', 'late_start'):
             with self.subTest(mode=mode):
                 self.mode = mode
                 self.marker.unlink(missing_ok=True)
                 result = await self.run_worker(timeout=.2)
-                self.assertEqual(result['status'], 'completed' if mode == 'shutdown_hang' else 'failed')
+                self.assertEqual(result['status'], 'failed')
+                self.assertNotIn('cleanup', result['detail'])
                 self.assertNotIn('late_runtime', [x['name'] for x in self.observations()])
                 self.assert_pids_gone()
+
+    async def test_observed_blocked_sdk_startup_is_cancelled_and_collected(self):
+        for mode in ('startup_hang', 'late_start'):
+            with self.subTest(mode=mode):
+                self.mode = mode
+                self.marker.unlink(missing_ok=True)
+                task = asyncio.create_task(self.run_worker())
+                async def wait_started():
+                    while not any(row['name'] == 'started' for row in self.observations()):
+                        if task.done():
+                            self.fail('Worker ended before observed SDK startup')
+                        await asyncio.sleep(.005)
+                await asyncio.wait_for(wait_started(), 2)
+                task.cancel()
+                result = await task
+                self.assertEqual(result['status'], 'interrupted')
+                self.assertNotIn('cleanup', result['detail'])
+                self.assertNotIn('late_runtime', [x['name'] for x in self.observations()])
+                self.assert_pids_gone()
+
+    async def test_observed_sdk_shutdown_hang_preserves_completed_result(self):
+        self.mode = 'shutdown_hang'
+        result_received = asyncio.Event()
+        original = boundary.OwnedProcess
+
+        class ObservedProcess(original):
+            async def wait(self):
+                # execute_worker calls wait only after decoding the real result.
+                result_received.set()
+                return await super().wait()
+
+        with patch.object(boundary, 'OwnedProcess', ObservedProcess):
+            task = asyncio.create_task(self.run_worker())
+            await asyncio.wait_for(result_received.wait(), 2)
+            task.cancel()
+            result = await task
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['detail']['terminal']['status'], 'completed')
+        self.assertIn('event_acked', [x['name'] for x in self.observations()])
+        self.assertNotIn('cleanup', result['detail'])
+        self.assert_pids_gone()
 
     async def test_cleanup_uncertainty_overrides_completed_provider(self):
         with patch.object(boundary, '_cleanup', new=AsyncMock(return_value=False)):

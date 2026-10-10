@@ -410,7 +410,9 @@ commands retain their existing path; this is not another service or scheduler.
 
 Decode Git path bytes losslessly using filesystem surrogate handling. Paths that
 cannot be represented as valid public UTF-8 remain local and outside publishable
-scope, even under a broad allowlist. Route them through existing bounded scope
+scope, even under a broad allowlist. Paths containing characters below U+0020
+likewise remain local and outside publishable scope, using the same predicate as
+remote path validation. Route them through existing bounded scope
 correction or durable diagnosis with byte-preserving private details. Do not let a
 decode exception wedge every reconciliation, publish escaped surrogate paths, or
 remove foreign/unrelated files.
@@ -518,7 +520,7 @@ delivery remain unchanged.
 Keep the existing Linux startup/control reader owned through deadline or caller
 cancellation. A tracked shielded handshake validates a late ready identity and
 starts the single receipt reader. Cleanup consumes that evidence within the
-existing grace budget; it does not extend deadlines, authorize late SDK dispatch,
+ existing grace budget; it does not extend deadlines, authorize late SDK dispatch,
 add a component or treat helper exit alone as clean. Malformed/missing identity,
 receipt or unconfirmed reaping stays unknown. Existing absence/signaling rules hold.
 
@@ -670,3 +672,30 @@ providers, direct/helper native launch rejection and malformed/lost/unknown
 controls, invalid-encoding diagnosis/restart/restoration, canonical real CI/provider
 binding and duplicate intake aliases. Current-head review, CI, native protected
 approval and actual product/host operation remain separate delivery gates.
+
+### Review corrections: expired startup admission and complete review collections
+
+The execution deadline remains child and assignment admission. An already-owned
+Linux helper may finish only its control handshake within the existing independent
+two-second cleanup budget; its initial admission wait keeps the original execution
+deadline. Admission expiry without a launch, a valid initial terminate control,
+or a launch control received after that deadline must create no child. Consume
+complete coalesced launch/terminate controls before child admission; malformed or
+partial trailing input cannot admit a child. The helper verifies ECHILD, emits an
+exact no-child `launch_cancelled` receipt, and exits zero. Parent
+cleanup accepts that first receipt only with helper zero exit and channel EOF,
+inside its unchanged cleanup deadline and matching ownership ticket. This does
+not authorize late SDK/capability work, model dispatch or a successful result.
+Missing/malformed receipts, uncertain reaping and failed ticket clearing still hold.
+Tests bind startup/shutdown phases to actual events, preserve original runtime
+budgets, and exercise Linux Python 3.14 as well as the minimum supported Python.
+CI uses the official setup action at an immutable verified revision; existing
+native protection and trusted hygiene remain enforced.
+
+Collect nested review-thread comments using the existing cursor pagination style,
+with at most 100 total outer and nested GraphQL requests per observation. Bind each
+nested thread to the scoped outer PR node identity. Duplicate comments, cursor
+cycles, malformed collections and exhausted bounds return the existing fail-closed
+GitHub observation error, never partial evidence. Do not add an error taxonomy,
+Runner interface, store or automatic review request. Test 101-plus comments in both
+resolved and unresolved threads, multiple outer pages, identity mismatch and bounds.

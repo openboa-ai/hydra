@@ -340,7 +340,7 @@ class GitHubTests(unittest.TestCase):
             if human_reply or extra_thread_comment and state['resolved']: nodes.append({'databaseId': 82})
             thread = {'id': 'PRRT_known', 'isOutdated': outdated, 'isResolved': state['resolved'],
                       'comments': {'nodes': nodes, 'pageInfo': {'hasNextPage': False}}}
-            return {'data': {'repository': {'pullRequest': {'reviewDecision': None,
+            return {'data': {'repository': {'pullRequest': {'id': 'PR_known', 'reviewDecision': None,
                     'reviewThreads': {'nodes': [thread], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}}
         return GitHub(transport=transport), provider, state
 
@@ -392,7 +392,7 @@ class GitHubTests(unittest.TestCase):
                     comment['author'] = {'login': 'chatgpt-codex-connector[bot]'}
                 thread = {'id': 'PRRT_provider', 'isResolved': False, 'isOutdated': True,
                           'comments': {'nodes': [comment], 'pageInfo': {'hasNextPage': False}}}
-                return {'data': {'repository': {'pullRequest': {'reviewDecision': None, 'reviewThreads': {'nodes': [thread] if more else [], 'pageInfo': {'hasNextPage': more, 'endCursor': 'next' if more else None}}}}}}
+                return {'data': {'repository': {'pullRequest': {'id': 'PR_known', 'reviewDecision': None, 'reviewThreads': {'nodes': [thread] if more else [], 'pageInfo': {'hasNextPage': more, 'endCursor': 'next' if more else None}}}}}}
             if '/check-runs?' in path: return {'check_runs': []}
             if '/actions/runs?' in path: return {'workflow_runs': []}
             if '/files?' in path: return [{'filename': 'src/main.py'}]

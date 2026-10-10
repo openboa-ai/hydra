@@ -83,13 +83,17 @@ def _coalesced(directory, *, actual_linux):
         peer.close()
         support._mark(directory, "helper", pid=helper.pid)
         stream = control.makefile("rb")
-        ready = boundary._decode_supervision(stream.readline())
-        child_pid, pgid = boundary._validate_ready(ready, helper.pid)
-        support._mark(directory, "owned", pid=child_pid, pgid=pgid)
-        receipt = boundary._validate_receipt(boundary._decode_supervision(stream.readline()), child_pid, pgid)
+        receipt = boundary._decode_supervision(stream.readline())
+        if receipt.get("kind") == "ready":
+            # Retain a regression's actual identity solely for fixture cleanup.
+            child_pid, pgid = boundary._validate_ready(receipt, helper.pid)
+            support._mark(directory, "owned", pid=child_pid, pgid=pgid)
+        assert receipt == {"version": 1, "kind": "launch_cancelled", "reaped": True}
         helper.communicate(timeout=2)
         assert helper.returncode == 0
-        assert boundary._group_absent(pgid)
+        assert stream.read(1) == b""
+        assert not any(row["name"] == "child_spawn_attempted" for row in support._observations(directory))
+        stream.close()
         return {"receipt": receipt, "helper_returncode": helper.returncode}
     finally:
         # Success assertions precede fallback. Failed fixtures still release only
@@ -209,8 +213,8 @@ class StartupRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = _coalesced(directory, actual_linux=False)
             observations = _support()._observations(directory)
-        self.assertTrue(result["receipt"]["reaped"])
-        self.assertTrue(result["receipt"]["group_absent"])
+        self.assertEqual(result["receipt"], {"version": 1, "kind": "launch_cancelled", "reaped": True})
+        self.assertEqual([row["name"] for row in observations], ["helper"])
         for row in observations:
             with self.assertRaises(ProcessLookupError):
                 os.kill(row["pid"], 0)
@@ -289,8 +293,9 @@ class LinuxStartupRecoveryTests(unittest.TestCase):
                 result = supervisor["result"]
                 self.assertEqual(result["helper_returncode"], 0, report)
                 if mode == "coalesced":
-                    self.assertTrue(result["receipt"]["reaped"])
-                    self.assertTrue(result["receipt"]["group_absent"])
+                    self.assertEqual(result["receipt"],
+                                     {"version": 1, "kind": "launch_cancelled", "reaped": True})
+                    self.assertEqual([row["name"] for row in report["observations"]], ["helper"])
                     continue
                 self.assertEqual(result["audits"], [])
                 if mode.startswith("execution_"):
@@ -312,6 +317,13 @@ if __name__ == "__main__":
         if sys.platform != "linux":
             # Native POSIX parser/reaping check; Linux uses the actual subreaper.
             boundary._enable_subreaper = lambda: None
+        native_popen = boundary.subprocess.Popen
+
+        def observed_spawn(*args, **kwargs):
+            _support()._mark(sys.argv[3], "child_spawn_attempted")
+            return native_popen(*args, **kwargs)
+
+        boundary.subprocess.Popen = observed_spawn
         raise SystemExit(boundary._supervisor_main(
             int(sys.argv[2]), time.monotonic() + 5,
             [sys.executable, "-I", "-c", "import time; time.sleep(60)"],

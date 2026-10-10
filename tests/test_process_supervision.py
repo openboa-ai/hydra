@@ -228,6 +228,7 @@ async def _supervisor(mode, directory):
         if handle.process is not None:
             _mark(directory, "helper", pid=handle.process.pid)
         result = {"clean": clean, "start_error": start_error,
+                  "cancelled_launch": handle._cancelled_launch,
                   "helper_returncode": handle.process.returncode if handle.process else None}
     else:
         unrelated = None
@@ -428,9 +429,12 @@ class LinuxProcessSupervisionTests(unittest.TestCase):
         report = self.run_driver("expired_start")
         self.assert_no_remaining_processes(report)
         result = report["supervisor"]["result"]
-        self.assertIn(result["start_error"], ("TimeoutError", "ProtocolError"))
-        self.assertFalse(result["clean"])
-        self.assertIsNotNone(result["helper_returncode"])
+        self.assertEqual(result["start_error"], "TimeoutError")
+        self.assertTrue(result["clean"])
+        self.assertEqual(result["cancelled_launch"], {
+            "version": 1, "kind": "launch_cancelled", "reaped": True,
+        })
+        self.assertEqual(result["helper_returncode"], 0)
         self.assertEqual([item["name"] for item in report["observations"]], ["helper"])
 
     def test_invalid_receipt_cannot_confirm_cleanup_after_real_reaping(self):
@@ -749,7 +753,7 @@ class HelperGroupOwnershipTests(unittest.TestCase):
 
         child = SimpleNamespace(pid=41001, returncode=None)
         control = Mock()
-        control.recv.return_value = boundary._supervision_frame("launch")
+        control.recv.side_effect = [boundary._supervision_frame("launch"), BlockingIOError]
         clock = [100.0]
         groups = []
         waits = []

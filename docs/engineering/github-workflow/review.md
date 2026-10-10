@@ -327,3 +327,63 @@ non-directory cwd rejection without helper dispatch. Twenty-nine focused launch
 and restart tests collected: 28 passed, one Linux-only case skipped. Existing
 unknown-result and failed-clear controls remained enforced; current-head Linux CI
 must verify the actual helper implementation.
+
+Current-head Code Review identified expired startup admission, control-character
+paths and nested review-comment pagination. Their bounded contract was independently
+accepted before dependent edits at specification SHA-256
+`82336325f670bbc289aec2d6a3fb6235e0e2b609ea704b2c9dcc93ee241f9211`.
+The original helper admission deadline and independent two-second cleanup budget
+remain unchanged. An exact no-child cancellation proof cannot authorize successful
+work or late SDK/model admission. Nested pagination reuses the existing client and
+fails closed without partial evidence or a new Runner/error interface.
+
+Independent path-source review accepted project SHA-256
+`518458c9a1ba957e372c1774b0c2339e4599cbe6a4e10cada63faa95cf9d6450`.
+Thirty focused tests passed, including actual Git newline/tab paths preserved
+locally and routed to scope correction before publication. Existing ordinary UTF-8,
+space and DEL behavior remains unchanged.
+
+Independent CI review accepted workflow SHA-256
+`3c49fdffbc306b8244f52288be38402a1ecf6ee9baf14ecd7a25944e8497404a`.
+The Python 3.11/3.14.2 matrix uses the official setup action at a verified immutable
+revision. Current aggregate native rules require `Repository hygiene` from app
+15368, which remains unchanged; the former generic kernel context was not required.
+Read-only permissions, nonpersistent checkout credentials, trusted hygiene and
+original timeouts remain enforced. Actual matrix execution is separate CI evidence.
+
+Independent pagination review accepted GitHub client SHA-256
+`4909fafcf5770ae55074e759ce14b5766bb7990a96a8c38085b3f5b871c2b091`.
+Twenty-nine focused tests passed. Actual API-shaped 101-plus comment collections,
+resolved threads, multiple outer pages, late human replies, mismatched identities,
+duplicate/cyclic cursors and the shared request bound are covered. The existing
+GitHub error contract and Runner remain unchanged; incomplete evidence still holds.
+
+Independent startup-source review accepted execution boundary SHA-256
+`5fdd6efca21b0ddc8ec21866e4348090b881756f5e40eb3ccd0b720d0124b464`.
+An expired or cancelled initial admission cannot start the worker. The existing
+helper instead proves ECHILD, emits an exact no-child receipt and exits zero;
+the parent still requires EOF, matching ownership and the unchanged cleanup
+budget before clearing ownership. Malformed, missing or uncertain receipts hold.
+Observed worker-start cancellation and decoded-result shutdown fixtures exercise
+their actual lifecycle phase rather than depending on helper startup speed.
+Twenty-nine execution-boundary and fourteen launch-rejection tests passed. Eight
+startup-recovery tests collected: seven passed and one Linux-only case skipped.
+The actual Linux subreaper and Python matrix remain separate CI requirements.
+Thirteen additional actual no-child cancellation tests passed. They force
+pre-admission expiry/cancellation, verify no spawn, zero helper exit and EOF,
+and preserve restart holds for malformed/lost receipts, uncertain collection and
+failed or stale ownership clearing. The macOS control-flow fixture skips only
+the unavailable Linux subreaper activation and is not Linux execution evidence.
+Independent test review accepted the boundary fixture at SHA-256
+`8c6cae3af6cef97d6d89dab4488f93fe005816418fb394eacb0a635532b7a7d7`,
+startup recovery at
+`0fcd5e7d3b86f3fca625a8c328882f3c5ec9f7a1d7f57a16f98bf4189f1b3a7f`
+and cancellation at
+`89a361644ac2192b4b1e306774f17cb0d245f0e836ddd086cb159309c1143d29`.
+The process fixture correction was independently accepted at SHA-256
+`c95e503aae3ce114b8a9b5401b35009efd67860b36e8b866d9eabdcb0f5bf070`.
+It models an exhausted nonblocking control socket and requires an exact no-child
+receipt for expired admission. Existing actual-process absence, helper-only and
+reused-group no-signal assertions remain. That module collected 28 tests: twelve
+passed and sixteen Linux-only cases skipped; the final Linux-only expectation
+must run on current-head CI.

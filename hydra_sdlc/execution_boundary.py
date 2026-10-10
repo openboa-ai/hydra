@@ -169,6 +169,13 @@ def _validate_launch_rejected(frame):
     return frame
 
 
+def _validate_launch_cancelled(frame):
+    if (set(frame) != {"version", "kind", "reaped"}
+            or frame["kind"] != "launch_cancelled" or frame["reaped"] is not True):
+        raise ProtocolError("Invalid launch cancellation receipt")
+    return frame
+
+
 class OwnedProcess:
     """One live-owned SDK group; Linux reaping never changes host-wide child ownership."""
 
@@ -181,9 +188,11 @@ class OwnedProcess:
         self.process = self.control = self._peer = self._launch = self._receipt_task = None
         self._ready_task = None
         self._launch_sent = False
+        self._admission_closed = False
         self._launch_command = None
         self._rejected_launch = None
         self._rejection = None
+        self._cancelled_launch = None
         self._ownership_ticket = None
         self._cleanup_task = None
         self._buffer = b""
@@ -244,8 +253,12 @@ class OwnedProcess:
             # Retain the single control reader through startup cancellation. It
             # can still validate late identity and cleanup within the same grace.
             self._ready_task = asyncio.create_task(self._read_ready(deadline))
-            await asyncio.wait_for(asyncio.shield(self._ready_task),
-                                  max(0.001, deadline - asyncio.get_running_loop().time()))
+            try:
+                await asyncio.wait_for(asyncio.shield(self._ready_task),
+                                      max(0.001, deadline - asyncio.get_running_loop().time()))
+            except (asyncio.CancelledError, TimeoutError):
+                self._admission_closed = True
+                raise
             if asyncio.get_running_loop().time() >= deadline:
                 raise TimeoutError("Owned process startup deadline expired")
             return self
@@ -257,11 +270,23 @@ class OwnedProcess:
 
     async def _read_ready(self, deadline):
         self.process = await asyncio.shield(self._launch)
-        if asyncio.get_running_loop().time() >= deadline:
-            raise TimeoutError("Owned process startup deadline expired")
-        await asyncio.get_running_loop().sock_sendall(self.control, _supervision_frame("launch"))
-        self._launch_sent = True
+        loop = asyncio.get_running_loop()
+        # This is the only initial writer. Expiry closes admission but leaves
+        # the reader alive for the helper's no-child receipt during cleanup.
+        if loop.time() < deadline:
+            initial = "terminate" if self._admission_closed else "launch"
+            try:
+                await loop.sock_sendall(self.control, _supervision_frame(initial))
+            except OSError:
+                # The helper may already have closed after confirming no child.
+                # Only its validated receipt, zero exit and EOF can prove clean.
+                pass
+            else:
+                self._launch_sent = initial == "launch"
         ready = await self._read_control()
+        if ready.get("kind") == "launch_cancelled":
+            self._cancelled_launch = _validate_launch_cancelled(ready)
+            raise TimeoutError("Owned process launch cancelled")
         if ready.get("kind") == "launch_rejected":
             self._rejection = _validate_launch_rejected(ready)
             raise OwnedCommandError("unavailable")
@@ -298,6 +323,7 @@ class OwnedProcess:
         return output
 
     async def cleanup(self):
+        self._admission_closed = True
         if self._cleanup_task is None:
             self._cleanup_task = asyncio.create_task(self._collect_owned())
         while True:
@@ -345,7 +371,8 @@ class OwnedProcess:
             group_gone = False
             kill_at = min(deadline, loop.time() + 1.0)
             while loop.time() < deadline:
-                if self._launch_sent and not control_sent and self._rejection is None:
+                if (self._launch_sent and not control_sent
+                        and self._rejection is None and self._cancelled_launch is None):
                     try:
                         await loop.sock_sendall(self.control, _supervision_frame("terminate"))
                     except (OSError, RuntimeError):
@@ -356,7 +383,8 @@ class OwnedProcess:
                         self._ready_task.result()
                     except Exception:
                         pass
-                if self._rejection is not None and self.process.returncode == 0:
+                if ((self._rejection is not None or self._cancelled_launch is not None)
+                        and self.process.returncode == 0):
                     await asyncio.wait_for(self.process.communicate(), max(.001, deadline - loop.time()))
                     if self._buffer:
                         return False
@@ -472,7 +500,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
     linux = sys.platform.startswith("linux")
     process = control = peer = None
     ownership_ticket = None
-    pid = pgid = receipt = rejection = None
+    pid = pgid = receipt = rejection = cancellation = None
+    launch_sent = False
     native_rejected = False
     buffered = b""
     data = bytearray()
@@ -510,7 +539,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 control_closed = True
 
         def receive(wait):
-            nonlocal pid, pgid, receipt, rejection, buffered, stdout_closed, control_failed, group_gone
+            nonlocal pid, pgid, receipt, rejection, cancellation, buffered, stdout_closed, control_failed, group_gone
             for key, _ in selector.select(max(0, min(.1, wait))):
                 if key.data == "output":
                     try:
@@ -528,7 +557,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                     try:
                         chunk = control.recv(SUPERVISION_LIMIT + 1)
                         if not chunk:
-                            if (receipt is None and rejection is None) or buffered:
+                            if (receipt is None and rejection is None and cancellation is None) or buffered:
                                 raise ProtocolError("Missing cleanup receipt")
                             close_control()
                             continue
@@ -538,14 +567,17 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                             if len(line) >= SUPERVISION_LIMIT:
                                 raise ProtocolError("Supervision frame too large")
                             frame = _decode_supervision(line)
-                            if pid is None and rejection is None:
+                            if pid is None and rejection is None and cancellation is None:
                                 if frame.get("kind") == "launch_rejected":
                                     rejection = _validate_launch_rejected(frame)
                                     fail("unavailable")
+                                elif frame.get("kind") == "launch_cancelled":
+                                    cancellation = _validate_launch_cancelled(frame)
+                                    fail("timeout")
                                 else:
                                     pid, pgid = _validate_ready(frame, process.pid)
-                            elif rejection is not None:
-                                raise ProtocolError("Unexpected frame after launch rejection")
+                            elif rejection is not None or cancellation is not None:
+                                raise ProtocolError("Unexpected frame after no-child receipt")
                             elif receipt is None:
                                 receipt = _validate_receipt(frame, pid, pgid)
                                 if receipt["group_absent"]:
@@ -584,7 +616,16 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             selector.register(process.stdout, selectors.EVENT_READ, "output")
             if linux:
                 selector.register(control, selectors.EVENT_READ, "control")
-                control.sendall(_supervision_frame("launch"))
+                if time.monotonic() < deadline:
+                    initial = "terminate" if stopped() else "launch"
+                    try:
+                        control.sendall(_supervision_frame(initial))
+                    except OSError:
+                        pass  # Still require the exact receipt, zero exit and EOF.
+                    else:
+                        launch_sent = initial == "launch"
+                else:
+                    fail("timeout")
             else:
                 pid = pgid = process.pid
             while reason is None:
@@ -609,12 +650,12 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
             kill_at = cleanup_deadline - 1.0
             term_sent = False
-            if linux and receipt is None and rejection is None and not control_closed:
+            if (linux and launch_sent and receipt is None and rejection is None
+                    and cancellation is None and not control_closed):
                 try:
                     control.sendall(_supervision_frame("terminate"))
                 except OSError:
-                    control_failed = True
-                    fail("cleanup_unknown")
+                    pass  # A no-child receipt may already be queued before EOF.
             try:
                 while time.monotonic() < cleanup_deadline:
                     try:
@@ -623,7 +664,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                     except BaseException:
                         fail("cleanup_unknown")
                     outer_code = process.poll()  # Collect only this direct child.
-                    if (rejection is not None and stdout_closed and control_closed
+                    if ((rejection is not None or cancellation is not None) and stdout_closed and control_closed
                             and outer_code == 0 and not control_failed):
                         clean = True
                         break
@@ -701,33 +742,65 @@ def _supervisor_main(fd, deadline, command):
         nonlocal stopping
         stopping = True
 
+    def no_child_receipt(kind, **fields):
+        try:
+            os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            for descriptor in (0, 1):
+                os.close(descriptor)
+            control.settimeout(.05)
+            control.sendall(_supervision_frame(kind, reaped=True, **fields))
+            return 0
+        raise ProtocolError("No-child receipt requires ECHILD")
+
     try:
         _enable_subreaper()
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         while b"\n" not in buffered:
-            part = control.recv(SUPERVISION_LIMIT + 1)
+            control.settimeout(max(.001, deadline - time.monotonic()))
+            try:
+                part = control.recv(SUPERVISION_LIMIT + 1)
+            except TimeoutError:
+                if buffered:
+                    raise ProtocolError("Incomplete launch control")
+                return no_child_receipt("launch_cancelled")
             if not part or len(buffered) + len(part) > SUPERVISION_LIMIT:
                 raise ProtocolError("Invalid launch control")
             buffered += part
         initial, buffered = buffered.split(b"\n", 1)
-        if json.loads(initial) != {"version": 1, "kind": "launch"} or stopping or time.monotonic() >= deadline:
-            raise ProtocolError("Launch refused")
+        initial = _decode_supervision(initial)
+        if initial not in ({"version": 1, "kind": "launch"}, {"version": 1, "kind": "terminate"}):
+            raise ProtocolError("Invalid launch control")
+        stopping = stopping or initial["kind"] == "terminate"
+        # Drain controls already available with launch before admitting a child.
+        # A partial or invalid tail never authorizes admission or a clean receipt.
+        control.setblocking(False)
+        while True:
+            try:
+                part = control.recv(SUPERVISION_LIMIT + 1)
+            except BlockingIOError:
+                break
+            if not part or len(buffered) + len(part) > SUPERVISION_LIMIT:
+                raise ProtocolError("Invalid initial control tail")
+            buffered += part
+        while b"\n" in buffered:
+            line, buffered = buffered.split(b"\n", 1)
+            if _decode_supervision(line) != {"version": 1, "kind": "terminate"}:
+                raise ProtocolError("Invalid initial control tail")
+            stopping = True
+        if buffered:
+            raise ProtocolError("Incomplete initial control tail")
+        control.settimeout(max(.001, deadline - time.monotonic()))
+        if stopping or time.monotonic() >= deadline:
+            return no_child_receipt("launch_cancelled")
         try:
             child = subprocess.Popen(command, close_fds=True, start_new_session=True)
         except OSError as exc:
             if not _native_launch_rejected(exc, command, None):
                 raise
-            try:
-                os.waitpid(-1, os.WNOHANG)
-            except ChildProcessError:
-                for descriptor in (0, 1):
-                    os.close(descriptor)
-                control.settimeout(.05)
-                control.sendall(_supervision_frame("launch_rejected", errno=exc.errno, reaped=True))
-                return 0
-            raise ProtocolError("Launch rejection left uncollected children")
+            return no_child_receipt("launch_rejected", errno=exc.errno)
         # Inherited SDK stdio is untouched; the private socket is CLOEXEC and is
         # deliberately absent from the child's pass_fds. Release helper copies.
         for descriptor in (0, 1):

@@ -31,9 +31,9 @@ def _path(value, *, glob=False):
 
 
 def matches(path, patterns):
-    # Git permits arbitrary filename bytes; surrogateescaped names stay private
-    # for bounded scope correction, even if the configured allowlist is broad.
-    if not isinstance(path, str) or any(0xD800 <= ord(c) <= 0xDFFF for c in path):
+    # Git permits arbitrary filenames; control characters and surrogateescaped
+    # names stay private for scope correction, even under a broad allowlist.
+    if not isinstance(path, str) or any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in path):
         return False
     return any(path == p.rstrip("/") or path.startswith(p.rstrip("/") + "/") if p.endswith("/") else fnmatch.fnmatchcase(path, p) for p in patterns)
 

@@ -316,28 +316,75 @@ class GitHub:
 
     def _threads(self, repo, n):
         owner, name = _repo(repo).split("/")
+        _number(n)
         cursor = None
+        pr_id = None
         threads = []
-        query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewDecision reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login}}pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}}}"""
-        for _ in range(100):
-            data = self.api("POST", "/graphql", {"query": query, "variables": {"owner": owner, "name": name, "number": n, "cursor": cursor}})
+        thread_ids, comment_ids, outer_cursors = set(), set(), set()
+        requests = 0
+        query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){id reviewDecision reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login}}pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}}}}"""
+        comment_query = """query($thread:ID!,$cursor:String){node(id:$thread){... on PullRequestReviewThread{id pullRequest{id} comments(first:100,after:$cursor){nodes{databaseId author{login}}pageInfo{hasNextPage endCursor}}}}}"""
+
+        def fetch(query, variables):
+            nonlocal requests
+            if requests >= 100:
+                raise GitHubError("Review thread pagination exceeds bound")
+            requests += 1
+            data = self.api("POST", "/graphql", {"query": query, "variables": variables})
+            if not isinstance(data, dict) or data.get("errors"):
+                raise GitHubError("Review thread observation incomplete")
+            return data["data"]
+
+        def page(collection, cursors):
+            nodes, info = collection["nodes"], collection["pageInfo"]
+            if (not isinstance(nodes, list) or len(nodes) > 100
+                    or any(not isinstance(node, dict) for node in nodes)
+                    or not isinstance(info, dict) or type(info.get("hasNextPage")) is not bool):
+                raise KeyError()
+            if not info["hasNextPage"]:
+                return nodes, None
+            following = info.get("endCursor")
+            if not isinstance(following, str) or not following or following in cursors:
+                raise KeyError()
+            cursors.add(following)
+            return nodes, following
+
+        while True:
             try:
-                if data.get("errors"):
+                data = fetch(query, {"owner": owner, "name": name, "number": n, "cursor": cursor})
+                pr = data["repository"]["pullRequest"]
+                if not isinstance(pr["id"], str) or not pr["id"] or pr_id not in {None, pr["id"]}:
                     raise KeyError()
-                pr = data["data"]["repository"]["pullRequest"]
-                collection = pr["reviewThreads"]
-                if any(t["comments"]["pageInfo"]["hasNextPage"] for t in collection["nodes"]):
-                    raise KeyError()
-                threads.extend(collection["nodes"])
-                if not collection["pageInfo"]["hasNextPage"]:
+                pr_id = pr["id"]
+                current, cursor = page(pr["reviewThreads"], outer_cursors)
+                for thread in current:
+                    tid = thread.get("id")
+                    if (not isinstance(tid, str) or not tid or tid in thread_ids
+                            or type(thread.get("isResolved")) is not bool
+                            or type(thread.get("isOutdated")) is not bool):
+                        raise KeyError()
+                    thread_ids.add(tid)
+                    collection = thread["comments"]
+                    comments, comment_cursors = [], set()
+                    while True:
+                        nodes, next_cursor = page(collection, comment_cursors)
+                        for node in nodes:
+                            cid = node.get("databaseId")
+                            if type(cid) is not int or cid < 1 or cid in comment_ids:
+                                raise KeyError()
+                            comment_ids.add(cid)
+                        comments.extend(nodes)
+                        if next_cursor is None:
+                            break
+                        detail = fetch(comment_query, {"thread": tid, "cursor": next_cursor})["node"]
+                        if detail["id"] != tid or detail["pullRequest"]["id"] != pr_id:
+                            raise KeyError()
+                        collection = detail["comments"]
+                    threads.append({**thread, "comments": {"nodes": comments, "pageInfo": collection["pageInfo"]}})
+                if cursor is None:
                     return threads, pr["reviewDecision"]
-                next_cursor = collection["pageInfo"]["endCursor"]
-                if not next_cursor or next_cursor == cursor:
-                    raise KeyError()
-                cursor = next_cursor
             except (KeyError, TypeError) as exc:
                 raise GitHubError("Review thread observation incomplete") from exc
-        raise GitHubError("Review thread pagination exceeds bound")
 
     def observe(self, repo, pr):
         info = self.repository(repo)
