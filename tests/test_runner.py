@@ -135,7 +135,9 @@ class GitHub:
         value['runs'][0]['jobs'][0]['check_run_url'] = value['runs'][0]['jobs'][0]['check_run_url'].replace('example/product', repo)
         return value
 
-    def merge(self, repo, pr, head, *, commit_message):
+    def merge(self, repo, pr, head, *, commit_message, issue_number):
+        if issue_number != self.work['number']:
+            raise AssertionError('Merge target must retain the delegated Issue')
         self.assert_intent('merge')
         self.writes.append(('merge', head))
         self.merge_message = commit_message
@@ -153,10 +155,14 @@ class GitHub:
             raise RuntimeError('response lost')
 
     def request_review(self, *args, **kwargs):
+        if kwargs['issue_number'] != self.work['number']:
+            raise AssertionError('Review target must retain the delegated Issue')
         self.assert_intent('request_review')
         self.writes.append(('request_review', kwargs.get('kind', 'code'), kwargs['head']))
 
-    def resolve_thread(self, repo, number, thread, head, provider):
+    def resolve_thread(self, repo, number, thread, head, provider, *, issue_number):
+        if issue_number != self.work['number']:
+            raise AssertionError('Resolution target must retain the delegated Issue')
         self.assert_intent('resolve_threads')
         self.writes.append(('resolve_thread', thread))
 

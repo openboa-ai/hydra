@@ -74,8 +74,9 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.github.transform_observation = observation
         self.github.note['checkpoint'] = 'await_auto_review'
         requests = []
-        def lost(repo, pr, kind='code', head=None):
+        def lost(repo, pr, kind='code', head=None, *, issue_number):
             nonlocal running
+            self.assertEqual(issue_number, NUMBER)
             self.assertEqual(self.github.note.get('pending_review_kind'), kind)
             self.assertEqual(head, HEAD)
             requests.append(kind)
@@ -433,7 +434,8 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.github.transform_observation = self.code_running
         self.github.note['checkpoint'] = 'await_auto_review'
         requests = []
-        def lost(repo, pr, kind='code', head=None):
+        def lost(repo, pr, kind='code', head=None, *, issue_number):
+            self.assertEqual(issue_number, NUMBER)
             requests.append(kind)
             raise RuntimeError('request response unavailable')
         self.github.request_review = lost

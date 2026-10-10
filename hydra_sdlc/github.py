@@ -12,6 +12,7 @@ import uuid
 from urllib.parse import quote, urlencode
 
 ACTIVE_LABEL = "hydra:active"
+MAX_COLLECTION_BYTES = 8_000_000
 
 
 class GitHubError(RuntimeError):
@@ -122,11 +123,18 @@ class GitHub:
 
     def _pages(self, path, key=None):
         result = []
+        retained_bytes = 0
         for page in range(1, 101):
             data = self.api("GET", path + ("&" if "?" in path else "?") + urlencode({"per_page": 100, "page": page}))
             rows = data.get(key) if key and isinstance(data, dict) else data
             if not isinstance(rows, list):
                 raise GitHubError("Incomplete GitHub collection")
+            try:
+                retained_bytes += len(json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            except (ValueError, TypeError) as exc:
+                raise GitHubError("Incomplete GitHub collection") from exc
+            if retained_bytes > MAX_COLLECTION_BYTES:
+                raise GitHubError("GitHub collection exceeds bound")
             result.extend(rows)
             if len(rows) < 100:
                 return result
@@ -401,11 +409,7 @@ class GitHub:
             checks.extend(self._pages(f"/repos/{repo}/commits/{commit}/check-runs?filter=latest", "check_runs"))
             runs.extend(self._pages(f"/repos/{repo}/actions/runs?head_sha={commit}", "workflow_runs"))
         # Fetch each run itself: the list response alone can omit reusable workflow identity.
-        expanded = []
-        for run in {r["id"]: r for r in runs}.values():
-            detail = self.api("GET", f"/repos/{repo}/actions/runs/{_number(run['id'])}")
-            detail["jobs"] = self._pages(f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest", "jobs")
-            expanded.append(detail)
+        expanded = self._expand_runs(repo, runs)
         threads, decision = self._threads(repo, pr)
         files = self._pages(f"/repos/{repo}/pulls/{pr}/files")
         if raw.get("changed_files") != len(files):
@@ -442,12 +446,23 @@ class GitHub:
         info = self.repository(repo)
         checks = self._pages(f"/repos/{repo}/commits/{sha}/check-runs?filter=latest", "check_runs")
         runs = self._pages(f"/repos/{repo}/actions/runs?head_sha={sha}", "workflow_runs")
-        expanded = []
-        for run in runs:
-            detail = self.api("GET", f"/repos/{repo}/actions/runs/{_number(run['id'])}")
-            detail["jobs"] = self._pages(f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest", "jobs")
-            expanded.append(detail)
+        expanded = self._expand_runs(repo, runs)
         return {"repository": info, "head_sha": sha, "checks": checks, "runs": expanded}
+
+    def _expand_runs(self, repo, runs):
+        ids = []
+        for run in runs:
+            if not isinstance(run, dict):
+                raise GitHubError("Workflow run observation incomplete")
+            ids.append(_number(run.get("id")))
+        expanded = []
+        for rid in dict.fromkeys(ids):
+            detail = self.api("GET", f"/repos/{repo}/actions/runs/{rid}")
+            if not isinstance(detail, dict) or type(detail.get("id")) is not int or detail["id"] != rid:
+                raise GitHubError("Workflow run observation incomplete")
+            jobs = self._pages(f"/repos/{repo}/actions/runs/{rid}/jobs?filter=latest", "jobs")
+            expanded.append({**detail, "jobs": jobs})
+        return expanded
 
     def owns_pr(self, repo, n, pr):
         """One ownership predicate for publication and runner reconciliation."""
@@ -471,6 +486,19 @@ class GitHub:
                 and head["repo"].get("id") == info["id"] and base["repo"].get("id") == info["id"]
                 and head.get("ref") == f"hydra/issue-{n}"
                 and base.get("ref") == info["default_branch"])
+
+    def _owned_pr_issue(self, repo, pr, expected_issue):
+        _number(expected_issue)
+        head = pr.get("head") if isinstance(pr, dict) else None
+        branch = head.get("ref") if isinstance(head, dict) else None
+        match = re.fullmatch(r"hydra/issue-([1-9][0-9]*)", branch) if isinstance(branch, str) else None
+        try:
+            issue = int(match[1]) if match else None
+        except ValueError as exc:
+            raise GitHubError("Foreign branch or PR ownership") from exc
+        if issue != expected_issue or not self.owns_pr(repo, expected_issue, pr):
+            raise GitHubError("Foreign branch or PR ownership")
+        return issue
 
     def ensure_pr(self, repo, n, branch, head, title, body):
         _number(n); _sha(head)
@@ -503,10 +531,12 @@ class GitHub:
         body += f"\n\nRelated issue: #{n}\n\n<!-- hydra-pr:v1 " + json.dumps(marker, sort_keys=True, separators=(",", ":")) + " -->"
         return self.api("POST", f"/repos/{repo}/pulls", {"head": branch, "base": info["default_branch"], "title": title, "body": body})
 
-    def request_review(self, repo, pr, kind="code", head=None):
+    def request_review(self, repo, pr, kind="code", head=None, *, issue_number):
+        _number(issue_number)
         if kind not in {"code", "security"}:
             raise GitHubError("Unknown review kind")
         raw = self.api("GET", f"/repos/{_repo(repo)}/pulls/{_number(pr)}")
+        issue = self._owned_pr_issue(repo, raw, issue_number)
         current = _sha(raw.get("head", {}).get("sha"))
         if head is None:
             head = current
@@ -515,6 +545,12 @@ class GitHub:
         identity = self._identity()
         marker = f"<!-- hydra-review-request:v1 head={head} kind={kind} -->"
 
+        def current_owned():
+            latest = self.api("GET", f"/repos/{repo}/pulls/{pr}")
+            self._owned_pr_issue(repo, latest, issue)
+            if latest.get("state") != "open" or latest["head"].get("sha") != head:
+                raise GitHubError("Review request head changed or PR closed")
+
         def find():
             own = [c for c in self.comments(repo, pr) if c.get("user", {}).get("id") == identity["id"] and marker in (c.get("body") or "")]
             if len(own) > 1:
@@ -522,6 +558,7 @@ class GitHub:
             return own[0] if own else None
 
         existing = find()
+        current_owned()
         if existing:
             return existing
         body = ("@codex review" if kind == "code" else "@codex security review") + "\n\n" + marker
@@ -529,18 +566,22 @@ class GitHub:
             return self.api("POST", f"/repos/{repo}/issues/{pr}/comments", {"body": body})
         except GitHubError:
             # A missing response is not permission to publish another request.
-            recovered = find()
+            try:
+                recovered = find()
+                current_owned()
+            except GitHubError as exc:
+                raise GitHubError("Review request read-back unavailable", uncertain=True) from exc
             if recovered:
                 return recovered
             raise
 
-    def resolve_thread(self, repo, pr, thread_id, expected_head, provider):
+    def resolve_thread(self, repo, pr, thread_id, expected_head, provider, *, issue_number):
         """Resolve only an observed outdated provider-only thread after runner review.
 
         GitHub has no head-conditioned thread mutation. Recheck the head before
         and after; a concurrent change remains uncertain, never delivery evidence.
         """
-        _repo(repo); _number(pr); _sha(expected_head)
+        _repo(repo); _number(pr); _sha(expected_head); _number(issue_number)
         if (not isinstance(thread_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", thread_id)
                 or not isinstance(provider, dict) or provider.get("login") != "chatgpt-codex-connector[bot]"
                 or type(provider.get("user_id")) is not int or provider["user_id"] < 1
@@ -549,6 +590,7 @@ class GitHub:
 
         def head_current():
             raw = self.api("GET", f"/repos/{repo}/pulls/{pr}")
+            self._owned_pr_issue(repo, raw, issue_number)
             return raw.get("state") == "open" and raw.get("head", {}).get("sha") == expected_head
 
         if not head_current():
@@ -562,13 +604,19 @@ class GitHub:
         if not comment_ids or any(type(cid) is not int for cid in comment_ids) or len(set(comment_ids)) != len(comment_ids):
             raise GitHubError("Thread comment ownership unobserved")
         for cid in comment_ids:
-            matching = [c for c in comments if c.get("id") == cid]
-            if (len(matching) != 1 or matching[0].get("user", {}).get("id") != provider["user_id"]
-                    or matching[0].get("user", {}).get("login") != provider["login"]
-                    or (matching[0].get("performed_via_github_app") is not None
-                        and matching[0]["performed_via_github_app"].get("id") != provider["app_id"])):
+            matching = [c for c in comments if isinstance(c, dict) and c.get("id") == cid]
+            if len(matching) != 1:
+                raise GitHubError("Thread comment ownership unobserved")
+            author, app = matching[0].get("user"), matching[0].get("performed_via_github_app")
+            if (not isinstance(author, dict) or type(author.get("id")) is not int
+                    or author["id"] != provider["user_id"] or author.get("login") != provider["login"]
+                    or author.get("type") != "Bot"
+                    or (app is not None and (not isinstance(app, dict)
+                        or type(app.get("id")) is not int or app["id"] != provider["app_id"]))):
                 raise GitHubError("Human or unknown review comment must be preserved")
         if selected[0].get("isResolved") is True:
+            if not head_current():
+                raise GitHubError("Review thread state changed")
             return selected[0]
         if selected[0].get("isResolved") is not False or not head_current():
             raise GitHubError("Review thread state changed")
@@ -594,11 +642,12 @@ class GitHub:
             return actual[0]
         raise GitHubError("Thread resolution requires reconciliation", uncertain=True) from failure
 
-    def merge(self, repo, pr, head, *, commit_message):
-        _sha(head)
+    def merge(self, repo, pr, head, *, commit_message, issue_number):
+        _sha(head); _number(issue_number)
         if not isinstance(commit_message, str) or not re.fullmatch(r"Hydra-Squash-v1: [0-9a-f]{64}", commit_message):
             raise GitHubError("Squash correlation message missing")
         raw = self.api("GET", f"/repos/{_repo(repo)}/pulls/{_number(pr)}")
+        self._owned_pr_issue(repo, raw, issue_number)
         if not isinstance(raw, dict) or not isinstance(raw.get("head"), dict) or raw["head"].get("sha") != head:
             raise GitHubError("PR head changed before merge")
         if raw.get("merged") is True:
@@ -612,6 +661,7 @@ class GitHub:
             raise GitHubError("Squash response requires reconciliation", uncertain=True)
         try:
             actual = self.api("GET", f"/repos/{repo}/pulls/{pr}")
+            self._owned_pr_issue(repo, actual, issue_number)
         except GitHubError as exc:
             raise GitHubError("Merge read-back unavailable", uncertain=True) from exc
         if (not isinstance(actual, dict) or actual.get("merged") is not True or actual.get("state") != "closed"

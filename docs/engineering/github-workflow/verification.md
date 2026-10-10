@@ -6,8 +6,9 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the full-suite checkpoint `8ee4f3d` collected 591 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 571 passed, 18 Linux-only process tests and
+On 2026-10-10 the PR-ownership/output full-suite checkpoint collected 607 tests
+on macOS with Python 3.14.2 and pinned SDK/CLI 0.162.0 installed: 587 passed,
+18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -25,6 +26,24 @@ short-grace deadline tests. A simulated 20-millisecond second response reproduce
 two calls with the old 30-millisecond grace and three with the revised fixture;
 the production adapter and its deadlines are unchanged. The timing of the CI
 failure itself was not instrumented. Final-head Linux CI remains separate evidence.
+
+
+The PR-ownership and bounded-observation correction binds every review request,
+thread resolution and merge to the caller's Issue, including fresh reads and
+lost-response reconciliation. Collection data has a cumulative 8,000,000-byte
+serialized UTF-8 bound; malformed workflow identities fail through the existing
+observation error. Capability collection is bounded before parsing and requires
+actual EOF within the original deadline. Fourteen focused capability tests passed
+without skips.
+
+Actual native REST inline comments and their reviews omit
+`performed_via_github_app`; the Issue summary includes it. The subsequent native
+authorship correction requires the configured integer Bot ID, login and Bot type
+on inline comments, with matching app metadata when supplied. Mandatory summary
+app authentication is unchanged. All 156 related GitHub/runner/recovery tests
+passed without skips after that correction; they overlap the full checkpoint.
+The final source collects 608 tests. Actual remote thread resolution, final-head
+Linux execution and unattended product delivery remain separate evidence.
 
 ```sh
 python3 -B -m unittest discover -s tests

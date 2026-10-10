@@ -168,12 +168,14 @@ async def _supervisor(mode, directory):
             _mark(directory, "owned", pid=self.pid, pgid=self.pgid)
             if mode == "capability_completed":
                 stdout = super().stdout
+                report_bytes = bytearray()
 
                 async def observe_output(*read_args, **read_kwargs):
                     output = await stdout.read(*read_args, **read_kwargs)
+                    report_bytes.extend(output)
                     if stdout.at_eof():
                         _mark(directory, "capability_stdout_eof",
-                              at=asyncio.get_running_loop().time(), stdout_hex=output.hex())
+                              at=asyncio.get_running_loop().time(), stdout_hex=report_bytes.hex())
                     return output
 
                 self._observed_stdout = SimpleNamespace(read=observe_output)

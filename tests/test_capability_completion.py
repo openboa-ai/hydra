@@ -54,8 +54,8 @@ class _LateEOF:
     def __init__(self, reader, root, events):
         self.reader, self.root, self.events = reader, root, events
 
-    async def read(self):
-        reading = asyncio.create_task(self.reader.read())
+    async def read(self, n=-1):
+        reading = asyncio.create_task(self.reader.read(n))
         try:
             return await asyncio.shield(reading)
         except asyncio.CancelledError:

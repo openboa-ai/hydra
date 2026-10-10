@@ -351,7 +351,7 @@ async def capabilities(cwd: str) -> dict:
     asyncio.to_thread would let its thread hold up asyncio.run shutdown after
     timeout, so the entire probe (including close) lives in a killable process.
     """
-    from .execution_boundary import OwnedProcess, worker_environment
+    from .execution_boundary import MAX_FRAME_BYTES, OwnedProcess, worker_environment
 
     output = _unknown_capabilities()
     process = None
@@ -369,11 +369,19 @@ async def capabilities(cwd: str) -> dict:
             env=worker_environment(),
         )
         await process.start(deadline)
-        stdout = await asyncio.wait_for(
-            process.stdout.read(), max(.001, deadline - loop.time()),
-        )
-        if loop.time() >= deadline:
-            raise TimeoutError("Capability report deadline expired.")
+        stdout = bytearray()
+        while True:
+            chunk = await asyncio.wait_for(
+                process.stdout.read(min(64 * 1024, MAX_FRAME_BYTES + 1 - len(stdout))),
+                max(.001, deadline - loop.time()),
+            )
+            if loop.time() >= deadline:
+                raise TimeoutError("Capability report deadline expired.")
+            stdout.extend(chunk)
+            if len(stdout) > MAX_FRAME_BYTES:
+                raise ValueError("Capability report exceeds the output limit.")
+            if not chunk:
+                break
         observed = json.loads(stdout)
         if not isinstance(observed, dict) or not isinstance(observed.get("available"), bool):
             raise ValueError("Capability probe returned an invalid result.")

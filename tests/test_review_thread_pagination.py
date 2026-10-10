@@ -3,7 +3,7 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 
 from hydra_sdlc.github import GitHub, GitHubError
-from test_github import BASE, HEAD, REPO, REPOSITORY, owned_pr
+from test_github import BASE, HEAD, IDENTITY, REPO, REPOSITORY, owned_pr
 
 
 PROVIDER = {'login': 'chatgpt-codex-connector[bot]', 'user_id': 199175422, 'app_id': 1144995}
@@ -40,6 +40,8 @@ class ReviewTransport:
         self.mutations = 0
 
     def __call__(self, method, path, payload):
+        if path == '/user':
+            return copy.deepcopy(IDENTITY)
         if path == '/graphql':
             if payload['query'].startswith('mutation'):
                 self.mutations += 1
@@ -61,10 +63,10 @@ class ReviewTransport:
         if path == f'/repos/{REPO}/git/ref/heads/main':
             return {'object': {'sha': BASE}}
         if path.startswith(f'/repos/{REPO}/pulls/7/comments?'):
-            comments = [{'id': i, 'user': {'id': PROVIDER['user_id'], 'login': PROVIDER['login']},
-                         'performed_via_github_app': {'id': PROVIDER['app_id']}} for i in range(1, 102)]
+            comments = [{'id': i, 'user': {'id': PROVIDER['user_id'], 'login': PROVIDER['login'],
+                                          'type': 'Bot'}} for i in range(1, 102)]
             if self.human_reply:
-                comments[-1]['user'] = {'id': 8, 'login': 'human'}
+                comments[-1]['user'] = {'id': 8, 'login': 'human', 'type': 'User'}
             page = int(parse_qs(urlsplit(path).query)['page'][0])
             return comments[(page - 1) * 100:page * 100]
         if '/check-runs?' in path:
@@ -103,10 +105,10 @@ class ReviewThreadPaginationTests(unittest.TestCase):
                 github = GitHub(transport=transport)
                 if human_reply:
                     with self.assertRaises(GitHubError):
-                        github.resolve_thread(REPO, 7, 'PRRT_large', HEAD, PROVIDER)
+                        github.resolve_thread(REPO, 7, 'PRRT_large', HEAD, PROVIDER, issue_number=4)
                     self.assertEqual(transport.mutations, 0)
                 else:
-                    resolved = github.resolve_thread(REPO, 7, 'PRRT_large', HEAD, PROVIDER)
+                    resolved = github.resolve_thread(REPO, 7, 'PRRT_large', HEAD, PROVIDER, issue_number=4)
                     self.assertTrue(resolved['isResolved'])
                     self.assertEqual(len(resolved['comments']['nodes']), 101)
                     self.assertEqual(transport.mutations, 1)

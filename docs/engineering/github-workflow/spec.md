@@ -837,3 +837,23 @@ Linux runs retain their actual adoption, reaping and negative assertions. Other
 errors still fail. Test lost acceptance writes, interrupted write completion,
 clean-unknown cross-repository continuation, exact output-prefix semantics and
 bounded allocation, plus unsupported-interface refusal before child creation.
+
+### Review correction: GitHub-native inline authorship
+
+Authenticate inline review comments using the configured immutable integer Bot
+user ID, exact login and `type == "Bot"` in GitHub's REST resource metadata. GitHub
+installation tokens act as their app's built-in Bot; another actor's body text or
+similar login cannot supply this identity. The review-comment API does not expose
+mandatory per-action app metadata. Absent or null `performed_via_github_app` on an
+inline comment is therefore compatible with this authenticated Bot principal;
+when supplied, require an object with the exact integer configured app ID.
+Malformed, foreign or human authors and replies remain ineligible for automatic
+resolution. Keep mandatory app attribution on provider Issue summaries and all
+existing PR ownership, current-head, outdated-thread, complete-comment and
+post-mutation reconciliation checks. This changes no trusted actor or merge gate.
+Tests must include actual native inline metadata shape, absent/null app metadata,
+present foreign/malformed app metadata, and missing/foreign/non-Bot authors.
+
+The API/authentication basis is GitHub's public documentation for
+[review comments](https://docs.github.com/en/rest/pulls/comments) and
+[Bot accounts and token identity](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/differences-between-github-apps-and-oauth-apps#token-based-identification).

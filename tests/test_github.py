@@ -46,6 +46,28 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual(len(GitHub(transport=fake).issues(REPO)), 101)
         self.assertEqual(len(fake.calls), 3)
 
+    def test_retained_page_bytes_accept_exact_bound_and_reject_cumulative_overflow(self):
+        first = [{'x': 'x' * 79990} for _ in range(100)]
+        size = lambda rows: len(json.dumps(rows, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+        self.assertEqual(size(first), 7_999_901)
+        for tail, accepted in [('x' * 89, True), ('x' * 90, False), ('é' + 'x' * 88, False)]:
+            for key in (None, 'rows'):
+                with self.subTest(tail_bytes=len(tail.encode('utf-8')), key=key):
+                    second = [{'x': tail}]
+                    self.assertEqual(size(first) + size(second), 8_000_000 if accepted else 8_000_001)
+                    wrap = lambda rows: {key: rows} if key else rows
+                    fake = Fake({('GET', '/collection?per_page=100&page=1'): wrap(first),
+                                 ('GET', '/collection?per_page=100&page=2'): wrap(second)})
+                    gh = GitHub(transport=fake)
+                    if accepted:
+                        self.assertEqual(gh._pages('/collection', key), first + second)
+                    else:
+                        with self.assertRaises(GitHubError) as caught:
+                            gh._pages('/collection', key)
+                        self.assertFalse(caught.exception.uncertain)
+                    self.assertEqual(len(fake.calls), 2)
+                    self.assertTrue(all(method == 'GET' for method, _, _ in fake.calls))
+
     def test_closed_issue_is_acquired_only_for_authenticated_pending_close(self):
         opened = {'number': 1, 'state': 'open'}
         closed = {'number': 4, 'state': 'closed', 'comments': 1, 'labels': [{'name': 'hydra:active'}]}
@@ -192,20 +214,23 @@ class GitHubTests(unittest.TestCase):
         def transport(method, path, payload):
             nonlocal merged
             calls.append((method, path, payload))
+            if path == '/user': return IDENTITY
+            if path == f'/repos/{REPO}': return REPOSITORY
             if method == 'PUT':
                 self.assertEqual(payload, {'sha': HEAD, 'merge_method': 'squash', 'commit_message': message}); merged = True
                 return {'merged': True, 'sha': MERGE}
             return {**owned_pr(), 'state': 'closed' if merged else 'open', 'merged': merged, 'merge_commit_sha': MERGE if merged else None}
         gh = GitHub(transport=transport)
-        self.assertEqual(gh.merge(REPO, 7, HEAD, commit_message=message)['merge_commit_sha'], MERGE)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(gh.merge(REPO, 7, HEAD, commit_message=message, issue_number=4)['merge_commit_sha'], MERGE)
+        self.assertEqual(sum(path.startswith(f'/repos/{REPO}/pulls/7') for _, path, _ in calls), 3)
         with self.assertRaises(GitHubError) as caught:
-            gh.merge(REPO, 7, HEAD, commit_message=message)
+            gh.merge(REPO, 7, HEAD, commit_message=message, issue_number=4)
         self.assertTrue(caught.exception.uncertain)
         self.assertEqual(len([c for c in calls if c[0] == 'PUT']), 1)
-        with self.assertRaises(GitHubError): gh.merge(REPO, 7, BASE, commit_message=message)
-        fake = Fake({('GET', f'/repos/{REPO}/pulls/7'): owned_pr(), ('PUT', f'/repos/{REPO}/pulls/7/merge'): {'merged': True}})
-        with self.assertRaises(GitHubError) as caught: GitHub(transport=fake).merge(REPO, 7, HEAD, commit_message=message)
+        with self.assertRaises(GitHubError): gh.merge(REPO, 7, BASE, commit_message=message, issue_number=4)
+        fake = Fake({('GET', '/user'): IDENTITY, ('GET', f'/repos/{REPO}'): REPOSITORY,
+                     ('GET', f'/repos/{REPO}/pulls/7'): owned_pr(), ('PUT', f'/repos/{REPO}/pulls/7/merge'): {'merged': True}})
+        with self.assertRaises(GitHubError) as caught: GitHub(transport=fake).merge(REPO, 7, HEAD, commit_message=message, issue_number=4)
         self.assertTrue(caught.exception.uncertain)
 
     def test_gh_auth_is_per_process_bounded_and_never_added_to_parent_environment(self):
@@ -267,16 +292,108 @@ class GitHubTests(unittest.TestCase):
         def transport(method, path, payload):
             calls.append((method, path, payload))
             if path == '/user': return IDENTITY
+            if path == f'/repos/{REPO}': return REPOSITORY
             if path == f'/repos/{REPO}/pulls/7': return owned_pr()
             if method == 'GET': return posted
             posted.append({'id': 99, 'user': IDENTITY, 'body': payload['body']})
             raise GitHubError('response lost', uncertain=True)
         gh = GitHub(transport=transport)
-        self.assertEqual(gh.request_review(REPO, 7, head=HEAD)['id'], 99)
+        self.assertEqual(gh.request_review(REPO, 7, head=HEAD, issue_number=4)['id'], 99)
         self.assertIn(f'head={HEAD} kind=code', posted[0]['body'])
-        gh.request_review(REPO, 7, head=HEAD)
+        gh.request_review(REPO, 7, head=HEAD, issue_number=4)
         self.assertEqual(sum(m == 'POST' for m, _, _ in calls), 1)
-        with self.assertRaises(GitHubError): gh.request_review(REPO, 7, head=BASE)
+        with self.assertRaises(GitHubError): gh.request_review(REPO, 7, head=BASE, issue_number=4)
+
+    @staticmethod
+    def changed_ownership(kind):
+        value = copy.deepcopy(owned_pr())
+        if kind == 'marker': value['body'] = 'Ownership removed'
+        elif kind == 'author': value['user']['id'] = 999
+        elif kind == 'base': value['base']['ref'] = 'other-base'
+        elif kind == 'repository': value['head']['repo']['id'] = 999
+        elif kind == 'noncanonical': value['head']['ref'] = 'hydra/issue-04'
+        elif kind == 'another_issue':
+            value['head']['ref'] = 'hydra/issue-5'
+            value['body'] = '<!-- hydra-pr:v1 {"repository_id":123,"issue_number":5} -->'
+        return value
+
+    def test_review_request_rechecks_same_head_ownership_before_post(self):
+        for read in (1, 2):
+            kinds = ('marker', 'author', 'base', 'repository', 'noncanonical', 'another_issue')
+            for kind in kinds:
+                with self.subTest(read=read, kind=kind):
+                    calls, reads = [], 0
+                    def transport(method, path, payload):
+                        nonlocal reads
+                        calls.append((method, path, payload))
+                        if path == '/user': return IDENTITY
+                        if path == f'/repos/{REPO}': return REPOSITORY
+                        if path == f'/repos/{REPO}/pulls/7':
+                            reads += 1
+                            return self.changed_ownership(kind) if reads >= read else owned_pr()
+                        if method == 'GET': return []
+                        self.fail('Foreign PR must not receive a review request')
+                    with self.assertRaises(GitHubError) as caught:
+                        GitHub(transport=transport).request_review(REPO, 7, head=HEAD, issue_number=4)
+                    self.assertFalse(caught.exception.uncertain)
+                    self.assertTrue(all(method == 'GET' for method, _, _ in calls))
+
+    def test_lost_review_response_with_changed_ownership_remains_uncertain(self):
+        for kind in ('marker', 'base', 'another_issue'):
+            with self.subTest(kind=kind):
+                posted = []
+                def transport(method, path, payload):
+                    if path == '/user': return IDENTITY
+                    if path == f'/repos/{REPO}': return REPOSITORY
+                    if path == f'/repos/{REPO}/pulls/7':
+                        return self.changed_ownership(kind) if posted else owned_pr()
+                    if method == 'GET': return copy.deepcopy(posted)
+                    posted.append({'id': 99, 'user': IDENTITY, 'body': payload['body']})
+                    raise GitHubError('response lost', uncertain=True)
+                with self.assertRaises(GitHubError) as caught:
+                    GitHub(transport=transport).request_review(REPO, 7, head=HEAD, issue_number=4)
+                self.assertTrue(caught.exception.uncertain)
+                self.assertEqual(len(posted), 1)
+
+    def test_merge_rechecks_delegated_issue_ownership_before_write_and_readback(self):
+        message = 'Hydra-Squash-v1: ' + 'e' * 64
+        for after_write in (False, True):
+            for kind in ('marker', 'author', 'base', 'repository', 'noncanonical', 'another_issue'):
+                with self.subTest(after_write=after_write, kind=kind):
+                    writes = []
+                    def transport(method, path, payload):
+                        if path == '/user': return IDENTITY
+                        if path == f'/repos/{REPO}': return REPOSITORY
+                        if method == 'PUT':
+                            writes.append(payload)
+                            return {'merged': True, 'sha': MERGE}
+                        self.assertEqual(path, f'/repos/{REPO}/pulls/7')
+                        value = self.changed_ownership(kind) if writes or not after_write else owned_pr()
+                        if writes:
+                            value.update(state='closed', merged=True, merge_commit_sha=MERGE)
+                        return value
+                    with self.assertRaises(GitHubError) as caught:
+                        GitHub(transport=transport).merge(REPO, 7, HEAD, commit_message=message, issue_number=4)
+                    self.assertEqual(caught.exception.uncertain, after_write)
+                    self.assertEqual(len(writes), int(after_write))
+                    if writes:
+                        self.assertEqual(writes, [{'sha': HEAD, 'merge_method': 'squash', 'commit_message': message}])
+
+    def test_mutation_issue_identity_requires_exact_positive_integer_before_observation(self):
+        provider = {'login': 'chatgpt-codex-connector[bot]', 'user_id': 199175422, 'app_id': 1144995}
+        for issue in (None, True, 0, -1, '4'):
+            for operation in ('request_review', 'resolve_thread', 'merge'):
+                with self.subTest(issue=issue, operation=operation):
+                    fake = Fake()
+                    gh = GitHub(transport=fake)
+                    with self.assertRaises(GitHubError):
+                        if operation == 'request_review':
+                            gh.request_review(REPO, 7, head=HEAD, issue_number=issue)
+                        elif operation == 'resolve_thread':
+                            gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=issue)
+                        else:
+                            gh.merge(REPO, 7, HEAD, commit_message='Hydra-Squash-v1: ' + 'e' * 64, issue_number=issue)
+                    self.assertEqual(fake.calls, [])
 
     def test_progress_recovery_fields_are_typed_and_bounded(self):
         fake = self.progress_fake([])
@@ -322,14 +439,19 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual(observed['head_sha'], MERGE)
         self.assertEqual(observed['runs'][0]['jobs'], [{'id': 91}])
 
-    def thread_transport(self, *, outdated=True, author=None, app=None, lose_response=False, change_head=False, extra_thread_comment=False, human_reply=False):
+    def thread_transport(self, *, outdated=True, author=..., app=..., lose_response=False, change_head=False, extra_thread_comment=False, human_reply=False):
         provider = {'login': 'chatgpt-codex-connector[bot]', 'user_id': 199175422, 'app_id': 1144995}
+        if author is ...: author = {'id': provider['user_id'], 'login': provider['login'], 'type': 'Bot'}
+        if app is ...: app = {'id': provider['app_id']}
         state = {'resolved': False, 'mutations': 0}
         def transport(method, path, payload):
+            if path == '/user': return IDENTITY
+            if path == f'/repos/{REPO}': return REPOSITORY
             if path.endswith('/pulls/7'):
-                return {**owned_pr(), 'head': {'sha': BASE if change_head and state['resolved'] else HEAD}}
+                value = owned_pr()
+                return {**value, 'head': {**value['head'], 'sha': BASE if change_head and state['resolved'] else HEAD}}
             if '/pulls/7/comments?' in path:
-                return [{'id': 81, 'user': author or {'id': provider['user_id'], 'login': provider['login']}, 'performed_via_github_app': app}] + ([{'id': 82, 'user': {'id': 8, 'login': 'human'}}] if human_reply else [])
+                return [{'id': 81, 'user': author, 'performed_via_github_app': app}] + ([{'id': 82, 'user': {'id': 8, 'login': 'human', 'type': 'User'}}] if human_reply else [])
             if payload['query'].startswith('mutation'):
                 self.assertEqual(payload['variables'], {'thread': 'PRRT_known'})
                 self.assertIn('resolveReviewThread', payload['query'])
@@ -348,9 +470,9 @@ class GitHubTests(unittest.TestCase):
         for lose_response in [False, True]:
             with self.subTest(lose_response=lose_response):
                 gh, provider, state = self.thread_transport(lose_response=lose_response)
-                result = gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                result = gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
                 self.assertTrue(result['isResolved']); self.assertEqual(state['mutations'], 1)
-                gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
                 self.assertEqual(state['mutations'], 1)
 
     def test_thread_resolution_preserves_current_human_foreign_unknown_threads(self):
@@ -359,20 +481,158 @@ class GitHubTests(unittest.TestCase):
                        {'app': {'id': 999}}, {'human_reply': True}]:
             with self.subTest(kwargs=kwargs):
                 gh, provider, state = self.thread_transport(**kwargs)
-                with self.assertRaises(GitHubError): gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                with self.assertRaises(GitHubError): gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
                 self.assertEqual(state['mutations'], 0)
         for tid, head in [('PRRT_foreign', HEAD), ('PRRT_known', BASE)]:
             gh, provider, state = self.thread_transport()
-            with self.assertRaises(GitHubError): gh.resolve_thread(REPO, 7, tid, head, provider)
+            with self.assertRaises(GitHubError): gh.resolve_thread(REPO, 7, tid, head, provider, issue_number=4)
             self.assertEqual(state['mutations'], 0)
+
+    def test_native_inline_bot_allows_absent_app_but_rejects_invalid_supplied_app(self):
+        for app in (..., None, False, [], '1144995', {}, {'id': None}, {'id': True},
+                    {'id': '1144995'}, {'id': 999}, {'id': 1144995}):
+            with self.subTest(app=app):
+                gh, provider, state = self.thread_transport(app=app)
+                if app is ...:
+                    original = gh.transport
+                    def without_app(method, path, payload):
+                        value = original(method, path, payload)
+                        if '/pulls/7/comments?' in path:
+                            for comment in value:
+                                comment.pop('performed_via_github_app', None)
+                        return value
+                    gh.transport = without_app
+                if app is ... or app is None or app == {'id': 1144995}:
+                    result = gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
+                    self.assertTrue(result['isResolved'])
+                    self.assertEqual(state['mutations'], 1)
+                    gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
+                    self.assertEqual(state['mutations'], 1)
+                else:
+                    with self.assertRaises(GitHubError) as caught:
+                        gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
+                    self.assertFalse(caught.exception.uncertain)
+                    self.assertEqual(state['mutations'], 0)
+
+    def test_inline_authorship_requires_configured_integer_bot_identity(self):
+        bot = {'id': 199175422, 'login': 'chatgpt-codex-connector[bot]', 'type': 'Bot'}
+        invalid = (..., None, False, [], 'chatgpt-codex-connector[bot]', {},
+                   {'login': bot['login'], 'type': 'Bot'},
+                   {**bot, 'id': True}, {**bot, 'id': str(bot['id'])}, {**bot, 'id': 8},
+                   {**bot, 'login': 'similar-connector[bot]'}, {**bot, 'type': 'User'},
+                   {**bot, 'type': 'bot'}, {**bot, 'type': None},
+                   {'id': bot['id'], 'login': bot['login']})
+        for author in invalid:
+            with self.subTest(author=author):
+                gh, provider, state = self.thread_transport(author=author, app=None)
+                if author is ...:
+                    original = gh.transport
+                    def without_author(method, path, payload):
+                        value = original(method, path, payload)
+                        if '/pulls/7/comments?' in path:
+                            for comment in value:
+                                comment.pop('user', None)
+                        return value
+                    gh.transport = without_author
+                with self.assertRaises(GitHubError) as caught:
+                    gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
+                self.assertFalse(caught.exception.uncertain)
+                self.assertEqual(state['mutations'], 0)
 
     def test_concurrent_head_or_comment_change_after_resolution_is_uncertain(self):
         for kwargs in [{'change_head': True}, {'extra_thread_comment': True}]:
             with self.subTest(kwargs=kwargs):
                 gh, provider, state = self.thread_transport(**kwargs)
-                with self.assertRaises(GitHubError) as caught: gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider)
+                with self.assertRaises(GitHubError) as caught: gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
                 self.assertTrue(caught.exception.uncertain)
                 self.assertEqual(state['mutations'], 1)
+
+    def test_thread_resolution_revalidates_pinned_ownership_before_and_after_mutation(self):
+        for read in (1, 2, 3):
+            kinds = ('marker', 'author', 'base', 'repository', 'another_issue')
+            for kind in kinds:
+                with self.subTest(read=read, kind=kind):
+                    gh, provider, state = self.thread_transport()
+                    original, reads = gh.transport, 0
+                    def transport(method, path, payload):
+                        nonlocal reads
+                        value = original(method, path, payload)
+                        if path == f'/repos/{REPO}/pulls/7':
+                            reads += 1
+                            if reads >= read:
+                                return self.changed_ownership(kind)
+                        return value
+                    gh.transport = transport
+                    with self.assertRaises(GitHubError) as caught:
+                        gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
+                    self.assertEqual(caught.exception.uncertain, read == 3)
+                    self.assertEqual(state['mutations'], 1 if read == 3 else 0)
+
+    def test_already_resolved_thread_still_requires_current_ownership(self):
+        gh, provider, state = self.thread_transport()
+        state['resolved'] = True
+        original, reads = gh.transport, 0
+        def transport(method, path, payload):
+            nonlocal reads
+            value = original(method, path, payload)
+            if path == f'/repos/{REPO}/pulls/7':
+                reads += 1
+                if reads == 2:
+                    return self.changed_ownership('marker')
+            return value
+        gh.transport = transport
+        with self.assertRaises(GitHubError):
+            gh.resolve_thread(REPO, 7, 'PRRT_known', HEAD, provider, issue_number=4)
+        self.assertEqual(state['mutations'], 0)
+
+    def run_observation_transport(self, rows, detail):
+        calls = []
+        def transport(method, path, payload):
+            calls.append((method, path, payload))
+            if path == f'/repos/{REPO}': return REPOSITORY
+            if path == f'/repos/{REPO}/pulls/7': return {**owned_pr(), 'changed_files': 0}
+            if '/git/ref/' in path: return {'object': {'sha': BASE}}
+            if '/check-runs?' in path: return {'check_runs': []}
+            if '/actions/runs?' in path: return {'workflow_runs': copy.deepcopy(rows)}
+            if '/actions/runs/50/jobs?' in path: return {'jobs': [{'id': 91}]}
+            if path == f'/repos/{REPO}/actions/runs/50': return copy.deepcopy(detail)
+            if path == '/graphql':
+                return {'data': {'repository': {'pullRequest': {'id': 'PR_known', 'reviewDecision': None,
+                    'reviewThreads': {'nodes': [], 'pageInfo': {'hasNextPage': False}}}}}}
+            if method == 'GET': return []
+            self.fail('Observation must not mutate GitHub')
+        return GitHub(transport=transport), calls
+
+    def test_malformed_workflow_run_rows_raise_structured_errors_for_both_observers(self):
+        invalid = (None, False, [], {}, {'id': None}, {'id': False}, {'id': 0},
+                   {'id': -1}, {'id': '50'}, {'id': []})
+        for row in invalid:
+            for observer in ('observe', 'observe_commit'):
+                with self.subTest(row=row, observer=observer):
+                    gh, calls = self.run_observation_transport([{'id': 50}, row], {'id': 50})
+                    with self.assertRaises(GitHubError) as caught:
+                        getattr(gh, observer)(REPO, 7 if observer == 'observe' else HEAD)
+                    self.assertFalse(caught.exception.uncertain)
+                    self.assertFalse(any('/actions/runs/50' in path for _, path, _ in calls))
+
+    def test_malformed_workflow_run_details_raise_structured_errors_for_both_observers(self):
+        for detail in (None, False, [], {}, {'id': True}, {'id': '50'}, {'id': 51}, {'id': 0}):
+            for observer in ('observe', 'observe_commit'):
+                with self.subTest(detail=detail, observer=observer):
+                    gh, calls = self.run_observation_transport([{'id': 50}], detail)
+                    with self.assertRaises(GitHubError) as caught:
+                        getattr(gh, observer)(REPO, 7 if observer == 'observe' else HEAD)
+                    self.assertFalse(caught.exception.uncertain)
+                    self.assertFalse(any('/jobs?' in path for _, path, _ in calls))
+
+    def test_workflow_run_expansion_deduplicates_and_keeps_bound_jobs(self):
+        for observer in ('observe', 'observe_commit'):
+            with self.subTest(observer=observer):
+                gh, calls = self.run_observation_transport([{'id': 50}, {'id': 50}], {'id': 50, 'head_sha': HEAD})
+                observed = getattr(gh, observer)(REPO, 7 if observer == 'observe' else HEAD)
+                self.assertEqual(observed['runs'], [{'id': 50, 'head_sha': HEAD, 'jobs': [{'id': 91}]}])
+                self.assertEqual(sum(path == f'/repos/{REPO}/actions/runs/50' for _, path, _ in calls), 1)
+                self.assertEqual(sum('/jobs?' in path for _, path, _ in calls), 1)
 
     def test_observe_collects_server_facts_and_thread_pagination(self):
         requests = []

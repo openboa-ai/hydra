@@ -529,3 +529,39 @@ tests are unchanged. Exactly three requests, one unused fourth rejection and
 same-thread/turn audit attempts preserve the retry bound. All 55 adapter tests
 passed. A simulated delayed response reproduced the old short-budget failure;
 the CI trace itself does not establish the exact scheduler delay.
+
+Independent source review accepted the PR-ownership and bounded-observation
+corrections within unchanged specification SHA-256
+`386de9b429a75797251821c7d364868d2d385252e39f3010f8879384efca2880`.
+The caller's Issue remains bound during fresh review-request, thread-resolution
+and merge reads; ownership loss after an effect remains uncertain. Workflow rows
+and expanded identities fail through the existing observation error. Pagination
+retains at most 8,000,000 serialized UTF-8 bytes per collection; capability output
+uses the existing frame bound plus one overflow byte and requires actual EOF.
+
+Accepted GitHub adapter SHA-256
+`385f7578c7247a7c454595d5a59ec6f2dd201d19710df42c03aba36940723e99`,
+Runner SHA-256
+`76d55f56ef2d217e7241dd4c5104f18cb1e49e68c4bbd6924b92ae576c4c5500`
+and capability adapter SHA-256
+`5d57363eaf7aac5dcac5effe02eb68edc0a7e73e08ff21b43835cabe87890d93`
+retain the existing execution, policy and reconciliation boundaries. Regression
+review preserves caller binding, overflow, malformed-data and lost-response
+controls. This preliminary checkpoint does not qualify actual automatic
+provider-thread resolution.
+
+The GitHub-native authorship clarification was independently accepted before
+dependent edits at specification SHA-256
+`a55e28552baec6f93d83c9654c51bba105d0485c1a1a0e16edfee0775b8fb2a7`.
+GitHub's installation-token identity is its app's built-in Bot. Inline metadata
+therefore binds the configured immutable integer ID, login and Bot type without
+inventing a mandatory app field absent from the review-comment API. Supplied
+malformed or foreign app metadata still fails; summary app attribution is required.
+
+Independent source review accepted final GitHub adapter SHA-256
+`14ca5617d0730ea728891d7920dbae52ac980304f155d659b93c2aa4fbbb77a2`
+and authorship regression SHA-256
+`268bfe3d2286ba782bb4839619ee93b62e385c27f5c3edf67716690efb88a04e`.
+All 156 related tests passed, retaining later-page human replies, malformed actors,
+current ownership, lost responses and bounded collections. Actual product delivery,
+fresh-head native reviews/CI and protected-change approval remain separate gates.

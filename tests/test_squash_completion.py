@@ -9,7 +9,7 @@ from hydra_sdlc.github import GitHub, GitHubError
 from hydra_sdlc.project import (ProjectError, gate_completed_delivery, gate_squash_result,
                                 squash_message, squash_message_matches)
 from hydra_sdlc.runner import Runner
-from test_github import REPO, owned_pr
+from test_github import REPO, REPOSITORY, IDENTITY, owned_pr
 from test_project import BASE, HEAD, MERGE, config, observation
 from test_runner import GitHub as RunnerGitHub, Workspace, complete_capabilities
 
@@ -130,6 +130,8 @@ class SquashGitHubTests(unittest.TestCase):
             with self.subTest(response=response, readback=readback):
                 writes = []
                 def transport(method, path, payload):
+                    if path == '/user': return IDENTITY
+                    if path == f'/repos/{REPO}': return REPOSITORY
                     if method == 'PUT':
                         writes.append(payload)
                         return response
@@ -139,7 +141,7 @@ class SquashGitHubTests(unittest.TestCase):
                         raise readback
                     return readback
                 with self.assertRaises(GitHubError) as caught:
-                    GitHub(transport=transport).merge(REPO, 7, HEAD, commit_message=marker)
+                    GitHub(transport=transport).merge(REPO, 7, HEAD, commit_message=marker, issue_number=4)
                 self.assertTrue(caught.exception.uncertain)
                 self.assertEqual(writes, [{'sha': HEAD, 'merge_method': 'squash', 'commit_message': marker}])
 
@@ -222,8 +224,9 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
                 await self.opened_pr()
                 calls = len(self.calls)
                 merge = self.github.merge
-                def lost_response(repo, pr, head, *, commit_message):
-                    merge(repo, pr, head, commit_message=commit_message)
+                def lost_response(repo, pr, head, *, commit_message, issue_number):
+                    self.assertEqual(issue_number, 4)
+                    merge(repo, pr, head, commit_message=commit_message, issue_number=issue_number)
                     self.github.merge_message = mutation(commit_message)
                     raise RuntimeError('response lost')
                 self.github.merge = lost_response

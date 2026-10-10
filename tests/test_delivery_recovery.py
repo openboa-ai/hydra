@@ -181,7 +181,8 @@ class DeliveryRecoveryTests(unittest.IsolatedAsyncioTestCase):
         requests = []
         writes = self.calls.count('workspace_write')
 
-        def resolve(repo, number, thread, head, provider):
+        def resolve(repo, number, thread, head, provider, *, issue_number):
+            self.assertEqual(issue_number, NUMBER)
             self.github.assert_intent('resolve_threads')
             requests.append((thread, copy.deepcopy(self.github.note)))
             if thread == 'thread-a':

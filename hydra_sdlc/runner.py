@@ -474,7 +474,7 @@ class Runner:
             if intent is None:
                 return record, self._intent_wait(repo, number)
             try:
-                self.github.resolve_thread(repo, pr_number, thread["id"], head, config["review_provider"])
+                self.github.resolve_thread(repo, pr_number, thread["id"], head, config["review_provider"], issue_number=number)
             except RuntimeError:
                 return intent, self._wait(repo, number, intent, "review_resolution_boundary", phase="uncertain")
             record = self._record(repo, number, intent, pending_action=None, pending_thread=None, phase="review_wait",
@@ -1041,7 +1041,7 @@ class Runner:
         message = squash_message(config["repository_id"], number, pr_number, head,
                                  record["expected_base"], record["intake_digest"])
         try:
-            receipt = self.github.merge(repo, pr_number, head, commit_message=message)
+            receipt = self.github.merge(repo, pr_number, head, commit_message=message, issue_number=number)
         except Exception:
             observed = self.github.observe(repo, pr_number)
             if not self.github.owns_pr(repo, number, observed["pr"]):
@@ -1159,7 +1159,7 @@ class Runner:
             if intent is None:
                 return record
             try:
-                self.github.request_review(repo, observation["pr"]["number"], kind=kind, head=head)
+                self.github.request_review(repo, observation["pr"]["number"], kind=kind, head=head, issue_number=number)
             except RuntimeError:
                 return self._record(repo, number, intent, phase="uncertain", wait_reason="review_request_unknown")
             record = self._record(repo, number, intent, pending_action=None, **{field: head},
