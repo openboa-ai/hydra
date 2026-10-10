@@ -80,6 +80,42 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.prompts[-1].startswith('Implement the accepted specification'))
         self.assertEqual(self.effects(), [])
 
+    async def test_interrupted_integration_keeps_first_implementation_pending(self):
+        self.integrated = False
+        async def interrupted(assignment, **kwargs):
+            await self.execute(assignment, **kwargs)
+            return {'status': 'interrupted', 'detail': {'cleanup': 'confirmed'}}
+        runner = self.runner()
+        runner.execute = interrupted
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'stop_requested')
+        self.assertEqual(self.github.note['checkpoint'], 'interrupted_committed')
+        self.assertEqual(self.github.note['resume_phase'], 'implementation')
+
+        self.assertEqual((await self.step())['action'], 'continue')
+        self.assertTrue(self.prompts[-2].startswith('Independently review the ACTUAL specification'))
+        self.assertTrue(self.prompts[-1].startswith('Implement the accepted specification'))
+        self.assertEqual(self.workspace.verification_calls, 0)
+        self.assertFalse(any(effect[0] in {'pr', 'merge', 'close'} for effect in self.effects()))
+
+    async def test_integration_decision_resumes_first_implementation_after_resolution(self):
+        self.integrated = False
+        async def needs_decision(assignment, **kwargs):
+            await self.execute(assignment, **kwargs)
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'needs_decision'}}}
+        runner = self.runner()
+        runner.execute = needs_decision
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'product_decision')
+        self.assertEqual(self.github.note['resume_phase'], 'implementation')
+        self.assertEqual(self.effects(), [])
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: decision {self.github.note['attempt_id']} resolved"})
+
+        self.assertEqual((await self.step())['action'], 'continue')
+        self.assertTrue(self.prompts[-2].startswith('Independently review the ACTUAL specification'))
+        self.assertTrue(self.prompts[-1].startswith('Implement the accepted specification'))
+        self.assertEqual(sum(p.startswith('Resolve integration_changed') for p in self.prompts), 1)
+        self.assertEqual(self.effects(), [])
+
     async def test_completed_implementation_is_not_repeated_after_integration(self):
         await self.step()
         self.integrated = False
