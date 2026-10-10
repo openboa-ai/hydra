@@ -11,7 +11,6 @@ import hashlib
 import importlib.metadata
 import json
 import os
-import signal
 import sys
 from contextlib import aclosing
 from dataclasses import asdict, is_dataclass
@@ -318,31 +317,7 @@ def _capability_command(cwd: str) -> list[str]:
 
 
 async def _stop_capability_probe(process) -> bool:
-    # This group belongs exclusively to the probe and its SDK runtime. Closing
-    # the parent alone could leave a blocked app-server child behind.
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            return False
-        deadline = asyncio.get_running_loop().time() + 1.0
-        while asyncio.get_running_loop().time() < deadline:
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                try:
-                    await asyncio.wait_for(
-                        process.communicate(), max(0.001, deadline - asyncio.get_running_loop().time()),
-                    )
-                    return True
-                except TimeoutError:
-                    break
-            except OSError:
-                return False
-            await asyncio.sleep(0.02)
-    return False
+    return await process.cleanup()
 
 
 async def capabilities(cwd: str) -> dict:
@@ -352,7 +327,7 @@ async def capabilities(cwd: str) -> dict:
     asyncio.to_thread would let its thread hold up asyncio.run shutdown after
     timeout, so the entire probe (including close) lives in a killable process.
     """
-    from .execution_boundary import worker_environment
+    from .execution_boundary import OwnedProcess, worker_environment
 
     output = _unknown_capabilities()
     process = None
@@ -360,13 +335,15 @@ async def capabilities(cwd: str) -> dict:
         _validate_cwd(cwd)
         if os.name != "posix":
             raise AdapterUnavailable("This qualification host requires POSIX process groups.")
-        process = await asyncio.create_subprocess_exec(
-            *_capability_command(cwd), stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        deadline = asyncio.get_running_loop().time() + CAPABILITIES_TIMEOUT_SECONDS
+        process = OwnedProcess(
+            _capability_command(cwd), stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             env=worker_environment(),
         )
+        await process.start(deadline)
         stdout, _ = await asyncio.wait_for(
-            process.communicate(), CAPABILITIES_TIMEOUT_SECONDS,
+            process.communicate(), max(.001, deadline - asyncio.get_running_loop().time()),
         )
         if process.returncode != 0:
             raise AdapterUnavailable("Capability probe did not complete successfully.")

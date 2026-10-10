@@ -67,6 +67,16 @@ class CliTests(unittest.TestCase):
                                       '14 python unrelated.py --capability-worker\n')
             self.assertEqual(residual_workers(), ['12', '13'])
 
+    def test_residual_reaper_helper_holds_startup_without_sdk_worker(self):
+        with patch('hydra_sdlc.coordinator.subprocess.run') as run:
+            run.return_value.stdout = (
+                '15 python /installed/hydra_sdlc/execution_boundary.py --owned-process-helper 4 12 []\n'
+                '16 python /installed/hydra_sdlc/codex.py --owned-process-helper 4 12 []\n'
+                '17 python unrelated.py --owned-process-helper 4 12 []\n'
+                '18 python /installed/hydra_sdlc/execution_boundary.py --owned-process-helper-extra\n'
+            )
+            self.assertEqual(residual_workers(), ['15'])
+
 
 if __name__ == '__main__':
     unittest.main()

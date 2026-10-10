@@ -8,13 +8,18 @@ import json
 import os
 import queue
 import signal
+import socket
+import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 MAX_FRAME_BYTES = 1024 * 1024
 PROTOCOL_VERSION = 1
+SUPERVISION_LIMIT = 4096
+CLEANUP_SECONDS = 2.0
 PUBLISHING_TOKEN_VARIABLES = frozenset({
     "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
 })
@@ -70,9 +75,216 @@ def _worker_command(source):
     return [sys.executable, "-I", str(Path(source).resolve()), "--execution-worker"]
 
 
-async def _cleanup(process):
-    if process is None:
+def _group_absent(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
         return True
+    except OSError:
+        return False
+    return False
+
+
+def _supervision_frame(kind, **values):
+    data = json.dumps({"version": 1, "kind": kind, **values}, allow_nan=False).encode() + b"\n"
+    if len(data) > SUPERVISION_LIMIT:
+        raise ProtocolError("Supervision frame too large")
+    return data
+
+
+class OwnedProcess:
+    """One live-owned SDK group; Linux reaping never changes host-wide child ownership."""
+
+    def __init__(self, command, *, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                 stderr=asyncio.subprocess.DEVNULL, env=None, limit=MAX_FRAME_BYTES):
+        self.command = list(command)
+        self.options = dict(stdin=stdin, stdout=stdout, stderr=stderr, env=env, limit=limit,
+                            start_new_session=True)
+        self.linux = sys.platform.startswith("linux")
+        self.process = self.control = self._peer = self._launch = self._receipt_task = None
+        self._cleanup_task = None
+        self._buffer = b""
+        self.pid = self.pgid = self._returncode = None
+        self.receipt = None
+
+    @property
+    def stdin(self):
+        return self.process.stdin
+
+    @property
+    def stdout(self):
+        return self.process.stdout
+
+    @property
+    def returncode(self):
+        return self._returncode if self.linux else self.process.returncode
+
+    def _registered(self, task):
+        try:
+            self.process = task.result()
+            if not self.linux:
+                self.pid = self.pgid = self.process.pid
+        except BaseException:
+            pass
+        finally:
+            if self._peer is not None:
+                self._peer.close()
+                self._peer = None
+
+    async def start(self, deadline):
+        if os.name != "posix" or self._launch is not None:
+            raise ProtocolError("Invalid owned process launch")
+        command, options = self.command, dict(self.options)
+        if self.linux:
+            self.control, self._peer = socket.socketpair()
+            self.control.setblocking(False)
+            command = [sys.executable, "-I", str(Path(__file__).resolve()), "--owned-process-helper",
+                       str(self._peer.fileno()), str(deadline), json.dumps(command)]
+            options["pass_fds"] = (self._peer.fileno(),)
+        self._launch = asyncio.create_task(asyncio.create_subprocess_exec(*command, **options))
+        self._launch.add_done_callback(self._registered)
+        # Retain an in-flight launch so cancellation cannot discard its ownership.
+        self.process = await asyncio.wait_for(asyncio.shield(self._launch),
+                                             max(0.001, deadline - asyncio.get_running_loop().time()))
+        if not self.linux:
+            self.pid = self.pgid = self.process.pid
+            return self
+        await asyncio.get_running_loop().sock_sendall(self.control, _supervision_frame("launch"))
+        ready = await asyncio.wait_for(self._read_control(),
+                                       max(0.001, deadline - asyncio.get_running_loop().time()))
+        if (set(ready) != {"version", "kind", "pid", "pgid"} or ready["kind"] != "ready"
+                or type(ready["pid"]) is not int or ready["pid"] <= 1
+                or type(ready["pgid"]) is not int
+                or ready["pgid"] != ready["pid"] or ready["pid"] == self.process.pid):
+            raise ProtocolError("Invalid supervision identity")
+        self.pid = self.pgid = ready["pid"]
+        self._receipt_task = asyncio.create_task(self._read_receipt())
+        return self
+
+    async def _read_control(self):
+        while b"\n" not in self._buffer:
+            data = await asyncio.get_running_loop().sock_recv(self.control, SUPERVISION_LIMIT + 1)
+            if not data:
+                raise ProtocolError("Supervision channel disconnected")
+            self._buffer += data
+            if len(self._buffer.split(b"\n", 1)[0]) >= SUPERVISION_LIMIT:
+                raise ProtocolError("Supervision frame too large")
+        data, self._buffer = self._buffer.split(b"\n", 1)
+        frame = json.loads(data)
+        if not isinstance(frame, dict) or type(frame.get("version")) is not int or frame["version"] != 1:
+            raise ProtocolError("Invalid supervision frame")
+        return frame
+
+    async def _read_receipt(self):
+        receipt = await self._read_control()
+        if (set(receipt) != {"version", "kind", "pid", "pgid", "returncode", "reaped", "group_absent"}
+                or receipt["kind"] != "cleanup" or receipt["pid"] != self.pid or receipt["pgid"] != self.pgid
+                or type(receipt["pid"]) is not int or type(receipt["pgid"]) is not int
+                or type(receipt["returncode"]) is not int
+                or type(receipt["reaped"]) is not bool or type(receipt["group_absent"]) is not bool):
+            raise ProtocolError("Invalid cleanup receipt")
+        self.receipt = receipt
+        self._returncode = receipt["returncode"]
+        return receipt
+
+    async def wait(self):
+        await self.process.wait()
+        if self.linux and self._receipt_task is not None:
+            await asyncio.shield(self._receipt_task)
+        return self.returncode
+
+    async def communicate(self):
+        output = await self.process.communicate()
+        if self.linux and self._receipt_task is not None:
+            await asyncio.shield(self._receipt_task)
+        return output
+
+    async def cleanup(self):
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._collect())
+        while True:
+            try:
+                return await asyncio.shield(self._cleanup_task)
+            except asyncio.CancelledError:
+                if self._cleanup_task.cancelled():
+                    return False
+                # Repeated caller cancellation cannot abandon the owned cleanup.
+                continue
+
+    async def _collect(self):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + CLEANUP_SECONDS
+        try:
+            if self._launch is not None and self.process is None:
+                try:
+                    self.process = await asyncio.wait_for(asyncio.shield(self._launch),
+                                                         max(0.001, deadline - loop.time()))
+                except (Exception, asyncio.CancelledError):
+                    self._launch.cancel()
+                    return False
+            if self.process is None:
+                return self._launch is None
+            if not self.linux:
+                return await _collect_direct(self.process, deadline)
+            try:
+                await loop.sock_sendall(self.control, _supervision_frame("terminate"))
+            except (OSError, RuntimeError):
+                pass
+            # A failed startup still retains its helper. It never authorizes clean
+            # from the helper's disappearance without the child's private receipt.
+            term_sent = False
+            group_gone = False
+            kill_at = min(deadline, loop.time() + 1.0)
+            while loop.time() < deadline:
+                if self.pgid is not None and _group_absent(self.pgid):
+                    group_gone = True
+                receipt_done = self._receipt_task is not None and self._receipt_task.done()
+                if receipt_done:
+                    try:
+                        self._receipt_task.result()
+                    except Exception:
+                        pass
+                if (self.receipt and self.receipt["reaped"] and self.receipt["group_absent"]
+                        and self.process.returncode == 0 and _group_absent(self.pgid)):
+                    await asyncio.wait_for(self.process.communicate(), max(0.001, deadline - loop.time()))
+                    return True
+                # Independent fallback if the helper/channel fails: signal only
+                # the group whose identity this live handle actually received.
+                failed = ((receipt_done and self.receipt is None) or self.process.returncode is not None)
+                if failed and self.pgid is not None and not group_gone:
+                    sig = signal.SIGTERM if loop.time() < kill_at else signal.SIGKILL
+                    if not term_sent or sig == signal.SIGKILL:
+                        try:
+                            os.killpg(self.pgid, sig)
+                        except ProcessLookupError:
+                            group_gone = True
+                        except OSError:
+                            break
+                        term_sent = True
+                await asyncio.sleep(min(.01, max(0, deadline - loop.time())))
+            if self.pgid is not None and not group_gone and not _group_absent(self.pgid):
+                try:
+                    os.killpg(self.pgid, signal.SIGKILL)
+                except OSError:
+                    pass
+            if self.process.returncode is None:
+                self.process.kill()
+            return False
+        except (OSError, TimeoutError, ProtocolError):
+            return False
+        finally:
+            if self._receipt_task is not None:
+                if not self._receipt_task.done():
+                    self._receipt_task.cancel()
+                elif not self._receipt_task.cancelled():
+                    self._receipt_task.exception()
+            if self.control is not None:
+                self.control.close()
+            if self._peer is not None:
+                self._peer.close()
+
+
+async def _collect_direct(process, deadline):
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -81,7 +293,7 @@ async def _cleanup(process):
             pass
         except OSError:
             return False
-        until = loop.time() + 1.0
+        until = min(deadline, loop.time() + 1.0)
         while loop.time() < until:
             try:
                 os.killpg(process.pid, 0)
@@ -95,6 +307,141 @@ async def _cleanup(process):
                 return False
             await asyncio.sleep(0.02)
     return False
+
+
+async def _cleanup(process):
+    return True if process is None else await process.cleanup()
+
+
+def _enable_subreaper():
+    import ctypes
+    if not sys.platform.startswith("linux"):
+        raise ProtocolError("Linux supervisor required")
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    libc.prctl.restype = ctypes.c_int
+    observed = ctypes.c_int()
+    if (libc.prctl(36, 1, 0, 0, 0) != 0
+            or libc.prctl(37, ctypes.addressof(observed), 0, 0, 0) != 0 or observed.value != 1):
+        raise ProtocolError("Subreaper unavailable")
+
+
+def _supervisor_main(fd, deadline, command):
+    """Isolated helper: it owns every child it can reap, and runs no SDK code."""
+    import select
+    control = socket.socket(fileno=fd)
+    control.settimeout(max(.001, deadline - time.monotonic()))
+    child = None
+    stopping = False
+    stop_at = None
+    returncode = None
+    buffered = b""
+    connected = True
+    group_gone = False
+
+    def stop(*_):
+        nonlocal stopping
+        stopping = True
+
+    try:
+        _enable_subreaper()
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+        while b"\n" not in buffered:
+            part = control.recv(SUPERVISION_LIMIT + 1)
+            if not part or len(buffered) + len(part) > SUPERVISION_LIMIT:
+                raise ProtocolError("Invalid launch control")
+            buffered += part
+        initial, buffered = buffered.split(b"\n", 1)
+        if json.loads(initial) != {"version": 1, "kind": "launch"} or stopping or time.monotonic() >= deadline:
+            raise ProtocolError("Launch refused")
+        child = subprocess.Popen(command, close_fds=True, start_new_session=True)
+        # Inherited SDK stdio is untouched; the private socket is CLOEXEC and is
+        # deliberately absent from the child's pass_fds. Release helper copies.
+        for descriptor in (0, 1):
+            os.close(descriptor)
+        control.sendall(_supervision_frame("ready", pid=child.pid, pgid=child.pid))
+        control.setblocking(False)
+        killed = False
+        while True:
+            all_reaped = False
+            while True:
+                try:
+                    pid, status = os.waitpid(-1, os.WNOHANG)
+                except ChildProcessError:
+                    all_reaped = True
+                    break
+                if pid == 0:
+                    break
+                if pid == child.pid:
+                    returncode = child.returncode = os.waitstatus_to_exitcode(status)
+                    stopping = True
+            absent = _group_absent(child.pid)
+            group_gone = group_gone or absent
+            if all_reaped and absent and returncode is not None:
+                control.settimeout(.05)
+                control.sendall(_supervision_frame("cleanup", pid=child.pid, pgid=child.pid,
+                    returncode=returncode, reaped=True, group_absent=True))
+                return 0
+            now = time.monotonic()
+            if stopping and stop_at is None:
+                stop_at = now
+                if not group_gone:
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        group_gone = True
+            if stop_at is not None:
+                if now >= stop_at + .8 and not killed:
+                    if not group_gone:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            group_gone = True
+                    killed = True
+                # Reserve time for the receipt and direct helper collection within
+                # the parent's existing total two-second cleanup allowance.
+                if now >= stop_at + 1.8:
+                    return 2
+            if not connected:
+                time.sleep(.01)
+            elif select.select([control], [], [], .01)[0]:
+                data = control.recv(SUPERVISION_LIMIT + 1)
+                if not data:
+                    stopping = True
+                    connected = False
+                else:
+                    buffered += data
+                    if len(buffered) > SUPERVISION_LIMIT:
+                        stopping = True
+                    while b"\n" in buffered:
+                        line, buffered = buffered.split(b"\n", 1)
+                        if json.loads(line) != {"version": 1, "kind": "terminate"}:
+                            raise ProtocolError("Invalid supervision control")
+                        stopping = True
+    except (Exception, KeyboardInterrupt):
+        # Any error must still attempt actual group termination and reaping; an
+        # absent/invalid receipt cannot be promoted to clean by the coordinator.
+        if child is not None:
+            if not group_gone:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            until = time.monotonic() + .8
+            while time.monotonic() < until:
+                try:
+                    pid, status = os.waitpid(-1, os.WNOHANG)
+                    if pid == child.pid:
+                        child.returncode = os.waitstatus_to_exitcode(status)
+                    if pid == 0:
+                        time.sleep(.01)
+                except ChildProcessError:
+                    break
+        return 2
+    finally:
+        control.close()
 
 
 async def execute_worker(assignment, on_identity, on_event, stop_requested, resume_thread_id,
@@ -123,14 +470,15 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         initial = _encode(_frame("assignment", 0, {
             "assignment": assignment, "resume_thread_id": resume_thread_id,
         }))
-        process = await asyncio.create_subprocess_exec(
-            *_worker_command(worker_source), stdin=asyncio.subprocess.PIPE,
+        process = OwnedProcess(
+            _worker_command(worker_source), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            limit=MAX_FRAME_BYTES, start_new_session=True,
+            limit=MAX_FRAME_BYTES,
             env=worker_environment(),
         )
+        await process.start(deadline)
         audit("hydra/workerStarted", {
-            "pid": process.pid, "pgid": process.pid,
+            "pid": process.pid, "pgid": process.pgid,
             "observed_at": datetime.now(timezone.utc).isoformat(),
         })
         process.stdin.write(initial)
@@ -231,8 +579,8 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         nonlocal failure
         if task is not None and not task.done():
             task.cancel()
-            # No SDK runs before the assignment is injected. Native asyncio owns
-            # cancellation of an incomplete subprocess launch.
+            # No SDK execution runs before assignment. OwnedProcess retains an
+            # in-flight launch so cleanup can still collect its actual owner.
             done, _ = await asyncio.wait({task}, timeout=1.0)
             if not done:
                 failure = "supervisor_cleanup_unknown"
@@ -355,3 +703,11 @@ def worker_main(execute):
         channel.result(result)
 
     asyncio.run(run())
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 5 or sys.argv[1] != "--owned-process-helper":
+        raise SystemExit(2)
+    # A fixed, parent-selected entry point. SDK assignment content never enters
+    # this argument vector or the separate supervision channel.
+    raise SystemExit(_supervisor_main(int(sys.argv[2]), float(sys.argv[3]), json.loads(sys.argv[4])))

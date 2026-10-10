@@ -324,33 +324,24 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('cleanup', result['detail'])
         self.assert_pids_gone()
 
-    def test_parent_pipe_eof_terminates_owned_group(self):
+    async def test_parent_pipe_eof_terminates_owned_group(self):
         self.mode = 'eof'
-        process = subprocess.Popen(self.command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, start_new_session=True)
+        process = boundary.OwnedProcess(self.command())
         try:
+            await process.start(asyncio.get_running_loop().time() + 3)
             process.stdin.write(boundary._encode(boundary._frame('assignment', 0, {'assignment': {}})))
-            process.stdin.flush()
+            await process.stdin.drain()
             until = time.monotonic() + 3
             while not any(x['name'] == 'descendant' for x in self.observations()):
                 if time.monotonic() > until:
                     self.fail('worker did not start')
-                time.sleep(.005)
+                await asyncio.sleep(.005)
             process.stdin.close()
-            process.wait(timeout=3)
-            until = time.monotonic() + 2
-            while time.monotonic() < until:
-                try:
-                    self.assert_pids_gone()
-                    break
-                except AssertionError:
-                    time.sleep(.02)
+            await asyncio.wait_for(process.wait(), 3)
+            self.assertTrue(await process.cleanup())
             self.assert_pids_gone()
         finally:
-            if process.poll() is None:
-                os.killpg(process.pid, 9)
-                process.wait(timeout=2)
-            process.stdout.close()
+            await process.cleanup()
 
     def test_outer_asyncio_run_exits_after_blocked_startup(self):
         script = '''
