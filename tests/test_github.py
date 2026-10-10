@@ -215,6 +215,27 @@ class GitHubTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(GitHubError):
                 GitHub(transport=fake).record(REPO, 4, {**record, **mutation})
 
+    def test_delivery_retry_record_round_trips_independently_of_model_action(self):
+        fields = {'delivery_action': 'merge', 'delivery_attempt': 3, 'delivery_head': HEAD,
+                  'review_requested_security_head': HEAD}
+        record = {**fields, 'pending_action': 'review', 'action_attempt': 1}
+        fake = self.progress_fake([])
+        gh = GitHub(transport=fake)
+        gh.record(REPO, 4, record)
+        body = fake.calls[-1][2]['body']
+        own = {'id': 77, 'user': IDENTITY, 'body': body}
+        restored = GitHub(transport=self.progress_fake([own])).progress(REPO, 4)
+        self.assertEqual({k: restored[k] for k in fields}, fields)
+        self.assertEqual(restored['pending_action'], 'review')
+        self.assertEqual(restored['action_attempt'], 1)
+        gh.record(REPO, 4, {k: None for k in fields})
+        for key, values in {'delivery_action': ['raw action text', '/private/path'],
+                            'delivery_attempt': [0, 4, True, '3'], 'delivery_head': ['main'],
+                            'review_requested_security_head': ['short']}.items():
+            for value in values:
+                with self.subTest(key=key, value=value), self.assertRaises(GitHubError):
+                    gh.record(REPO, 4, {**record, key: value})
+
     def test_commit_observation_binds_jobs_to_returned_run(self):
         fake = Fake({('GET', f'/repos/{REPO}'): REPOSITORY,
                      ('GET', f'/repos/{REPO}/commits/{MERGE}/check-runs?filter=latest&per_page=100&page=1'): {'check_runs': [{'id': 91}]},

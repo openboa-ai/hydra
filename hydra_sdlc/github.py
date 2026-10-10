@@ -179,7 +179,7 @@ class GitHub:
 
     @staticmethod
     def _validate_record(record, *, metadata=False):
-        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head"}
+        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head"}
         if metadata:
             allowed |= {"repository_id", "issue_number", "version"}
         if not isinstance(record, dict) or set(record) - allowed:
@@ -187,7 +187,7 @@ class GitHub:
         for key, value in record.items():
             if value is None:
                 continue
-            if key in {"contract_revision", "spec_revision", "head", "expected_head", "expected_base", "review_requested_head"}:
+            if key in {"contract_revision", "spec_revision", "head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head"}:
                 _sha(value)
             elif key == "attempt_id":
                 try:
@@ -195,7 +195,7 @@ class GitHub:
                         raise ValueError()
                 except (ValueError, AttributeError, TypeError) as exc:
                     raise GitHubError("Invalid attempt UUID") from exc
-            elif key == "action_attempt":
+            elif key in {"action_attempt", "delivery_attempt"}:
                 if type(value) is not int or not 1 <= value <= 3:
                     raise GitHubError("Service action retry bound exceeded")
             elif key in {"pr_number", "repository_id", "issue_number", "version"}:
