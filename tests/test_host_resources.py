@@ -68,6 +68,7 @@ class CompletionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.deliver()
         self.assertEqual(result["resource_wait_reason"], "resource_cleanup_pending")
         self.assertEqual(self.gh.note["phase"], "completed")
+        self.assertEqual(self.gh.note["next_action"], "resource_cleanup")
         self.assertEqual(self.gh.work["state"], "closed")
         counts = {effect: len([w for w in self.gh.writes if w[0] == effect])
                   for effect in ["push", "pr", "merge", "close"]}
@@ -80,6 +81,20 @@ class CompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["resource_status"], "retired")
         for effect, count in counts.items():
             self.assertEqual(len([w for w in self.gh.writes if w[0] == effect]), count)
+        self.assertEqual(self.gh.note["next_action"], "completed")
+
+    async def test_lost_retirement_response_stays_discoverable_without_resource_hint(self):
+        self.ws.fail_retire = True
+        result = await self.deliver()
+        self.assertEqual(result["resource_wait_reason"], "resource_cleanup_pending")
+        self.ws.issue_numbers = lambda repo: []
+        self.gh.issues = lambda repo: [self.gh.issue(repo, 4)] if self.gh.note["next_action"] == "resource_cleanup" else []
+        issues, wait = self.runner._issues("example/product")
+        self.assertIsNone(wait)
+        self.assertEqual([issue["number"] for issue in issues], [4])
+        self.ws.fail_retire = False
+        self.assertEqual((await self.runner.step("example/product", 4))["resource_status"], "retired")
+        self.assertEqual(self.gh.note["next_action"], "completed")
 
     async def test_closed_hint_without_authored_completion_is_not_adopted(self):
         self.gh.issues = lambda repo: []

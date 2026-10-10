@@ -301,7 +301,7 @@ class GitHub:
                 raise GitHubError("Existing progress identity mismatch")
             self._validate_record(old, metadata=True)
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
-                     and metadata.get("wait_reason") is None)
+                     and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
         if not completed:
             self._active(repo, n, True)
         if previous and old == metadata:

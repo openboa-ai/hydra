@@ -166,10 +166,19 @@ class Runner:
         self.github.record(repo, number, record)
         return record
 
+    def _completion_callback(self):
+        if (hasattr(self.workspace, "lifecycle_provider")
+                and getattr(self.workspace.lifecycle_provider, "completed", None) is None):
+            return None
+        return (getattr(self.workspace, "completed", None)
+                if hasattr(type(self.workspace), "completed") or "completed" in getattr(self.workspace, "__dict__", {}) else None)
+
+    def _verify_candidate(self, path, config, evidence_key):
+        return self.workspace.verify(path, config["verification"], stop_requested=self.stop_requested)
+
     def _resource_completion(self, repo, number, config, record, pr_number, merge_sha):
         result = {"repository": repo, "issue": number, "action": "completed", "pr": pr_number}
-        complete = (getattr(self.workspace, "completed", None)
-                    if hasattr(type(self.workspace), "completed") or "completed" in getattr(self.workspace, "__dict__", {}) else None)
+        complete = self._completion_callback()
         if complete is None:
             return result
         try:
@@ -180,6 +189,7 @@ class Runner:
                     or self._latest(repo, number, config) != "issue_closed"):
                 result["resource_wait_reason"] = "resource_completion_unconfirmed"
             elif complete(repo, number, record["branch"], record["head"], pr_number, merge_sha):
+                self._record(repo, number, current, next_action="completed")
                 result["resource_status"] = "retired"
         except (ValueError, RuntimeError, OSError):
             # Delivered progress must not be rewritten as unfinished work when
@@ -727,7 +737,8 @@ class Runner:
                 if self.github.issue(repo, number).get("state") != "closed":
                     return self._wait(repo, number, record, "close_unknown", phase="uncertain")
                 record = self._record(repo, number, record, phase="completed", pending_action=None,
-                                      checkpoint=record["checkpoint"], next_action="completed", wait_reason=None)
+                                      checkpoint=record["checkpoint"], wait_reason=None,
+                                      next_action="resource_cleanup" if self._completion_callback() is not None else "completed")
                 return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
             if closing_recovery or config.get("_completion_only"):
                 return self._wait(repo, number, record, "completion_merge_unconfirmed", phase="uncertain")
@@ -907,7 +918,7 @@ class Runner:
                 return self._intent_wait(repo, number)
             verification_error = None
             try:
-                verification = self.workspace.verify(path, config["verification"], stop_requested=self.stop_requested)
+                verification = self._verify_candidate(path, config, evidence_key)
             except WorkspaceWait as exc:
                 if exc.uncertain:
                     self.host_hold_reason = "host_verification_unconfirmed"

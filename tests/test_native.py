@@ -36,6 +36,49 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         values.update(changes)
         return await self.controller.checkpoint(**values)
 
+    async def change_review(self):
+        implementation = await self.result(await self.controller.begin(self.url))
+        self.ws.dirty = True
+        await self.result(implementation)
+        record = self.gh.progress("example/product", 4)
+        return await self.controller.advance(self.url, record["attempt_id"], record["head"], record["contract_revision"])
+
+    async def test_uncertain_fsync_returns_ticket_identity_without_dispatch(self):
+        with patch("hydra_sdlc.coordinator.os.fsync", side_effect=OSError("uncertain sync")):
+            recovery = await self.controller.begin(self.url)
+        self.assertEqual(recovery["action"], "waiting")
+        self.assertEqual(recovery["reason"], "assignment_ticket_unconfirmed")
+        self.assertIn(recovery["step_id"].encode(), self.lock.read_bytes())
+        with self.assertRaises(HostBusy):
+            await self.new_controller().begin(self.url)
+        stopped = await self.result(recovery, "stopped")
+        self.assertEqual(stopped["reason"], "stop_requested")
+        self.assertEqual(self.lock.read_bytes(), b"")
+
+    async def test_review_accepts_exactly_the_run_in_its_prompt(self):
+        review = await self.change_review()
+        self.assertEqual(self.ws.verification_calls, 1)
+        await self.result(review)
+        self.assertEqual(self.ws.verification_calls, 1)
+        self.assertEqual(self.controller.runner.pending_verifications, {})
+
+    async def test_restart_requires_a_new_review_of_fresh_verification(self):
+        review = await self.change_review()
+        self.assertEqual(self.ws.verification_calls, 1)
+        self.controller = self.new_controller()
+        fresh = await self.result(review)
+        self.assertEqual(self.ws.verification_calls, 2)
+        self.assertEqual(fresh["phase"], "change_review")
+        self.assertNotEqual(fresh["step_id"], review["step_id"])
+        await self.result(fresh)
+        self.assertEqual(self.ws.verification_calls, 2)
+
+    async def test_write_results_do_not_retain_private_summaries(self):
+        implementation = await self.result(await self.controller.begin(self.url))
+        self.ws.dirty = True
+        await self.result(implementation, summary="private implementation summary")
+        self.assertEqual(self.controller.runner.summaries, {})
+
     async def test_native_development_review_merge_and_observation(self):
         review = await self.controller.begin(self.url)
         self.assertEqual(review["phase"], "spec_review")

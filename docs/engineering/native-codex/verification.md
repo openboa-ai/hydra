@@ -10,6 +10,15 @@ canonical workspace lookup and stopped spec/intake changes. Required Linux CI st
 validates the final PR revision, including optional MCP tests on Python 3.11 and 3.14.2.
 The final native-focused run passed all 25 tests, including those later corrections.
 
+The first published PR revision passed 641 tests on both Linux/Python 3.11 and
+3.14.2, including repository hygiene. The subsequent PR review correction batch
+passed all 29 native-focused tests and the full macOS/Python 3.14.2 suite:
+647 tests in 215.622 seconds, with 25 environment-specific skips. New regressions
+cover uncertain ticket persistence, one verification run per native review,
+fresh review after restart, write-summary disposal, and durable cleanup discovery
+even when a provider no longer lists the retired resource. Remote checks must
+still run against the correction commit before delivery.
+
 The native fixtures exercise spec review, implementation, verification, independent
 change review, existing exact-head merge/post-merge gates, interrupted result and
 callback recovery, stale results, policy/intake/head changes and shared host admission.

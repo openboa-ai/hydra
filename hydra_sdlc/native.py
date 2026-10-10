@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from .coordinator import (confirm_native_assignment, coordinator_lock,
-                          register_native_assignment, residual_workers)
+                          native_assignment_matches, register_native_assignment, residual_workers)
 from .runner import Runner, intake_digest, issue_url
 from .project import load_project
 
@@ -32,6 +32,17 @@ class NativeRunner(Runner):
         super().__init__(*args, execute=None, capabilities=None, **kwargs)
         self.consumed = set()
         self.summaries = {}
+        self.pending_verifications = {}
+        self.review_steps = {}
+
+    def _verify_candidate(self, path, config, evidence_key):
+        if evidence_key in self.pending_verifications:
+            return self.pending_verifications[evidence_key]
+        verification = super()._verify_candidate(path, config, evidence_key)
+        state = self.workspace.inspect(path)
+        if verification and all(v["passed"] for v in verification) and not state["dirty"] and state["head"] == evidence_key[2]:
+            self.pending_verifications[evidence_key] = verification
+        return verification
 
     def _record(self, repo, number, record, **values):
         if record.get("native_step") in self.consumed:
@@ -50,6 +61,20 @@ class NativeRunner(Runner):
         digest = (hashlib.sha256(self.workspace.read_spec(path, config["_scoped_spec"])).hexdigest()
                   if self.workspace.valid_spec(path, config["_scoped_spec"], require_tracked=False) else None)
         step = record.get("native_step")
+        evidence_key = (repo, number, record["head"], config["blob_sha"])
+        if step and phase == "change_review" and record.get("native_outcome") and self.review_steps.get(step) != evidence_key:
+            # A restarted service has lost the run examined by this reviewer.
+            # Retire its finished judgment and dispatch a new review of the fresh run.
+            self.consumed.add(step)
+            clean = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
+            self._record(repo, number, clean, pending_action=None, wait_reason=None)
+            observed = self.github.progress(repo, number)
+            if observed.get("native_step") or observed.get("head") != record["head"]:
+                raise RuntimeError("Stale verification review retirement is unconfirmed")
+            confirm_native_assignment(step)
+            self.summaries.pop(step, None)
+            self.review_steps.pop(step, None)
+            record, step = clean, None
         if step and step not in self.consumed:
             if record.get("native_phase") != phase:
                 return None, {"action": "waiting", "reason": "native_phase_changed"}
@@ -67,6 +92,9 @@ class NativeRunner(Runner):
                     or observed.get("head") != record["head"]):
                 raise RuntimeError("Native review retirement is unconfirmed")
             confirm_native_assignment(step)
+            self.review_steps.pop(step, None)
+            if phase == "change_review":
+                self.pending_verifications.pop(evidence_key, None)
             return result
         state = self.workspace.inspect(path)
         if state["dirty"]:
@@ -75,10 +103,18 @@ class NativeRunner(Runner):
         if phase == "design" and not record.get("resume_phase"):
             record = {**record, "resume_phase": "design"}
         step = str(uuid.uuid4())
-        register_native_assignment(step, assignment_scope(repo, number, record["attempt_id"],
-                                                          state["head"], record["contract_revision"]))
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
+        scope = assignment_scope(repo, number, record["attempt_id"], state["head"], record["contract_revision"])
+        try:
+            register_native_assignment(step, scope)
+        except (RuntimeError, ValueError, OSError):
+            try:
+                held = native_assignment_matches(step, scope)
+            except (RuntimeError, ValueError, OSError):
+                held = False
+            return None, {**recovery, "action": "waiting",
+                          "reason": "assignment_ticket_unconfirmed" if held else "assignment_ticket_unknown"}
         try:
             record = self._intent(repo, number, config, record, None,
             execution_mode="native", native_step=step, native_phase=phase,
@@ -93,6 +129,8 @@ class NativeRunner(Runner):
             return None, {**recovery, "action": "waiting", "reason": "assignment_record_unknown"}
         if record is None:
             return None, {**recovery, "action": "waiting", "reason": "assignment_record_unconfirmed"}
+        if phase == "change_review":
+            self.review_steps[step] = evidence_key
         return None, {"repository": repo, "issue": number, "action": "native_task",
             "attempt_id": record["attempt_id"], "step_id": step, "phase": phase,
             "head": state["head"], "contract_revision": record["contract_revision"],
@@ -201,6 +239,10 @@ class NativeController:
                 confirm_native_assignment(step_id)
                 self.runner.consumed.add(step_id)
                 self.runner._record(repo, n, fresh)
+                self.runner.summaries.pop(step_id, None)
+                key = self.runner.review_steps.pop(step_id, None)
+                if key is not None:
+                    self.runner.pending_verifications.pop(key, None)
                 return {"action": "waiting", "reason": spec_wait["reason"] if spec_wait else "stop_requested", "head": current_head}
             # Persist only the bounded outcome; raw summaries remain private and
             # cannot authorize delivery. Interrupted read-back keeps ownership.
@@ -208,7 +250,8 @@ class NativeController:
             fresh = self.runner.github.progress(repo, n)
             if fresh.get("native_outcome") != outcome or fresh.get("native_step") != step_id:
                 raise RuntimeError("Candidate result write is unconfirmed")
-            self.runner.summaries[step_id] = summary
+            if "review" in phase:
+                self.runner.summaries[step_id] = summary
             digest = record.get("native_spec_digest")
             if phase in {"implementation", "correction", "change_review"} and record.get("spec_revision") and digest:
                 actual = hashlib.sha256(self.runner.workspace.read_spec(path, config["_scoped_spec"]

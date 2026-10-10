@@ -137,6 +137,16 @@ def register_native_assignment(step_id, scope):
     return owner.register(native_step=step_id, native_scope=scope)
 
 
+def native_assignment_matches(step_id, scope):
+    """Read back registration uncertainty without dispatching or clearing ownership."""
+    owner = _current_owner.get()
+    if owner is None or owner.fd is None:
+        raise HostBusy("Native registration read-back requires the host lock")
+    value = os.pread(owner.fd, len(_NATIVE_PREFIX) + 140, 0)
+    return (_read_owner(owner.fd) == (owner.boot, step_id)
+            and value == _NATIVE_PREFIX + (owner.boot + "\n" + step_id + "\n" + scope + "\n").encode("ascii"))
+
+
 def confirm_native_assignment(step_id):
     owner = _current_owner.get()
     if owner is None or owner.ticket is None or owner.ticket[1] != step_id:
