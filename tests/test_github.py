@@ -91,7 +91,7 @@ class GitHubTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(GitHubError): gh.record(REPO, 4, bad)
 
     def test_record_never_overwrites_malformed_or_mismatched_existing_record(self):
-        for body in ['<!-- hydra-progress:v1 broken -->', '<!-- hydra-progress:v1 {"version":1,"repository_id":999,"issue_number":4} -->']:
+        for body in ['<!-- hydra-progress:v1 broken -->', '<!-- hydra-progress:v1 {"version":1,"repository_id":999,"repository_id":123,"issue_number":4} -->', '<!-- hydra-progress:v1 {"version":1,"repository_id":999,"issue_number":4} -->']:
             fake = self.progress_fake([{'id': 77, 'user': IDENTITY, 'body': body}])
             with self.assertRaises(GitHubError): GitHub(transport=fake).record(REPO, 4, {'phase': 'waiting'})
             self.assertFalse(any(m != 'GET' for m, _, _ in fake.calls))
@@ -101,6 +101,26 @@ class GitHubTests(unittest.TestCase):
                      ('GET', f'/repos/{REPO}/pulls?state=all&head=example%3Ahydra%2Fissue-4&per_page=100&page=1'): pulls,
                      ('GET', f'/repos/{REPO}/git/ref/heads/hydra%2Fissue-4'): {'object': {'sha': HEAD}},
                      ('POST', f'/repos/{REPO}/pulls'): owned_pr()})
+
+    def test_pr_ownership_matches_published_json_and_actual_author(self):
+        gh = GitHub(transport=self.pr_fake([]))
+        self.assertTrue(gh.owns_pr(REPO, 4, owned_pr()))
+        for mutation in [
+            {'body': '<!-- hydra:pr:v1 repository=example/product issue=4 -->'},
+            {'body': '<!-- hydra-pr:v1 {"repository_id":999,"issue_number":4} -->'},
+            {'body': '<!-- hydra-pr:v1 {"repository_id":123,"issue_number":5} -->'},
+            {'body': '<!-- hydra-pr:v1 {"repository_id":999,"repository_id":123,"issue_number":4} -->'},
+            {'body': '<!-- hydra-pr:v1 malformed -->'},
+            {'body': owned_pr()['body'] + owned_pr()['body']},
+            {'user': {'id': 999, 'login': 'openboa'}}, {'user': {'id': 11, 'login': 'foreign'}},
+            {'head': {'sha': HEAD, 'ref': 'hydra/issue-4', 'repo': {'id': 999}}},
+            {'head': {'sha': HEAD, 'ref': 'foreign-branch', 'repo': {'id': 123}}},
+            {'head': {'sha': HEAD, 'ref': 'hydra/issue-4', 'repo': None}}, {'user': None},
+        ]:
+            with self.subTest(mutation=mutation):
+                self.assertFalse(gh.owns_pr(REPO, 4, {**owned_pr(), **mutation}))
+        marker = gh.ensure_pr(REPO, 4, 'hydra/issue-4', HEAD, 'Fix', 'Scope and tests')
+        self.assertTrue(gh.owns_pr(REPO, 4, marker))
 
     def test_existing_owned_pr_recovers_lost_creation_response_without_duplicate(self):
         fake = self.pr_fake([owned_pr()]); gh = GitHub(transport=fake)

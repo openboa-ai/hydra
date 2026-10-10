@@ -43,8 +43,16 @@ def _marker(body, name):
     matches = re.findall(re.escape(prefix) + r"(.*?) -->", body, re.S)
     if len(matches) != 1 or body.count(prefix) != 1:
         raise GitHubError("Ambiguous service marker")
+    def unique_keys(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("Duplicate marker field")
+            value[key] = item
+        return value
+
     try:
-        value = json.loads(matches[0])
+        value = json.loads(matches[0], object_pairs_hook=unique_keys)
     except (ValueError, TypeError) as exc:
         raise GitHubError("Malformed service marker") from exc
     if not isinstance(value, dict):
@@ -154,7 +162,7 @@ class GitHub:
 
     def _progress_comment(self, repo, n):
         identity = self._identity()
-        own = [c for c in self.comments(repo, n) if c.get("user", {}).get("id") == identity["id"] and "<!-- hydra-progress:v1 " in (c.get("body") or "")]
+        own = [c for c in self.comments(repo, n) if c.get("user", {}).get("id") == identity["id"] and c.get("user", {}).get("login") == identity["login"] and "<!-- hydra-progress:v1 " in (c.get("body") or "")]
         if len(own) > 1:
             raise GitHubError("Duplicate service progress comments")
         return own[0] if own else None
@@ -309,18 +317,42 @@ class GitHub:
             expanded.append(detail)
         return {"repository": info, "head_sha": sha, "checks": checks, "runs": expanded}
 
+    def owns_pr(self, repo, n, pr):
+        """One ownership predicate for publication and runner reconciliation."""
+        _number(n)
+        info, identity = self.repository(repo), self._identity()
+        if not isinstance(pr, dict) or not isinstance(pr.get("body"), str):
+            return False
+        try:
+            marker = _marker(pr["body"], "hydra-pr")
+        except GitHubError:
+            return False
+        author, head, base = pr.get("user"), pr.get("head"), pr.get("base")
+        if not all(isinstance(x, dict) for x in [author, head, base]):
+            return False
+        if not all(isinstance(x.get("repo"), dict) for x in [head, base]):
+            return False
+        return (isinstance(marker, dict) and set(marker) == {"repository_id", "issue_number"}
+                and type(marker["repository_id"]) is int and marker["repository_id"] == info["id"]
+                and type(marker["issue_number"]) is int and marker["issue_number"] == n
+                and author.get("id") == identity["id"] and author.get("login") == identity["login"]
+                and head["repo"].get("id") == info["id"] and base["repo"].get("id") == info["id"]
+                and head.get("ref") == f"hydra/issue-{n}"
+                and base.get("ref") == info["default_branch"])
+
     def ensure_pr(self, repo, n, branch, head, title, body):
         _number(n); _sha(head)
         if branch != f"hydra/issue-{n}":
             raise GitHubError("Only the owned issue branch can be published")
-        info, identity = self.repository(repo), self._identity()
+        info = self.repository(repo)
+        self._identity()
         marker = {"repository_id": info["id"], "issue_number": n}
         existing = self.pulls(repo, branch)
         if len(existing) > 1:
             raise GitHubError("Multiple matching PRs")
         if existing:
             value = existing[0]
-            if value.get("user", {}).get("id") != identity["id"] or _marker(value.get("body"), "hydra-pr") != marker:
+            if not self.owns_pr(repo, n, value):
                 raise GitHubError("Foreign branch or PR ownership")
             if value.get("head", {}).get("repo", {}).get("id") != info["id"] or value.get("head", {}).get("ref") != branch or value.get("head", {}).get("sha") != head or value.get("base", {}).get("ref") != info["default_branch"]:
                 raise GitHubError("Existing PR revision mismatch")
