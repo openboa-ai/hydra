@@ -314,3 +314,16 @@ The provider stop fixture was independently corrected at test-file SHA-256
 Its execution spy preserves actual Git identity preflight, while still requiring
 the stop exception, exactly one wrapper construction and zero verifier launches.
 The two related tests passed; no runtime source or stop condition was relaxed.
+
+Linux CI exposed a second consumer of the native launch exception: the readiness
+waiter can await a completed launch before its done callback executes. Independent
+review accepted the bounded source correction at SHA-256
+`076ad442a1fcbba734a78aebd14969e4b626d392730389b802d9300eb5f6628f`.
+Native rejection provenance is now captured inside the existing launch coroutine
+before another waiter can change its traceback, and remains bound to that exact
+completed, uncancelled task. No task, supervisor, timeout or accepted error category
+was added. Portable forced-Linux startup tests exercise actual missing and
+non-directory cwd rejection without helper dispatch. Twenty-nine focused launch
+and restart tests collected: 28 passed, one Linux-only case skipped. Existing
+unknown-result and failed-clear controls remained enforced; current-head Linux CI
+must verify the actual helper implementation.

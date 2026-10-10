@@ -207,16 +207,22 @@ class OwnedProcess:
             self.process = task.result()
             if not self.linux:
                 self.pid = self.pgid = self.process.pid
-        except BaseException as exc:
-            # A later await can replace an exception's traceback. Keep only the
-            # qualified native proof observed at this exact task's first result.
-            if (not task.cancelled()
-                    and _native_launch_rejected(exc, self._launch_command, self.options["cwd"])):
-                self._rejected_launch = task
+        except BaseException:
+            pass
         finally:
             if self._peer is not None:
                 self._peer.close()
                 self._peer = None
+
+    async def _spawn(self, command, options):
+        try:
+            return await asyncio.create_subprocess_exec(*command, **options)
+        except OSError as exc:
+            # A readiness waiter can consume failure before done callbacks run.
+            # Capture native provenance inside the launch task before exposing it.
+            if _native_launch_rejected(exc, self._launch_command, options["cwd"]):
+                self._rejected_launch = asyncio.current_task()
+            raise
 
     async def start(self, deadline):
         if os.name != "posix" or self._launch is not None:
@@ -232,7 +238,7 @@ class OwnedProcess:
         coordinator = _ownership_coordinator()
         self._ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
         self._launch_command = tuple(command)
-        self._launch = asyncio.create_task(asyncio.create_subprocess_exec(*command, **options))
+        self._launch = asyncio.create_task(self._spawn(command, options))
         self._launch.add_done_callback(self._registered)
         if self.linux:
             # Retain the single control reader through startup cancellation. It

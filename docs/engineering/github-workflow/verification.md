@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 484 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 464 passed, 18 Linux-only process tests and
+On 2026-10-10 the final local suite collected 485 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 465 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -119,7 +119,9 @@ before verifier launch.
 
 Native async/sync launch rejection covers missing executables/directories, denied
 execution, non-directory cwd and invalid executable format. First-result native
-proof survives later traceback removal. Generic/post-spawn errors, malformed/lost
+proof is captured inside the launch coroutine before the readiness waiter or
+caller can alter its traceback. Portable forced-Linux cwd regressions cover this
+ordering with actual native failures and no helper dispatch. Generic/post-spawn errors, malformed/lost
 helper receipts and failed/stale ticket clearing preserve ownership. Forty focused
 boundary/launch tests passed. The actual Linux helper variant requires remote CI.
 Canonical repository binding and invalid UTF-8 accepted-spec diagnosis have seven

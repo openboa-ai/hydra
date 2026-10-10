@@ -130,6 +130,50 @@ class LaunchRejectionTests(unittest.IsolatedAsyncioTestCase):
                 with coordinator.coordinator_lock(lock):
                     pass
 
+    async def test_linux_style_outer_cwd_rejection_retains_exact_launch_proof(self):
+        # Exercise the concurrent ready reader on every POSIX host. Native cwd
+        # rejection prevents the helper executable from running, including on
+        # macOS; no Linux subprocess implementation or result is simulated.
+        for name, command, cwd, expected in self.cases:
+            if name not in {"missing_cwd", "nondirectory_cwd"}:
+                continue
+            with self.subTest(case=name):
+                lock = self.root / ("linux-outer-" + name + ".lock")
+                handle = boundary.OwnedProcess(command, cwd=cwd, env=boundary.worker_environment())
+                handle.linux = True
+                loop = asyncio.get_running_loop()
+                with coordinator.coordinator_lock(lock), \
+                        patch.object(loop, "sock_sendall", wraps=loop.sock_sendall) as send_control:
+                    try:
+                        # assertRaises clears the caller's exception traceback.
+                        # Only the evidence captured by the exact launch task
+                        # before another reader awaits it can permit cleanup.
+                        with self.assertRaises(OSError) as caught:
+                            await handle.start(loop.time() + 5)
+                        self.assertEqual(caught.exception.errno, expected)
+                        self.assertIsNone(caught.exception.__traceback__)
+                        self.assertTrue(lock.read_bytes())
+                        self.assertIsNone(handle.process)
+                        self.assertIsNone(handle.pid)
+                        self.assertIsNone(handle.pgid)
+                        self.assertIsNone(handle._rejection)
+                        self.assertIsNone(handle.receipt)
+                        self.assertIsNone(handle._receipt_task)
+                        self.assertIsNotNone(handle._ready_task)
+                        self.assertTrue(handle._ready_task.done())
+                        self.assertTrue(handle._launch.done())
+                        self.assertFalse(handle._launch.cancelled())
+                        self.assertIs(handle._rejected_launch, handle._launch)
+                        self.assertFalse(handle._launch_sent)
+                        send_control.assert_not_called()
+                        self.assertTrue(await handle.cleanup())
+                        send_control.assert_not_called()
+                        self.assertEqual(lock.read_bytes(), b"")
+                    finally:
+                        await handle.cleanup()
+                with coordinator.coordinator_lock(lock):
+                    pass
+
     async def test_real_sync_native_rejections_are_unavailable_and_allow_fresh_lock(self):
         for name, command, cwd, _ in self.cases:
             with self.subTest(case=name):
