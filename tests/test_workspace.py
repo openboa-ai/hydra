@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from hydra_sdlc.workspace import Workspace, WorkspaceWait, _environment, _run
+from hydra_sdlc.workspace import Workspace, WorkspaceWait, _environment, _promote_directory, _run
 
 
 def git(path, *args):
@@ -61,6 +61,95 @@ class WorkspaceTests(unittest.TestCase):
         restarted = LocalWorkspace(self.root / "work", self.remote)
         self.assertEqual(restarted.prepare("example/project", 1, "hydra/issue-1", None), self.path)
         self.assertFalse(list((self.root / "work").glob("**/*.json")))
+
+    def test_interrupted_staging_before_and_after_stamping_is_preserved_on_restart(self):
+        for number, after_stamp in ((2, False), (3, True)):
+            with self.subTest(after_stamp=after_stamp):
+                final = self.path.parent / f"issue-{number}"
+                original = self.workspace._git
+                staged = []
+                def interrupted(path, *args, **kwargs):
+                    marker = self.workspace._marker(final, "owner" if after_stamp else "repository")
+                    if args[:3] == ("config", "--local", marker) and len(args) == 4:
+                        staged.append(Path(path))
+                        if after_stamp:
+                            original(path, *args, **kwargs)
+                        raise KeyboardInterrupt("allocation interrupted")
+                    return original(path, *args, **kwargs)
+                with patch.object(self.workspace, "_git", side_effect=interrupted):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.workspace.prepare("example/project", number, f"hydra/issue-{number}", None)
+                self.assertFalse(final.exists())
+                self.assertEqual(len(staged), 1)
+                stage = staged[0]
+                self.assertEqual(stage.parent, final.parent)
+                self.assertNotEqual(stage, final)
+                before = (stage / ".git/config").read_bytes()
+                (stage / "retain").write_bytes(b"abandoned allocation")
+                restarted = LocalWorkspace(self.root / "work", self.remote)
+                self.assertEqual(restarted.prepare("example/project", number, f"hydra/issue-{number}", None), final)
+                self.assertEqual((stage / ".git/config").read_bytes(), before)
+                self.assertEqual((stage / "retain").read_bytes(), b"abandoned allocation")
+                self.assertFalse((final / "retain").exists())
+                self.assertEqual(restarted.inspect(final)["head"], self.base)
+
+    def test_interruption_after_promotion_reuses_complete_owned_checkout(self):
+        final = self.path.parent / "issue-2"
+        def interrupted(source, destination):
+            _promote_directory(source, destination)
+            raise KeyboardInterrupt("promoted response lost")
+        with patch("hydra_sdlc.workspace._promote_directory", side_effect=interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
+        inode = final.stat().st_ino
+        restarted = LocalWorkspace(self.root / "work", self.remote)
+        with patch("hydra_sdlc.workspace._promote_directory", side_effect=AssertionError("unexpected reallocation")):
+            self.assertEqual(restarted.prepare("example/project", 2, "hydra/issue-2", None), final)
+        self.assertEqual(final.stat().st_ino, inode)
+        self.assertEqual(restarted.inspect(final)["head"], self.base)
+
+    def test_promotion_refuses_raced_foreign_empty_directory_and_symlinks(self):
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        (foreign / "retain").write_bytes(b"foreign content")
+        for number, kind in ((2, "directory"), (3, "symlink"), (4, "dangling")):
+            with self.subTest(kind=kind):
+                final = self.path.parent / f"issue-{number}"
+                staged, identity = [], []
+                def raced(source, destination):
+                    staged.append(source)
+                    if kind == "directory":
+                        destination.mkdir()
+                    else:
+                        destination.symlink_to(foreign if kind == "symlink" else self.root / "absent")
+                    identity.append(destination.lstat().st_ino)
+                    _promote_directory(source, destination)
+                with patch("hydra_sdlc.workspace._promote_directory", side_effect=raced):
+                    with self.assertRaisesRegex(WorkspaceWait, "workspace_destination_exists"):
+                        self.workspace.prepare("example/project", number, f"hydra/issue-{number}", None)
+                self.assertEqual(final.lstat().st_ino, identity[0])
+                self.assertTrue(staged[0].is_dir())
+                if kind == "directory":
+                    self.assertEqual(list(final.iterdir()), [])
+                else:
+                    self.assertTrue(final.is_symlink())
+                with self.assertRaises(WorkspaceWait):
+                    LocalWorkspace(self.root / "work", self.remote).prepare("example/project", number, f"hydra/issue-{number}", None)
+                self.assertEqual(final.lstat().st_ino, identity[0])
+                self.assertEqual((foreign / "retain").read_bytes(), b"foreign content")
+
+    def test_exclusive_promotion_unavailable_preserves_source_without_fallback(self):
+        stage, final = self.root / "stage", self.root / "destination"
+        stage.mkdir()
+        (stage / "retain").write_bytes(b"owned allocation")
+        with patch("hydra_sdlc.workspace.sys.platform", "unsupported"):
+            with self.assertRaisesRegex(WorkspaceWait, "exclusive_rename_unavailable"):
+                _promote_directory(stage, final)
+        with patch("hydra_sdlc.workspace.ctypes.CDLL", return_value=object()):
+            with self.assertRaisesRegex(WorkspaceWait, "exclusive_rename_unavailable"):
+                _promote_directory(stage, final)
+        self.assertFalse(final.exists())
+        self.assertEqual((stage / "retain").read_bytes(), b"owned allocation")
 
     def test_dirty_foreign_branch_and_alias_wait_without_changing_files(self):
         (self.path / "draft").write_text("keep")

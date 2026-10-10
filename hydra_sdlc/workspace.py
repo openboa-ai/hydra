@@ -9,6 +9,8 @@ through verification_output, not through public result records.
 from __future__ import annotations
 
 import hashlib
+import ctypes
+import errno
 import os
 from pathlib import Path
 import re
@@ -16,6 +18,7 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -31,6 +34,33 @@ PUBLISH_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENT
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 MAX_SPEC_BYTES = 1024 * 1024
 GIT_TIMEOUT = 60
+
+
+def _promote_directory(source, destination):
+    """Atomically publish a sibling directory without replacing any object."""
+    source, destination = Path(source), Path(destination)
+    if (source.parent != destination.parent or source != source.resolve()
+            or destination.parent != destination.parent.resolve()):
+        raise WorkspaceWait("workspace_missing_or_aliased")
+    name, flags = {"darwin": ("renameatx_np", 4), "linux": ("renameat2", 1)}.get(sys.platform, (None, None))
+    if name is None:
+        raise WorkspaceWait("exclusive_rename_unavailable")
+    try:
+        rename = getattr(ctypes.CDLL(None, use_errno=True), name)
+    except (AttributeError, OSError) as exc:
+        raise WorkspaceWait("exclusive_rename_unavailable") from exc
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    parent = os.open(source.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        # Darwin RENAME_EXCL / Linux RENAME_NOREPLACE. No ordinary rename fallback.
+        if rename(parent, os.fsencode(source.name), parent, os.fsencode(destination.name), flags):
+            error = ctypes.get_errno()
+            if error in {errno.EEXIST, errno.ENOTEMPTY}:
+                raise WorkspaceWait("workspace_destination_exists")
+            raise WorkspaceWait("exclusive_rename_unavailable")
+    finally:
+        os.close(parent)
 
 
 def _environment():
@@ -228,12 +258,16 @@ class Workspace:
         if not re.fullmatch(r"issue-[1-9][0-9]*", issue):
             raise WorkspaceWait("foreign_workspace")
         branch = "hydra/" + issue
+        self._checkout_identity(path, repo, issue[6:], branch, marker_path=path)
+        return path, repo, branch
+
+    def _checkout_identity(self, path, repo, number, branch, *, marker_path):
         top = self._git(path, "rev-parse", "--show-toplevel").stdout.decode().strip()
         if Path(top).resolve() != path:
             raise WorkspaceWait("foreign_workspace")
-        expected = {"repository": repo, "issue": issue[6:], "branch": branch, "owner": self.user}
+        expected = {"repository": repo, "issue": str(number), "branch": branch, "owner": self.user}
         for key, value in expected.items():
-            result = self._git(path, "config", "--local", "--get", self._marker(path, key), check=False)
+            result = self._git(path, "config", "--local", "--get", self._marker(marker_path, key), check=False)
             if result.returncode or result.stdout.decode().strip() != value:
                 raise WorkspaceWait("foreign_workspace")
         origin = self._git(path, "remote", "get-url", "--all", "origin").stdout.decode().strip()
@@ -243,7 +277,6 @@ class Workspace:
         current = self._git(path, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
         if current.returncode or current.stdout.decode().strip() != branch:
             raise WorkspaceWait("workspace_branch_changed")
-        return path, repo, branch
 
     @staticmethod
     def _marker(path, key):
@@ -288,31 +321,48 @@ class Workspace:
         if self._managed() and self.lifecycle_provider is None:
             raise WorkspaceWait("lifecycle_provider_required")
         path.parent.mkdir(parents=True, exist_ok=True)
+        allocation = path
         if self.lifecycle_provider is not None:
             provided = self.lifecycle_provider.prepare(repo, number, branch, expected_remote_sha, path)
             if Path(provided).absolute() != path:
                 raise WorkspaceWait("lifecycle_provider_path_mismatch")
         else:
-            self._git(path.parent, "clone", "--no-local", "--no-checkout", self._url(repo), str(path), remote=True)
-            observed = self._remote_sha(path, branch)
+            # Retain interrupted allocations. Their names grant no ownership and
+            # a restart creates fresh staging rather than adopting or deleting them.
+            allocation = Path(tempfile.mkdtemp(prefix="." + path.name + "-allocation-", dir=path.parent))
+            self._git(path.parent, "clone", "--no-local", "--no-checkout", self._url(repo), str(allocation), remote=True)
+            observed = self._remote_sha(allocation, branch)
             if observed != expected_remote_sha:
                 raise WorkspaceWait("remote_head_changed")
             if expected_remote_sha is None:
-                base = self._git(path, "symbolic-ref", "refs/remotes/origin/HEAD").stdout.decode().strip()
-                self._git(path, "checkout", "-b", branch, base)
+                base = self._git(allocation, "symbolic-ref", "refs/remotes/origin/HEAD").stdout.decode().strip()
+                self._git(allocation, "checkout", "-b", branch, base)
             else:
-                self._git(path, "checkout", "-b", branch, expected_remote_sha)
+                self._git(allocation, "checkout", "-b", branch, expected_remote_sha)
+            git_directory = allocation / ".git"
+            common = self._git(allocation, "rev-parse", "--git-common-dir").stdout.decode().strip()
+            if (not git_directory.is_dir() or git_directory.is_symlink()
+                    or (allocation / common).resolve() != git_directory):
+                raise WorkspaceWait("foreign_workspace")
         # Stamp only the newly allocated directory. An existing arbitrary tree is
         # never adopted just because its name resembles the deterministic path.
-        if path != path.resolve() or not path.is_dir():
+        if allocation != allocation.resolve() or not allocation.is_dir():
             raise WorkspaceWait("workspace_missing_or_aliased")
-        if self._git(path, "status", "--porcelain=v1", "--untracked-files=all").stdout:
+        if self._git(allocation, "status", "--porcelain=v1", "--untracked-files=all").stdout:
             raise WorkspaceWait("dirty_workspace")
-        current = self._git(path, "symbolic-ref", "--short", "HEAD").stdout.decode().strip()
+        current = self._git(allocation, "symbolic-ref", "--short", "HEAD").stdout.decode().strip()
         if current != branch:
             raise WorkspaceWait("workspace_branch_changed")
         for key, value in {"repository": repo, "issue": str(number), "branch": branch, "owner": self.user}.items():
-            self._git(path, "config", "--local", self._marker(path, key), value)
+            self._git(allocation, "config", "--local", self._marker(path, key), value)
+        if allocation != path:
+            self._checkout_identity(allocation, repo, number, branch, marker_path=path)
+            head = _sha(self._git(allocation, "rev-parse", "--verify", "HEAD^{commit}").stdout.decode().strip())
+            if expected_remote_sha is not None and head != expected_remote_sha:
+                raise WorkspaceWait("remote_head_changed")
+            if self._remote_sha(allocation, branch) != expected_remote_sha:
+                raise WorkspaceWait("remote_head_changed")
+            _promote_directory(allocation, path)
         self._identity(path)
         if self._remote_sha(path, branch) != expected_remote_sha:
             raise WorkspaceWait("remote_head_changed")
