@@ -113,6 +113,7 @@ class FakeClient:
         self.start_silent = False
         self.closed = False
         self.account_type = "chatgpt"
+        self.on_start = None
 
     async def __aenter__(self):
         return self
@@ -123,6 +124,8 @@ class FakeClient:
     async def thread_start(self, **options):
         self.trace.append("thread-start")
         self.options = options
+        if self.on_start is not None:
+            self.on_start()
         if self.start_silent:
             await asyncio.Event().wait()
         return self.thread
@@ -166,6 +169,11 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     def save_event(self, event_id, payload):
         self.events.append((event_id, payload))
         self.trace.append("persist-event")
+
+    def stop_after_turn_identity(self, **fields):
+        self.identity(**fields)
+        if "turn_id" in fields:
+            self.stop = True
 
     async def execute(self, **kwargs):
         return await codex._execute_in_process(
@@ -315,15 +323,15 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stop_during_pending_start_is_unknown(self):
         self.client.start_silent = True
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
+        self.client.on_start = lambda: setattr(self, "stop", True)
         result = await self.execute()
         self.assertEqual(result["status"], "transport_unknown")
+        self.assertIn("thread-start", self.trace)
         self.assertNotIn("turn-start", self.trace)
 
     async def test_cancel_silent_stream_interrupts_once_and_waits_for_terminal(self):
         self.turn.silent = True
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
-        result = await self.execute()
+        result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(self.turn.interrupts, 1)
         self.assertEqual(result["detail"]["terminal"]["status"], "interrupted")
@@ -387,8 +395,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_interrupt_without_terminal_does_not_claim_stopped(self):
         self.turn.silent = True
         self.turn.interrupt_terminal = False
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
-        result = await self.execute()
+        result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(self.turn.interrupts, 1)
         self.assertIsNone(result["detail"]["terminal"])
@@ -398,8 +405,14 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_interrupt_failure_is_durable_without_sensitive_message(self):
         self.turn.silent = True
         self.turn.interrupt_error = ConnectionError("private response diagnostics")
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
-        result = await self.execute()
+        # Account/thread setup can outlast a short wall timer under CI load.
+        # Exercise an interrupt of an actual known turn, never pre-dispatch stop.
+        original_account = self.client.account
+        async def slow_account(*args, **kwargs):
+            await asyncio.sleep(0.04)
+            return await original_account(*args, **kwargs)
+        self.client.account = slow_account
+        result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(result["detail"]["interrupt"], {
             "state": "request_failed", "reason": "stop_requested", "error_type": "ConnectionError",
@@ -414,9 +427,8 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_delayed_turn_activation_retries_same_interrupt(self):
         self.turn.silent = True
         self.turn.interrupt_errors = [NoActiveTurn(), None]
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
         with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
-            result = await self.execute()
+            result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(self.turn.interrupts, 2)
         self.assertEqual(self.trace.count("turn-start"), 1)
@@ -427,9 +439,8 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_active_turn_retries_are_bounded_to_two(self):
         self.turn.silent = True
         self.turn.interrupt_errors = [NoActiveTurn() for _ in range(4)]
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
         with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
-            result = await self.execute()
+            result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(self.turn.interrupts, 3)
         self.assertEqual(result["detail"]["interrupt"]["attempt"], 3)
@@ -438,27 +449,30 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_terminal_cancels_pending_interrupt_retry(self):
         self.turn.silent = True
         self.turn.interrupt_errors = [NoActiveTurn()]
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
-        asyncio.get_running_loop().call_later(0.022, self.turn.interrupted.set)
+        original_interrupt = self.turn.interrupt
+        async def terminal_after_rejection():
+            try:
+                await original_interrupt()
+            finally:
+                self.turn.interrupted.set()
+        self.turn.interrupt = terminal_after_rejection
         with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.02, 0.03)):
-            result = await self.execute()
+            result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(self.turn.interrupts, 1)
 
     async def test_different_invalid_request_does_not_retry(self):
         self.turn.silent = True
         self.turn.interrupt_error = NoActiveTurn("different active turn")
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
         with patch.object(codex, "INTERRUPT_RETRY_DELAYS_SECONDS", (0.005, 0.01)):
-            result = await self.execute()
+            result = await self.execute(on_identity=self.stop_after_turn_identity)
         self.assertEqual(result["status"], "transport_unknown")
         self.assertEqual(self.turn.interrupts, 1)
 
     async def test_interrupt_acknowledgement_does_not_count_as_terminal(self):
         self.turn.silent = True
         self.turn.interrupt_terminal = False
-        asyncio.get_running_loop().call_later(0.015, setattr, self, "stop", True)
-        result = await self.execute()
+        result = await self.execute(on_identity=self.stop_after_turn_identity)
         response = next(payload for _, payload in self.events if payload["method"] == "hydra/interruptResponse")
         self.assertEqual(response["params"]["state"], "response_acknowledged")
         self.assertEqual(result["status"], "transport_unknown")
