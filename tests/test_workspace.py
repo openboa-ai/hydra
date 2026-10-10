@@ -372,6 +372,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_checkpoint_disables_hooks_and_is_idempotent(self):
         sentinel = self.root / "hook-ran"
         hook = self.path / ".git/hooks/pre-commit"
+        hook.parent.mkdir(exist_ok=True)
         hook.write_text("#!/bin/sh\ntouch " + str(sentinel) + "\n")
         hook.chmod(0o755)
         (self.path / "README.md").write_text("changed\n")
@@ -814,12 +815,14 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_read_spec_bounds_growth_after_descriptor_validation(self):
         spec = self.path / "README.md"
+        identity = spec.stat()
         real_fstat = os.fstat
         checks = []
         def grown(fd):
             info = real_fstat(fd)
-            checks.append(fd)
-            spec.write_bytes(b"x" * (1024 * 1024 + 1))
+            if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+                checks.append(fd)
+                spec.write_bytes(b"x" * (1024 * 1024 + 1))
             return info
         with patch("hydra_sdlc.workspace.os.fstat", side_effect=grown):
             with self.assertRaisesRegex(WorkspaceWait, "invalid_spec"):

@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 350 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 332 passed, 16 Linux-only process tests and
+On 2026-10-10 the final local suite collected 394 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 376 passed, 16 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -48,6 +48,18 @@ requires exactly the delegated regular bounded specification; pending publicatio
 keeps its original base. Malformed intake cannot hide other Issues from status.
 Actual native workspace tests cover staged allocation, crashes around ownership
 stamping/promotion, destination races, and exclusive rename without replacement.
+
+Native active labels bound closed-Issue recovery without scanning completed history.
+Label-before-progress ordering, durable completion before cleanup, lost responses,
+and ownership holds during completion cleanup have client/runner regressions.
+Dependency priority includes valid blocked intake; malformed reported usage holds
+dispatch instead of silently dropping a bucket. Concrete specs respect the allowlist.
+Required-job CI classification ignores optional aggregate failure while preserving
+producer and commit binding. Nine actual service-Git regressions exercise standalone
+and linked layouts with synthetic credentials and local remotes: candidate executable
+settings stay unexecuted, genuine checkout/index/shared data remain available, and
+mutable origin/config cannot redirect a remote read. Indexed submodules hold as
+unsupported metadata. These fixtures make no claim of host credential isolation.
 
 The shared SDK/capability/verification process owner requires actual cleanup. A
 synchronous verification facade reuses the isolated helper and receipt contract;

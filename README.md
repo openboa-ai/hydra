@@ -48,6 +48,11 @@ A decision or CI wait releases capacity for another repository. Active external
 waits are checked every 60 seconds; idle intake every five minutes. Unchanged state
 does not trigger a model turn or repeated output.
 
+Native ready, paused and decision labels control delegated work; `hydra:active`
+keeps unfinished work and interrupted completion cleanup discoverable. Open intake
+and closed active recovery are queried separately, without scanning closed history.
+Labels do not establish successful checks, reviews or merge.
+
 One service-authored Issue comment records attempts, revisions, checkpoint, pending
 action and next step. This directs recovery; actual branch/PR/CI/provider facts
 authorize delivery. Restart reconciles effects before retry and never creates a

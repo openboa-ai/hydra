@@ -168,3 +168,34 @@ The CI interruption-fixture correction was also independently checked with delay
 account setup; its assertions and runtime interruption contract remain intact.
 These source/test acceptances do not replace final-head CI, both provider reviews,
 native protected approval or actual two-project delivery and recovery.
+
+The observation-scope/service-Git appendix, including native active-label discovery,
+was independently accepted before dependent edits at specification SHA-256
+`cb28b63f1d21f10e71417d1240ef9da36fa46038b1ce53eec9799b49424c7a36`.
+Independent review accepted GitHub adapter SHA-256
+`ded91f8ba9975bf84a2ec3652572a11da55ed0ca93c9495ece6c09f9aff91f63`
+and runner SHA-256
+`8dfa6c93808841f758d2503493f6fbd127fcde5fb97a9cafdd613bc8c5ce6253`
+for bounded native label discovery, fresh PR ownership, dependency priority and
+completion reconciliation. Review found and corrected premature label removal
+after a completion-recovery ownership hold. Eight label regressions, including
+the actual GitHub client and runner together, passed; five independently authored
+ownership/ordering regressions also failed against the previous source as expected.
+Usage normalization and dispatch received a separate independent source review at
+Codex adapter SHA-256
+`e2cb31bf66170d6f7375b408fb2abc0541fc65fa7f3a7f73b4934e25f2785d59`;
+sixteen reported-bucket/window/privacy regressions passed. These are bounded source
+and fixture results, separate from authenticated unattended delivery.
+Independent review also accepted project SHA-256
+`c8ac1f313b00ebc7f09a0880d055b2a2948123fcc34a8c0fc80a45422e740880`
+for concrete intake allowlists and authenticated required-job CI classification.
+Optional workflow failures no longer count as required failures; missing required
+jobs in completed formal runs enter diagnosis. Active or unidentified evidence
+still cannot pass, and producer/event/reusable/commit binding remains unchanged.
+Service-Git source SHA-256
+`f5caa086a573b8ca1a02fce9e74eb2f220d330631953955a81856e93c8fc5d7c`
+passed a separate independent review against the same accepted appendix. Each
+service operation receives generated configuration and the service-derived remote;
+candidate executable configuration is excluded. Genuine checkout/index/shared data
+and guarded nonforce publication remain in use. Unsupported metadata, including
+indexed submodules, holds. This does not establish host credential isolation.

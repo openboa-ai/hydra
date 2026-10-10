@@ -2,7 +2,7 @@ import copy
 import json
 import unittest
 
-from hydra_sdlc.project import ProjectError, gate_checks, gate_delivery, gate_post_merge, load_project, parse_intake, _provider
+from hydra_sdlc.project import ProjectError, gate_checks, gate_delivery, gate_post_merge, load_project, parse_intake, terminal_required_checks, _provider
 
 
 BASE, HEAD, BLOB, MERGE = 'a' * 40, 'b' * 40, 'c' * 40, 'd' * 40
@@ -159,6 +159,22 @@ class ProjectTests(unittest.TestCase):
     def test_exact_head_genuine_checks_and_completed_provider_pass(self):
         self.assertEqual(gate_delivery(config(), observation(), HEAD, ['src/main.py']), [])
 
+    def test_intake_spec_requires_its_concrete_path_in_candidate_allowlist(self):
+        issue = {'number': 4, 'state': 'open', 'title': 'Scoped change', 'user': {'login': 'operator'},
+                 'labels': [{'name': 'hydra:ready'}],
+                 'body': '## Goal\nFix parsing.\n## Scope\nParser.\n## Acceptance\nTests pass.\n'
+                         '```hydra\nspec = "docs/engineering/parser/spec.md"\nspec_revision = "' + HEAD + '"\n```'}
+        cfg = config()
+        for paths in [['src/'], ['docs/engineering/other/'], ['docs/engineering/parser/spec.md.bak']]:
+            with self.subTest(paths=paths):
+                cfg['allowed_paths'] = paths
+                with self.assertRaisesRegex(ProjectError, 'candidate allowlist'):
+                    parse_intake(issue, cfg)
+        for paths in [['docs/'], ['docs/engineering/*/spec.md'], ['docs/engineering/parser/spec.md']]:
+            with self.subTest(paths=paths):
+                cfg['allowed_paths'] = paths
+                self.assertEqual(parse_intake(issue, cfg)['spec'], 'docs/engineering/parser/spec.md')
+
     def test_spoofed_or_stale_checks_and_native_evidence_block(self):
         cases = [(['runs', 0, 'workflow_id'], 9), (['runs', 0, 'path'], '.github/workflows/fake.yml'),
                  (['runs', 0, 'event'], 'workflow_dispatch'), (['runs', 0, 'head_sha'], BASE),
@@ -178,8 +194,95 @@ class ProjectTests(unittest.TestCase):
                 self.assertTrue(gate_delivery(config(), obs, HEAD, ['src/main.py']))
 
     def test_newer_failed_rerun_does_not_reuse_old_success(self):
-        obs = observation(); failed = copy.deepcopy(obs['runs'][0]); failed.update(id=51, run_attempt=2, conclusion='failure'); obs['runs'].append(failed)
-        self.assertIn('check_not_successful:Unit tests', gate_delivery(config(), obs, HEAD, ['src/main.py']))
+        obs = observation()
+        failed = copy.deepcopy(obs['runs'][0])
+        failed.update(id=51, run_attempt=2, conclusion='failure')
+        failed['jobs'][0].update(id=91, conclusion='failure',
+                                check_run_url='https://api.github.com/repos/example/product/check-runs/91')
+        check = copy.deepcopy(obs['checks'][0]); check.update(id=91, conclusion='failure')
+        obs['runs'].append(failed); obs['checks'].append(check)
+        self.assertIn('check_job_not_successful:Unit tests', gate_delivery(config(), obs, HEAD, ['src/main.py']))
+        self.assertEqual(terminal_required_checks(config(), obs, HEAD), [{'job': 'Unit tests', 'conclusion': 'failure'}])
+
+    def test_optional_job_failure_does_not_block_successful_required_job(self):
+        cfg, obs = config(), observation()
+        run = obs['runs'][0]
+        run['conclusion'] = 'failure'
+        optional = copy.deepcopy(run['jobs'][0])
+        optional.update(id=91, name='Optional report', conclusion='failure',
+                        check_run_url='https://api.github.com/repos/example/product/check-runs/91')
+        run['jobs'].append(optional)
+        check = copy.deepcopy(obs['checks'][0]); check.update(id=91, name='Optional report', conclusion='failure')
+        obs['checks'].append(check)
+        self.assertEqual(gate_delivery(cfg, obs, HEAD, ['src/main.py']), [])
+        self.assertEqual(terminal_required_checks(cfg, obs, HEAD), [])
+        run.update(event='push', head_sha=MERGE, head_branch='main')
+        for item in run['jobs'] + obs['checks']:
+            item['head_sha'] = MERGE
+        self.assertEqual(gate_checks(cfg, obs, MERGE, events=['push']), [])
+
+    def test_required_job_and_check_failures_remain_actionable(self):
+        for outcome in ['failure', 'timed_out', 'cancelled', 'startup_failure', 'skipped', 'unknown_result']:
+            for source in ['job', 'check', 'both']:
+                with self.subTest(outcome=outcome, source=source):
+                    cfg, obs = config(), observation()
+                    if source in {'job', 'both'}:
+                        obs['runs'][0]['jobs'][0]['conclusion'] = outcome
+                    if source in {'check', 'both'}:
+                        obs['checks'][0]['conclusion'] = outcome
+                    self.assertTrue(gate_checks(cfg, obs, HEAD))
+                    self.assertEqual(terminal_required_checks(cfg, obs, HEAD),
+                                     [{'job': 'Unit tests', 'conclusion': outcome}])
+
+    def test_missing_required_job_in_completed_bound_run_requires_diagnosis(self):
+        for conclusion in ['success', 'failure', 'cancelled', 'startup_failure']:
+            with self.subTest(conclusion=conclusion):
+                cfg, obs = config(), observation()
+                obs['runs'][0].update(conclusion=conclusion, jobs=[])
+                self.assertTrue(gate_checks(cfg, obs, HEAD))
+                self.assertEqual(terminal_required_checks(cfg, obs, HEAD),
+                                 [{'job': 'Unit tests', 'conclusion': 'missing_required_job'}])
+        obs['runs'][0]['status'] = 'in_progress'
+        self.assertTrue(gate_checks(cfg, obs, HEAD))
+        self.assertEqual(terminal_required_checks(cfg, obs, HEAD), [])
+
+    def test_completed_required_failure_is_actionable_while_optional_work_remains_active(self):
+        for source in ['job', 'check', 'both']:
+            with self.subTest(source=source):
+                cfg, obs = config(), observation()
+                obs['runs'][0].update(status='in_progress', conclusion=None)
+                if source in {'job', 'both'}:
+                    obs['runs'][0]['jobs'][0]['conclusion'] = 'failure'
+                if source in {'check', 'both'}:
+                    obs['checks'][0]['conclusion'] = 'failure'
+                self.assertTrue(gate_checks(cfg, obs, HEAD))
+                self.assertEqual(terminal_required_checks(cfg, obs, HEAD),
+                                 [{'job': 'Unit tests', 'conclusion': 'failure'}])
+
+    def test_unknown_or_active_required_evidence_does_not_pass_or_trigger_correction(self):
+        cases = [(['runs', 0, 'workflow_id'], 999),
+                 (['runs', 0, 'jobs', 0, 'head_sha'], BASE),
+                 (['runs', 0, 'jobs', 0, 'check_run_url'], 'https://api.github.com/repos/other/repo/check-runs/90'),
+                 (['checks', 0, 'app', 'id'], 999),
+                 (['runs', 0, 'jobs', 0, 'status'], 'in_progress'),
+                 (['checks', 0, 'status'], 'queued')]
+        for path, value in cases:
+            with self.subTest(path=path):
+                cfg, obs = config(), observation()
+                obs['runs'][0]['conclusion'] = 'failure'
+                obs['runs'][0]['jobs'][0]['conclusion'] = 'failure'
+                obs['checks'][0]['conclusion'] = 'failure'
+                target = obs
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.assertTrue(gate_checks(cfg, obs, HEAD))
+                self.assertEqual(terminal_required_checks(cfg, obs, HEAD), [])
+        cfg, obs = config(), observation()
+        cfg['required_checks'][0].update(reusable_workflow='example/controls/.github/workflows/check.yml', reusable_sha=BLOB)
+        obs['runs'][0].update(conclusion='startup_failure', jobs=[])
+        self.assertTrue(gate_checks(cfg, obs, HEAD))
+        self.assertEqual(terminal_required_checks(cfg, obs, HEAD), [])
 
     def test_target_event_requires_current_base_head_association(self):
         cfg, obs = config(), observation(); cfg['required_checks'][0]['events'] = ['pull_request_target', 'push']

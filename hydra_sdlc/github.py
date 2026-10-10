@@ -11,6 +11,8 @@ import subprocess
 import uuid
 from urllib.parse import quote, urlencode
 
+ACTIVE_LABEL = "hydra:active"
+
 
 class GitHubError(RuntimeError):
     def __init__(self, reason, *, status=None, uncertain=False):
@@ -114,7 +116,7 @@ class GitHub:
             raise GitHubError("GitHub transport unavailable", uncertain=method != "GET") from exc
 
     def api(self, method, path, payload=None):
-        if method not in {"GET", "POST", "PATCH", "PUT"} or not isinstance(path, str) or not path.startswith("/") or ".." in path or "://" in path:
+        if method not in {"GET", "POST", "PATCH", "PUT", "DELETE"} or not isinstance(path, str) or not path.startswith("/") or ".." in path or "://" in path:
             raise GitHubError("Invalid GitHub API request")
         return self.transport(method, path, payload)
 
@@ -157,20 +159,53 @@ class GitHub:
 
     def issues(self, repo):
         result = []
-        for issue in self._pages(f"/repos/{_repo(repo)}/issues?state=all&sort=created&direction=asc"):
-            if not isinstance(issue, dict) or issue.get("state") not in {"open", "closed"}:
+        prefix = f"/repos/{_repo(repo)}/issues"
+        for issue in self._pages(prefix + "?state=open&sort=created&direction=asc"):
+            if not isinstance(issue, dict) or issue.get("state") != "open":
                 raise GitHubError("Incomplete Issue state")
-            if "pull_request" in issue:
-                continue
-            if issue["state"] == "open":
+            if "pull_request" not in issue:
                 result.append(issue)
-            elif issue.get("comments") != 0:
-                # A close response may be lost after GitHub closes the Issue.
-                # Only our authenticated pending intention admits recovery.
+        for issue in self._pages(prefix + "?" + urlencode({"state": "closed", "labels": ACTIVE_LABEL,
+                                                          "sort": "created", "direction": "asc"})):
+            if not isinstance(issue, dict) or issue.get("state") != "closed":
+                raise GitHubError("Incomplete recovery Issue state")
+            if "pull_request" not in issue and ACTIVE_LABEL in self._labels(issue) and issue.get("comments") != 0:
+                # A label narrows discovery; only authenticated progress admits recovery.
                 record = self.progress(repo, _number(issue.get("number")))
-                if record and record.get("pending_action") == "close_issue":
+                if record and (record.get("pending_action") == "close_issue" or record.get("phase") == "completed"):
                     result.append(issue)
         return result
+
+    @staticmethod
+    def _labels(issue):
+        labels = issue.get("labels")
+        if not isinstance(labels, list) or any(not isinstance(x, dict) or not isinstance(x.get("name"), str) for x in labels):
+            raise GitHubError("Incomplete Issue labels")
+        return {x["name"] for x in labels}
+
+    def _active(self, repo, n, active):
+        prefix = f"/repos/{_repo(repo)}"
+        present = ACTIVE_LABEL in self._labels(self.issue(repo, n))
+        if present == active:
+            return
+        if active:
+            label = prefix + "/labels/" + quote(ACTIVE_LABEL, safe="")
+            try:
+                self.api("GET", label)
+            except GitHubError as exc:
+                if exc.status != 404:
+                    raise
+                self.api("POST", prefix + "/labels", {"name": ACTIVE_LABEL, "color": "1d76db",
+                                                       "description": "Hydra work or completion reconciliation in progress"})
+            self.api("POST", f"{prefix}/issues/{n}/labels", {"labels": [ACTIVE_LABEL]})
+        else:
+            try:
+                self.api("DELETE", f"{prefix}/issues/{n}/labels/" + quote(ACTIVE_LABEL, safe=""))
+            except GitHubError as exc:
+                if exc.status != 404:
+                    raise
+        if (ACTIVE_LABEL in self._labels(self.issue(repo, n))) != active:
+            raise GitHubError("Active label result unconfirmed")
 
     def issue(self, repo, n):
         value = self.api("GET", f"/repos/{_repo(repo)}/issues/{_number(n)}")
@@ -247,14 +282,24 @@ class GitHub:
             if old.get("repository_id") != metadata["repository_id"] or old.get("issue_number") != n or old.get("version") != 1:
                 raise GitHubError("Existing progress identity mismatch")
             self._validate_record(old, metadata=True)
+        completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
+                     and metadata.get("wait_reason") is None)
+        if not completed:
+            self._active(repo, n, True)
         if previous and old == metadata:
+            if completed:
+                self._active(repo, n, False)
             return previous
         human = ["## Hydra progress", ""]
         human += [f"- {key.replace('_', ' ').capitalize()}: `{value}`" for key, value in metadata.items() if value is not None and key not in {"version", "repository_id", "issue_number"}]
         body = "\n".join(human) + "\n\n<!-- hydra-progress:v1 " + json.dumps(metadata, sort_keys=True, separators=(",", ":")) + " -->"
         if previous:
-            return self.api("PATCH", f"/repos/{_repo(repo)}/issues/comments/{_number(previous['id'])}", {"body": body})
-        return self.api("POST", f"/repos/{_repo(repo)}/issues/{n}/comments", {"body": body})
+            result = self.api("PATCH", f"/repos/{_repo(repo)}/issues/comments/{_number(previous['id'])}", {"body": body})
+        else:
+            result = self.api("POST", f"/repos/{_repo(repo)}/issues/{n}/comments", {"body": body})
+        if completed:
+            self._active(repo, n, False)
+        return result
 
     def ref(self, repo, branch):
         try:

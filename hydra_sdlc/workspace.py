@@ -34,6 +34,37 @@ PUBLISH_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENT
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 MAX_SPEC_BYTES = 1024 * 1024
 GIT_TIMEOUT = 60
+MAX_GIT_CONFIG_BYTES = 1024 * 1024
+
+
+def _git_file(path, *, optional=False, contents=True):
+    """Read metadata without following aliases or blocking on special files."""
+    path = Path(path)
+    if path.parent != path.parent.resolve():
+        raise WorkspaceWait("foreign_workspace")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        if optional:
+            return None
+        raise WorkspaceWait("foreign_workspace")
+    except OSError as exc:
+        raise WorkspaceWait("foreign_workspace") from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or (contents and info.st_size > MAX_GIT_CONFIG_BYTES):
+            raise WorkspaceWait("foreign_workspace")
+        if not contents:
+            return b""
+        data = bytearray()
+        while len(data) <= MAX_GIT_CONFIG_BYTES:
+            chunk = os.read(descriptor, min(65536, MAX_GIT_CONFIG_BYTES + 1 - len(data)))
+            if not chunk:
+                return bytes(data)
+            data.extend(chunk)
+        raise WorkspaceWait("foreign_workspace")
+    finally:
+        os.close(descriptor)
 
 
 def _promote_directory(source, destination):
@@ -212,22 +243,174 @@ class Workspace:
         env["GH_TOKEN"] = token
         return env
 
-    def _git(self, path, *args, remote=False, check=True, publish_guard=None):
-        env = self._auth_environment() if remote else _environment()
-        options = ["-c", "core.hooksPath=/dev/null", "-c", "credential.helper="]
-        if remote:
-            options += ["-c", "credential.helper=!gh auth git-credential"]
-        if publish_guard is None:
-            result = _run(["git", *options, *args], path, GIT_TIMEOUT, env)
+    def _git_layout(self, path):
+        path = Path(path).absolute()
+        if path != path.resolve() or not path.is_dir():
+            raise WorkspaceWait("workspace_missing_or_aliased")
+        entry = path / ".git"
+        if entry.is_dir() and not entry.is_symlink():
+            gitdir = common = entry
+            if (entry / "commondir").exists() or (entry / "commondir").is_symlink():
+                raise WorkspaceWait("foreign_workspace")
         else:
-            branch, expected, head = publish_guard
-            env.update(HYDRA_PUBLISH_REF="refs/heads/" + branch,
-                       HYDRA_EXPECTED_REMOTE_SHA=expected or "0" * 40,
-                       HYDRA_PUBLISH_SHA=head)
-            # Bind the actual server advertisement, then let normal push's
-            # receive-side old-object check close the remaining race. No force.
-            with tempfile.TemporaryDirectory(prefix="hydra-publish-") as directory:
-                hook = Path(directory) / "pre-push"
+            pointer = _git_file(entry)
+            if self.lifecycle_provider is None or not pointer.startswith(b"gitdir: "):
+                raise WorkspaceWait("foreign_workspace")
+            gitdir = Path(os.path.abspath(path / os.fsdecode(pointer[8:].strip())))
+            if gitdir != gitdir.resolve() or not gitdir.is_dir():
+                raise WorkspaceWait("foreign_workspace")
+            common = (gitdir / os.fsdecode(_git_file(gitdir / "commondir").strip())).resolve()
+            backlink = (gitdir / os.fsdecode(_git_file(gitdir / "gitdir").strip())).resolve()
+            if (gitdir.parent.name != "worktrees" or gitdir.parent.parent != common
+                    or backlink != entry or common != common.resolve()):
+                raise WorkspaceWait("foreign_workspace")
+        for directory in (common, common / "objects", common / "refs"):
+            if directory != directory.resolve() or not directory.is_dir():
+                raise WorkspaceWait("foreign_workspace")
+        _git_file(gitdir / "HEAD")
+        for name in ("index", "FETCH_HEAD", "config.worktree"):
+            _git_file(gitdir / name, optional=True, contents=False)
+        if (_git_file(common / "shallow", optional=True)
+                or _git_file(common / "objects/info/alternates", optional=True)):
+            raise WorkspaceWait("unsupported_git_metadata")
+        return gitdir, common
+
+    def _git_config(self, common, directory):
+        raw = _git_file(common / "config")
+        snapshot = directory / "config-snapshot"
+        snapshot.write_bytes(raw)
+        result = _run(["git", "config", "--file", str(snapshot), "--no-includes", "--null", "--list"],
+                      directory, GIT_TIMEOUT, _environment())
+        if result.returncode:
+            raise WorkspaceWait("invalid_git_config")
+        values = {}
+        try:
+            for item in result.stdout.split(b"\0"):
+                if item:
+                    key, _, value = item.partition(b"\n")
+                    values.setdefault(key.decode("utf-8"), []).append(value.decode("utf-8"))
+        except UnicodeError as exc:
+            raise WorkspaceWait("invalid_git_config") from exc
+        if (values.get("core.repositoryformatversion", ["0"]) not in (["0"], ["1"])
+                or values.get("extensions.objectformat", ["sha1"]) != ["sha1"]
+                or values.get("extensions.refstorage", ["files"]) != ["files"]
+                or any(key.startswith("extensions.") and key not in {
+                    "extensions.objectformat", "extensions.refstorage", "extensions.worktreeconfig",
+                } for key in values)):
+            raise WorkspaceWait("unsupported_git_metadata")
+        return raw, values, snapshot
+
+    def _git_marker(self, common, directory, raw, values, snapshot, args):
+        if (len(args) not in (3, 4) or args[:2] != ("config", "--local")):
+            raise WorkspaceWait("invalid_git_config_operation")
+        reading = len(args) == 4 and args[2] == "--get"
+        key = args[3] if reading else args[2]
+        if not re.fullmatch(r"hydra\.workspace-[0-9a-f]{64}\.(repository|issue|branch|owner)", key):
+            raise WorkspaceWait("invalid_git_config_operation")
+        if reading:
+            found = values.get(key, [])
+            return subprocess.CompletedProcess(args, 0 if len(found) == 1 else 1,
+                                               (found[0] + "\n").encode() if len(found) == 1 else b"")
+        if len(args) != 4:
+            raise WorkspaceWait("invalid_git_config_operation")
+        result = _run(["git", "config", "--file", str(snapshot), "--no-includes", "--replace-all", key, args[3]],
+                      directory, GIT_TIMEOUT, _environment())
+        if result.returncode:
+            return result
+        # Cooperate with Git's shared config lock and only replace the snapshot
+        # we read. Other issue markers and unrelated configuration stay intact.
+        lock = common / "config.lock"
+        try:
+            descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except OSError as exc:
+            raise WorkspaceWait("git_config_changed") from exc
+        locked = True
+        try:
+            if _git_file(common / "config") != raw:
+                raise WorkspaceWait("git_config_changed")
+            os.fchmod(descriptor, stat.S_IMODE((common / "config").stat().st_mode))
+            with os.fdopen(descriptor, "wb") as target:
+                descriptor = None
+                target.write(snapshot.read_bytes())
+            os.replace(lock, common / "config")
+            locked = False
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if locked:
+                lock.unlink(missing_ok=True)
+        return result
+
+    def _git(self, path, *args, remote=False, check=True, publish_guard=None):
+        path = Path(path).absolute()
+        with tempfile.TemporaryDirectory(prefix="hydra-git-") as temporary:
+            directory = Path(temporary)
+            env = _environment()
+            options = ["-c", "core.hooksPath=/dev/null", "-c", "credential.helper=",
+                       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+                       "-c", "http.followRedirects=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+                       "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false"]
+            clone = args and args[0] == "clone"
+            if not clone:
+                gitdir, common = self._git_layout(path)
+                raw, values, snapshot = self._git_config(common, directory)
+                if args[:2] == ("config", "--local"):
+                    result = self._git_marker(common, directory, raw, values, snapshot, args)
+                    if check and result.returncode:
+                        raise WorkspaceWait("git_operation_failed")
+                    return result
+                # Expose data, never candidate config/includes, hooks, info or
+                # legacy remote aliases. HEAD/index/FETCH_HEAD remain genuine.
+                for name in ("objects", "refs", "logs"):
+                    source = common / name
+                    if source.exists():
+                        if source != source.resolve() or not source.is_dir():
+                            raise WorkspaceWait("foreign_workspace")
+                        (directory / name).symlink_to(source, target_is_directory=True)
+                packed = _git_file(common / "packed-refs", optional=True)
+                if packed is not None:
+                    (directory / "packed-refs").write_bytes(packed)
+                (directory / "config").write_text("[core]\nrepositoryformatversion=0\nbare=false\nfsmonitor=false\n")
+                env["GIT_COMMON_DIR"] = str(directory)
+                options[:0] = ["--git-dir=" + str(gitdir), "--work-tree=" + str(path)]
+                index = _run(["git", *options, "ls-files", "--stage", "-z"], path, GIT_TIMEOUT, env)
+                if index.returncode:
+                    raise WorkspaceWait("git_operation_failed")
+                if any(item.startswith(b"160000 ") for item in index.stdout.split(b"\0")):
+                    # Nested Git commands can discard the parent's isolated
+                    # configuration. Submodule execution is not supported here.
+                    raise WorkspaceWait("unsupported_git_metadata")
+                if args and args[0] == "remote":
+                    # Preserve identity validation without interpreting URL
+                    # rewrites or invoking a transport from candidate config.
+                    key = "remote.origin.pushurl" if "--push" in args else "remote.origin.url"
+                    found = values.get(key, values.get("remote.origin.url", []))
+                    return subprocess.CompletedProcess(args, 0, ("\n".join(found) + "\n").encode())
+            if remote:
+                parts = path.relative_to(self.root).parts
+                repo = self._repository("/".join(parts[:2]))
+                url = self._url(repo)
+                args = tuple(url if value == "origin" else value for value in args)
+                # The existing trusted local test transport overrides _url;
+                # production's implementation always returns canonical HTTPS.
+                if Path(url).is_absolute() and type(self)._url is not Workspace._url:
+                    options += ["-c", "protocol.file.allow=always"]
+                elif url != Workspace._url(self, repo):
+                    raise WorkspaceWait("foreign_remote")
+                if clone:
+                    args = (*args[:1], "--template=", *args[1:])
+                authenticated = self._auth_environment()
+                authenticated.update(env)
+                env = authenticated
+                options += ["-c", "credential.helper=!gh auth git-credential"]
+            if publish_guard is not None:
+                branch, expected, head = publish_guard
+                env.update(HYDRA_PUBLISH_REF="refs/heads/" + branch,
+                           HYDRA_EXPECTED_REMOTE_SHA=expected or "0" * 40,
+                           HYDRA_PUBLISH_SHA=head)
+                hooks = directory / "hooks"
+                hooks.mkdir()
+                hook = hooks / "pre-push"
                 hook.write_text("#!/bin/sh\nset -eu\ncount=0\n"
                     "while read -r local_ref local_sha remote_ref remote_sha; do\n"
                     "  test \"$remote_ref\" = \"$HYDRA_PUBLISH_REF\" || exit 1\n"
@@ -235,8 +418,8 @@ class Workspace:
                     "  test \"$remote_sha\" = \"$HYDRA_EXPECTED_REMOTE_SHA\" || exit 1\n"
                     "  count=$((count + 1))\ndone\ntest \"$count\" = 1\n")
                 hook.chmod(0o700)
-                options += ["-c", "core.hooksPath=" + directory]
-                result = _run(["git", *options, *args], path, GIT_TIMEOUT, env)
+                options += ["-c", "core.hooksPath=" + str(hooks)]
+            result = _run(["git", *options, *args], directory if clone else path, GIT_TIMEOUT, env)
         if check and result.returncode:
             raise WorkspaceWait("git_operation_failed", uncertain=remote)
         return result
@@ -350,9 +533,9 @@ class Workspace:
             else:
                 self._git(allocation, "checkout", "-b", branch, expected_remote_sha)
             git_directory = allocation / ".git"
-            common = self._git(allocation, "rev-parse", "--git-common-dir").stdout.decode().strip()
+            _, common = self._git_layout(allocation)
             if (not git_directory.is_dir() or git_directory.is_symlink()
-                    or (allocation / common).resolve() != git_directory):
+                    or common != git_directory):
                 raise WorkspaceWait("foreign_workspace")
         # Stamp only the newly allocated directory. An existing arbitrary tree is
         # never adopted just because its name resembles the deterministic path.

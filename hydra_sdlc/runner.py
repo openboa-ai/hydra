@@ -34,14 +34,33 @@ def usage_allowed(capabilities):
     usage = capabilities.get("usage", {})
     if usage.get("status") != "known":
         return False
-    data = usage.get("data") or {}
+    data = usage.get("data")
+    if not isinstance(data, dict):
+        return False
     if data.get("ordinaryUsageAllowed") is not True:
         return False
-    buckets = data.get("rateLimitsByLimitId") or {"default": data.get("rateLimits")}
-    windows = [bucket.get(key) for bucket in buckets.values() if isinstance(bucket, dict)
-               for key in ("primary", "secondary")]
-    observed = [window.get("usedPercent") for window in windows if isinstance(window, dict)]
-    return bool(observed) and all(type(v) in (int, float) and 0 <= v <= 80 for v in observed)
+    buckets = data.get("rateLimitsByLimitId")
+    if buckets is None:
+        buckets = {"default": data.get("rateLimits")}
+    if not isinstance(buckets, dict) or not buckets:
+        return False
+    for bucket in buckets.values():
+        if not isinstance(bucket, dict):
+            return False
+        observed = False
+        for key in ("primary", "secondary"):
+            window = bucket.get(key)
+            if window is None:
+                continue
+            if not isinstance(window, dict):
+                return False
+            used = window.get("usedPercent")
+            if type(used) not in (int, float) or not 0 <= used <= 80:
+                return False
+            observed = True
+        if not observed:
+            return False
+    return True
 
 
 def intake_digest(issue):
@@ -406,7 +425,12 @@ class Runner:
             return self._wait(repo, number, record, "intake_unbound", phase="uncertain")
         config = {**config, "intake_digest": record["intake_digest"]}
         reason = self._latest(repo, number, config, include_dependencies=False)
-        closing_recovery = reason == "issue_closed" and record.get("pending_action") == "close_issue"
+        closing_recovery = reason == "issue_closed" and (record.get("pending_action") == "close_issue"
+                                                       or record.get("phase") == "completed")
+        if closing_recovery and record.get("phase") == "completed":
+            # Keep failed completion-label cleanup discoverable while current
+            # delivery evidence is rechecked; never dispatch another close.
+            record = {**record, "phase": "closing", "pending_action": "close_issue"}
         if reason and not closing_recovery:
             if reason == "intake_changed":
                 return self._wait(repo, number, record, reason, phase="uncertain")
@@ -510,7 +534,7 @@ class Runner:
             record = {**record, "pr_number": pr["number"]}
             observation = self.github.observe(repo, pr["number"])
             pr = observation["pr"]
-            if config.get("_completion_only") and not self.github.owns_pr(repo, number, pr):
+            if not self.github.owns_pr(repo, number, pr):
                 return self._wait(repo, number, record, "foreign_pr")
             if pr.get("merged"):
                 if pr["head"]["sha"] != record.get("head"):
@@ -1036,7 +1060,8 @@ class Runner:
                     reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(repo, issue["number"], bound)
                 except (ValueError, RuntimeError, OSError):
                     reason = "intake_unavailable"
-                if reason == "issue_closed" and progress and progress.get("pending_action") == "close_issue":
+                if reason == "issue_closed" and progress and (progress.get("pending_action") == "close_issue"
+                                                              or progress.get("phase") == "completed"):
                     reason = "completion_reconciliation"
                 elif not reason and config.get("_completion_only"):
                     reason = "completion_reconciliation"
@@ -1050,6 +1075,7 @@ class Runner:
             return [{"action": "waiting", "reason": self.host_hold_reason}]
         ready = []
         results = []
+        dependents = {}
         for repo in repos:
             try:
                 issues = self.github.issues(repo)
@@ -1064,19 +1090,21 @@ class Runner:
                     config = self._work_config(repo, issue["number"], progress)
                     if progress:
                         config = {**config, "intake_digest": progress.get("intake_digest")}
-                    closing = issue.get("state") == "closed" and progress and progress.get("pending_action") == "close_issue"
-                    reason = self._latest(repo, issue["number"], config)
+                    closing = issue.get("state") == "closed" and progress and (progress.get("pending_action") == "close_issue"
+                                                                              or progress.get("phase") == "completed")
+                    reason = self._latest(repo, issue["number"], config, include_dependencies=False)
                     if reason and not (reason == "issue_closed" and closing):
                         continue
                     intake = parse_intake({**issue, "state": "open"} if closing else issue, config)
+                    for dependency in intake.get("dependencies", []):
+                        key = issue_url(dependency)
+                        dependents[key] = dependents.get(key, 0) + 1
+                    reason = self._latest(repo, issue["number"], {**config, "intake_digest": intake_digest(issue)})
+                    if reason and not (reason == "issue_closed" and closing):
+                        continue
                     ready.append((repo, issue["number"], intake, progress, issue.get("created_at", "")))
                 except (ValueError, RuntimeError, OSError):
                     results.append({"repository": repo, "issue": issue["number"], "action": "waiting", "reason": "intake_unavailable"})
-        dependents = {}
-        for _, _, intake, _, _ in ready:
-            for dependency in intake.get("dependencies", []):
-                key = issue_url(dependency)
-                dependents[key] = dependents.get(key, 0) + 1
         ready.sort(key=lambda item: (0 if item[3] else 1, -dependents.get(item[:2], 0),
                                     -item[2].get("priority", 0), item[4], item[0], item[1]))
         for repo, number, *_ in ready:

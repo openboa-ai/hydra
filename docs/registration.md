@@ -11,7 +11,10 @@ observed values. Do not enable automatic merge until strict protection, provider
 reviews and production effects are verified. This file references existing product
 specifications; it does not duplicate product requirements.
 
-Create ready, paused and decision labels using the contract's exact names. A ready
+Create ready, paused and decision labels using the contract's exact names. Hydra
+manages the common `hydra:active` label while work or completion reconciliation is
+unfinished. Leave it attached until verified completion; it is a discovery and
+display label, not verification evidence. A ready
 Issue is written by an authorized repository writer and states a public goal, scope
 and acceptance criteria:
 

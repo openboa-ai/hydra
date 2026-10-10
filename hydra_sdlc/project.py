@@ -113,6 +113,7 @@ def parse_intake(issue, config):
     _require(not set(intake) - {"spec", "spec_revision", "dependencies", "priority"}, "Issue cannot supply execution policy")
     spec = intake.get("spec")
     _require(_path(spec) and spec.startswith(config["spec_directory"].rstrip("/") + "/") and PurePosixPath(spec).name == "spec.md", "Spec must be in the registered directory")
+    _require(matches(spec, config["allowed_paths"]), "Spec is outside the registered candidate allowlist")
     _require(intake.get("spec_revision") is None or _sha(intake["spec_revision"]), "Invalid spec revision")
     dependencies = intake.get("dependencies", [])
     _require(isinstance(dependencies, list) and len(dependencies) <= 50 and all(isinstance(x, str) for x in dependencies) and len(set(dependencies)) == len(dependencies) and all(isinstance(x, str) and re.fullmatch(r"https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*", x) for x in dependencies), "Invalid dependencies")
@@ -191,18 +192,22 @@ def terminal_required_checks(config, observation, sha):
         run = max(candidates, key=_run_order)
         if not _reusable_bound(binding, run):
             continue
-        if run.get("status") == "completed" and run.get("conclusion") != "success":
-            results.append({"job": binding["job"], "conclusion": run.get("conclusion")})
-            continue
         jobs = [j for j in run.get("jobs", []) if j.get("name") == binding["job"]]
+        if not jobs:
+            if run.get("status") == "completed":
+                results.append({"job": binding["job"], "conclusion": "missing_required_job"})
+            continue
         if len(jobs) != 1 or jobs[0].get("head_sha") != sha or jobs[0].get("check_run_url") != f"https://api.github.com/repos/{config['repository']}/check-runs/{jobs[0].get('id')}":
             continue
         checks = [c for c in observation["checks"] if c.get("id") == jobs[0].get("id")
                   and c.get("check_suite", {}).get("id") == run.get("check_suite_id")
                   and c.get("app", {}).get("id") == binding["app_id"]
                   and c.get("head_sha") == sha and c.get("name") == binding["job"]]
-        if len(checks) == 1 and checks[0].get("status") == "completed" and checks[0].get("conclusion") != "success":
-            results.append({"job": binding["job"], "conclusion": checks[0].get("conclusion")})
+        if len(checks) == 1 and jobs[0].get("status") == checks[0].get("status") == "completed":
+            for evidence in (jobs[0], checks[0]):
+                if evidence.get("conclusion") != "success":
+                    results.append({"job": binding["job"], "conclusion": evidence.get("conclusion")})
+                    break
     return results
 
 
@@ -218,7 +223,7 @@ def _checks(config, observation, sha, *, post_merge, historical=False):
             blockers.append(f"check_identity_missing:{label}")
             continue
         run = max(candidates, key=_run_order)
-        if run.get("status") != "completed" or run.get("conclusion") != "success":
+        if run.get("status") != "completed":
             blockers.append(f"check_not_successful:{label}")
             continue
         if not _reusable_bound(binding, run):

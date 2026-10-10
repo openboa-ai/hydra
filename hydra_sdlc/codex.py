@@ -225,27 +225,46 @@ def _json(value: Any) -> Any:
 
 def _safe_usage(data: dict) -> dict:
     """Whitelist metering data; never return account identity or arbitrary keys."""
+    if not isinstance(data, dict):
+        raise ValueError("Invalid metering response")
+
     def snapshot(item):
         if not isinstance(item, dict):
-            return None
+            raise ValueError("Invalid metering bucket")
         result = {
             key: item[key]
             for key in ("limitId", "limitName", "rateLimitReachedType", "spendControlReached")
             if key in item
         }
+        observed = False
         for key in ("primary", "secondary"):
             window = item.get(key)
+            if window is not None:
+                if not isinstance(window, dict):
+                    raise ValueError("Invalid metering window")
+                used = window.get("usedPercent")
+                if type(used) not in (int, float) or not 0 <= used <= 100:
+                    raise ValueError("Invalid metering percentage")
+                observed = True
             result[key] = {
                 field: window[field]
                 for field in ("usedPercent", "windowDurationMins", "resetsAt")
                 if field in window
             } if isinstance(window, dict) else None
+        if not observed:
+            raise ValueError("Unobserved metering bucket")
         return result
 
     buckets = data.get("rateLimitsByLimitId")
+    if buckets is not None and (not isinstance(buckets, dict) or not buckets):
+        raise ValueError("Invalid metering buckets")
+    # An absent legacy snapshot is normal when the multi-bucket response exists.
+    legacy = data.get("rateLimits")
+    if buckets is None and legacy is None:
+        raise ValueError("Unobserved metering limits")
     return {
         "ordinaryUsageAllowed": data.get("ordinaryUsageAllowed"),
-        "rateLimits": snapshot(data.get("rateLimits")),
+        "rateLimits": snapshot(legacy) if legacy is not None else None,
         "rateLimitsByLimitId": {
             key: snapshot(value) for key, value in buckets.items()
         } if isinstance(buckets, dict) else None,
