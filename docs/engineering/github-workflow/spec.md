@@ -366,3 +366,56 @@ requirements remain unchanged.
 
 OS semantics: [Linux subreapers](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html)
 and [exclusive rename](https://man7.org/linux/man-pages/man2/rename.2.html).
+
+## Review corrections: verification and final observation
+
+Review-request recovery binds the bounded delivery attempt to the exact head and
+review kind. An authentic current-head running/queued/completed provider row settles
+only that pending kind, including a successful request whose response/progress was
+lost. Clear that reconciled intent before requesting the other kind. An unrelated
+Code row cannot reset an unknown Security request. Legacy aggregate records may be
+reconciled only when the original kind is identifiable from their requested-head
+markers and provider facts; otherwise diagnose rather than transfer exhausted
+attempts. Preserve existing request authentication, bounded retries and native gates.
+
+Re-read formally bound push checks for the exact merge commit after recording the
+close intent and after the final PR-candidate observation. Pending, failed or newer
+rerun checks stop both a new close and recovered completion, retaining the close
+intent. Reapply current Issue, dependency and policy controls after that final
+external observation and before the effect/completion record.
+
+Registered verification is a potentially mutating owned execution. Record its
+intent before dispatch. Once process cleanup is confirmed, inspect the checkout
+before independent review. Preserve tracked/untracked edits and changed HEAD as an
+owned local checkpoint, record the new revision and enter existing bounded
+correction for verification mutation. Do not reset/delete the work or accept the
+old verification receipts for the new revision. Stopping preserves that correction
+continuation; failure or cancellation must not strand known completed mutations.
+After correction, re-run verification and independent review for the resulting
+head. A repeated mutating verifier reaches durable diagnosis rather than an endless
+loop. Unconfirmed cleanup or interruption retains execution ownership and prevents
+another host execution until explicit stopped recovery. On that recovery, detected
+verification mutations receive the same correction treatment before delivery.
+
+Verification on Linux reuses the existing per-execution subreaper/helper and cleanup
+receipt, including actual descendant reaping and group absence. Keep the synchronous
+workspace/provider API by a bounded per-call adapter to that same process handle;
+do not run a nested event loop in the coordinator or alter host-wide child ownership.
+Poll stop/deadline at most every 100ms, bound output, and confirm cleanup before
+returning pass, failure or stopped. Unknown supervision holds the host. Service Git
+commands retain their existing path; this is not another service or scheduler.
+
+Decode Git path bytes losslessly using filesystem surrogate handling. Paths that
+cannot be represented as valid public UTF-8 remain local and outside publishable
+scope, even under a broad allowlist. Route them through existing bounded scope
+correction or durable diagnosis with byte-preserving private details. Do not let a
+decode exception wedge every reconciliation, publish escaped surrogate paths, or
+remove foreign/unrelated files.
+
+Acceptance adds lost third Code request with first Security request, exhausted
+unknown Security despite an observed Code row, close-intent push-check reruns and
+closed-Issue recovery, successful/failed/stopped verification edits and commits,
+interrupted verification/checkpoint-record failures and bounded mutation correction,
+real Linux verification stop/timeout/EOF/resistant descendants under a nonreaping
+ancestor, and actual invalid-UTF-8 tracked/untracked filenames. Existing product
+delivery, native protected approvals and final-head provider reviews remain required.
