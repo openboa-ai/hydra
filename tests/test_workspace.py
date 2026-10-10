@@ -1,4 +1,5 @@
 import hashlib
+import errno
 import os
 from pathlib import Path
 import signal
@@ -269,6 +270,67 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.workspace.changed_paths(self.path, self.base),
                          ["README.md", "new\nfile", "renamed file.md"])
 
+    def test_changed_paths_preserve_actual_non_utf8_tracked_staged_and_untracked_names(self):
+        names = (b"tracked-\xff.txt", b"staged-\xfe.txt", b"untracked-\xfd.txt", b"valid-\xc3\xa9.txt")
+        root = os.fsencode(self.path) + b"/"
+        try:
+            with open(root + names[0], "wb") as target:
+                target.write(b"original tracked bytes\n")
+        except OSError as exc:
+            if exc.errno == errno.EILSEQ:
+                self.skipTest("filesystem rejects non-UTF-8 filenames")
+            raise
+        baseline = self.workspace.checkpoint(self.path, "Track raw filename")
+        contents = {name: b"preserved bytes " + name + b"\n" for name in names}
+        for name, data in contents.items():
+            with open(root + name, "wb") as target:
+                target.write(data)
+        git(self.path, "add", "--", os.fsdecode(names[1]))
+        index = (self.path / ".git/index").read_bytes()
+        paths = self.workspace.changed_paths(self.path, baseline)
+        self.assertEqual({os.fsencode(path) for path in paths}, set(names))
+        self.assertIn("valid-é.txt", paths)
+        self.assertEqual((self.path / ".git/index").read_bytes(), index)
+        self.assertEqual(git(self.path, "rev-parse", "HEAD"), baseline)
+        for name, data in contents.items():
+            with open(root + name, "rb") as target:
+                self.assertEqual(target.read(), data)
+        self.workspace.checkpoint(self.path, "Preserve owned raw paths")
+        self.assertFalse(self.workspace.inspect(self.path)["dirty"])
+        self.assertEqual({os.fsencode(path) for path in self.workspace.changed_paths(self.path, baseline)}, set(names))
+
+    def test_changed_paths_report_both_sides_of_actual_non_utf8_rename(self):
+        old, new = b"before-\xff.txt", b"after-\xfe.txt"
+        root = os.fsencode(self.path) + b"/"
+        try:
+            with open(root + old, "wb") as target:
+                target.write(b"preserved rename content\n")
+        except OSError as exc:
+            if exc.errno == errno.EILSEQ:
+                self.skipTest("filesystem rejects non-UTF-8 filenames")
+            raise
+        baseline = self.workspace.checkpoint(self.path, "Track rename source")
+        os.rename(root + old, root + new)
+        self.assertEqual({os.fsencode(path) for path in self.workspace.changed_paths(self.path, baseline)}, {old, new})
+        self.workspace.checkpoint(self.path, "Checkpoint raw rename")
+        self.assertEqual({os.fsencode(path) for path in self.workspace.changed_paths(self.path, baseline)}, {old, new})
+        with open(root + new, "rb") as target:
+            self.assertEqual(target.read(), b"preserved rename content\n")
+
+    def test_changed_paths_preserve_non_utf8_path_from_actual_git_tree(self):
+        name = b"raw-\xff.txt"
+        blob = git(self.path, "rev-parse", "HEAD:README.md")
+        subprocess.run(["git", "update-index", "-z", "--index-info"], cwd=self.path,
+                       env=_environment(), input=b"100644 " + blob.encode() + b"\t" + name + b"\0", check=True)
+        tree = git(self.path, "write-tree")
+        baseline = git(self.path, "commit-tree", tree, "-p", self.base, "-m", "Raw filename base")
+        git(self.path, "read-tree", self.base)
+        raw_tree = subprocess.check_output(["git", "ls-tree", "-rz", baseline], cwd=self.path, env=_environment())
+        self.assertIn(b"\t" + name + b"\0", raw_tree)
+        self.assertEqual([os.fsencode(path) for path in self.workspace.changed_paths(self.path, baseline)], [name])
+        self.assertEqual(self.workspace.inspect(self.path)["head"], self.base)
+        self.assertFalse(self.workspace.inspect(self.path)["dirty"])
+
     def test_fetch_base_prepares_exact_object_without_changing_issue_workspace(self):
         (self.seed / "new-base-file").write_text("upstream\n")
         git(self.seed, "add", ".")
@@ -350,7 +412,7 @@ class WorkspaceTests(unittest.TestCase):
         with patch.dict(os.environ, {"GH_TOKEN": "not-forwarded", "GITHUB_TOKEN": "not-forwarded"}):
             records = self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",
                 "import os; assert 'GH_TOKEN' not in os.environ and 'GITHUB_TOKEN' not in os.environ"]},
-                {"argv": [sys.executable, "-c", "import time; time.sleep(60)"], "timeout": 0.05},
+                {"argv": [sys.executable, "-c", "import time; time.sleep(60)"], "timeout": 1},
                 {"argv": [sys.executable, "-c", "from pathlib import Path; Path('later-check').touch()"]}])
         self.assertTrue(records[0]["passed"])
         self.assertFalse(records[1]["passed"])
@@ -406,7 +468,7 @@ class WorkspaceTests(unittest.TestCase):
         try:
             with self.assertRaisesRegex(WorkspaceWait, "verification_stopped"):
                 self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",
-                    "import os,signal,time; os.kill(os.getppid(),signal.SIGUSR1); time.sleep(60)"], "timeout": 5}],
+                    f"import os,signal,time; os.kill({os.getpid()},signal.SIGUSR1); time.sleep(60)"], "timeout": 5}],
                     stop_requested=lambda: stopped)
         finally:
             signal.signal(signal.SIGUSR1, previous)
@@ -418,6 +480,16 @@ class WorkspaceTests(unittest.TestCase):
         ) as spawn:
             self.workspace.verify(self.path, [{"argv": ["true"]}], stop_requested=lambda: True)
         spawn.assert_not_called()
+
+    def test_verification_cleanup_uncertainty_prevents_receipts_and_later_commands(self):
+        from hydra_sdlc.execution_boundary import OwnedCommandError
+        with patch("hydra_sdlc.execution_boundary.run_owned_sync",
+                   side_effect=OwnedCommandError("cleanup_unknown")) as execute:
+            with self.assertRaisesRegex(WorkspaceWait, "verification_cleanup_unknown") as error:
+                self.workspace.verify(self.path, [{"argv": ["first"]}, {"argv": ["later"]}])
+        self.assertTrue(error.exception.uncertain)
+        self.assertEqual(execute.call_count, 1)
+        self.assertEqual(self.workspace._outputs, {})
 
     def test_publish_reads_back_and_never_forces(self):
         (self.path / "README.md").write_text("changed\n")

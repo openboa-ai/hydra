@@ -92,6 +92,16 @@ def _check_stop(stop_requested):
 def _run(argv, cwd, timeout, env=None, *, stop_requested=None):
     """Bound command and descendants, retaining bounded private output only."""
     _check_stop(stop_requested)
+    if stop_requested is not None:
+        from .execution_boundary import OwnedCommandError, run_owned_sync
+        try:
+            return run_owned_sync(argv, cwd=cwd, env=env if env is not None else _environment(),
+                                  timeout=timeout, stop_requested=stop_requested,
+                                  max_output_bytes=MAX_OUTPUT_BYTES)
+        except OwnedCommandError as exc:
+            reason = {"stopped": "verification_stopped", "output_limit": "command_output_limit",
+                      "cleanup_unknown": "verification_cleanup_unknown", "unavailable": "command_unavailable"}[exc.reason]
+            raise WorkspaceWait(reason, uncertain=exc.reason == "cleanup_unknown") from exc
     try:
         process = subprocess.Popen(argv, cwd=cwd, env=env or _environment(),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -536,7 +546,7 @@ class Workspace:
         tracked = self._git(path, "diff", "--name-only", "--no-renames", "--no-ext-diff",
                             "--no-textconv", "-z", base_sha, "--").stdout
         untracked = self._git(path, "ls-files", "--others", "--exclude-standard", "-z").stdout
-        return sorted(set(item.decode() for item in (tracked + untracked).split(b"\0") if item))
+        return sorted(set(os.fsdecode(item) for item in (tracked + untracked).split(b"\0") if item))
 
     def checkpoint(self, path, message):
         path, _, _ = self._identity(path)
