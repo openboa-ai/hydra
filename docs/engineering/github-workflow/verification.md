@@ -6,9 +6,12 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 308 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 298 passed and 10 Linux-only process tests were
-skipped. `git diff --check` passed. Skipped tests are not Linux execution evidence.
+On 2026-10-10 the final local suite collected 342 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 324 passed, 16 Linux-only process tests and
+2 filesystem-specific raw-filename cases were skipped. The native filesystem
+rejects those filenames with EILSEQ; an actual raw Git tree case passed without
+changing the checkout or index. `git diff --check` passed. Skipped tests are not
+Linux execution evidence.
 
 ```sh
 python3 -B -m unittest discover -s tests
@@ -23,14 +26,25 @@ reviews and CI remain required when a PR was merged externally. Current merge
 permission is distinct from evidence of an already performed merge.
 
 Final effects recheck bound dependencies and Issue controls, including after the
-last PR observation and during closed-Issue recovery. Terminal unsuccessful required
+last PR observation and during closed-Issue recovery. Exact merge-commit push checks
+are re-read after the close intent; newer pending/failed reruns prevent completion.
+Review-request retries retain the exact kind across lost responses and replanning;
+an observed Code row cannot reset an unknown Security request. Verification records
+execution intent, preserves its mutations before review and enters bounded
+correction, including stop/restart, policy/ref changes and integration ordering.
+Invalid UTF-8 filenames remain lossless private correction input outside publishable
+scope. Terminal unsuccessful required
 CI enters bounded correction or durable diagnosis. Interrupted design publication
 requires exactly the delegated regular bounded specification; pending publication
 keeps its original base. Malformed intake cannot hide other Issues from status.
 Actual native workspace tests cover staged allocation, crashes around ownership
 stamping/promotion, destination races, and exclusive rename without replacement.
 
-The shared SDK/capability process owner requires actual cleanup. Linux-specific
+The shared SDK/capability/verification process owner requires actual cleanup. A
+synchronous verification facade reuses the isolated helper and receipt contract;
+it preserves caller-thread stop checks and does not nest event loops or add a
+service. Receipt-confirmed group disappearance forbids later fallback signals,
+including a reused PGID observation. Linux-specific
 cases run below a deliberately non-reaping ancestor and observe remaining children
 before test cleanup, including a negative control; they must run on Linux CI. Native
 process tests cover cancellation and no signaling after observed group disappearance.

@@ -126,3 +126,29 @@ Both helper and parent stop signaling a group after observing its disappearance.
 Unknown startup, receipts or helper death remain holds. The same-host startup scan
 also detects residual helpers. The native direct path retains its cleanup deadline.
 Source review does not substitute for actual Linux process tests or host qualification.
+
+The verification/final-observation appendix was independently accepted before
+dependent implementation at spec SHA-256
+`824c77923e1f76e1f33400eb644a5660ccad8c84a987463287600b1d4275eaba`.
+Independent source review accepted runner SHA-256
+`ce91268a81f350e288a5bbcb1aebec953e02191e87fe88b880df760eea3a6705`,
+GitHub adapter SHA-256
+`75fdaf2f0c32bb1d09c4c99b884aa807b606db73359e92809323c5e778eda8a2`
+and project SHA-256
+`f7803c7f0b43ee9da33c7b5999933154510cb5c7aa18698d854d457aea172852`.
+Review caught stopped-verification ownership being lost before PR waits, policy/ref
+changes adopting recovery state, pending review kinds being lost during replanning,
+and mutation retries/integration consuming the wrong continuation. Regressions cover
+those restart sequences and final push-check reruns before Issue completion.
+
+Workspace SHA-256
+`fe0b4ee33f4d3b1a7bf57d069a379d4cd28ac921a364dd5e77f58f49c95be65f`
+passed independent review for lossless Git paths and synchronous verification
+supervision. Non-public UTF-8 filenames enter bounded local correction, never the
+public allowlist. Execution boundary SHA-256
+`77ce939c163484c8128cae74b43d55607f4385ce135737797c9b3c6528dc6d9e`
+passed independent review after fixing a completed-receipt control-write race and
+receipt-confirmed group disappearance before fallback signals. Verification uses
+the existing isolated helper, with no host-wide child adoption or new service.
+These source acceptances remain separate from final-head CI/provider reviews,
+native approval and actual two-project unattended delivery.
