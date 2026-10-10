@@ -147,7 +147,7 @@ class Runner:
         self._record(repo, number, record, phase=phase, wait_reason=reason, resume_phase=resume,
                      next_action=next_action,
                      pending_action=record.get("pending_action") if phase == "uncertain" or
-                     record.get("pending_action") == "close_issue" or phase == "executing" else None)
+                     record.get("pending_action") in {"close_issue", "merge"} or phase == "executing" else None)
         return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
 
     def _intent_wait(self, repo, number):
@@ -161,6 +161,20 @@ class Runner:
         return any((c.get("user") or {}).get("login") in config["authorized_actors"]
                    and c.get("body", "").strip() == phrase
                    for c in self.github.comments(repo, number))
+
+    def _branch_boundary(self, repo, number, record, *, previously_owned=True):
+        remote = self.github.ref(repo, record["branch"])
+        pulls = self.github.pulls(repo, record["branch"])
+        if not previously_owned and (remote or pulls):
+            return "foreign_branch", remote, pulls
+        if len(pulls) > 1:
+            return "multiple_prs", remote, pulls
+        if pulls and not self.github.owns_pr(repo, number, pulls[0]):
+            return "foreign_pr", remote, pulls
+        if remote is not None and not (pulls or remote == record.get("published_head") or
+                record.get("pending_action") == "publish" and remote == record.get("head")):
+            return "foreign_branch", remote, pulls
+        return None, remote, pulls
 
     async def _model(self, repo, number, config, record, path, phase, task, *, correction=None):
         if self.host_hold_reason:
@@ -177,7 +191,10 @@ class Runner:
             return None, self._wait(repo, number, record, self.host_hold_reason)
         if not usage_allowed(capabilities):
             return None, self._wait(repo, number, record, "usage_unavailable_or_low")
-        remote = self.github.ref(repo, record["branch"])
+        boundary, remote, _ = self._branch_boundary(repo, number, record)
+        if boundary:
+            return None, self._wait(repo, number, record, boundary,
+                                    phase="uncertain" if record.get("pending_action") else "waiting")
         if remote is not None and remote not in {record.get("head"), record.get("expected_head")}:
             return None, self._wait(repo, number, record, "remote_head_changed")
         if record.get("resume_phase"):
@@ -261,7 +278,10 @@ class Runner:
             return self._wait(repo, number, record, reason,
                               phase="uncertain" if record.get("pending_action") == "publish" else "waiting")
         branch = record["branch"]
-        remote = self.github.ref(repo, branch)
+        boundary, remote, _ = self._branch_boundary(repo, number, record)
+        if boundary:
+            return self._wait(repo, number, record, boundary,
+                              phase="uncertain" if record.get("pending_action") else "waiting")
         if remote not in {record.get("head"), record.get("expected_head")}:
             return self._wait(repo, number, record, "remote_head_changed",
                               phase="uncertain" if record.get("pending_action") == "publish" else "waiting")
@@ -278,7 +298,7 @@ class Runner:
                 return self._wait(repo, number, record, "publish_unknown", phase="uncertain")
         if self.github.ref(repo, branch) != head:
             return self._wait(repo, number, record, "published_head_mismatch", phase="uncertain")
-        self._record(repo, number, record, head=head, pending_action=None, phase="published",
+        self._record(repo, number, record, head=head, published_head=head, pending_action=None, phase="published",
                      checkpoint="interrupted_committed" if record.get("checkpoint") == "interrupted_committed"
                      else "remote_committed", next_action="pr")
         return None
@@ -358,6 +378,9 @@ class Runner:
             # Closed/paused tasks are observations, not a reason to write or take ownership.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
         intake = parse_intake({**issue, "state": "open"} if closing_recovery else issue, config)
+        boundary, _, _ = self._branch_boundary(repo, number, record, previously_owned=previously_owned)
+        if boundary:
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": boundary}
         for dependency in intake.get("dependencies", []):
             dep_repo, dep_n = issue_url(dependency)
             if self.github.issue(dep_repo, dep_n).get("state") != "closed":
@@ -418,6 +441,8 @@ class Runner:
             return self._wait(repo, number, record, "multiple_prs")
         if (closing_recovery or config.get("_completion_only")) and not pulls:
             return self._wait(repo, number, record, "completion_pr_unavailable", phase="uncertain")
+        if record.get("pending_action") == "merge" and not pulls:
+            return self._wait(repo, number, record, "merge_pr_unavailable", phase="uncertain")
         if pulls:
             pr = pulls[0]
             if not self.github.owns_pr(repo, number, pr):
@@ -455,6 +480,16 @@ class Runner:
                 return self._wait(repo, number, record, "completion_merge_unconfirmed", phase="uncertain")
             if pr.get("state") == "closed":
                 return self._wait(repo, number, record, "closed_unmerged_pr")
+            if record.get("pending_action") == "merge":
+                # A new candidate cannot replace an irreversible unresolved effect.
+                head = record.get("head")
+                if pr["head"]["sha"] != head or record.get("expected_head") != head:
+                    return self._wait(repo, number, record, "remote_head_changed", phase="uncertain")
+                if (observation.get("base_sha") != record.get("expected_base") or
+                        gate_delivery(config, observation, head, self._paths(observation))):
+                    return self._wait(repo, number, record, "merge_reconciliation_pending", phase="uncertain")
+                return self._merge(repo, number, config, {**record, "phase": "uncertain"},
+                                   pr["number"], head, self._paths(observation))
             # Existing publication needs observation, not fresh model turns on each restart.
             # Current CI/provider/native facts authorize delivery, never the progress phase.
             current_head = pr["head"]["sha"]
@@ -485,7 +520,7 @@ class Runner:
         remote = self.github.ref(repo, branch)
         if record.get("pending_action") == "publish":
             if remote == record.get("head"):
-                record = self._record(repo, number, record, pending_action=None, phase="published",
+                record = self._record(repo, number, record, pending_action=None, published_head=remote, phase="published",
                                       checkpoint="interrupted_committed" if record.get("checkpoint") == "interrupted_committed"
                                       else "remote_committed", next_action="pr")
             elif remote != record.get("expected_head"):
@@ -501,6 +536,10 @@ class Runner:
             self._record(repo, number, record, pr_number=pr["number"], phase="review_wait",
                          pending_action=None, next_action="remote_review")
             return {"action": "continue", "repository": repo, "issue": number}
+        boundary, remote, _ = self._branch_boundary(repo, number, record)
+        if boundary:
+            return self._wait(repo, number, record, boundary,
+                              phase="uncertain" if record.get("pending_action") else "waiting")
         path = self.workspace.prepare(repo, number, branch, remote, recover_dirty=recover_dirty)
         self.workspace.fetch_base(path, config["revision"])
         state = self.workspace.inspect(path)
@@ -702,6 +741,8 @@ class Runner:
         latest = self.github.observe(repo, pr_number)
         if not self.github.owns_pr(repo, number, latest["pr"]):
             return self._wait(repo, number, record, "foreign_pr")
+        if record.get("pending_action") == "merge" and latest.get("base_sha") != record.get("expected_base"):
+            return self._wait(repo, number, record, "merge_reconciliation_pending", phase="uncertain")
         if gate_delivery(config, latest, head, paths):
             return self._wait(repo, number, record, "delivery_facts_changed")
         record = self._intent(repo, number, config, record, "merge", phase="merging",
@@ -736,9 +777,13 @@ class Runner:
             if len(rows) > 1:
                 continue
             revision = re.search(r"`([0-9a-f]{7,40})`", rows[0]) if rows else None
-            # A current row can be completed or pending; delivery still uses the strict gate parser.
             if revision and {sha for sha in commits if sha.startswith(revision[1])} == {head}:
-                continue
+                cells = rows[0].split("|")
+                status = cells[2].strip() if len(cells) > 3 else ""
+                if re.fullmatch(r"(?:✅ \*\*Completed\*\*|(?:🔄|⏳) \*\*(?:Running|Queued|Pending)\*\*)(?: .*)?", status):
+                    continue
+                self._wait(repo, number, record, "replan_required", next_action="diagnose_review")
+                return self.github.progress(repo, number)
             if record.get(field) != head:
                 missing.append((kind, field))
         if not missing:

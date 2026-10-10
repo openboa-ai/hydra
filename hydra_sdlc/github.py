@@ -200,7 +200,7 @@ class GitHub:
 
     @staticmethod
     def _validate_record(record, *, metadata=False):
-        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "pending_thread", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
+        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "published_head", "pr_number", "pending_action", "pending_thread", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
         if metadata:
             allowed |= {"repository_id", "issue_number", "version"}
         if not isinstance(record, dict) or set(record) - allowed:
@@ -211,7 +211,7 @@ class GitHub:
             if key == "intake_digest":
                 if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
                     raise GitHubError("Invalid delegated intake digest")
-            elif key in {"contract_revision", "spec_revision", "head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head"}:
+            elif key in {"contract_revision", "spec_revision", "head", "published_head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head"}:
                 _sha(value)
             elif key == "attempt_id":
                 try:
