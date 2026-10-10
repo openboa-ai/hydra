@@ -118,7 +118,8 @@ class ReviewRecoveryTests(unittest.IsolatedAsyncioTestCase):
         for index, line in enumerate(lines):
             if line.startswith('|') and f'**{name}**' in line:
                 cells = line.split('|')
-                cells[2] = f' **{status}** '
+                icon = '🔄' if status == 'Running' else '⏳' if status in {'Queued', 'Pending'} else '❌'
+                cells[2] = f' {icon} **{status}** '
                 lines[index] = '|'.join(cells)
         comment['body'] = '\n'.join(lines)
         return value
