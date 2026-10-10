@@ -350,34 +350,54 @@ async def capabilities(cwd: str) -> dict:
 
     output = _unknown_capabilities()
     process = None
+    report = None
+    clean = False
     try:
         _validate_cwd(cwd)
         if os.name != "posix":
             raise AdapterUnavailable("This qualification host requires POSIX process groups.")
-        deadline = asyncio.get_running_loop().time() + CAPABILITIES_TIMEOUT_SECONDS
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + CAPABILITIES_TIMEOUT_SECONDS
         process = OwnedProcess(
             _capability_command(cwd), stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env=worker_environment(),
         )
         await process.start(deadline)
-        stdout, _ = await asyncio.wait_for(
-            process.communicate(), max(.001, deadline - asyncio.get_running_loop().time()),
+        stdout = await asyncio.wait_for(
+            process.stdout.read(), max(.001, deadline - loop.time()),
         )
-        if process.returncode != 0:
-            raise AdapterUnavailable("Capability probe did not complete successfully.")
+        if loop.time() >= deadline:
+            raise TimeoutError("Capability report deadline expired.")
         observed = json.loads(stdout)
         if not isinstance(observed, dict) or not isinstance(observed.get("available"), bool):
             raise ValueError("Capability probe returned an invalid result.")
-        output.update({
+        if loop.time() >= deadline:
+            raise TimeoutError("Capability report deadline expired.")
+        report = {
             key: observed[key] for key in (*output, "error_type", "cleanup") if key in observed
-        })
+        }
+        remaining = deadline - loop.time()
+        if remaining > 0:
+            try:
+                # EOF may precede normal worker exit. Preserve its remaining runtime,
+                # while keeping a timely report independent of slower helper reaping.
+                await asyncio.wait_for(process.wait(), remaining)
+            except TimeoutError:
+                pass
     except Exception as exc:
+        report = None
         output["error_type"] = type(exc).__name__
     finally:
-        if process is not None and not await _stop_capability_probe(process):
+        clean = process is None or await _stop_capability_probe(process)
+        if not clean:
             output["available"] = False
             output["cleanup"] = "unknown"
+    if report is not None and clean:
+        if process.returncode == 0:
+            output.update(report)
+        else:
+            output["error_type"] = "AdapterUnavailable"
     return output
 
 

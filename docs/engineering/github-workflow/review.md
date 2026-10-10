@@ -387,3 +387,46 @@ receipt for expired admission. Existing actual-process absence, helper-only and
 reused-group no-signal assertions remain. That module collected 28 tests: twelve
 passed and sixteen Linux-only cases skipped; the final Linux-only expectation
 must run on current-head CI.
+
+Current-head Code Review identified timely capability report collection, duplicate
+native security-marker fields and per-scope status failure isolation. Their bounded
+contract was independently accepted before dependent edits at specification
+SHA-256 `0a6b1662ff8b588a37539a02575cd6a08633b9a9654ee67da89e4c838ff17e34`.
+A timely full JSON document and EOF remain provisional through the existing
+remaining-deadline wait, unchanged owned cleanup and worker-zero proof. Duplicate
+decoded keys and malformed six-field native markers use existing review diagnosis.
+Read-only status catches only existing operational exceptions at the failed
+repository or Issue, preserving healthy results and private error omission.
+No execution budget, supervisor, error interface or workflow store is added.
+
+Independent security-marker review accepted project SHA-256
+`d0e201a7c6631596354f9936c4a1d367ce082a48ecaadd26f12b6c4a8cf52d92`
+and marker-regression SHA-256
+`7505571c02f5bf310d4572e410efc70a1e79b66b95c872256e0acc7612fb4649`.
+Forty-eight related tests passed. Duplicate decoded keys, exact field and type
+checks preserve the existing authenticated head/completion binding and diagnosis;
+recovery retains uncertain request identity and its request budget.
+
+Independent status review accepted Runner SHA-256
+`5b2e8f8dccd2eb1308d25063c11a353428a6db7cb178bd60c1995f6ec408ff5d`
+and status-regression SHA-256
+`2c99245b59b738eb94ba1ad54b915aa5cf34d3067bad6acc160f5b9b51a2b175`.
+Eighteen focused tests passed. Failed repository or progress reads retain healthy
+results without exposing exception payloads; canonical identity, read-only
+operation, policy/completion recovery and BaseException propagation remain intact.
+
+Independent capability review accepted adapter SHA-256
+`fe0426c49ff91679a23243e5ae487bf11a10d8c37a0a73dbc8ec76bed6e81530`,
+actual process-supervision fixture SHA-256
+`753d63e7ec1d9601362aa8682c7757915fc2cfa2c8502775c4dfba0131c27def`
+and capability-completion fixture SHA-256
+`ebb1f8b64f571530455d28b74e3b97178e4d7802eb276b7f64faaa124af61d82`.
+Ninety-two focused tests collected: 76 passed and 16 Linux-only cases skipped.
+Actual portable processes cover timely EOF with slow completion, early EOF before
+normal exit, late/missing/malformed output, nonzero exit, unknown cleanup and failed
+ownership retirement. A rejected-output fixture exposed actual native TERM EPERM
+at immediate natural exit; only its observed phase was gated to keep the worker
+alive until cleanup. Runtime cleanup and failure rules were not relaxed. The
+Linux fixture requires actual EOF before the original probe deadline and actual
+receipt/reaping afterward, with no remaining descendants; current-head matrix CI
+must establish that platform result. Supervisor revision `5fdd6efc` is unchanged.

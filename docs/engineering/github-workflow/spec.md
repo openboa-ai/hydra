@@ -699,3 +699,47 @@ cycles, malformed collections and exhausted bounds return the existing fail-clos
 GitHub observation error, never partial evidence. Do not add an error taxonomy,
 Runner interface, store or automatic review request. Test 101-plus comments in both
 resolved and unresolved threads, multiple outer pages, identity mismatch and bounds.
+
+### Review corrections: capability completion, provider JSON and status isolation
+
+Capability report collection is distinct from helper shutdown. Collect the complete
+existing stdout JSON document and EOF within the original probe deadline, validate
+it with the existing report contract, and retain only a provisional whitelisted
+report. Retain the existing process wait only for the remaining original deadline;
+expiry of that completion wait preserves a timely report and proceeds to cleanup.
+This lets an early-EOF worker finish normally without granting extra execution.
+Always perform the existing owned cleanup within its unchanged two-second
+budget. Publish availability only after confirmed cleanup and actual worker exit
+zero. A timely report must not be discarded solely because helper reaping finishes
+after the probe deadline; missing, malformed, trailing or late output, nonzero
+worker exit and unknown cleanup remain unavailable. Preserve framing, admission
+and execution budgets, ownership, stop/cancellation and error interfaces. Tests
+bind complete output and slow helper reaping to actual observed phases, including
+negative controls and Linux Python 3.14 execution. No new process supervisor is
+introduced.
+
+The authenticated native security marker is one JSON object with exactly the
+observed six fields: `blockingSeverityThreshold`, `headSha`, `mergeGateEnabled`,
+`pullRequestNumber`, `repository` and `status`. Reject duplicate decoded keys,
+including equal values and escape-equivalent keys. Require strings for threshold,
+head, repository and status, an exact integer PR number excluding booleans, and
+an exact boolean merge-gate flag. Preserve existing repository/PR/head/status and
+review-table binding. Threshold and merge-gate metadata do not grant approval or
+weaken project policy. Malformed, missing or extra fields return the existing
+`provider_format_unknown` and review diagnosis, with pending request identity and
+budget preserved. Use the existing small duplicate-key parsing pattern; add no
+parser framework, error taxonomy or Runner interface. Test both conflicting-key
+orders, equal/escaped duplicates, schema controls and diagnosed restart without
+model, new review request or merge.
+
+Read-only status isolates operational discovery failures by their existing scope.
+Catch only the existing `(ValueError, RuntimeError, OSError)` tuple around each
+repository's Issue discovery and each Issue's initial progress lookup. A failed
+repository contributes its name and `project_contract_unavailable`; do not invent
+Issue/state/progress facts. Failed progress contributes the known Issue identity
+and state, `progress=None` and `intake_unavailable`. Continue healthy Issues and
+repositories, keeping canonical identity, case deduplication, policy and completed
+recovery behavior unchanged. Never include exception payloads, mutate GitHub or
+workspace state, or dispatch capability/model work from status. Base exceptions
+still propagate. Test partial failures, healthy results before/after failures,
+deduplication, private error omission and read-only behavior.

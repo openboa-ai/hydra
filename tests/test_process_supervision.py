@@ -65,7 +65,7 @@ def _spawn_descendant(directory):
     if child.stdout.readline() != "ready\n":
         raise RuntimeError("resistant descendant did not start")
     child.stdout.close()
-    _mark(directory, "descendant", pid=child.pid)
+    _mark(directory, "descendant", pid=child.pid, at=time.monotonic())
     return child
 
 
@@ -93,6 +93,10 @@ def _worker(mode, directory):
         return
     _spawn_descendant(directory)
     if mode == "capability_completed":
+        # The supervisor releases a ready worker near the original deadline;
+        # interpreter startup must not silently consume the intended phase.
+        while not (Path(directory) / "capability-report-release").exists():
+            time.sleep(.005)
         print(json.dumps({"available": True}), flush=True)
         return
     if mode == "verification_completed":
@@ -117,6 +121,18 @@ async def _wait_for_descendant(directory):
         await asyncio.sleep(.01)
 
 
+async def _release_capability_report(directory, deadline):
+    loop = asyncio.get_running_loop()
+    release_at = deadline - .3
+    while not any(item["name"] == "descendant" for item in _observations(directory)):
+        if loop.time() >= release_at:
+            raise TimeoutError("capability descendant missed the report-release phase")
+        await asyncio.sleep(min(.01, max(0, release_at - loop.time())))
+    await asyncio.sleep(max(0, release_at - loop.time()))
+    _mark(directory, "capability_report_released", at=loop.time())
+    (Path(directory) / "capability-report-release").touch()
+
+
 async def _supervisor(mode, directory):
     sys.path.insert(0, str(REPOSITORY))
     from hydra_sdlc import codex, execution_boundary as boundary
@@ -136,22 +152,59 @@ async def _supervisor(mode, directory):
         return {"negative_control": True}
 
     real_owned_process = boundary.OwnedProcess
+    report_release = None
 
     class ObservedProcess(real_owned_process):
+        @property
+        def stdout(self):
+            return getattr(self, "_observed_stdout", super().stdout)
+
         async def start(self, *args, **kwargs):
+            nonlocal report_release
+            if mode == "capability_completed":
+                _mark(directory, "capability_deadline", deadline=args[0])
             result = await super().start(*args, **kwargs)
             _mark(directory, "helper", pid=self.process.pid)
             _mark(directory, "owned", pid=self.pid, pgid=self.pgid)
+            if mode == "capability_completed":
+                stdout = super().stdout
+
+                async def observe_output(*read_args, **read_kwargs):
+                    output = await stdout.read(*read_args, **read_kwargs)
+                    if stdout.at_eof():
+                        _mark(directory, "capability_stdout_eof",
+                              at=asyncio.get_running_loop().time(), stdout_hex=output.hex())
+                    return output
+
+                self._observed_stdout = SimpleNamespace(read=observe_output)
+                report_release = asyncio.create_task(
+                    _release_capability_report(directory, args[0]),
+                )
             return result
 
         async def _read_control(self):
             frame = await super()._read_control()
+            if mode == "capability_completed" and frame.get("kind") == "cleanup":
+                _mark(directory, "capability_cleanup_receipt",
+                      at=asyncio.get_running_loop().time(), receipt=frame)
             if mode == "invalid_receipt" and frame.get("kind") == "cleanup":
                 # Preserve real setup, shutdown and reaping. Corrupt only the
                 # identity in the actual helper's completed cleanup receipt.
                 _mark(directory, "receipt_rewritten")
                 return {**frame, "pid": frame["pid"] + 1}
             return frame
+
+        async def cleanup(self):
+            if mode == "capability_completed":
+                _mark(directory, "capability_cleanup_started",
+                      at=asyncio.get_running_loop().time())
+            clean = await super().cleanup()
+            if mode == "capability_completed":
+                _mark(directory, "capability_cleanup_finished",
+                      at=asyncio.get_running_loop().time(), clean=clean,
+                      worker_returncode=self.returncode,
+                      helper_returncode=self.process.returncode)
+            return clean
 
     boundary.OwnedProcess = ObservedProcess
     if mode.startswith("execution_"):
@@ -170,6 +223,8 @@ async def _supervisor(mode, directory):
         codex._capability_command = lambda _: _command("--worker", worker_mode, directory)
         codex.CAPABILITIES_TIMEOUT_SECONDS = 1.5
         result = await codex.capabilities(str(directory))
+        if report_release is not None:
+            await report_release
     elif mode.startswith("verification_"):
         helpers = []
         helper_killed = False
@@ -407,11 +462,33 @@ class LinuxProcessSupervisionTests(unittest.TestCase):
         self.assertEqual(result["error_type"], "TimeoutError")
         self.assertNotIn("cleanup", result)
 
-    def test_completed_capability_reaps_descendant_before_available(self):
+    def test_timely_capability_survives_reaping_after_probe_deadline(self):
         report = self.run_driver("capability_completed")
         self.assert_clean(report)
         self.assertTrue(report["supervisor"]["result"]["available"])
         self.assertNotIn("cleanup", report["supervisor"]["result"])
+        phases = {item["name"]: item for item in report["observations"]}
+        deadline = phases["capability_deadline"]["deadline"]
+        released = phases["capability_report_released"]["at"]
+        eof = phases["capability_stdout_eof"]
+        started = phases["capability_cleanup_started"]["at"]
+        receipt = phases["capability_cleanup_receipt"]
+        finished = phases["capability_cleanup_finished"]
+        self.assertLess(phases["descendant"]["at"], released, report)
+        self.assertGreaterEqual(released, deadline - .3, report)
+        self.assertLess(released, eof["at"], report)
+        self.assertLess(eof["at"], deadline, report)
+        self.assertEqual(json.loads(bytes.fromhex(eof["stdout_hex"])), {"available": True})
+        self.assertGreaterEqual(started, deadline, report)
+        self.assertGreater(receipt["at"], deadline, report)
+        self.assertGreaterEqual(finished["at"], receipt["at"], report)
+        self.assertTrue(receipt["receipt"]["reaped"], report)
+        self.assertTrue(receipt["receipt"]["group_absent"], report)
+        self.assertEqual(receipt["receipt"]["returncode"], 0, report)
+        self.assertTrue(finished["clean"], report)
+        self.assertEqual(finished["worker_returncode"], 0, report)
+        self.assertEqual(finished["helper_returncode"], 0, report)
+        self.assertLess(finished["at"] - started, 2, report)
 
     def test_control_eof_stops_tree_and_reaps_helper_without_claiming_receipt(self):
         report = self.run_driver("control_eof")

@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 509 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 489 passed, 18 Linux-only process tests and
+On 2026-10-10 the final local suite collected 527 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 507 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -86,6 +86,26 @@ scoped PR identity. Twenty-nine GitHub-client tests cover complete 101-plus comm
 collections, resolved threads, multiple outer pages and late human replies; cursor
 cycles, duplicate identities and incomplete evidence remain failures without
 partial acceptance.
+
+Capability collection retains a timely full stdout JSON document and EOF through
+the remaining original completion wait, then publishes it only after confirmed
+owned cleanup and worker exit zero. Nine actual portable process cases cover slow
+completion, early EOF before normal exit, late/missing/malformed output, nonzero
+worker exit, unknown cleanup and failed durable ownership retirement. Rejected
+output workers stay alive until cleanup so their tested phase does not race native
+natural exit. Runtime deadlines and uncertain-cleanup rules remain unchanged. The
+Linux fixture separately requires observed EOF before the probe deadline and
+actual receipt/reaping afterward, with no remaining descendants; current-head CI
+must establish that result.
+
+Authenticated native security metadata requires one exact six-field JSON object,
+unique decoded keys and exact scalar types. Conflicting/equal/escape-equivalent
+duplicates and malformed schema enter existing diagnosis without settling an
+uncertain request or dispatching new work. Threshold and merge-gate metadata cannot
+replace other required evidence. Read-only status isolates failed repository and
+Issue-progress observations while retaining healthy results, canonical deduplication
+and existing policy/completion recovery. Private exception text is omitted and
+BaseException still propagates.
 
 The shared SDK/capability/verification process owner requires actual cleanup. A
 synchronous verification facade reuses the isolated helper and receipt contract;

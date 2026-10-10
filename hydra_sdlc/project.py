@@ -271,13 +271,26 @@ def _provider(config, observation, head):
         return ["provider_summary_missing_or_ambiguous"]
     body = summaries[0].get("body", "")
     markers = re.findall(r"<!-- codex-security-review:v1 (.*?) -->", body, re.S)
+    def unique_keys(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("Duplicate marker field")
+            value[key] = item
+        return value
+
     try:
         if len(markers) != 1:
             raise ValueError()
-        marker = json.loads(markers[0])
+        marker = json.loads(markers[0], object_pairs_hook=unique_keys)
     except ValueError:
         return ["provider_format_unknown"]
-    if not isinstance(marker, dict) or marker.get("repository") != config["repository"] or marker.get("pullRequestNumber") != raw.get("number") or marker.get("headSha") != head or marker.get("status") != "completed":
+    fields = {"blockingSeverityThreshold": str, "headSha": str, "mergeGateEnabled": bool,
+              "pullRequestNumber": int, "repository": str, "status": str}
+    if (not isinstance(marker, dict) or set(marker) != set(fields)
+            or any(type(marker[key]) is not kind for key, kind in fields.items())):
+        return ["provider_format_unknown"]
+    if marker["repository"] != config["repository"] or marker["pullRequestNumber"] != raw.get("number") or marker["headSha"] != head or marker["status"] != "completed":
         return ["provider_head_or_completion_missing"]
     for name in ["Code Review", "Security Review"]:
         rows = [line for line in body.splitlines() if line.startswith("|") and f"**{name}**" in line]

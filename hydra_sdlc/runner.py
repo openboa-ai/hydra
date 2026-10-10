@@ -1123,10 +1123,20 @@ class Runner:
             if repo.casefold() in seen:
                 continue
             seen.add(repo.casefold())
-            for issue in self.github.issues(repo):
+            try:
+                issues = self.github.issues(repo)
+            except (ValueError, RuntimeError, OSError):
+                result.append({"repository": repo, "wait_reason": "project_contract_unavailable"})
+                continue
+            for issue in issues:
                 if "pull_request" in issue:
                     continue
-                progress = self.github.progress(repo, issue["number"])
+                try:
+                    progress = self.github.progress(repo, issue["number"])
+                except (ValueError, RuntimeError, OSError):
+                    result.append({"repository": repo, "issue": issue["number"], "state": issue["state"],
+                                   "progress": None, "wait_reason": "intake_unavailable"})
+                    continue
                 try:
                     config = self._work_config(repo, issue["number"], progress)
                 except (ValueError, RuntimeError, OSError):
