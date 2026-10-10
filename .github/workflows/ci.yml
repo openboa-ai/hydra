@@ -33,6 +33,7 @@ jobs:
       - name: Verify Python and bounded execution contracts
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 11)'
+          python3 -m pip install '.[mcp]'
           python3 -m unittest discover -s tests -v
   hygiene:
     name: Repository hygiene

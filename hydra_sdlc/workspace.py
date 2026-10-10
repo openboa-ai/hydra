@@ -200,6 +200,9 @@ class Workspace:
     at the owned worktree with its sanitized environment, original timeout, stop
     callback, output bound and owned-process cleanup. Managed
     OpenBoa roots require these providers; the standalone fallback is explicit.
+    Optional issue_numbers(repo) discovers this provider owner's registered Issue
+    resources. completed(repo, number, branch, head, pr_number, merge_sha, path)
+    reconciles their normal release/retirement after verified product completion.
     """
 
     def __init__(self, root: Path, lifecycle_provider=None, storage_provider=None,
@@ -212,6 +215,36 @@ class Workspace:
         self.storage_provider = storage_provider
         self.user = user
         self._outputs = {}
+
+    def issue_numbers(self, repo):
+        repo = self._repository(repo)
+        discover = getattr(self.lifecycle_provider, "issue_numbers", None)
+        if discover is None:
+            return []
+        numbers = discover(repo)
+        if not isinstance(numbers, list) or any(type(n) is not int or n <= 0 for n in numbers):
+            raise WorkspaceWait("resource_discovery_unavailable")
+        return sorted(set(numbers))
+
+    def completed(self, repo, number, branch, head, pr_number, merge_sha):
+        complete = getattr(self.lifecycle_provider, "completed", None)
+        if complete is None:
+            return False
+        repo = self._repository(repo)
+        if (type(number) is not int or number <= 0 or branch != f"hydra/issue-{number}"
+                or type(pr_number) is not int or pr_number <= 0):
+            raise WorkspaceWait("invalid_issue_branch")
+        _sha(head)
+        _sha(merge_sha)
+        path = self.root / repo / f"issue-{number}"
+        if path != path.resolve():
+            raise WorkspaceWait("workspace_missing_or_aliased")
+        # The provider owns registry/read-back validation, including already
+        # retired resources. Never recreate a missing checkout for cleanup.
+        result = complete(repo, number, branch, head, pr_number, merge_sha, path)
+        if not isinstance(result, dict) or result.get("retired") is not True:
+            raise WorkspaceWait("resource_completion_unconfirmed")
+        return True
 
     def _managed(self):
         return any((parent / ".workspace/storage.json").is_file()

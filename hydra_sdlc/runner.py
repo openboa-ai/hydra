@@ -166,6 +166,51 @@ class Runner:
         self.github.record(repo, number, record)
         return record
 
+    def _resource_completion(self, repo, number, config, record, pr_number, merge_sha):
+        result = {"repository": repo, "issue": number, "action": "completed", "pr": pr_number}
+        complete = (getattr(self.workspace, "completed", None)
+                    if hasattr(type(self.workspace), "completed") or "completed" in getattr(self.workspace, "__dict__", {}) else None)
+        if complete is None:
+            return result
+        try:
+            current = self.github.progress(repo, number)
+            if (not current or current.get("phase") != "completed" or current.get("pending_action") is not None
+                    or current.get("wait_reason") is not None
+                    or any(current.get(key) != value for key, value in record.items())
+                    or self._latest(repo, number, config) != "issue_closed"):
+                result["resource_wait_reason"] = "resource_completion_unconfirmed"
+            elif complete(repo, number, record["branch"], record["head"], pr_number, merge_sha):
+                result["resource_status"] = "retired"
+        except (ValueError, RuntimeError, OSError):
+            # Delivered progress must not be rewritten as unfinished work when
+            # resource cleanup is unavailable or its response is uncertain.
+            result["resource_wait_reason"] = "resource_cleanup_pending"
+        return result
+
+    def _issues(self, repo):
+        issues = self.github.issues(repo)
+        discover = (getattr(self.workspace, "issue_numbers", None)
+                    if hasattr(type(self.workspace), "issue_numbers") or "issue_numbers" in getattr(self.workspace, "__dict__", {}) else None)
+        if discover is None:
+            return issues, None
+        try:
+            numbers = discover(repo)
+            seen = {issue["number"] for issue in issues}
+            for number in numbers:
+                if number in seen:
+                    continue
+                seen.add(number)
+                issue = self.github.issue(repo, number)
+                progress = self.github.progress(repo, number)
+                if (issue.get("number") == number and issue.get("state") == "closed"
+                        and "pull_request" not in issue and progress
+                        and progress.get("host_alias") == self.host
+                        and (progress.get("phase") == "completed" or progress.get("pending_action") == "close_issue")):
+                    issues.append(issue)
+        except (ValueError, RuntimeError, OSError):
+            return issues, "resource_discovery_unavailable"
+        return issues, None
+
     def _intent(self, repo, number, config, record, action, *, stopped_checkpoint=False, **values):
         service_action = action in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}
         head = values.get("head", record.get("head"))
@@ -323,6 +368,12 @@ class Runner:
                                        next_action="publish")
             return None, self._wait(repo, number, record, "execution_unknown" if status == "transport_unknown" or self.host_hold_reason
                                     else "execution_failed", phase="uncertain", next_action="confirm_stopped")
+        return self._candidate_result(repo, number, config, record, path, phase,
+                                      result, correction=correction, spec_record=spec_record)
+
+    def _candidate_result(self, repo, number, config, record, path, phase, result, *,
+                          correction=None, spec_record=None):
+        spec_record = spec_record or record
         candidate = result.get("detail", {}).get("result")
         if isinstance(candidate, str):
             try:
@@ -489,6 +540,8 @@ class Runner:
             return {"repository": repo, "issue": number, "action": "waiting", "reason": self.host_hold_reason}
         issue = self.github.issue(repo, number)
         record = self.github.progress(repo, number)
+        if record and record.get("execution_mode") == "native" and not getattr(self, "native", False):
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": "native_owned"}
         config = self._work_config(repo, number, record)
         repo = config["repository"]
         previously_owned = record is not None
@@ -671,9 +724,11 @@ class Runner:
                     except Exception:
                         if self.github.issue(repo, number).get("state") != "closed":
                             return self._wait(repo, number, record, "close_unknown", phase="uncertain")
-                self._record(repo, number, record, phase="completed", pending_action=None,
-                             checkpoint=record["checkpoint"], next_action="completed", wait_reason=None)
-                return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
+                if self.github.issue(repo, number).get("state") != "closed":
+                    return self._wait(repo, number, record, "close_unknown", phase="uncertain")
+                record = self._record(repo, number, record, phase="completed", pending_action=None,
+                                      checkpoint=record["checkpoint"], next_action="completed", wait_reason=None)
+                return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
             if closing_recovery or config.get("_completion_only"):
                 return self._wait(repo, number, record, "completion_merge_unconfirmed", phase="uncertain")
             if pr.get("state") == "closed":
@@ -743,7 +798,8 @@ class Runner:
         if fresh_remote != remote:
             return self._wait(repo, number, record, "remote_head_changed",
                               phase="uncertain" if record.get("pending_action") else "waiting")
-        path = recovered_path or self.workspace.prepare(repo, number, branch, remote, recover_dirty=recover_dirty)
+        path = recovered_path or self.workspace.prepare(repo, number, branch, remote,
+            recover_dirty=recover_dirty or bool(getattr(self, "native", False) and record.get("native_outcome")))
         self.workspace.fetch_base(path, config["revision"])
         state = self.workspace.inspect(path)
         head = state["head"]
@@ -796,18 +852,7 @@ class Runner:
             if wait:
                 return wait
             record = self.github.progress(repo, number)
-            if result["outcome"] != "candidate_ready":
-                return self._wait(repo, number, record, "replan_required", next_action="diagnose")
-            changed = self.workspace.changed_paths(path, config["revision"])
-            if any(name != intake["spec"] for name in changed):
-                return self._wait(repo, number, record, "implementation_before_design_acceptance")
-            if set(changed) != {intake["spec"]} or not self.workspace.valid_spec(path, intake["spec"], require_tracked=False):
-                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
-            head = self.workspace.checkpoint(path, f"Specify Issue {number}")
-            if not self.workspace.valid_spec(path, intake["spec"]):
-                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
-            self._record(repo, number, record, head=head, phase="design_done", resume_phase=None, next_action="spec_review")
-            return {"action": "continue", "repository": repo, "issue": number}
+            return self._finish_design(repo, number, config, record, path, intake, result)
         if not self.workspace.valid_spec(path, intake["spec"]):
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         spec_digest = hashlib.sha256(self.workspace.read_spec(path, intake["spec"])).hexdigest()
@@ -847,16 +892,7 @@ class Runner:
                 "Prepare actual behavior evidence; UI changes require a screen shared with the operator.\n" + issue["body"])
             if wait:
                 return wait
-            record = self.github.progress(repo, number)
-            head = self.workspace.checkpoint(path, f"Implement Issue {number}")
-            record, changed, wait = self._spec_checkpoint(repo, number, config, record, path, head)
-            if changed:
-                return wait or {"action": "continue", "repository": repo, "issue": number}
-            if result["outcome"] != "candidate_ready":
-                record = self._record(repo, number, record, head=head)
-                return await self._correct(repo, number, config, record, path, "implementation_failure", details=result.get("summary", ""))
-            record = self._record(repo, number, record, head=head, phase="implementation_done", resume_phase=None, next_action="verification")
-            return {"action": "continue", "repository": repo, "issue": number}
+            return await self._finish_implementation(repo, number, config, record, path, result)
         if state["dirty"]:
             head = self.workspace.checkpoint(path, f"Checkpoint Issue {number}")
         paths = self.workspace.changed_paths(path, config["revision"])
@@ -1211,6 +1247,41 @@ class Runner:
             correction=(reason, attempts), spec_record=spec_record)
         if wait:
             return wait
+        return self._finish_correction(repo, number, config, record, path, result,
+            reason=reason, attempts=attempts, prior_head=prior_head, spec_base=spec_base, spec_only=spec_only,
+            integrating=integrating, completed_phase=completed_phase, resume_phase=resume_phase,
+            spec_record=spec_record, remote_before=remote_before)
+
+    def _finish_design(self, repo, number, config, record, path, intake, result):
+        if result["outcome"] != "candidate_ready":
+            return self._wait(repo, number, record, "replan_required", next_action="diagnose")
+        changed = self.workspace.changed_paths(path, config["revision"])
+        if any(name != intake["spec"] for name in changed):
+            return self._wait(repo, number, record, "implementation_before_design_acceptance")
+        if set(changed) != {intake["spec"]} or not self.workspace.valid_spec(path, intake["spec"], require_tracked=False):
+            return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
+        head = self.workspace.checkpoint(path, f"Specify Issue {number}")
+        if not self.workspace.valid_spec(path, intake["spec"]):
+            return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
+        self._record(repo, number, record, head=head, phase="design_done", resume_phase=None, next_action="spec_review")
+        return {"action": "continue", "repository": repo, "issue": number}
+
+    async def _finish_implementation(self, repo, number, config, record, path, result):
+        record = self.github.progress(repo, number)
+        head = self.workspace.checkpoint(path, f"Implement Issue {number}")
+        record, changed, wait = self._spec_checkpoint(repo, number, config, record, path, head)
+        if changed:
+            return wait or {"action": "continue", "repository": repo, "issue": number}
+        if result["outcome"] != "candidate_ready":
+            record = self._record(repo, number, record, head=head)
+            return await self._correct(repo, number, config, record, path, "implementation_failure", details=result.get("summary", ""))
+        record = self._record(repo, number, record, head=head, phase="implementation_done", resume_phase=None, next_action="verification")
+        return {"action": "continue", "repository": repo, "issue": number}
+
+    def _finish_correction(self, repo, number, config, record, path, result, *, reason, attempts, spec_only,
+                           prior_head, spec_base, integrating, completed_phase, resume_phase,
+                           spec_record, remote_before):
+        key = repo, number, reason
         self.failures[key] = attempts
         record = self.github.progress(repo, number)
         record = self._record(repo, number, record, correction_reason=reason, correction_attempt=attempts)
@@ -1248,10 +1319,12 @@ class Runner:
                 continue
             seen.add(repo.casefold())
             try:
-                issues = self.github.issues(repo)
+                issues, resource_wait = self._issues(repo)
             except (ValueError, RuntimeError, OSError):
                 result.append({"repository": repo, "wait_reason": "project_contract_unavailable"})
                 continue
+            if resource_wait:
+                result.append({"repository": repo, "wait_reason": resource_wait})
             for issue in issues:
                 if "pull_request" in issue:
                     continue
@@ -1295,10 +1368,12 @@ class Runner:
                 continue
             seen.add(repo.casefold())
             try:
-                issues = self.github.issues(repo)
+                issues, resource_wait = self._issues(repo)
             except (ValueError, RuntimeError, OSError):
                 results.append({"repository": repo, "action": "waiting", "reason": "project_contract_unavailable"})
                 continue
+            if resource_wait:
+                results.append({"repository": repo, "action": "waiting", "reason": resource_wait})
             for issue in issues:
                 if "pull_request" in issue:
                     continue
