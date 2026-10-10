@@ -200,7 +200,7 @@ class GitHub:
 
     @staticmethod
     def _validate_record(record, *, metadata=False):
-        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
+        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "pending_thread", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
         if metadata:
             allowed |= {"repository_id", "issue_number", "version"}
         if not isinstance(record, dict) or set(record) - allowed:
@@ -219,6 +219,9 @@ class GitHub:
                         raise ValueError()
                 except (ValueError, AttributeError, TypeError) as exc:
                     raise GitHubError("Invalid attempt UUID") from exc
+            elif key == "pending_thread":
+                if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value):
+                    raise GitHubError("Invalid pending review thread ID")
             elif key in {"action_attempt", "delivery_attempt", "correction_attempt"}:
                 if type(value) is not int or not 1 <= value <= 3:
                     raise GitHubError("Service action retry bound exceeded")

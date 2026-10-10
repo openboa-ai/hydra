@@ -301,15 +301,30 @@ class Runner:
 
     def _resolve_outdated(self, repo, number, config, record, observation):
         head, pr_number = observation["head_sha"], observation["pr"]["number"]
-        for thread in self._outdated_provider_threads(observation, config):
-            intent = self._intent(repo, number, config, record, "resolve_threads", head=head)
+        threads = self._outdated_provider_threads(observation, config)
+        if record.get("pending_action") == "resolve_threads":
+            target = record.get("pending_thread")
+            selected = [t for t in observation.get("threads", []) if target and t.get("id") == target]
+            if len(selected) != 1 or selected[0].get("isResolved") not in {True, False}:
+                return record, self._wait(repo, number, record, "review_resolution_target_unknown", phase="uncertain")
+            if selected[0]["isResolved"] is True:
+                record = self._record(repo, number, record, pending_action=None, pending_thread=None,
+                                      phase="review_wait", wait_reason=None,
+                                      delivery_action=None, delivery_attempt=None, delivery_head=None)
+            elif selected[0] not in threads:
+                return record, self._wait(repo, number, record, "review_resolution_boundary", phase="uncertain")
+            else:
+                threads = [selected[0]] + [t for t in threads if t.get("id") != target]
+        for thread in threads:
+            intent = self._intent(repo, number, config, record, "resolve_threads", head=head,
+                                  pending_thread=thread["id"])
             if intent is None:
                 return record, self._intent_wait(repo, number)
             try:
                 self.github.resolve_thread(repo, pr_number, thread["id"], head, config["review_provider"])
             except RuntimeError:
                 return intent, self._wait(repo, number, intent, "review_resolution_boundary", phase="uncertain")
-            record = self._record(repo, number, intent, pending_action=None, phase="review_wait",
+            record = self._record(repo, number, intent, pending_action=None, pending_thread=None, phase="review_wait",
                                   delivery_action=None, delivery_attempt=None, delivery_head=None)
         if record.get("pending_action") == "resolve_threads":
             record = self._record(repo, number, record, pending_action=None, phase="review_wait",
@@ -364,7 +379,8 @@ class Runner:
                        and c.get("body", "").strip() == phrase for c in self.github.comments(repo, number)):
                 return {"repository": repo, "issue": number, "action": "waiting", "reason": "replan_required"}
             self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
-            service_retry = record.get("delivery_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
+            service_retry = (record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
+                             and record.get("delivery_action") == record.get("pending_action"))
             active_write = record.get("phase") == "executing" and record.get("pending_action") in {"design", "implementation", "correction"}
             if active_write:
                 if not self._handover(repo, number, record, config):
