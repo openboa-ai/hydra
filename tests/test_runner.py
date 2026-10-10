@@ -201,7 +201,7 @@ class Workspace:
         self.verification_calls += 1
         return [{'passed': True, 'exit_code': 0, 'argv': ['true'], 'cwd': '.', 'output_digest': 'e' * 64}]
 
-    def verification_output(self, digest):
+    def verification_output(self, digest, *, max_chars=None):
         return ''
 
     def publish(self, path, branch, expected):
@@ -761,7 +761,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_successful_verification_output_is_private_review_input(self):
         runner = await self.publish()
         private_output = 'SKIPPED behavior receipt; warning private-test-account'
-        self.workspace.verification_output = lambda digest: private_output + 'x' * 30000
+        self.workspace.verification_output = lambda digest, *, max_chars=None: (private_output + 'x' * 30000)[:max_chars]
         prompts = []
         async def capture(assignment, **kwargs):
             prompts.append(assignment['prompt'])
@@ -1145,6 +1145,11 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.workspace.verification_calls, before)
                     self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
                     await restarted.step('example/product', 4)
+                self.assertEqual(self.workspace.verification_calls, before)
+                self.assertIn('workspace_write', self.calls)
+                self.assertIsNone(self.github.note['resume_phase'])
+                self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
+                await restarted.step('example/product', 4)
                 self.assertEqual(self.workspace.verification_calls, before + 1)
                 self.assertIn('read_only', self.calls)
                 self.assertNotEqual(self.github.note['checkpoint'], 'interrupted_committed')
@@ -1164,11 +1169,15 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.github.branch, HEAD)
         self.assertEqual(self.github.note['expected_head'], HEAD)
         self.assertEqual(self.github.note['checkpoint'], 'interrupted_committed')
+        partial_head = self.workspace.head
         self.github.work['labels'] = [{'name': 'hydra:ready'}]
         before = self.workspace.verification_calls
+        self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.workspace.verification_calls, before)
+        self.assertNotEqual(self.workspace.head, partial_head)
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
         self.assertEqual(self.workspace.verification_calls, before + 1)
-        self.assertEqual(self.github.branch, 'f' * 40)
+        self.assertEqual(self.github.branch, self.workspace.head)
 
     async def test_remote_head_changed_during_interruption_is_never_adopted(self):
         self.github.remote_pending = True

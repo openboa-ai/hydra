@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 560 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 540 passed, 18 Linux-only process tests and
+On 2026-10-10 the final local suite collected 591 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 571 passed, 18 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -198,6 +198,28 @@ Current-head remote kernel/hygiene CI, coupled Code/Security Review and native
 protected-change approval must be read from PR #4. Previous-head completion does
 not qualify the current candidate. Revision-linked source acceptance is recorded
 in [the review record](review.md).
+
+The final correction batch passed the full suite in 196.509 seconds. Related
+control/output and native-credit suites each passed 139 tests, overlapping the
+full suite. Actual Git control-path and write-continuation checks passed 18 tests.
+The initial full run exposed an accepted-spec fixture missing its durable anchor;
+it now references its actual specification commit without changing its path-byte,
+no-publication or no-verification assertions. Handover checks select only records
+from that recovery while preserving exact revised-spec bytes. Stale-cache/no-anchor
+negatives continue to require independent review.
+
+Durable acceptance precedes caching; stopped write work completes before verification
+and new integration. Clean transport uncertainty holds its Issue, while unknown
+cleanup holds the host. Private reviewer output stays within 24,000 characters
+before decoding/joining complete logs. Proc prerequisite tests distinguish explicit
+unsupported-interface skips from actual supported Linux topology acceptance.
+
+A fresh non-generative installed-SDK read observed known usage with included
+permission false, available existing credits and explicit spend permission. The
+revised dispatch guard allowed an attempt and confirmed process cleanup retired
+its ownership marker. No model turn or billing change occurred. Credit availability
+is not a backend acceptance/completion guarantee; every-selected-bucket credit
+requirements remain a conservative compatibility restriction.
 
 Actual product delivery, another-host resumption, host lifecycle integration and
 login-service activation remain unobserved. Fixtures, local tests and successful

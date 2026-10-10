@@ -151,7 +151,7 @@ class UsageObservationTests(unittest.TestCase):
             with self.subTest(data=data):
                 self.assert_invalid(data)
 
-    def test_credits_do_not_replace_explicit_ordinary_usage_permission(self):
+    def test_top_level_credit_claim_does_not_authorize_bucket_usage(self):
         for allowed in (None, False, 1, "true"):
             with self.subTest(allowed=allowed):
                 data = {
@@ -160,6 +160,110 @@ class UsageObservationTests(unittest.TestCase):
                     "rateLimits": bucket(),
                 }
                 self.assertFalse(usage_allowed(capabilities(codex._safe_usage(data))))
+
+    def test_existing_credits_allow_exhausted_legacy_and_selected_map_buckets(self):
+        for used in (93, 100):
+            for reason in (None, "rate_limit_reached"):
+                paid = {**bucket(used), "credits": {"hasCredits": True},
+                        "spendControlReached": False, "rateLimitReachedType": reason}
+                for limits in ({"rateLimits": paid},
+                               {"rateLimitsByLimitId": {"codex": paid, "other": paid}},
+                               {"rateLimits": bucket(), "rateLimitsByLimitId": {"codex": paid}}):
+                    with self.subTest(used=used, reason=reason, limits=limits):
+                        data = {"ordinaryUsageAllowed": False, **limits}
+                        normalized = codex._safe_usage(data)
+                        self.assertTrue(usage_allowed(capabilities(data)))
+                        self.assertTrue(usage_allowed(capabilities(normalized)))
+
+    def test_paid_permission_needs_each_buckets_credit_and_explicit_spend_observation(self):
+        paid = {**bucket(100), "credits": {"hasCredits": True}, "spendControlReached": False}
+        denied = [
+            {**bucket(100), "spendControlReached": False},
+            {**paid, "credits": None},
+            {**paid, "credits": {"hasCredits": False}},
+            {**bucket(100), "credits": {"hasCredits": True}},
+            *({**paid, "spendControlReached": value} for value in (None, True, 0, 1, "false", [], {})),
+        ]
+        for snapshot in denied:
+            for first in (False, True):
+                items = [("allowed", paid), ("denied", snapshot)]
+                if first:
+                    items.reverse()
+                for limits in ({"rateLimits": snapshot},
+                               {"rateLimits": paid, "rateLimitsByLimitId": dict(items)}):
+                    with self.subTest(snapshot=snapshot, first=first, limits=limits):
+                        data = {"ordinaryUsageAllowed": False, **limits}
+                        self.assertFalse(usage_allowed(capabilities(codex._safe_usage(data))))
+
+    def test_malformed_credit_objects_fail_normalization_even_with_included_usage(self):
+        malformed = [False, 0, "available", [], {},
+                     *({"hasCredits": value} for value in (None, 0, 1, "true", [], {}))]
+        for included in (False, True):
+            for credits in malformed:
+                with self.subTest(included=included, credits=credits):
+                    invalid = {**bucket(100), "credits": credits, "spendControlReached": False}
+                    self.assert_invalid({"ordinaryUsageAllowed": included,
+                        "rateLimitsByLimitId": {"healthy": {**bucket(), "credits": {"hasCredits": True},
+                                                               "spendControlReached": False}, "invalid": invalid}})
+
+    def test_workspace_and_unknown_limit_reasons_hold_both_permission_paths(self):
+        denials = ("workspace_owner_credits_depleted", "workspace_member_credits_depleted",
+                   "workspace_owner_usage_limit_reached", "workspace_member_usage_limit_reached",
+                   "future_reason", "", False, 0, [], {})
+        for included in (False, True):
+            for reason in denials:
+                denied = {**bucket(100), "credits": {"hasCredits": True},
+                          "spendControlReached": False, "rateLimitReachedType": reason}
+                allowed = {**denied, "rateLimitReachedType": None}
+                for limits in ({"rateLimits": denied},
+                               {"rateLimitsByLimitId": {"allowed": allowed, "denied": denied}}):
+                    with self.subTest(included=included, reason=reason, limits=limits):
+                        data = {"ordinaryUsageAllowed": included, **limits}
+                        self.assertFalse(usage_allowed(capabilities(data)))
+                        self.assertFalse(usage_allowed(capabilities(codex._safe_usage(data))))
+
+    def test_included_usage_keeps_optional_credit_and_spend_behavior(self):
+        for credits in (None, {"hasCredits": False}, {"hasCredits": True}):
+            for control in (None, False):
+                for reason in (None, "rate_limit_reached"):
+                    with self.subTest(credits=credits, control=control, reason=reason):
+                        data = metering(rateLimits={**bucket(100), "credits": credits,
+                            "spendControlReached": control, "rateLimitReachedType": reason})
+                        self.assertTrue(usage_allowed(capabilities(codex._safe_usage(data))))
+
+    def test_bucket_credits_do_not_replace_known_included_permission_or_capabilities(self):
+        paid = {**bucket(100), "credits": {"hasCredits": True}, "spendControlReached": False}
+        for included in (None, 0, 1, "false", "true", [], {}):
+            with self.subTest(included=included):
+                data = {"ordinaryUsageAllowed": included, "rateLimits": paid}
+                self.assertFalse(usage_allowed(capabilities(codex._safe_usage(data))))
+        data = {"ordinaryUsageAllowed": False, "rateLimits": paid}
+        for field, value in (("available", False), ("cleanup", "unknown"), ("sdk_version", None),
+                             ("runtime_version", None), ("account", {"status": "unknown"}),
+                             ("models", {"status": "known", "ids": []})):
+            with self.subTest(field=field):
+                self.assertFalse(usage_allowed({**capabilities(codex._safe_usage(data)), field: value}))
+
+    def test_paid_probe_retains_only_credit_permission_and_never_private_balance(self):
+        raw = {"ordinaryUsageAllowed": False, "rateLimitsByLimitId": {"codex": {
+            **bucket(100), "spendControlReached": False, "rateLimitReachedType": "rate_limit_reached",
+            "credits": {"hasCredits": True, "balance": "synthetic-private-credit-balance",
+                        "unlimited": True, "accountId": "synthetic-credit-account"},
+        }}}
+        result = self.probe(raw)
+        self.assertEqual(result["usage"]["status"], "known")
+        self.assertEqual(result["usage"]["data"]["rateLimitsByLimitId"]["codex"]["credits"],
+                         {"hasCredits": True})
+        self.assertTrue(usage_allowed(result))
+        encoded = json.dumps(result)
+        for private in ("balance", "unlimited", "accountId", "synthetic-private-credit-balance",
+                        "synthetic-credit-account"):
+            self.assertNotIn(private, encoded)
+        raw["rateLimitsByLimitId"]["codex"]["credits"]["hasCredits"] = "true"
+        rejected = self.probe(raw)
+        self.assertEqual(rejected["usage"], {"status": "unknown", "error_type": "ValueError"})
+        self.assertFalse(usage_allowed(rejected))
+        self.assertNotIn("synthetic-private-credit-balance", json.dumps(rejected))
 
     def test_normalization_only_keeps_metering_whitelist_without_mutating_input(self):
         window = {

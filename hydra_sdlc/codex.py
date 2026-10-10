@@ -236,6 +236,11 @@ def _safe_usage(data: dict) -> dict:
             for key in ("limitId", "limitName", "rateLimitReachedType", "spendControlReached")
             if key in item
         }
+        credits = item.get("credits")
+        if credits is not None:
+            if not isinstance(credits, dict) or type(credits.get("hasCredits")) is not bool:
+                raise ValueError("Invalid metering credits")
+            result["credits"] = {"hasCredits": credits["hasCredits"]}
         observed = False
         for key in ("primary", "secondary"):
             window = item.get(key)

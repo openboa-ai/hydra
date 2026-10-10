@@ -21,7 +21,8 @@ hydra serve --repos owner/product owner/another-product \
   --workspace-root /absolute/owned/workspaces --host-alias development-mac
 ```
 
-The first runtime selects the existing `openboa` GitHub CLI account per operation and the existing ChatGPT subscription. It neither buys credits nor switches
+The first runtime selects the existing `openboa` GitHub CLI account per operation
+and the existing ChatGPT subscription or available account credits. It neither buys credits nor switches
 to a paid model API. Configure the project's reviewed `.hydra.toml` on its protected
 default branch and delegate a ready Issue using the [registration guide](docs/registration.md).
 
@@ -62,9 +63,12 @@ recovered after host loss. See [the implementation contract](docs/engineering/gi
 
 The existing OS lock retains only a boot identity and one unresolved launch nonce.
 It blocks restart after an uncertain execution even if its wrapper has disappeared;
-confirmed cleanup clears it. It contains no project/workflow state. Native Codex
-permission governs new turns, including existing credits; native denial and unknown
-usage still hold, without purchases or billing fallback.
+confirmed cleanup clears it. It contains no project/workflow state. Native included
+permission or explicit credit availability with spend permission permits a turn
+attempt; Codex accepts or rejects execution. Unknown usage and workspace denials
+hold without purchases or billing fallback. Credit attempts currently require
+availability in every selected quota bucket, so an additional bucket without credit
+information conservatively waits.
 
 ## Status
 

@@ -64,7 +64,7 @@ class ControlCharacterPathTests(unittest.IsolatedAsyncioTestCase):
         github.work['number'] = 1
         github.note = dict(attempt_id='00000000-0000-4000-8000-000000000001',
                            host_alias='test-host', contract_revision=fixture.base,
-                           branch='hydra/issue-1', head=head, expected_head=None,
+                           branch='hydra/issue-1', head=head, expected_head=None, spec_revision=head,
                            phase='ready', pending_action=None,
                            intake_digest=intake_digest(github.work))
         names = ('src/line\nbreak.py', 'src/tab\tname.py')

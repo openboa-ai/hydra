@@ -405,6 +405,10 @@ def _driver(mode, directory):
 @unittest.skipUnless(sys.platform == "linux", "requires Linux subreaper and /proc semantics")
 class LinuxProcessSupervisionTests(unittest.TestCase):
     def run_driver(self, mode):
+        try:
+            Path(f"/proc/self/task/{os.getpid()}/children").read_text()
+        except (FileNotFoundError, PermissionError):
+            self.skipTest("requires readable Linux proc task-children for owned fixture cleanup")
         with tempfile.TemporaryDirectory() as directory:
             completed = subprocess.run(
                 _command("--driver", mode, directory), capture_output=True,
@@ -564,6 +568,32 @@ class LinuxProcessSupervisionTests(unittest.TestCase):
             "reason": "cleanup_unknown", "helper_killed": True,
         })
         self.assertNotEqual(report["adopted"]["state"], "none", report)
+
+
+class TopologyPrerequisiteTests(unittest.TestCase):
+    def test_missing_or_denied_proc_interface_skips_before_child_creation(self):
+        for error in (FileNotFoundError("missing task-children"), PermissionError("denied task-children")):
+            with self.subTest(error=type(error).__name__):
+                fixture = LinuxProcessSupervisionTests("test_negative_control_detects_adoption_before_test_cleanup")
+                with patch.object(Path, "read_text", side_effect=error), \
+                        patch.object(tempfile, "TemporaryDirectory") as directory, \
+                        patch.object(subprocess, "run") as spawn:
+                    with self.assertRaisesRegex(unittest.SkipTest, "requires readable Linux proc task-children"):
+                        fixture.run_driver("negative_control")
+                    directory.assert_not_called()
+                    spawn.assert_not_called()
+
+    def test_unexpected_proc_read_error_is_not_masked_as_unsupported(self):
+        fixture = LinuxProcessSupervisionTests("test_negative_control_detects_adoption_before_test_cleanup")
+        error = OSError("unexpected proc read failure")
+        with patch.object(Path, "read_text", side_effect=error), \
+                patch.object(tempfile, "TemporaryDirectory") as directory, \
+                patch.object(subprocess, "run") as spawn:
+            with self.assertRaises(OSError) as raised:
+                fixture.run_driver("negative_control")
+            self.assertIs(raised.exception, error)
+            directory.assert_not_called()
+            spawn.assert_not_called()
 
 
 @unittest.skipUnless(os.name == "posix", "owned command execution requires POSIX")

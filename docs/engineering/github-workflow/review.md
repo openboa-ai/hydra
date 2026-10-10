@@ -467,3 +467,46 @@ uncertain request identity and budget without a new model/request/merge loop.
 The final macOS suite collected 560 tests: 540 passed and 20 platform-specific
 cases skipped. Fresh-head remote CI, native review and protected-change approval
 remain separate delivery requirements.
+
+The durable-acceptance, interrupted-completion and bounded-output clarification
+was independently accepted before dependent edits at specification SHA-256
+`4a4fd07c11c698df812fb0414879f1c636e6e185b987da0c90b434cf411e47d4`.
+It retains the existing accepted-anchor, continuation, cleanup and private-output
+contracts, without another workflow store, state schema or public interface.
+Native clean transport-unknown results may omit the unknown-cleanup marker;
+unexpected executor exceptions must explicitly retain that marker. Unsupported
+proc-interface fixture skips are not topology acceptance evidence.
+
+Independent final source review accepted Runner SHA-256
+`eeaa4cf9f65249a48f958453c58eee5cc81c80c3fe0edd8ad94f27e2d55c9038`.
+Interrupted correction resumes before new-base integration, retaining its reason
+and attempt count. All 139 related control/output regressions passed. The stopped
+handover fixture selects records from that recovery, retaining exact spec bytes.
+
+The included-usage versus existing-credit clarification was independently accepted
+before dependent edits at specification SHA-256
+`386de9b429a75797251821c7d364868d2d385252e39f3010f8879384efca2880`.
+The pinned SDK defines ordinary permission for included usage. Native credit
+availability with explicit spend permission permits an existing-SDK attempt;
+the backend still decides whether it can execute. This adds no billing fallback
+or purchase authority. Requiring credit availability in every selected bucket is
+a conservative runtime restriction, not a universal Codex credit requirement.
+
+Independent final usage-source review accepted Runner SHA-256
+`d60bf6cc7cb5c2ea3f06ba7bfe52063c45f89c5daa17a7f70219144d181f2dfb`,
+Codex adapter SHA-256
+`eb69f7861cb1938df365a1457a2c2efd312a6b0167f86205154e9c99d13bf17f`
+and usage regression SHA-256
+`658eab569c3b2a8b89de24353057b8414be6a7af4e23171a90de6dd45b1fadf6`.
+The focused usage/adapter/runner suite passed all 139 tests. The actual installed
+SDK observed denied included usage with available native credits, allowing an
+attempt through the guard and clearing owned cleanup without starting a model.
+The exact existing-credit path still depends on backend acceptance of the real turn.
+
+Independent fixture review accepted the actual Git control-path fixture at SHA-256
+`2b92411a2a33d0e4526354350aa9ebc1122b06472e183b79b5447d13ec9ff2d0`.
+Its durable accepted revision names the actual owned specification commit; exact
+control-filename bytes and no-publication/no-verification assertions are unchanged.
+The related 18 tests passed. The final macOS suite collected 591 tests: 571 passed
+and 20 platform-specific cases skipped. Source and local evidence do not replace
+fresh-head Linux CI, Code/Security Review, native approval or actual product delivery.

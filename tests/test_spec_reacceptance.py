@@ -254,12 +254,13 @@ class SpecReacceptanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls, [])
         self.github.extra_comments.append({"user": {"login": "operator"},
             "body": f"hydra: handover {self.github.note['attempt_id']} stopped"})
+        before_handover = len(self.records)
         result = await self.step()
         self.assertEqual(result["action"], "continue")
         self.assertEqual(self.calls, ["spec_review", "implementation"])
         self.assertEqual(self.workspace.verification_calls, 0)
         self.assertIn(True, self.workspace.prepared_recovery)
-        revised = [record for record in self.records if record.get("resume_phase") == "implementation"
+        revised = [record for record in self.records[before_handover:] if record.get("resume_phase") == "implementation"
                    and record.get("spec_revision") == BASE and record.get("head") != HEAD]
         self.assertTrue(revised, self.records)
         self.assertEqual(self.workspace.snapshots[revised[0]["head"]][SPEC], dirty[SPEC])

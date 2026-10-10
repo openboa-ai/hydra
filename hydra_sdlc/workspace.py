@@ -727,10 +727,14 @@ class Workspace:
                 break
         return records
 
-    def verification_output(self, digest):
+    def verification_output(self, digest, *, max_chars=None):
         """Private reviewer material; never include this in GitHub progress."""
         if digest not in self._outputs:
             raise WorkspaceWait("verification_output_unavailable")
+        if max_chars is not None:
+            if type(max_chars) is not int or max_chars < 0:
+                raise ValueError("max_chars must be a nonnegative integer or None")
+            return self._outputs[digest][:4 * max_chars].decode(errors="replace")[:max_chars]
         return self._outputs[digest].decode(errors="replace")
 
     def changed_paths(self, path, base_sha):

@@ -105,8 +105,8 @@ Workspace-write mode is explicit with deny-all approval. Restrict writes to the
 owned workspace/resources; keep read-only reviewer mode. Product checks run through
 registered resource/lifecycle provider. The reviewer examines actual spec/diff/output.
 A provider-completed result proposes candidate readiness, never delivery completion.
-Missing resources/auth/usage observation or Codex denying ordinary usage prevents
-a new model turn. Respect reported native spend controls. Existing account credits
+Missing resources/auth/usage observation or unavailable included usage and credits
+prevents a new model turn. Respect reported native spend controls. Existing account credits
 may be consumed when Codex permits use; never buy credits, auto-recharge or switch
 to API billing. Preserve failed/unknown outcomes as waits rather than automatic restart.
 
@@ -481,11 +481,25 @@ or hidden by a healthy bucket. Use legacy rateLimits only when the multi-bucket 
 is absent/null, not when a supplied map is empty or malformed. Invalid normalization
 keeps usage unknown. On 2026-10-10 the operator chose Codex's native usage permission,
 including existing credits, instead of the previous optional 20% subscription reserve.
-Require ordinaryUsageAllowed to be exactly true; a reported spend-control denial or
-malformed spend-control value holds. Missing/unreported optional controls do not
-invent a denial. No credit balance, pricing arithmetic or fallback billing mechanism
-is added. Acceptance covers valid high-usage/credit-backed dispatch, native denial,
-spend controls and unchanged unknown/malformed-report holds.
+The pinned SDK defines ordinaryUsageAllowed as permission for included usage, not
+all credit-backed usage. Permit a native dispatch attempt when that flag is exactly
+true. When it is exactly false, the operator-authorized existing-credit path needs
+every selected quota bucket to report credits.hasCredits exactly true and
+spendControlReached exactly false. Missing/malformed included permission still
+holds; absent, malformed or unavailable credits cannot authorize that paid path.
+A supplied credit object must have an exact boolean hasCredits. Retain only that
+flag, never credit balances or account identifiers. Native workspace credit/usage
+denials and unknown/malformed limit reasons hold both paths; a bare included
+rate_limit_reached does not deny available existing credits. Spend-control denial
+or malformed controls hold every selected bucket. Missing optional spend controls
+retain the prior included-usage behavior but cannot authorize the paid path.
+The native backend accepts or rejects the actual turn; availability is not a promise
+of completion. A rejected/uncertain turn retains the existing bounded wait/recovery
+path, without retrying through another billing method. No purchase, auto-recharge,
+pricing arithmetic or API fallback is added. Acceptance covers included usage,
+exhausted included limits with valid existing credits, absent/malformed credits,
+spend controls and unchanged unknown-report holds. This implements the operator's
+existing-credit choice using [Codex's documented credit path](https://learn.chatgpt.com/docs/pricing).
 
 Required CI is the explicitly bound job and matching check, not optional jobs in
 the same workflow. After formal producer/run identity validation, inspect that job
@@ -792,3 +806,34 @@ workflow, event, head, repository, reusable revision and job/check identity gate
 neither ambiguity nor a progress record is passing evidence. Test completed
 duplicate success/mixed results, active and foreign controls, newer reruns and
 durable Runner diagnosis with no model, new request or merge.
+
+### Review corrections: durable acceptance and interrupted completion
+
+Publish the accepted-spec anchor before caching its acceptance in memory. A cache
+entry without the durable accepted revision cannot bypass independent review.
+Failed progress writes retain the existing uncertainty and must not accept later
+implementation edits through an unset or stale anchor.
+
+Record the existing originating write continuation before dispatch. Confirmed
+interruption of implementation or correction retains that continuation through its
+checkpoint and publication; a fresh completion turn precedes verification. Keep
+accepted-spec implementation debt and correction reason/count intact. Successful
+integration restores its prior continuation so it does not create a correction
+loop. A clean transport-unknown attempt remains uncertain for its Issue, while
+other repositories remain eligible. Only unconfirmed cleanup holds the host;
+unexpected executor exceptions explicitly retain unknown cleanup.
+
+Bound private reviewer output to the existing 24,000-character budget before
+decoding or concatenating complete outputs. Read each stored UTF-8 byte prefix up
+to four times the remaining character budget, then truncate decoded characters;
+charge intervening newlines and stop fetching when the budget is exhausted.
+Preserve full stored bytes, receipts and the default full private getter; an
+optional internal prefix argument adds no public interface or workflow state.
+
+Linux topology fixtures that need the optional proc task-children interface must
+check it before spawning owned test children. Missing or permission-denied access
+is an explicit unsupported-fixture skip, never passing topology evidence. Supported
+Linux runs retain their actual adoption, reaping and negative assertions. Other
+errors still fail. Test lost acceptance writes, interrupted write completion,
+clean-unknown cross-repository continuation, exact output-prefix semantics and
+bounded allocation, plus unsupported-interface refusal before child creation.
