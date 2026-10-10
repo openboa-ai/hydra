@@ -116,6 +116,46 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(p.startswith('Resolve integration_changed') for p in self.prompts), 1)
         self.assertEqual(self.effects(), [])
 
+    async def test_interrupted_initial_design_finishes_before_first_implementation(self):
+        spec = 'docs/engineering/task/spec.md'
+        spec_path = self.workspace.path / spec
+        spec_path.unlink()
+        self.paths = [spec]
+        phases = []
+        original_execute = self.execute
+        async def design_then_implement(assignment, **kwargs):
+            phase = self.github.note['pending_action']
+            phases.append(phase)
+            result = await original_execute(assignment, **kwargs)
+            if phase == 'design':
+                self.assertIn('Prepare ONLY the scoped specification at ' + spec, assignment['prompt'])
+                spec_path.write_text('Requirement-linked specification for the actual implementation')
+                if phases.count('design') == 1:
+                    return {'status': 'interrupted', 'detail': {'cleanup': 'confirmed'}}
+            elif phase == 'implementation':
+                target = self.workspace.path / 'src/main.py'
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('implemented = True\n')
+                self.paths.append('src/main.py')
+            return result
+        self.execute = design_then_implement
+
+        self.assertEqual((await self.step())['reason'], 'stop_requested')
+        self.assertTrue(spec_path.is_file())
+        self.assertEqual(self.github.note['resume_phase'], 'design')
+        self.assertFalse((self.workspace.path / 'src/main.py').exists())
+        self.assertEqual((await self.step())['action'], 'continue')
+        self.assertEqual(phases, ['design', 'design'])
+        self.assertEqual(self.github.note['phase'], 'design_done')
+        self.assertFalse(any(effect[0] in {'pr', 'merge', 'close'} for effect in self.effects()))
+
+        self.assertEqual((await self.step())['action'], 'continue')
+        self.assertEqual(phases, ['design', 'design', 'spec_review', 'implementation'])
+        self.assertTrue((self.workspace.path / 'src/main.py').is_file())
+        self.assertEqual(self.github.note['phase'], 'implementation_done')
+        self.assertEqual(self.workspace.verification_calls, 0)
+        self.assertFalse(any(effect[0] in {'pr', 'merge', 'close'} for effect in self.effects()))
+
     async def test_completed_implementation_is_not_repeated_after_integration(self):
         await self.step()
         self.integrated = False
