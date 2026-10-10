@@ -48,6 +48,15 @@ its exact revision is given. Otherwise design a scoped spec in the permitted doc
 location and independently review the actual spec before dependent implementation.
 An independent review is another Codex turn, not a native human approval.
 
+Bind valid initial intake by SHA-256 of exact Issue title/body serialized as sorted,
+compact UTF-8 JSON. Store this public digest before first dispatch and recheck it
+before PR recovery/delivery, during execution and immediately before/after service
+intent publication. Labels/comments are separately observed and do not change this
+digest. Changed or unbound intake holds the existing attempt and pending effect;
+do not silently replace its digest, adopt a new goal or close it with old evidence.
+Restore the delegated intake to continue, or close/pause the old task and delegate a
+new Issue for a changed scope. Failure replanning does not authorize goal expansion.
+
 Use the branch `hydra/issue-N`. Existing remote branch/PR and current dirty workspace
 must be reconciled before changes. Another actor's branch/PR is a conflict, not adopted.
 A public-safe marker binds PR to repository numeric ID and Issue number. Multiple
