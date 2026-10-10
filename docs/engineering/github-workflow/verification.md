@@ -4,7 +4,7 @@ The new workflow removes runtime SQLite/store imports. Old qualification files a
 outside dispatch and are not adopted. The same CLI provides foreground operation
 and eventual login-service execution.
 
-On 2026-10-10 all 259 deterministic tests passed with the pinned SDK installed
+On 2026-10-10 all 279 deterministic tests passed with the pinned SDK installed
 (Python 3.14.2, SDK/CLI 0.162.0), with no skipped tests. `git diff --check` passed.
 
 Deterministic evidence covers supervised SDK startup/interrupt/unknown outcomes,
@@ -43,6 +43,17 @@ create or record a design/implementation/correction checkpoint preserves the act
 write and its stopped-work recovery route. The independently authored regressions
 failed on the prior code and pass on the corrected candidate.
 
+Additional regressions cover foreign branches before or after dependency/usage
+waits, confirmed publication retained through PR retry, and late ref advancement
+or deletion before ordinary preparation and stopped dirty recovery. They preserve
+the original head, bytes and ownership without workspace/model dispatch. Pending
+merges survive new findings and changed integration facts until exact read-back;
+actual matching merges use post-merge checks. Failed/cancelled/error or unknown
+review states enter diagnosis, while recognized queued/running states remain waits.
+Actual regular spec files at the 1 MiB boundary are readable and oversized tracked
+or untracked files cannot become design-ready. Non-finite/non-positive timeouts
+are refused before acquiring GitHub, SDK, provider or host resources.
+
 On 2026-10-10 the pinned Codex SDK/CLI 0.162.0 completed a fresh authenticated
 workspace-write turn on the development Mac. The temporary Git workspace contained
 the exact requested file afterward, with two identity observations, 105 lifecycle
@@ -55,6 +66,12 @@ additional pending-work, final ownership, retry diagnosis, scoped checkpoint and
 write-completion ordering findings. They are covered by the revised candidate and regressions. A prior-head
 review or CI result does not qualify this revision; check its current remote facts
 before merge.
+
+Remote kernel/hygiene CI and both coupled provider reviews subsequently completed
+at `2ab740a621ad17baa144079c31f4993e4c2aa0dc`. Five new code findings concerned
+branch acquisition, oversized specs, unresolved merges, non-finite timeouts and
+terminal review states. The revised source and regressions address these findings;
+their previous-head completion does not qualify this new candidate.
 
 Actual product delivery, another-host resumption and login-service activation
 remain unobserved. They are not established by fixtures or successful installation.

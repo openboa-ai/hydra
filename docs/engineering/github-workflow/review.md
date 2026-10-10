@@ -75,3 +75,18 @@ Independent regressions reproduce the prior failures and pass on the correction.
 Checkpoint failures retain active write ownership until confirmed stopped recovery;
 scope correction stays within the original boundary. Source acceptance remains
 separate from current-head provider reviews, native approval and actual delivery.
+
+The acquisition/terminal-observation appendix was independently accepted before
+dependent edits at spec SHA-256
+`f25c7b2b9da09cffe3ddddd28edb1f96d694988d27a3e70fb1daead887ba3b30`.
+Independent source review accepted runner SHA-256
+`1b1de6a0e33453b6fe5dabcc53285d67d9462e2884a66a97001a94760a1b8be2`
+and GitHub adapter SHA-256
+`476aa17e6f626b4d8879e39933e9c89008fc0e8e9af844152b7e8a6c6c439e58`.
+Progress-only waits cannot acquire a remote branch; confirmed publication identity
+survives PR failures. Review reproduced and corrected a late ref change or deletion
+being adopted during stopped-work recovery. Uncertain merges remain limited to
+read-back or the same gated effect. Terminal review failures enter durable diagnosis.
+The shared spec-size limit and finite CLI deadlines were also independently checked.
+No blocking finding remained in these source scopes; final-head CI/provider/native
+protection and actual product delivery remain separate acceptance evidence.
