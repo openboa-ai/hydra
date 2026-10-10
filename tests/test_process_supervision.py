@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import ExitStack
@@ -93,6 +94,15 @@ def _worker(mode, directory):
     if mode == "capability_completed":
         print(json.dumps({"available": True}), flush=True)
         return
+    if mode == "verification_completed":
+        print("verified", flush=True)
+        return
+    if mode == "verification_eof":
+        os.close(1)
+        os.close(2)
+        _mark(directory, "stdout_closed")
+    if mode == "verification_output_limit":
+        os.write(1, b"x" * 4096)
     if mode == "owned":
         print("ready", flush=True)
     time.sleep(60)
@@ -159,6 +169,50 @@ async def _supervisor(mode, directory):
         codex._capability_command = lambda _: _command("--worker", worker_mode, directory)
         codex.CAPABILITIES_TIMEOUT_SECONDS = 1.5
         result = await codex.capabilities(str(directory))
+    elif mode.startswith("verification_"):
+        helpers = []
+        helper_killed = False
+        real_popen = boundary.subprocess.Popen
+        real_ready = boundary._validate_ready
+
+        def observe_spawn(command, *args, **kwargs):
+            process = real_popen(command, *args, **kwargs)
+            if "--owned-process-helper" in command:
+                helpers.append(process)
+                _mark(directory, "helper", pid=process.pid)
+            return process
+
+        def observe_ready(*args, **kwargs):
+            pid, pgid = real_ready(*args, **kwargs)
+            _mark(directory, "owned", pid=pid, pgid=pgid)
+            return pid, pgid
+
+        def stopped():
+            nonlocal helper_killed
+            names = {item["name"] for item in _observations(directory)}
+            if (mode == "verification_helper_death" and {"owned", "descendant"} <= names
+                    and not helper_killed):
+                os.kill(helpers[0].pid, signal.SIGKILL)
+                helper_killed = True
+            return ((mode == "verification_stop" and "descendant" in names)
+                    or (mode == "verification_eof" and "stdout_closed" in names))
+
+        # Deliberately invoke the synchronous facade inside this active loop.
+        # Only observe real helper creation and real validated identities.
+        with patch.object(boundary.subprocess, "Popen", side_effect=observe_spawn), \
+                patch.object(boundary, "_validate_ready", side_effect=observe_ready):
+            try:
+                completed = boundary.run_owned_sync(
+                    _command("--worker", mode, directory), cwd=directory,
+                    env=boundary.worker_environment(),
+                    timeout=1.5 if mode == "verification_timeout" else 5,
+                    stop_requested=stopped,
+                    max_output_bytes=128 if mode == "verification_output_limit" else 1024,
+                )
+                result = {"returncode": completed.returncode, "stdout_hex": completed.stdout.hex()}
+            except boundary.OwnedCommandError as exc:
+                result = {"reason": exc.reason}
+        result["helper_killed"] = helper_killed
     elif mode == "expired_start":
         handle = ObservedProcess(_command("--worker", "owned", directory))
         start_error = None
@@ -393,6 +447,181 @@ class LinuxProcessSupervisionTests(unittest.TestCase):
         self.assertTrue(report["supervisor"]["result"]["unrelated_alive"])
         worker = next(item for item in report["observations"] if item["name"] == "worker")
         self.assertEqual(set(worker["descriptors"]), {"0", "1", "2"}, worker)
+
+    def test_sync_verification_success_reaps_resistant_descendant(self):
+        report = self.run_driver("verification_completed")
+        self.assert_clean(report)
+        self.assertEqual(report["supervisor"]["result"], {
+            "returncode": 0, "stdout_hex": b"verified\n".hex(), "helper_killed": False,
+        })
+
+    def test_sync_verification_timeout_reaps_resistant_descendant(self):
+        report = self.run_driver("verification_timeout")
+        self.assert_clean(report)
+        self.assertLess(report["supervisor"]["result"]["returncode"], 0)
+
+    def test_sync_verification_stop_reaps_resistant_descendant(self):
+        report = self.run_driver("verification_stop")
+        self.assert_clean(report)
+        self.assertEqual(report["supervisor"]["result"]["reason"], "stopped")
+
+    def test_sync_verification_stop_after_stdout_eof_reaps_descendant(self):
+        report = self.run_driver("verification_eof")
+        self.assert_clean(report)
+        self.assertEqual(report["supervisor"]["result"]["reason"], "stopped")
+        self.assertIn("stdout_closed", [item["name"] for item in report["observations"]])
+
+    def test_sync_verification_output_limit_reaps_resistant_descendant(self):
+        report = self.run_driver("verification_output_limit")
+        self.assert_clean(report)
+        self.assertEqual(report["supervisor"]["result"]["reason"], "output_limit")
+
+    def test_sync_verification_helper_death_keeps_cleanup_unknown(self):
+        report = self.run_driver("verification_helper_death")
+        self.assertEqual(report["supervisor"]["result"], {
+            "reason": "cleanup_unknown", "helper_killed": True,
+        })
+        self.assertNotEqual(report["adopted"]["state"], "none", report)
+
+
+@unittest.skipUnless(os.name == "posix", "owned command execution requires POSIX")
+class SynchronousCommandTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from hydra_sdlc import execution_boundary as boundary
+        self.boundary = boundary
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+
+    def run_command(self, source, **options):
+        return self.boundary.run_owned_sync(
+            [sys.executable, "-I", "-c", source], cwd=self.root,
+            env=options.pop("env", {}), timeout=options.pop("timeout", 3),
+            max_output_bytes=options.pop("max_output_bytes", 1024), **options,
+        )
+
+    def assert_worker_gone(self):
+        pid = int((self.root / "worker.pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(pid, 0)
+
+    async def test_active_loop_preserves_cwd_explicit_environment_and_combined_bytes(self):
+        self.assertIsNotNone(asyncio.get_running_loop())
+        source = (
+            "import json,os,sys\n"
+            "print(json.dumps({'cwd': os.getcwd(), 'value': os.environ.get('HYDRA_SYNC_TEST'), "
+            "'stdin': sys.stdin.buffer.read().decode()}), flush=True)\n"
+            "os.write(2, b'private stderr\\n')\n"
+        )
+        with patch.dict(os.environ, {"HYDRA_SYNC_TEST": "parent"}):
+            result = self.run_command(source, env={"HYDRA_SYNC_TEST": "child"})
+            self.assertEqual(os.environ["HYDRA_SYNC_TEST"], "parent")
+        self.assertEqual(result.returncode, 0)
+        self.assertIsInstance(result.stdout, bytes)
+        lines = result.stdout.splitlines()
+        self.assertEqual(json.loads(lines[0]), {"cwd": str(self.root), "value": "child", "stdin": ""})
+        self.assertEqual(lines[1:], [b"private stderr"])
+
+    async def test_stop_before_dispatch_never_spawns(self):
+        with patch.object(self.boundary.subprocess, "Popen") as spawn:
+            with self.assertRaises(self.boundary.OwnedCommandError) as raised:
+                self.run_command("raise AssertionError('must not run')", stop_requested=lambda: True)
+        self.assertEqual(raised.exception.reason, "stopped")
+        spawn.assert_not_called()
+
+    async def test_completed_receipt_needs_no_further_control_write(self):
+        # Exercise the actual private socket on any POSIX host. This helper
+        # reaps one real child; it does not simulate Linux descendant reaping.
+        helper = """
+import json, os, socket, subprocess, sys, time
+from pathlib import Path
+
+control = socket.socket(fileno=int(sys.argv[1]))
+buffered = b''
+while b'\\n' not in buffered:
+    buffered += control.recv(4096)
+assert json.loads(buffered) == {'version': 1, 'kind': 'launch'}
+Path('helper.pid').write_text(str(os.getpid()))
+child = subprocess.Popen(json.loads(sys.argv[2]), start_new_session=True, close_fds=True)
+code = child.wait(timeout=2)
+try:
+    os.killpg(child.pid, 0)
+except ProcessLookupError:
+    pass
+else:
+    raise AssertionError('child group remains after collection')
+frames = [
+    {'version': 1, 'kind': 'ready', 'pid': child.pid, 'pgid': child.pid},
+    {'version': 1, 'kind': 'cleanup', 'pid': child.pid, 'pgid': child.pid,
+     'returncode': code, 'reaped': True, 'group_absent': True},
+]
+# Once terminal cleanup is ready, the helper no longer accepts commands.
+# An extra terminate write must fail, while the receipt can still be read.
+control.shutdown(socket.SHUT_RD)
+control.sendall(b''.join(json.dumps(frame).encode() + b'\\n' for frame in frames))
+time.sleep(.05)
+control.close()
+"""
+
+        def helper_command(command, control_fd, deadline):
+            return [sys.executable, "-I", "-c", helper, str(control_fd), json.dumps(command)]
+
+        source = (
+            "import os\nfrom pathlib import Path\n"
+            "Path('worker.pid').write_text(str(os.getpid()))\n"
+            "print('collected', flush=True)\n"
+        )
+        with patch.object(self.boundary.sys, "platform", "linux"), \
+                patch.object(self.boundary, "_helper_command", side_effect=helper_command):
+            result = self.run_command(source)
+        self.assertEqual((result.returncode, result.stdout), (0, b"collected\n"))
+        self.assert_worker_gone()
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / "helper.pid").read_text()), 0)
+
+    async def test_stop_after_stdout_closes_runs_callback_on_caller_thread(self):
+        caller = threading.get_ident()
+        callback_threads = []
+
+        def stopped():
+            callback_threads.append(threading.get_ident())
+            return (self.root / "closed").exists()
+
+        source = (
+            "import os,time\nfrom pathlib import Path\n"
+            "Path('worker.pid').write_text(str(os.getpid()))\n"
+            "os.close(1); os.close(2)\nPath('closed').touch()\ntime.sleep(60)\n"
+        )
+        with self.assertRaises(self.boundary.OwnedCommandError) as raised:
+            self.run_command(source, stop_requested=stopped)
+        self.assertEqual(raised.exception.reason, "stopped")
+        self.assertGreaterEqual(len(callback_threads), 2)
+        self.assertEqual(set(callback_threads), {caller})
+        self.assert_worker_gone()
+
+    async def test_output_limit_collects_worker_before_error(self):
+        source = (
+            "import os,time\nfrom pathlib import Path\n"
+            "Path('worker.pid').write_text(str(os.getpid()))\n"
+            "os.write(1, b'x' * 4096)\ntime.sleep(60)\n"
+        )
+        with self.assertRaises(self.boundary.OwnedCommandError) as raised:
+            self.run_command(source, max_output_bytes=128)
+        self.assertEqual(raised.exception.reason, "output_limit")
+        self.assert_worker_gone()
+
+    async def test_timeout_after_stdout_closes_returns_negative_receipt(self):
+        source = (
+            "import os,time\nfrom pathlib import Path\n"
+            "Path('worker.pid').write_text(str(os.getpid()))\n"
+            "os.close(1); os.close(2)\ntime.sleep(60)\n"
+        )
+        result = self.run_command(source, timeout=.5, stop_requested=lambda: False)
+        self.assertLess(result.returncode, 0)
+        self.assertEqual(result.stdout, b"")
+        self.assert_worker_gone()
 
 
 class CleanupCancellationTests(unittest.TestCase):

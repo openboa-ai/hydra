@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import queue
+import selectors
 import signal
 import socket
 import subprocess
@@ -92,13 +93,50 @@ def _supervision_frame(kind, **values):
     return data
 
 
+class OwnedCommandError(ProtocolError):
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _helper_command(command, control_fd, deadline):
+    return [sys.executable, "-I", str(Path(__file__).resolve()), "--owned-process-helper",
+            str(control_fd), str(deadline), json.dumps(command)]
+
+
+def _decode_supervision(data):
+    frame = json.loads(data)
+    if not isinstance(frame, dict) or type(frame.get("version")) is not int or frame["version"] != 1:
+        raise ProtocolError("Invalid supervision frame")
+    return frame
+
+
+def _validate_ready(ready, helper_pid):
+    if (set(ready) != {"version", "kind", "pid", "pgid"} or ready["kind"] != "ready"
+            or type(ready["pid"]) is not int or ready["pid"] <= 1
+            or type(ready["pgid"]) is not int
+            or ready["pgid"] != ready["pid"] or ready["pid"] == helper_pid):
+        raise ProtocolError("Invalid supervision identity")
+    return ready["pid"], ready["pgid"]
+
+
+def _validate_receipt(receipt, pid, pgid):
+    if (set(receipt) != {"version", "kind", "pid", "pgid", "returncode", "reaped", "group_absent"}
+            or receipt["kind"] != "cleanup" or receipt["pid"] != pid or receipt["pgid"] != pgid
+            or type(receipt["pid"]) is not int or type(receipt["pgid"]) is not int
+            or type(receipt["returncode"]) is not int
+            or type(receipt["reaped"]) is not bool or type(receipt["group_absent"]) is not bool):
+        raise ProtocolError("Invalid cleanup receipt")
+    return receipt
+
+
 class OwnedProcess:
     """One live-owned SDK group; Linux reaping never changes host-wide child ownership."""
 
     def __init__(self, command, *, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                 stderr=asyncio.subprocess.DEVNULL, env=None, limit=MAX_FRAME_BYTES):
+                 stderr=asyncio.subprocess.DEVNULL, env=None, cwd=None, limit=MAX_FRAME_BYTES):
         self.command = list(command)
-        self.options = dict(stdin=stdin, stdout=stdout, stderr=stderr, env=env, limit=limit,
+        self.options = dict(stdin=stdin, stdout=stdout, stderr=stderr, env=env, cwd=cwd, limit=limit,
                             start_new_session=True)
         self.linux = sys.platform.startswith("linux")
         self.process = self.control = self._peer = self._launch = self._receipt_task = None
@@ -138,8 +176,7 @@ class OwnedProcess:
         if self.linux:
             self.control, self._peer = socket.socketpair()
             self.control.setblocking(False)
-            command = [sys.executable, "-I", str(Path(__file__).resolve()), "--owned-process-helper",
-                       str(self._peer.fileno()), str(deadline), json.dumps(command)]
+            command = _helper_command(command, self._peer.fileno(), deadline)
             options["pass_fds"] = (self._peer.fileno(),)
         self._launch = asyncio.create_task(asyncio.create_subprocess_exec(*command, **options))
         self._launch.add_done_callback(self._registered)
@@ -152,12 +189,7 @@ class OwnedProcess:
         await asyncio.get_running_loop().sock_sendall(self.control, _supervision_frame("launch"))
         ready = await asyncio.wait_for(self._read_control(),
                                        max(0.001, deadline - asyncio.get_running_loop().time()))
-        if (set(ready) != {"version", "kind", "pid", "pgid"} or ready["kind"] != "ready"
-                or type(ready["pid"]) is not int or ready["pid"] <= 1
-                or type(ready["pgid"]) is not int
-                or ready["pgid"] != ready["pid"] or ready["pid"] == self.process.pid):
-            raise ProtocolError("Invalid supervision identity")
-        self.pid = self.pgid = ready["pid"]
+        self.pid, self.pgid = _validate_ready(ready, self.process.pid)
         self._receipt_task = asyncio.create_task(self._read_receipt())
         return self
 
@@ -170,19 +202,10 @@ class OwnedProcess:
             if len(self._buffer.split(b"\n", 1)[0]) >= SUPERVISION_LIMIT:
                 raise ProtocolError("Supervision frame too large")
         data, self._buffer = self._buffer.split(b"\n", 1)
-        frame = json.loads(data)
-        if not isinstance(frame, dict) or type(frame.get("version")) is not int or frame["version"] != 1:
-            raise ProtocolError("Invalid supervision frame")
-        return frame
+        return _decode_supervision(data)
 
     async def _read_receipt(self):
-        receipt = await self._read_control()
-        if (set(receipt) != {"version", "kind", "pid", "pgid", "returncode", "reaped", "group_absent"}
-                or receipt["kind"] != "cleanup" or receipt["pid"] != self.pid or receipt["pgid"] != self.pgid
-                or type(receipt["pid"]) is not int or type(receipt["pgid"]) is not int
-                or type(receipt["returncode"]) is not int
-                or type(receipt["reaped"]) is not bool or type(receipt["group_absent"]) is not bool):
-            raise ProtocolError("Invalid cleanup receipt")
+        receipt = _validate_receipt(await self._read_control(), self.pid, self.pgid)
         self.receipt = receipt
         self._returncode = receipt["returncode"]
         return receipt
@@ -311,6 +334,193 @@ async def _collect_direct(process, deadline):
 
 async def _cleanup(process):
     return True if process is None else await process.cleanup()
+
+
+def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_bytes):
+    """Run a synchronous check using the same owned helper and receipt contract.
+
+    No nested event loop or background thread is needed. The caller retains its
+    storage lease and evaluates its stop callback on the original thread.
+    """
+    if os.name != "posix":
+        raise OwnedCommandError("unavailable")
+    if stop_requested is not None and stop_requested():
+        raise OwnedCommandError("stopped")
+    deadline = time.monotonic() + timeout
+    linux = sys.platform.startswith("linux")
+    process = control = peer = None
+    pid = pgid = receipt = None
+    buffered = b""
+    data = bytearray()
+    reason = None
+    group_gone = stdout_closed = control_closed = control_failed = False
+
+    def fail(value):
+        nonlocal reason
+        if (reason is None or value == "cleanup_unknown" or (value == "stopped" and reason != "cleanup_unknown")
+                or (value == "output_limit" and reason == "timeout")):
+            reason = value
+
+    def stopped():
+        if stop_requested is not None and stop_requested():
+            fail("stopped")
+            return True
+        return False
+
+    def signal_group(sig):
+        nonlocal group_gone
+        if pgid is not None and not group_gone:
+            try:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                group_gone = True
+            except OSError:
+                fail("cleanup_unknown")
+
+    with selectors.DefaultSelector() as selector:
+        def close_control():
+            nonlocal control_closed
+            if control is not None and not control_closed:
+                selector.unregister(control)
+                control.close()
+                control_closed = True
+
+        def receive(wait):
+            nonlocal pid, pgid, receipt, buffered, stdout_closed, control_failed
+            for key, _ in selector.select(max(0, min(.1, wait))):
+                if key.data == "output":
+                    try:
+                        chunk = os.read(process.stdout.fileno(), 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(process.stdout)
+                        stdout_closed = True
+                    elif len(data) <= max_output_bytes:
+                        data.extend(chunk[:max_output_bytes + 1 - len(data)])
+                        if len(data) > max_output_bytes:
+                            fail("output_limit")
+                else:
+                    try:
+                        chunk = control.recv(SUPERVISION_LIMIT + 1)
+                        if not chunk:
+                            if receipt is None or buffered:
+                                raise ProtocolError("Missing cleanup receipt")
+                            close_control()
+                            continue
+                        buffered += chunk
+                        while b"\n" in buffered:
+                            line, buffered = buffered.split(b"\n", 1)
+                            if len(line) >= SUPERVISION_LIMIT:
+                                raise ProtocolError("Supervision frame too large")
+                            frame = _decode_supervision(line)
+                            if pid is None:
+                                pid, pgid = _validate_ready(frame, process.pid)
+                            elif receipt is None:
+                                receipt = _validate_receipt(frame, pid, pgid)
+                            else:
+                                raise ProtocolError("Unexpected supervision frame")
+                        if len(buffered) >= SUPERVISION_LIMIT:
+                            raise ProtocolError("Supervision frame too large")
+                    except BlockingIOError:
+                        continue
+                    except (OSError, ValueError, ProtocolError):
+                        control_failed = True
+                        fail("cleanup_unknown")
+                        close_control()
+
+        try:
+            command = list(argv)
+            options = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, start_new_session=True)
+            if linux:
+                control, peer = socket.socketpair()
+                control.setblocking(False)
+                command = _helper_command(command, peer.fileno(), deadline)
+                options["pass_fds"] = (peer.fileno(),)
+            process = subprocess.Popen(command, **options)
+            if peer is not None:
+                peer.close()
+                peer = None
+            os.set_blocking(process.stdout.fileno(), False)
+            selector.register(process.stdout, selectors.EVENT_READ, "output")
+            if linux:
+                selector.register(control, selectors.EVENT_READ, "control")
+                control.sendall(_supervision_frame("launch"))
+            else:
+                pid = pgid = process.pid
+            while reason is None:
+                if stopped():
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    fail("timeout")
+                    break
+                receive(remaining)
+                if (linux and receipt is not None) or (not linux and process.poll() is not None):
+                    break
+        except BaseException as exc:
+            fail("stopped" if isinstance(exc, KeyboardInterrupt) else
+                 "cleanup_unknown" if process is not None else "unavailable")
+        finally:
+            if peer is not None:
+                peer.close()
+
+        clean = process is None
+        if process is not None:
+            cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
+            kill_at = cleanup_deadline - 1.0
+            term_sent = False
+            if linux and receipt is None and not control_closed:
+                try:
+                    control.sendall(_supervision_frame("terminate"))
+                except OSError:
+                    control_failed = True
+                    fail("cleanup_unknown")
+            try:
+                while time.monotonic() < cleanup_deadline:
+                    try:
+                        stopped()
+                        receive(cleanup_deadline - time.monotonic())
+                    except BaseException:
+                        fail("cleanup_unknown")
+                    outer_code = process.poll()  # Collect only this direct child.
+                    absent = pgid is not None and _group_absent(pgid)
+                    if absent:
+                        group_gone = True
+                    receipt_clean = (receipt is not None and receipt["reaped"] and receipt["group_absent"])
+                    if (stdout_closed and absent and outer_code is not None
+                            and (not linux or (outer_code == 0 and receipt_clean and not control_failed))):
+                        clean = True
+                        break
+                    # The Linux helper handles ordinary termination and reaping.
+                    # Fall back only to the actual group reported by this handle.
+                    if not linux or control_failed or outer_code is not None:
+                        if not term_sent:
+                            signal_group(signal.SIGTERM)
+                            term_sent = True
+                        if time.monotonic() >= kill_at:
+                            signal_group(signal.SIGKILL)
+                if not clean:
+                    signal_group(signal.SIGKILL)
+                    if process.poll() is None:
+                        process.kill()
+                    process.poll()
+            except (OSError, ValueError):
+                clean = False
+            finally:
+                if control is not None:
+                    control.close()
+                process.stdout.close()
+        elif control is not None:
+            control.close()
+
+    if not clean or reason == "cleanup_unknown":
+        raise OwnedCommandError("cleanup_unknown")
+    if reason in {"stopped", "output_limit", "unavailable"}:
+        raise OwnedCommandError(reason)
+    code = -signal.SIGKILL if reason == "timeout" else receipt["returncode"] if linux else process.returncode
+    return subprocess.CompletedProcess(list(argv), code, bytes(data))
 
 
 def _enable_subreaper():
