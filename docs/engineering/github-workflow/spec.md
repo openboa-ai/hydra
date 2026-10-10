@@ -450,14 +450,16 @@ Revalidate the latest PR's shared ownership predicate before any PR-side mutatio
 including review requests and thread resolution. Earlier branch/list ownership
 cannot authorize effects after its marker or author changes.
 
-Enumerate open intake separately from closed recovery. Use a bounded GitHub search
-for a visible discovery hint derived solely from the existing pending-close progress
-field; authenticate and parse the actual progress before admitting any result.
-Remove the hint when that pending action is cleared. This is a search index hint,
-not new workflow state, authority, a label or acceptance evidence. Do not scan all
-historical Issues or add local persistence. Partial/truncated/unavailable recovery
-search holds safely. Search indexing can delay discovery; direct `run --issue`
-still reconciles exact closed pending intents, including older unindexed records.
+Use native Issue state and labels for work discovery: open delegated intake and
+closed `hydra:active` recovery are separate bounded collections. Set the active
+label before an owned progress write can authorize execution, and remove it only
+after verified completion is durably recorded. An interrupted label cleanup is
+reconciled from the completed progress and actual delivery facts on the next cycle.
+Authenticate and parse progress before admitting a closed recovery candidate.
+Labels select and display work; PR, CI, reviews and actual merge facts still prove
+delivery. Do not scan historical closed Issues, add a search marker, new journal or
+local persistence. Collection/label failures hold safely. Read-only status does not
+mutate labels. Direct `run --issue` still reconciles older unlabeled pending intents.
 
 Reject an intake specification outside the registered candidate allowlist before
 design or implementation dispatch. Do not silently broaden policy to accommodate it.
@@ -494,7 +496,7 @@ or foreign metadata holds rather than weakening the boundary. This limits servic
 Git configuration execution; it does not claim hostile-worker host isolation.
 
 Acceptance covers fresh PR ownership changes before intermediate effects, large
-closed histories with small open intake and authenticated pending-close search,
+closed histories with small open intake and authenticated active-label recovery,
 out-of-policy specs before any model turn, valid/invalid mixed usage buckets,
 required versus optional CI failures, dependency-unblocker selection, and real Git
 fsmonitor/include/worktree/filter/transport traps in both supported layouts using
