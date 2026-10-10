@@ -443,3 +443,60 @@ Acceptance adds final-guard rejection before every model/verification phase and
 ordinary restart after the boundary clears, preservation of pending correction
 and genuine unknown execution, duplicate authenticated summaries/rows with and
 without an uncertain request, and authorized replan after evidence repair.
+
+## Review corrections: observation scope and service Git
+
+Revalidate the latest PR's shared ownership predicate before any PR-side mutation,
+including review requests and thread resolution. Earlier branch/list ownership
+cannot authorize effects after its marker or author changes.
+
+Enumerate open intake separately from closed recovery. Use a bounded GitHub search
+for a visible discovery hint derived solely from the existing pending-close progress
+field; authenticate and parse the actual progress before admitting any result.
+Remove the hint when that pending action is cleared. This is a search index hint,
+not new workflow state, authority, a label or acceptance evidence. Do not scan all
+historical Issues or add local persistence. Partial/truncated/unavailable recovery
+search holds safely. Search indexing can delay discovery; direct `run --issue`
+still reconciles exact closed pending intents, including older unindexed records.
+
+Reject an intake specification outside the registered candidate allowlist before
+design or implementation dispatch. Do not silently broaden policy to accommodate it.
+Count dependency edges from otherwise valid delegated, unpaused intake before
+excluding dependency-blocked work from execution. Preserve recovery-first sorting;
+malformed, unauthorized or paused work cannot boost another task's priority.
+
+Validate every reported usage bucket and every actual reported window. Each bucket
+needs at least one valid numeric finite window, and every observed usedPercent must
+remain within the existing 0..80 dispatch boundary. A missing/null optional window
+is unreported, never zero; malformed buckets/windows must not be normalized to null
+or hidden by a healthy bucket. Use legacy rateLimits only when the multi-bucket map
+is absent/null, not when a supplied map is empty or malformed. Invalid normalization
+keeps usage unknown. Credits do not override this existing policy.
+
+Required CI is the explicitly bound job and matching check, not optional jobs in
+the same workflow. After formal producer/run identity validation, inspect that job
+and check before failure classification. A completed required job/check can pass
+despite another job's aggregate failure. Actual required-job failure, cancelled or
+missing startup work still reaches the existing bounded recovery or diagnosis;
+unknown identities and active required work cannot pass.
+
+All service Git operates with a per-call generated trusted configuration and actual
+validated HEAD/index/data paths. Use a private common-directory view with the actual
+per-worktree gitdir and explicit worktree, preserving supported standalone and
+lifecycle-provider-approved linked layouts. Candidate local config, includes,
+config.worktree, filters, fsmonitor and transport commands must never execute.
+Read the existing ownership keys and origin from bounded raw snapshots with includes
+disabled in a neutral context; preserve their storage and shared config bytes.
+Pass the service-derived GitHub HTTPS URL directly to remote commands, with the
+fixed credential helper and protocol restrictions. Preserve genuine checkpoint
+visibility, guarded nonforce publication and actual remote read-back. Unsupported
+or foreign metadata holds rather than weakening the boundary. This limits service
+Git configuration execution; it does not claim hostile-worker host isolation.
+
+Acceptance covers fresh PR ownership changes before intermediate effects, large
+closed histories with small open intake and authenticated pending-close search,
+out-of-policy specs before any model turn, valid/invalid mixed usage buckets,
+required versus optional CI failures, dependency-unblocker selection, and real Git
+fsmonitor/include/worktree/filter/transport traps in both supported layouts using
+only synthetic credentials. Final-head reviews, native approval and actual product
+delivery remain unchanged.
