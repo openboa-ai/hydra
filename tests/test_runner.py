@@ -441,9 +441,12 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         await runner.step('example/product', 4)
         self.github.transform_observation = lambda v: {**v, 'provider_comments': []}
         self.github.note.update(checkpoint='await_auto_review', delivery_action='request_review',
-                                delivery_attempt=2, delivery_head=HEAD)
+                                delivery_attempt=2, delivery_head=HEAD, pending_review_kind='code')
+        attempts = []
+        self.github.on_record = lambda record: attempts.append((record['pending_review_kind'], record['delivery_attempt'])) if record.get('pending_action') == 'request_review' else None
         await self.runner().step('example/product', 4)
         self.assertEqual([x[1] for x in self.github.writes if x[0] == 'request_review'], ['code', 'security'])
+        self.assertEqual(attempts, [('code', 3), ('security', 1)])
 
     async def test_behind_pr_integrates_once_before_publishing(self):
         self.github.remote_pending = True

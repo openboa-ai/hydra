@@ -104,7 +104,7 @@ class ReviewRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.github.work['state'], 'open')
         passing = True
         self.assertEqual((await self.step())['action'], 'completed')
-        self.assertEqual(observed, [MERGE, MERGE])
+        self.assertEqual(observed, [MERGE, MERGE, MERGE])
         self.assertEqual(self.github.work['state'], 'closed')
         self.assertEqual(self.github.note['phase'], 'completed')
         self.assertEqual(len(self.calls), calls)

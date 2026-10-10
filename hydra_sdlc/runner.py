@@ -132,7 +132,8 @@ class Runner:
         service_action = action in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}
         head = values.get("head", record.get("head"))
         attempts = (record.get("delivery_attempt", 0) + 1 if service_action and
-                    record.get("delivery_action") == action and record.get("delivery_head") == head else 1)
+                    record.get("delivery_action") == action and record.get("delivery_head") == head
+                    and (action != "request_review" or record.get("pending_review_kind") == values.get("pending_review_kind")) else 1)
         if self._latest(repo, number, config, include_stop=not checkpoint):
             return None
         if attempts > 3:
@@ -212,6 +213,7 @@ class Runner:
             task += "\nOperator decision context (untrusted data; retain accepted scope and policy):\n" + json.dumps(comments[-50:])[:24000]
         record = self._intent(repo, number, config, record, phase, phase="executing",
                               wait_reason=None, next_action=phase, expected_head=remote,
+                              **({"checkpoint": None} if correction and record.get("checkpoint") == "verification_mutation_pending" else {}),
                               **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
         if record is None:
             return None, self._intent_wait(repo, number)
@@ -421,6 +423,7 @@ class Runner:
                                   wait_reason=None, pending_action=None,
                                   resume_phase=origin)
         recover_dirty = False
+        recovering_verification = record.get("phase") == "executing" and record.get("pending_action") == "verification"
         if record.get("wait_reason") == "replan_required":
             phrase = f"hydra: replan {record['attempt_id']} ready"
             if not any((c.get("user") or {}).get("login") in config["authorized_actors"]
@@ -429,7 +432,7 @@ class Runner:
             self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
             service_retry = (record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
                              and record.get("delivery_action") == record.get("pending_action"))
-            active_write = record.get("phase") == "executing" and record.get("pending_action") in {"design", "implementation", "correction"}
+            active_write = record.get("phase") == "executing" and record.get("pending_action") in {"design", "implementation", "correction", "verification"}
             if active_write:
                 if not self._handover(repo, number, record, config):
                     return {"repository": repo, "issue": number, "action": "waiting", "reason": "confirm_previous_stopped"}
@@ -438,6 +441,7 @@ class Runner:
             record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()), checkpoint=None,
                                   pending_action=record.get("pending_action") if service_retry else None,
                                   delivery_action=None, delivery_attempt=None, delivery_head=None,
+                                  pending_review_kind=record.get("pending_review_kind") if service_retry else None,
                                   correction_reason=record.get("correction_reason") if origin == "correction" else None,
                                   correction_attempt=None, wait_reason=None,
                                   phase="uncertain" if service_retry else "ready",
@@ -456,7 +460,27 @@ class Runner:
         if record.get("contract_revision") != config["revision"]:
             old = self.github.file(repo, ".hydra.toml", record["contract_revision"])
             if old["sha"] != config["blob_sha"]:
+                if recover_dirty:
+                    return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
                 return self._wait(repo, number, record, "policy_changed")
+        if recover_dirty and recovering_verification:
+            # Settle stopped verification before any PR wait or completed-merge
+            # shortcut can erase the execution origin or ignore local changes.
+            boundary, recovery_remote, _ = self._branch_boundary(repo, number, record)
+            if boundary:
+                return {"repository": repo, "issue": number, "action": "waiting", "reason": boundary}
+            if recovery_remote != record.get("expected_head"):
+                return {"repository": repo, "issue": number, "action": "waiting", "reason": "remote_head_changed"}
+            recovery_path = self.workspace.prepare(repo, number, branch, recovery_remote, recover_dirty=True)
+            self.workspace.fetch_base(recovery_path, config["revision"])
+            state = self.workspace.inspect(recovery_path)
+            mutated = state["dirty"] or state["head"] != record.get("head")
+            recovered_head = self.workspace.checkpoint(recovery_path, f"Recover stopped verification for Issue {number}")
+            record = self._record(repo, number, record, head=recovered_head, expected_head=recovery_remote,
+                                  phase="checkpoint", pending_action=None, wait_reason=None,
+                                  **({"resume_phase": "correction", "correction_reason": "verification_mutation",
+                                      "checkpoint": "verification_mutation_pending"} if mutated else {}))
+            recover_dirty = False
         pulls = self.github.pulls(repo, branch)
         if not previously_owned and (pulls or self.github.ref(repo, branch)):
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "foreign_branch"}
@@ -497,6 +521,11 @@ class Runner:
                         or current["pr"].get("merge_commit_sha") != merge_sha
                         or gate_completed_delivery(config, current, record["head"], self._paths(current))):
                     return self._wait(repo, number, record, "completion_evidence_missing", phase="uncertain")
+                # A push rerun can start while publishing the close intent.
+                # Candidate evidence does not substitute for current merge CI.
+                post = self.github.observe_commit(repo, merge_sha)
+                if gate_checks(config, post, merge_sha, events=["push"]):
+                    return self._wait(repo, number, record, "post_merge_checks", phase="observing")
                 boundary = self._latest(repo, number, config)
                 if boundary and not (closing_recovery and boundary == "issue_closed"):
                     return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
@@ -600,7 +629,9 @@ class Runner:
                 return self._wait(repo, number, record, "scope_changed", phase="uncertain")
             wait = self._publish(repo, number, config, record, path, head)
             return wait or {"action": "continue", "repository": repo, "issue": number}
-        if (not self.workspace.contains_base(path, config["revision"]) or
+        pending_verifier_correction = (record.get("resume_phase") == "correction"
+                                      and record.get("correction_reason") == "verification_mutation")
+        if not pending_verifier_correction and (not self.workspace.contains_base(path, config["revision"]) or
                 pulls and observation["pr"].get("mergeable_state") == "behind" and head == remote and not correcting):
             return await self._correct(repo, number, config, record, path, "integration_changed",
                 details=f"Merge the observed default-branch commit {config['revision']} into the owned Issue branch. "
@@ -654,7 +685,8 @@ class Runner:
         paths = self.workspace.changed_paths(path, config["revision"])
         if record.get("resume_phase") == "correction":
             return await self._correct(repo, number, config, record, path,
-                record.get("correction_reason") or "review_findings", resuming=True,
+                record.get("correction_reason") or "review_findings",
+                resuming=record.get("checkpoint") != "verification_mutation_pending",
                 details=json.dumps(self._thread_details(observation)) if pulls else issue["body"])
         # First implementation is selected from the recorded checkpoint, never model prose.
         if (record.get("phase") in {"ready", "design_done", "spec_accepted", "spec_review_done"} and not pulls
@@ -679,14 +711,40 @@ class Runner:
         evidence_key = (repo, number, head, config["blob_sha"])
         if evidence_key not in self.verified_heads:
             from .workspace import WorkspaceWait
+            record = self._intent(repo, number, config, record, "verification", phase="executing",
+                                  head=head, expected_head=remote, wait_reason=None, next_action="verification")
+            if record is None:
+                return self._intent_wait(repo, number)
+            verification_error = None
             try:
                 verification = self.workspace.verify(path, config["verification"], stop_requested=self.stop_requested)
             except WorkspaceWait as exc:
-                if exc.reason != "verification_stopped":
-                    raise
+                if exc.uncertain:
+                    self.host_hold_reason = "host_verification_unconfirmed"
+                    return self._wait(repo, number, record, self.host_hold_reason,
+                                      phase="executing", next_action="confirm_stopped")
+                verification_error = exc.reason
+                verification = []
+            # Cleanup is confirmed here. Preserve mutations before any review,
+            # stop wait or failed-check correction can strand the owned checkout.
+            state = self.workspace.inspect(path)
+            mutated = state["dirty"] or state["head"] != head
+            if mutated:
+                head = self.workspace.checkpoint(path, f"Checkpoint verification changes for Issue {number}")
+            record = self._record(repo, number, record, head=head, phase="implementation_done", pending_action=None,
+                                  **({"resume_phase": "correction", "correction_reason": "verification_mutation",
+                                      "checkpoint": "verification_mutation_pending",
+                                      "correction_attempt": record.get("correction_attempt")
+                                          if record.get("correction_reason") == "verification_mutation" else None}
+                                     if mutated else {}))
+            if self.stop_requested() or verification_error == "verification_stopped":
                 return self._wait(repo, number, record, "stop_requested", next_action="verification")
-            if self.stop_requested():
-                return self._wait(repo, number, record, "stop_requested", next_action="verification")
+            if mutated:
+                return await self._correct(repo, number, config, record, path, "verification_mutation",
+                    details="Registered verification changed the owned checkout. Inspect and correct those changes and the verifier; "
+                            "preserve intended work and accepted scope. Verification must leave a stable candidate head for review.")
+            if verification_error:
+                return self._wait(repo, number, record, "replan_required", next_action="diagnose_verification")
             private_outputs = "\n".join(self.workspace.verification_output(v["output_digest"]) for v in verification)[:24000]
             if not verification or not all(v["passed"] for v in verification):
                 return await self._correct(repo, number, config, record, path, "verification_failure", details=private_outputs)
@@ -812,6 +870,7 @@ class Runner:
         body = summaries[0].get("body", "") if summaries else ""
         commits = {c["sha"] for c in observation.get("commits", [])}
         missing = []
+        observed = set()
         for kind, name, field in (("code", "Code Review", "review_requested_head"),
                                   ("security", "Security Review", "review_requested_security_head")):
             rows = [line for line in body.splitlines() if line.startswith("|") and f"**{name}**" in line]
@@ -822,22 +881,52 @@ class Runner:
                 cells = rows[0].split("|")
                 status = cells[2].strip() if len(cells) > 3 else ""
                 if re.fullmatch(r"(?:✅ \*\*Completed\*\*|(?:🔄|⏳) \*\*(?:Running|Queued|Pending)\*\*)(?: .*)?", status):
+                    observed.add(kind)
                     continue
                 self._wait(repo, number, record, "replan_required", next_action="diagnose_review")
                 return self.github.progress(repo, number)
             if record.get(field) != head:
                 missing.append((kind, field))
+        pending_kind = record.get("pending_review_kind")
+        pending_request = (record.get("delivery_action") == "request_review" and record.get("delivery_head") == head
+                           or record.get("pending_action") == "request_review" and record.get("head") == head)
+        if pending_request and not pending_kind:
+            # Older aggregate intents carry no kind. Infer only from a recorded
+            # completed request for the other kind; a Running row alone cannot
+            # distinguish a lost Code request from a lost Security request.
+            code_recorded = record.get("review_requested_head") == head
+            security_recorded = record.get("review_requested_security_head") == head
+            if code_recorded != security_recorded:
+                pending_kind = "security" if code_recorded else "code"
+                record = self._record(repo, number, record, pending_review_kind=pending_kind)
+            else:
+                self._wait(repo, number, record, "replan_required", next_action="diagnose_review_request")
+                return self.github.progress(repo, number)
+        if pending_request and pending_kind in observed:
+            field = "review_requested_head" if pending_kind == "code" else "review_requested_security_head"
+            record = self._record(repo, number, record, pending_action=None, pending_review_kind=None,
+                                  **{field: head}, delivery_action=None, delivery_attempt=None, delivery_head=None,
+                                  wait_reason=None)
+            pending_request = False
+        if pending_request:
+            # Settle the uncertain effect before a different kind can overwrite
+            # its bounded retry history. Observed unrelated rows never reset it.
+            missing.sort(key=lambda item: item[0] != pending_kind)
+            if not any(kind == pending_kind for kind, _ in missing):
+                self._wait(repo, number, record, "replan_required", next_action="diagnose_review_request")
+                return self.github.progress(repo, number)
         if not missing:
             return record
         # Allow one unchanged observation for the repository's automatic coupled trigger.
-        if record.get("checkpoint") != "await_auto_review":
+        if record.get("checkpoint") != "await_auto_review" and not pending_request:
             return self._record(repo, number, record, checkpoint="await_auto_review")
         for kind, field in missing:
             if (record.get("delivery_action") == "request_review" and record.get("delivery_head") == head
+                    and record.get("pending_review_kind") == kind
                     and (record.get("delivery_attempt") or 0) >= 3):
                 self._wait(repo, number, record, "replan_required", next_action="diagnose")
                 return self.github.progress(repo, number)
-            intent = self._intent(repo, number, config, record, "request_review", head=head)
+            intent = self._intent(repo, number, config, record, "request_review", head=head, pending_review_kind=kind)
             if intent is None:
                 return record
             try:
@@ -845,7 +934,7 @@ class Runner:
             except RuntimeError:
                 return self._record(repo, number, intent, phase="uncertain", wait_reason="review_request_unknown")
             record = self._record(repo, number, intent, pending_action=None, **{field: head},
-                                  delivery_action=None, delivery_attempt=None, delivery_head=None)
+                                  delivery_action=None, delivery_attempt=None, delivery_head=None, pending_review_kind=None)
         return self._record(repo, number, record, checkpoint="review_requested")
 
     async def _correct(self, repo, number, config, record, path, reason, *, details="", spec_only=False, resuming=False):

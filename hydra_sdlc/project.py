@@ -25,10 +25,15 @@ def _sha(value):
 def _path(value, *, glob=False):
     return (isinstance(value, str) and bool(value) and not value.startswith(("/", "~"))
             and "\\" not in value and all(p not in {"", ".", "..", ".git"} for p in value.rstrip("/").split("/"))
-            and not any(ord(c) < 32 for c in value) and (glob or not any(c in value for c in "*?[]")))
+            and not any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value)
+            and (glob or not any(c in value for c in "*?[]")))
 
 
 def matches(path, patterns):
+    # Git permits arbitrary filename bytes; surrogateescaped names stay private
+    # for bounded scope correction, even if the configured allowlist is broad.
+    if not isinstance(path, str) or any(0xD800 <= ord(c) <= 0xDFFF for c in path):
+        return False
     return any(path == p.rstrip("/") or path.startswith(p.rstrip("/") + "/") if p.endswith("/") else fnmatch.fnmatchcase(path, p) for p in patterns)
 
 

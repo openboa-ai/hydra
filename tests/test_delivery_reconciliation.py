@@ -549,6 +549,44 @@ class DeliveryReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('change_review', self.calls[calls:])
         self.assertEqual(self.effects(writes), [])
 
+    async def test_pending_verifier_correction_finishes_before_integration_without_losing_its_reason(self):
+        runner = await self.prepare_verification()
+        original_verify = self.workspace.verify
+        def mutating_stop(*args, **kwargs):
+            result = original_verify(*args, **kwargs)
+            self.mutate('dirty')
+            self.stopped = True
+            return result
+        self.workspace.verify = mutating_stop
+        self.assertEqual((await runner.step(REPO, NUMBER))['reason'], 'stop_requested')
+        self.stopped = False
+        self.workspace.verify = original_verify
+        self.github.cfg['revision'] = 'e' * 40
+        integrated = False
+        self.workspace.contains_base = lambda *args: integrated
+        reasons = []
+        original_execute = self.execute
+        async def execute(assignment, **kwargs):
+            nonlocal integrated
+            if self.github.note['pending_action'] == 'correction':
+                reason = self.github.note['correction_reason']
+                reasons.append(reason)
+                if reason == 'integration_changed':
+                    integrated = True
+            return await original_execute(assignment, **kwargs)
+        self.execute = execute
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'continue')
+        self.assertEqual(reasons, ['verification_mutation'])
+        self.assertEqual(self.github.note['correction_attempt'], 1)
+        self.assertIsNone(self.github.note.get('resume_phase'))
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['action'], 'continue')
+        self.assertEqual(reasons, ['verification_mutation', 'integration_changed'])
+        self.assertTrue(integrated)
+        self.github.remote_pending = True
+        self.assertEqual((await self.runner().step(REPO, NUMBER))['reason'], 'remote_delivery_gates')
+        self.assertEqual(reasons, ['verification_mutation', 'integration_changed'])
+        self.assertEqual(self.calls.count('change_review'), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
