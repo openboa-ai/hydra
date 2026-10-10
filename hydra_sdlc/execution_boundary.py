@@ -15,6 +15,9 @@ from pathlib import Path
 
 MAX_FRAME_BYTES = 1024 * 1024
 PROTOCOL_VERSION = 1
+PUBLISHING_TOKEN_VARIABLES = frozenset({
+    "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+})
 
 
 class ProtocolError(RuntimeError):
@@ -105,6 +108,7 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
             *_worker_command(worker_source), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             limit=MAX_FRAME_BYTES, start_new_session=True,
+            env={key: value for key, value in os.environ.items() if key not in PUBLISHING_TOKEN_VARIABLES},
         )
         audit("hydra/workerStarted", {
             "pid": process.pid, "pgid": process.pid,

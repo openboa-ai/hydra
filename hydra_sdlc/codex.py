@@ -1,4 +1,4 @@
-"""Bounded, read-only Codex qualification; provider completion is not delivery.
+"""Bounded Codex assignments; provider completion is not delivery.
 
 The optional SDK is imported lazily. This module owns no durable state and never
 retries an uncertain start. Callbacks must persist before returning.
@@ -60,16 +60,21 @@ def _versions() -> dict[str, str]:
     return versions
 
 
-def _new_client(cwd: str):
+def _new_client(cwd: str, mode: str = "read_only"):
     _versions()
-    from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
+    from openai_codex import ApprovalMode, CodexConfig, Sandbox
+    from openai_codex.client import CodexClient
 
-    client = AsyncCodex(CodexConfig(cwd=cwd, client_name="hydra", client_title="Hydra"))
-    return client, Sandbox.read_only, ApprovalMode.deny_all
+    client = _SdkClient(CodexClient(
+        CodexConfig(cwd=cwd, client_name="hydra", client_title="Hydra"),
+        approval_handler=_reject_approval,
+    ))
+    sandbox = Sandbox.workspace_write if mode == "workspace_write" else Sandbox.read_only
+    return client, sandbox, ApprovalMode.deny_all
 
 
 def _reject_approval(method: str, params: dict | None) -> dict:
-    # Capability reads need no command execution, files, tools, or permissions.
+    # No worker or capability read may gain authority through a server request.
     if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
         return {"decision": "decline"}
     if method == "item/permissions/requestApproval":
@@ -78,7 +83,116 @@ def _reject_approval(method: str, params: dict | None) -> dict:
         return {"answers": {}}
     if method == "mcpServer/elicitation/request":
         return {"action": "decline", "content": None}
-    raise AdapterUnavailable("Unexpected server request during a capability read.")
+    raise AdapterUnavailable("Unexpected server request.")
+
+
+def _denied_policy(approval_mode):
+    from openai_codex import ApprovalMode
+    from openai_codex.generated.v2_all import AskForApproval, AskForApprovalValue
+
+    if approval_mode != ApprovalMode.deny_all:
+        raise AdapterUnavailable("Only denied escalation is supported.")
+    return AskForApproval(root=AskForApprovalValue.never)
+
+
+def _thread_settings(options):
+    from openai_codex import Sandbox
+    from openai_codex.generated.v2_all import SandboxMode
+
+    options = dict(options)
+    approval = _denied_policy(options.pop("approval_mode"))
+    sandbox = options.pop("sandbox")
+    if sandbox not in (Sandbox.read_only, Sandbox.workspace_write):
+        raise AdapterUnavailable("Unsupported worker sandbox.")
+    return {**options, "approval_policy": approval, "sandbox": SandboxMode(sandbox.value)}
+
+
+class _SdkClient:
+    """Async facade over public SDK methods with an explicit rejection handler.
+
+    Blocking SDK calls stay in the supervised child. The high-level async SDK
+    does not expose its approval handler and defaults to accepting requests.
+    """
+
+    def __init__(self, transport):
+        self.transport = transport
+
+    async def __aenter__(self):
+        await asyncio.to_thread(self.transport.start)
+        await asyncio.to_thread(self.transport.initialize)
+        return self
+
+    async def account(self, refresh_token=False):
+        from openai_codex.generated.v2_all import GetAccountParams
+
+        return await asyncio.to_thread(
+            self.transport.account_read, GetAccountParams(refresh_token=refresh_token),
+        )
+
+    async def thread_start(self, **options):
+        from openai_codex.generated.v2_all import ThreadStartParams
+
+        response = await asyncio.to_thread(
+            self.transport.thread_start, ThreadStartParams(**_thread_settings(options)),
+        )
+        return _SdkThread(self.transport, response.thread.id)
+
+    async def thread_resume(self, thread_id, **options):
+        from openai_codex.generated.v2_all import ThreadResumeParams
+
+        response = await asyncio.to_thread(
+            self.transport.thread_resume, thread_id,
+            ThreadResumeParams(thread_id=thread_id, **_thread_settings(options)),
+        )
+        return _SdkThread(self.transport, response.thread.id)
+
+    async def close(self):
+        await asyncio.to_thread(self.transport.close)
+
+
+class _SdkThread:
+    def __init__(self, transport, thread_id):
+        self.transport, self.id = transport, thread_id
+
+    async def turn(self, prompt, *, approval_mode, output_schema, sandbox=None, **options):
+        from openai_codex import Sandbox
+        from openai_codex.generated.v2_all import (
+            ReadOnlySandboxPolicy, SandboxPolicy, TextUserInput, TurnStartParams, UserInput,
+        )
+
+        policy = None
+        if sandbox is not None:
+            # Workspace writes inherit the restricted thread policy rather than
+            # replacing its resource roots or implicit temporary-directory rules.
+            if sandbox != Sandbox.read_only:
+                raise AdapterUnavailable("Only a read-only turn override is supported.")
+            policy = SandboxPolicy(root=ReadOnlySandboxPolicy(type="readOnly", network_access=False))
+        params = TurnStartParams(
+            thread_id=self.id, input=[UserInput(root=TextUserInput(type="text", text=prompt))],
+            approval_policy=_denied_policy(approval_mode), sandbox_policy=policy,
+            output_schema=output_schema, **options,
+        )
+        response = await asyncio.to_thread(self.transport.turn_start, self.id, prompt, params)
+        return _SdkTurn(self.transport, self.id, response.turn.id)
+
+
+class _SdkTurn:
+    def __init__(self, transport, thread_id, turn_id):
+        self.transport, self.thread_id, self.id = transport, thread_id, turn_id
+
+    async def stream(self):
+        # Public turn_start registers its queue before returning the turn ID.
+        try:
+            while True:
+                event = await asyncio.to_thread(self.transport.next_turn_notification, self.id)
+                yield event
+                if event.method == "turn/completed":
+                    break
+        finally:
+            self.transport.unregister_turn_notifications(self.id)
+
+    async def interrupt(self):
+        return await asyncio.to_thread(self.transport.turn_interrupt, self.thread_id, self.id)
 
 
 def _new_capability_client(cwd: str):
@@ -273,6 +387,59 @@ def _validate_cwd(cwd: str) -> None:
         raise ValueError("cwd must be an absolute existing directory.")
 
 
+def _owned_directory(value: str) -> Path:
+    _validate_cwd(value)
+    directory = Path(value).resolve(strict=True)
+    if value != str(directory) or directory.stat().st_uid != os.geteuid():
+        raise ValueError("Write directories must be canonical and owned by the current user.")
+    if directory in (Path(directory.anchor), Path.home().resolve()):
+        raise ValueError("Write directories must be scoped to the assignment.")
+    return directory
+
+
+def _assignment_options(assignment: dict) -> tuple[str, str, dict]:
+    """Validate host-provided scope; resource authority remains with the runner."""
+    _validate_cwd(assignment["cwd"])
+    mode = assignment.get("mode", "read_only")
+    if mode not in ("read_only", "workspace_write"):
+        raise ValueError("mode must be read_only or workspace_write.")
+    roots = assignment.get("writable_roots", [])
+    if not isinstance(roots, list):
+        raise ValueError("writable_roots must be a list of absolute directories.")
+    config = {}
+    if mode == "workspace_write":
+        cwd = _owned_directory(assignment["cwd"])
+        resources = [_owned_directory(root) for root in roots]
+        if any(cwd.is_relative_to(root) for root in resources):
+            raise ValueError("Resource roots cannot contain the assignment workspace.")
+        config = {"sandbox_workspace_write": {
+            "writable_roots": list(dict.fromkeys(str(root) for root in resources)),
+            "network_access": False,
+            "exclude_slash_tmp": True,
+            "exclude_tmpdir_env_var": True,
+        }}
+    elif roots:
+        raise ValueError("Read-only assignments cannot grant writable resources.")
+    if "prompt" in assignment:
+        prompt = assignment["prompt"]
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("prompt must be nonempty text.")
+    else:
+        if mode != "read_only":
+            raise ValueError("Workspace-write assignments require an explicit prompt.")
+        task = assignment.get("task")
+        if not isinstance(task, str) or not task.strip():
+            raise ValueError("task must be nonempty text.")
+        prompt = (
+            "Perform this bounded read-only qualification assignment. Do not change files, "
+            "use external tools/connectors/browser, access credentials or authentication files, "
+            "publish, push, create a PR, merge, deploy, or claim the project goal is achieved. "
+            "If the assignment requires an excluded action, return needs_decision. "
+            "Return the requested structured result.\n\n" + task
+        )
+    return mode, prompt, config
+
+
 def _structured_result(items: dict[str, dict]) -> dict | None:
     messages = [item for item in items.values() if item.get("type") == "agentMessage"]
     messages = [item for item in messages if item.get("phase") == "final_answer"] or [
@@ -322,7 +489,7 @@ async def _execute_in_process(
     resume_thread_id: str | None = None,
     on_dispatch: Callable[[str], bool] | None = None,
 ) -> dict:
-    """Run one qualification turn; uncertain starts always require reconciliation."""
+    """Run one bounded turn; uncertain starts always require reconciliation."""
     thread_id = None
     turn_id = None
     attempted_start = False
@@ -369,21 +536,23 @@ async def _execute_in_process(
         return await call()
 
     try:
-        _validate_cwd(assignment["cwd"])
-        if not isinstance(assignment.get("task"), str) or not assignment["task"].strip():
-            raise ValueError("task must be nonempty text.")
+        mode, prompt, config = _assignment_options(assignment)
         if resume_thread_id is not None and (
             not isinstance(resume_thread_id, str) or not resume_thread_id.strip()
         ):
             raise ValueError("resume_thread_id must identify an existing thread.")
+        if mode == "workspace_write" and resume_thread_id is not None:
+            raise ValueError("Workspace-write assignments require a fresh thread.")
         if stop_requested():
             raise _Stopped
-        client, sandbox, approval_mode = _new_client(assignment["cwd"])
+        client, sandbox, approval_mode = _new_client(assignment["cwd"], mode)
         await bounded_call(client.__aenter__())
         account = _json(await bounded_call(client.account(refresh_token=False)))
         if (account.get("account") or {}).get("type") != "chatgpt":
             raise AdapterUnavailable("Qualification requires the existing ChatGPT account.")
         options = {"cwd": assignment["cwd"], "sandbox": sandbox, "approval_mode": approval_mode}
+        if config:
+            options["config"] = config
         thread = await bounded_call(dispatch(
             "thread/resume" if resume_thread_id else "thread/start",
             lambda: client.thread_resume(resume_thread_id, **options)
@@ -407,15 +576,13 @@ async def _execute_in_process(
             result["status"] = "interrupted"
             detail["reason"] = "stopped_before_turn"
             return result
-        prompt = (
-            "Perform this bounded read-only qualification assignment. Do not change files, "
-            "use external tools/connectors/browser, access credentials or authentication files, "
-            "publish, push, create a PR, merge, deploy, or claim the project goal is achieved. "
-            "If the assignment requires an excluded action, return needs_decision. "
-            "Return the requested structured result.\n\n" + assignment["task"]
-        )
+        turn_options = {"approval_mode": approval_mode, "output_schema": RESULT_SCHEMA}
+        # The workspace preset would replace the configured roots/temp restrictions.
+        # Inherit that policy; a read-only override explicitly denies network access.
+        if mode == "read_only":
+            turn_options["sandbox"] = sandbox
         turn = await bounded_call(dispatch("turn/start", lambda: thread.turn(
-            prompt, sandbox=sandbox, approval_mode=approval_mode, output_schema=RESULT_SCHEMA,
+            prompt, **turn_options,
         )))
         turn_id = turn.id
         if not isinstance(turn_id, str) or not turn_id:

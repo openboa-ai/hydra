@@ -1,0 +1,276 @@
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from hydra_sdlc.workspace import Workspace, WorkspaceWait, _environment, _run
+
+
+def git(path, *args):
+    return subprocess.check_output(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+         "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+        cwd=path, env=_environment(), stderr=subprocess.DEVNULL,
+    ).decode().strip()
+
+
+class LocalWorkspace(Workspace):
+    def __init__(self, root, remote, **kwargs):
+        super().__init__(root, **kwargs)
+        self.remote = remote
+
+    def _url(self, repo):
+        self._repository(repo)
+        return str(self.remote)
+
+    def _auth_environment(self):
+        return _environment()
+
+
+class WorkspaceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.remote = self.root / "origin.git"
+        self.remote.mkdir()
+        git(self.remote, "init", "--bare", "--initial-branch=main")
+        self.seed = self.root / "seed"
+        self.seed.mkdir()
+        git(self.seed, "init", "--initial-branch=main")
+        (self.seed / "README.md").write_text("Initial\n")
+        git(self.seed, "add", ".")
+        git(self.seed, "commit", "-m", "initial")
+        self.base = git(self.seed, "rev-parse", "HEAD")
+        git(self.seed, "remote", "add", "origin", str(self.remote))
+        git(self.seed, "push", "origin", "main")
+        self.workspace = LocalWorkspace(self.root / "work", self.remote)
+        self.path = self.workspace.prepare("example/project", 1, "hydra/issue-1", None)
+
+    def test_prepare_inspect_and_restart_use_owned_resource_identity(self):
+        self.assertEqual(self.path, self.root / "work/example/project/issue-1")
+        self.assertEqual(self.workspace.inspect(self.path), {
+            "head": self.base, "dirty": False, "branch": "hydra/issue-1", "remote_sha": None,
+        })
+        restarted = LocalWorkspace(self.root / "work", self.remote)
+        self.assertEqual(restarted.prepare("example/project", 1, "hydra/issue-1", None), self.path)
+        self.assertFalse(list((self.root / "work").glob("**/*.json")))
+
+    def test_dirty_foreign_branch_and_alias_wait_without_changing_files(self):
+        (self.path / "draft").write_text("keep")
+        with self.assertRaisesRegex(WorkspaceWait, "dirty_workspace"):
+            self.workspace.prepare("example/project", 1, "hydra/issue-1", None)
+        self.assertEqual((self.path / "draft").read_text(), "keep")
+        git(self.path, "checkout", "-b", "another-owner")
+        with self.assertRaisesRegex(WorkspaceWait, "workspace_branch_changed"):
+            self.workspace.inspect(self.path)
+        alias = self.root / "alias"
+        alias.symlink_to(self.path, target_is_directory=True)
+        with self.assertRaisesRegex(WorkspaceWait, "workspace_missing_or_aliased"):
+            self.workspace.inspect(alias)
+
+    def test_existing_directory_is_never_adopted(self):
+        foreign = self.root / "work/example/project/issue-2"
+        git(self.root, "clone", str(self.remote), str(foreign))
+        git(foreign, "checkout", "-b", "hydra/issue-2")
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_workspace"):
+            self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
+
+    def test_invalid_repository_branch_actor_and_commit_reject(self):
+        for repo in ("../project", "example/..", "https://token@github.com/owner/repo", "x/repo.git"):
+            with self.subTest(repo=repo), self.assertRaises(WorkspaceWait):
+                self.workspace.prepare(repo, 2, "hydra/issue-2", None)
+        for number, branch, sha in ((True, "hydra/issue-1", None), (2, "main", None), (2, "hydra/issue-2", "main")):
+            with self.assertRaises(WorkspaceWait):
+                self.workspace.prepare("example/project", number, branch, sha)
+        with self.assertRaises(WorkspaceWait):
+            Workspace(self.root, user="SonSangjoon")
+
+    def test_changed_paths_include_renames_staged_and_untracked(self):
+        git(self.path, "mv", "README.md", "renamed file.md")
+        (self.path / "new\nfile").write_text("new\n")
+        self.assertEqual(self.workspace.changed_paths(self.path, self.base),
+                         ["README.md", "new\nfile", "renamed file.md"])
+
+    def test_checkpoint_disables_hooks_and_is_idempotent(self):
+        sentinel = self.root / "hook-ran"
+        hook = self.path / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\ntouch " + str(sentinel) + "\n")
+        hook.chmod(0o755)
+        (self.path / "README.md").write_text("changed\n")
+        head = self.workspace.checkpoint(self.path, "Implement issue")
+        self.assertNotEqual(head, self.base)
+        self.assertEqual(self.workspace.checkpoint(self.path, "No empty commit"), head)
+        self.assertFalse(sentinel.exists())
+        self.assertFalse(self.workspace.inspect(self.path)["dirty"])
+
+    def test_verify_returns_digests_and_private_output_for_actual_commands(self):
+        (self.path / "nested").mkdir()
+        (self.path / "nested/private-output").write_text("private reviewer evidence\n")
+        results = self.workspace.verify(self.path, [
+            {"argv": [sys.executable, "-c", "from pathlib import Path; print(Path('private-output').read_text(), end='')"], "cwd": "nested", "timeout": 2},
+            {"argv": [sys.executable, "-c", "print('failure'); raise SystemExit(3)"]},
+        ])
+        self.assertEqual([item["passed"] for item in results], [True, False])
+        self.assertEqual(results[1]["exit_code"], 3)
+        self.assertEqual(results[0]["cwd"], "nested")
+        digest = hashlib.sha256(b"private reviewer evidence\n").hexdigest()
+        self.assertEqual(results[0]["output_digest"], digest)
+        self.assertNotIn("private reviewer evidence", str(results[0]))  # argv is policy, output is private.
+        self.assertEqual(self.workspace.verification_output(digest), "private reviewer evidence\n")
+
+    def test_verify_validates_all_commands_before_any_execution(self):
+        marker = self.path / "must-not-run"
+        commands = [{"argv": [sys.executable, "-c", "from pathlib import Path; Path('must-not-run').touch()"]},
+                    {"argv": ["true"], "cwd": "../.."}]
+        with self.assertRaises(WorkspaceWait):
+            self.workspace.verify(self.path, commands)
+        self.assertFalse(marker.exists())
+        for commands in ([], [{"argv": "echo hello"}], [{"argv": ["true"], "timeout": float("inf")}],
+                         [{"argv": ["true"], "cwd": "/"}], [{"argv": ["true"], "timeout": True}]):
+            with self.assertRaises(WorkspaceWait):
+                self.workspace.verify(self.path, commands)
+
+    def test_verification_does_not_receive_publishing_tokens_and_timeout_fails(self):
+        with patch.dict(os.environ, {"GH_TOKEN": "not-forwarded", "GITHUB_TOKEN": "not-forwarded"}):
+            records = self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",
+                "import os; assert 'GH_TOKEN' not in os.environ and 'GITHUB_TOKEN' not in os.environ"]},
+                {"argv": [sys.executable, "-c", "import time; time.sleep(60)"], "timeout": 0.05}])
+        self.assertTrue(records[0]["passed"])
+        self.assertFalse(records[1]["passed"])
+
+    def test_publish_reads_back_and_never_forces(self):
+        (self.path / "README.md").write_text("changed\n")
+        head = self.workspace.checkpoint(self.path, "Change")
+        with patch.object(self.workspace, "_git", wraps=self.workspace._git) as calls:
+            self.assertEqual(self.workspace.publish(self.path, "hydra/issue-1", None), head)
+            self.assertEqual(self.workspace.publish(self.path, "hydra/issue-1", None), head)
+        pushes = [call for call in calls.call_args_list if "push" in call.args]
+        self.assertEqual(len(pushes), 1)
+        self.assertNotIn("--force", str(pushes))
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/hydra/issue-1"), head)
+
+    def test_publish_lost_response_is_resolved_once_without_retry(self):
+        head = self.workspace.checkpoint(self.path, "No changes")
+        real = self.workspace._git
+        def lost(path, *args, **kwargs):
+            value = real(path, *args, **kwargs)
+            if args[0] == "push":
+                raise WorkspaceWait("transport_lost", uncertain=True)
+            return value
+        with patch.object(self.workspace, "_git", side_effect=lost) as calls:
+            self.assertEqual(self.workspace.publish(self.path, "hydra/issue-1", None), head)
+        self.assertEqual(sum("push" in call.args for call in calls.call_args_list), 1)
+
+    def test_publish_rejects_remote_creation_between_preflight_and_push(self):
+        (self.path / "README.md").write_text("candidate\n")
+        self.workspace.checkpoint(self.path, "Candidate")
+        real = self.workspace._git
+        def raced(path, *args, **kwargs):
+            if args[0] == "push":
+                git(self.seed, "push", "origin", "main:hydra/issue-1")
+            return real(path, *args, **kwargs)
+        with patch.object(self.workspace, "_git", side_effect=raced):
+            with self.assertRaisesRegex(WorkspaceWait, "remote_head_changed"):
+                self.workspace.publish(self.path, "hydra/issue-1", None)
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/hydra/issue-1"), self.base)
+
+    def test_publish_rejects_remote_advance_even_when_still_fast_forward(self):
+        self.workspace.publish(self.path, "hydra/issue-1", None)
+        (self.path / "README.md").write_text("first\n")
+        first = self.workspace.checkpoint(self.path, "First")
+        (self.path / "README.md").write_text("second\n")
+        self.workspace.checkpoint(self.path, "Second")
+        real = self.workspace._git
+        def raced(path, *args, **kwargs):
+            if args[0] == "push":
+                git(self.path, "push", "origin", first + ":refs/heads/hydra/issue-1")
+            return real(path, *args, **kwargs)
+        with patch.object(self.workspace, "_git", side_effect=raced):
+            with self.assertRaisesRegex(WorkspaceWait, "remote_head_changed"):
+                self.workspace.publish(self.path, "hydra/issue-1", self.base)
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/hydra/issue-1"), first)
+
+    def test_command_output_is_capped_while_process_is_running(self):
+        with patch("hydra_sdlc.workspace.MAX_OUTPUT_BYTES", 1000):
+            with self.assertRaisesRegex(WorkspaceWait, "command_output_limit"):
+                _run([sys.executable, "-c", "import os,time; os.write(1,b'x'*10000); time.sleep(60)"], self.path, 2)
+
+    def test_publication_cannot_follow_tags_from_host_preferences(self):
+        git(self.path, "config", "push.followTags", "true")
+        git(self.path, "config", "push.recurseSubmodules", "on-demand")
+        git(self.path, "tag", "-a", "private-tag", "-m", "Do not publish this tag")
+        self.workspace.publish(self.path, "hydra/issue-1", None)
+        self.assertEqual(git(self.remote, "tag", "--list"), "")
+
+    def test_remote_change_dirty_and_foreign_pushurl_block_publication(self):
+        git(self.seed, "push", "origin", "main:hydra/issue-1")
+        (self.path / "README.md").write_text("candidate\n")
+        self.workspace.checkpoint(self.path, "Candidate")
+        with self.assertRaisesRegex(WorkspaceWait, "remote_head_changed"):
+            self.workspace.publish(self.path, "hydra/issue-1", None)
+        (self.path / "uncommitted").touch()
+        with self.assertRaisesRegex(WorkspaceWait, "dirty_workspace"):
+            self.workspace.publish(self.path, "hydra/issue-1", self.base)
+        git(self.path, "remote", "set-url", "--push", "origin", "https://github.com/foreign/repo.git")
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_remote"):
+            self.workspace.inspect(self.path)
+
+    def test_unknown_readback_is_an_explicit_wait(self):
+        with patch.object(self.workspace, "_remote_sha", side_effect=[None, WorkspaceWait("offline")]), \
+             patch.object(self.workspace, "_git", wraps=self.workspace._git):
+            with self.assertRaisesRegex(WorkspaceWait, "publish_unknown") as error:
+                self.workspace.publish(self.path, "hydra/issue-1", None)
+        self.assertTrue(error.exception.uncertain)
+
+    def test_managed_root_requires_registered_resource_providers(self):
+        (self.root / ".workspace").mkdir()
+        (self.root / ".workspace/storage.json").write_text("{}")
+        with self.assertRaisesRegex(WorkspaceWait, "lifecycle_provider_required"):
+            self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
+        with self.assertRaisesRegex(WorkspaceWait, "storage_provider_required"):
+            self.workspace.verify(self.path, [{"argv": ["true"]}])
+
+    def test_storage_provider_receives_owned_path_and_validated_arguments(self):
+        class Storage:
+            def run(inner, path, argv, cwd, timeout):
+                self.assertEqual(path, self.path)
+                self.assertEqual(cwd, self.path)
+                self.assertEqual(timeout, 20)
+                return _run(argv, cwd, timeout)
+        self.workspace.storage_provider = Storage()
+        self.assertTrue(self.workspace.verify(self.path, [{"argv": [sys.executable, "-c", "pass"], "timeout": 20}])[0]["passed"])
+
+    def test_lifecycle_provider_can_register_independent_linked_worktrees(self):
+        class Lifecycle:
+            def prepare(inner, repo, number, branch, expected, path):
+                self.assertEqual((repo, number, expected), ("example/project", 2, None))
+                git(self.path, "worktree", "add", "-b", branch, str(path), self.base)
+                return path
+        self.workspace.lifecycle_provider = Lifecycle()
+        second = self.workspace.prepare("example/project", 2, "hydra/issue-2", None)
+        self.assertEqual(self.workspace.inspect(second)["head"], self.base)
+        self.assertEqual(self.workspace.inspect(self.path)["head"], self.base)
+
+    def test_additional_push_destination_is_rejected(self):
+        git(self.path, "remote", "set-url", "--add", "--push", "origin", str(self.remote))
+        git(self.path, "remote", "set-url", "--add", "--push", "origin", "https://github.com/foreign/repo.git")
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_remote"):
+            self.workspace.publish(self.path, "hydra/issue-1", None)
+
+    def test_selected_auth_is_per_process_not_saved_or_returned(self):
+        workspace = Workspace(self.root / "auth")
+        token = b"private-test-token\n"
+        with patch("hydra_sdlc.workspace.subprocess.run", return_value=subprocess.CompletedProcess([], 0, token, b"")) as call:
+            env = workspace._auth_environment()
+        self.assertEqual(call.call_args.args[0], ["gh", "auth", "token", "--hostname", "github.com", "--user", "openboa"])
+        self.assertEqual(env["GH_TOKEN"], token.decode().strip())
+        self.assertNotEqual(os.environ.get("GH_TOKEN"), token.decode().strip())
+
+
+if __name__ == "__main__":
+    unittest.main()

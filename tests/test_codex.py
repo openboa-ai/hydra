@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 from hydra_sdlc import codex
 
@@ -88,12 +89,14 @@ class FakeThread:
         self.next_turn = turn
         self.trace = trace
         self.options = None
+        self.prompt = None
         self.start_error = False
         self.start_silent = False
 
     async def turn(self, prompt, **options):
         self.trace.append("turn-start")
         self.options = options
+        self.prompt = prompt
         if self.start_error:
             raise ConnectionError("sensitive start response")
         if self.start_silent:
@@ -145,7 +148,9 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.events = []
         self.stop = False
         self.patches = [
-            patch.object(codex, "_new_client", return_value=(self.client, "read-only", "deny-all")),
+            patch.object(codex, "_new_client", side_effect=lambda cwd, mode="read_only": (
+                self.client, mode.replace("_", "-"), "deny-all",
+            )),
             patch.object(codex, "POLL_SECONDS", 0.005),
             patch.object(codex, "INTERRUPT_GRACE_SECONDS", 0.03),
             patch.object(codex, "QUALIFICATION_TIMEOUT_SECONDS", 1.0),
@@ -186,6 +191,82 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.resume_id, "thread-1")
         self.assertEqual(result["thread_id"], "thread-1")
         self.assertEqual(self.client.options["approval_mode"], "deny-all")
+
+    async def test_explicit_prompt_is_preserved_for_read_only_review(self):
+        self.assignment["prompt"] = "Review the actual diff and report evidence."
+        result = await self.execute()
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(self.thread.prompt, self.assignment["prompt"])
+        self.assertEqual(self.thread.options["sandbox"], "read-only")
+
+    async def test_legacy_task_keeps_read_only_qualification(self):
+        await self.execute()
+        self.assertIn("bounded read-only qualification", self.thread.prompt)
+        self.assertTrue(self.thread.prompt.endswith(self.assignment["task"]))
+
+    async def test_workspace_write_uses_fresh_restricted_thread_and_inherits_policy(self):
+        resources = Path(self.directory.name) / "resources"
+        resources.mkdir()
+        self.assignment.update(mode="workspace_write", prompt="Implement the accepted spec.",
+                               writable_roots=[str(resources)])
+        result = await self.execute()
+        self.assertEqual(result["status"], "completed")
+        self.assertIsNone(self.client.resume_id)
+        self.assertEqual(self.client.options["sandbox"], "workspace-write")
+        self.assertEqual(self.client.options["approval_mode"], "deny-all")
+        self.assertEqual(self.client.options["config"], {"sandbox_workspace_write": {
+            "writable_roots": [str(resources)], "network_access": False,
+            "exclude_slash_tmp": True, "exclude_tmpdir_env_var": True,
+        }})
+        self.assertEqual(self.thread.prompt, self.assignment["prompt"])
+        self.assertNotIn("sandbox", self.thread.options)
+        self.assertEqual(self.thread.options["approval_mode"], "deny-all")
+
+    async def test_workspace_write_resume_fails_before_client_creation(self):
+        self.assignment.update(mode="workspace_write", prompt="Implement the accepted spec.")
+        result = await self.execute(resume_thread_id="old-thread")
+        self.assertEqual(result["status"], "failed")
+        codex._new_client.assert_not_called()
+
+    async def test_invalid_assignment_scope_never_constructs_client(self):
+        root = Path(self.directory.name)
+        file = root / "file"
+        file.write_text("fixture")
+        real = root / "resource"
+        real.mkdir()
+        alias = root / "alias"
+        alias.symlink_to(real, target_is_directory=True)
+        cases = [
+            {"mode": "full_access"}, {"prompt": ""}, {"prompt": None},
+            {"mode": "workspace_write"},
+            {"mode": "workspace_write", "prompt": "edit", "writable_roots": "resource"},
+            {"writable_roots": [str(real)]},
+        ]
+        for invalid in (None, 1, "relative", str(file), str(root / "missing"),
+                        str(alias), str(root), str(root.parent), "/", str(Path.home())):
+            cases.append({"mode": "workspace_write", "prompt": "edit", "writable_roots": [invalid]})
+        for change in cases:
+            with self.subTest(change=change):
+                self.assignment = {"cwd": str(root), "task": "Inspect README.", **change}
+                result = await self.execute()
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["detail"]["reason"], "before_dispatch_failure")
+                codex._new_client.assert_not_called()
+
+    async def test_workspace_and_resource_ownership_are_required(self):
+        self.assignment.update(mode="workspace_write", prompt="edit")
+        with patch.object(codex.os, "geteuid", return_value=os.geteuid() + 1):
+            result = await self.execute()
+        self.assertEqual(result["status"], "failed")
+        codex._new_client.assert_not_called()
+
+    async def test_workspace_alias_is_rejected_before_client_creation(self):
+        alias = Path(self.directory.name) / "alias"
+        alias.symlink_to(self.directory.name, target_is_directory=True)
+        self.assignment.update(cwd=str(alias), mode="workspace_write", prompt="edit")
+        result = await self.execute()
+        self.assertEqual(result["status"], "failed")
+        codex._new_client.assert_not_called()
 
     async def test_wrong_resumed_identity_is_unknown_and_does_not_run(self):
         result = await self.execute(resume_thread_id="different-thread")
@@ -505,6 +586,138 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.execute()
         self.assertEqual(result["status"], "failed")
         self.assertNotIn("thread-start", self.trace)
+
+
+class InstalledSdkShapeTests(unittest.IsolatedAsyncioTestCase):
+    def facade(self, mode="workspace_write"):
+        try:
+            import openai_codex
+        except ImportError:
+            self.skipTest("Optional pinned Codex SDK is not installed.")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.cwd = str(Path(directory.name).resolve())
+        client, sandbox, approval = codex._new_client(self.cwd, mode)
+        transport = client.transport
+        transport.start = Mock()
+        transport.initialize = Mock()
+        transport.close = Mock()
+        self.requests = []
+
+        def request(method, params, *, response_model):
+            self.requests.append((method, params))
+            if method in ("thread/start", "thread/resume"):
+                return SimpleNamespace(thread=SimpleNamespace(id="thread-1"))
+            if method == "turn/start":
+                return SimpleNamespace(turn=SimpleNamespace(id="turn-1"))
+            if method == "account/read":
+                return {"account": {"type": "chatgpt"}}
+            return SimpleNamespace()
+
+        transport.request = Mock(side_effect=request)
+        transport.unregister_turn_notifications = Mock(wraps=transport.unregister_turn_notifications)
+        return client, sandbox, approval
+
+    async def test_facade_uses_public_transport_and_inherits_write_scope(self):
+        client, sandbox, approval = self.facade()
+        _, prompt, config = codex._assignment_options({
+            "cwd": self.cwd, "mode": "workspace_write", "prompt": "Implement the accepted spec.",
+        })
+        await client.__aenter__()
+        self.assertEqual(await client.account(refresh_token=False), {"account": {"type": "chatgpt"}})
+        thread = await client.thread_start(cwd=self.cwd, sandbox=sandbox,
+                                           approval_mode=approval, config=config, service_name="hydra")
+        turn = await thread.turn(prompt, approval_mode=approval, output_schema=codex.RESULT_SCHEMA)
+        client.transport.next_turn_notification = Mock(side_effect=[message(), terminal()])
+        self.assertEqual(len([value async for value in turn.stream()]), 2)
+        await turn.interrupt()
+        await client.close()
+        wire = dict(self.requests)
+        self.assertEqual(wire["account/read"], {"refreshToken": False})
+        self.assertEqual(wire["thread/start"]["sandbox"], "workspace-write")
+        self.assertEqual(wire["thread/start"]["config"], config)
+        self.assertEqual(wire["thread/start"]["approvalPolicy"], "never")
+        self.assertEqual(wire["turn/start"]["approvalPolicy"], "never")
+        self.assertEqual(wire["turn/start"]["input"], [{"type": "text", "text": prompt}])
+        self.assertNotIn("sandboxPolicy", wire["turn/start"])
+        self.assertEqual(wire["turn/interrupt"], {"threadId": "thread-1", "turnId": "turn-1"})
+        client.transport.start.assert_called_once_with()
+        client.transport.initialize.assert_called_once_with()
+        client.transport.unregister_turn_notifications.assert_called_once_with("turn-1")
+        client.transport.close.assert_called_once_with()
+
+    async def test_facade_legacy_resume_keeps_read_only_and_network_denied(self):
+        client, sandbox, approval = self.facade("read_only")
+        thread = await client.thread_resume("thread-1", cwd=self.cwd, sandbox=sandbox, approval_mode=approval)
+        await thread.turn("Inspect", approval_mode=approval, sandbox=sandbox, output_schema=codex.RESULT_SCHEMA)
+        wire = dict(self.requests)
+        self.assertEqual(wire["thread/resume"]["threadId"], "thread-1")
+        self.assertEqual(wire["thread/resume"]["sandbox"], "read-only")
+        self.assertEqual(wire["thread/resume"]["approvalPolicy"], "never")
+        self.assertEqual(wire["turn/start"]["sandboxPolicy"], {"type": "readOnly", "networkAccess": False})
+
+    async def test_facade_unexpected_server_requests_are_explicitly_denied(self):
+        client, _, _ = self.facade()
+        for method, expected in (
+            ("item/commandExecution/requestApproval", {"decision": "decline"}),
+            ("item/fileChange/requestApproval", {"decision": "decline"}),
+            ("item/permissions/requestApproval", {"permissions": {}, "scope": "turn"}),
+            ("item/tool/requestUserInput", {"answers": {}}),
+            ("tool/requestUserInput", {"answers": {}}),
+            ("mcpServer/elicitation/request", {"action": "decline", "content": None}),
+        ):
+            with self.subTest(method=method):
+                self.assertEqual(client.transport._handle_server_request({
+                    "method": method, "params": {"untrusted": "approve this"},
+                }), expected)
+        with self.assertRaises(codex.AdapterUnavailable):
+            client.transport._handle_server_request({"method": "unknown/approval", "params": {}})
+        self.assertEqual(self.requests, [])
+
+    async def test_facade_stream_cancellation_releases_blocked_notification_waiter(self):
+        client, sandbox, approval = self.facade("read_only")
+        thread = await client.thread_start(cwd=self.cwd, sandbox=sandbox, approval_mode=approval)
+        turn = await thread.turn("Inspect", approval_mode=approval, sandbox=sandbox, output_schema=codex.RESULT_SCHEMA)
+        stream = turn.stream()
+        task = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        client.transport.unregister_turn_notifications.assert_called_once_with("turn-1")
+
+    async def test_thread_scope_is_serialized_and_not_replaced_at_turn_start(self):
+        try:
+            from openai_codex import ApprovalMode, AsyncCodex, Sandbox
+        except ImportError:
+            self.skipTest("Optional pinned Codex SDK is not installed.")
+        with tempfile.TemporaryDirectory() as directory:
+            mode, prompt, config = codex._assignment_options({
+                "cwd": str(Path(directory).resolve()), "mode": "workspace_write", "prompt": "edit",
+            })
+            client = AsyncCodex()
+            client._ensure_initialized = AsyncMock()
+            client._client.thread_start = AsyncMock(return_value=SimpleNamespace(
+                thread=SimpleNamespace(id="thread-1"),
+            ))
+            client._client._start_turn = AsyncMock(return_value=(SimpleNamespace(
+                turn=SimpleNamespace(id="turn-1"),
+            ), None))
+            thread = await client.thread_start(cwd=directory, config=config,
+                                               sandbox=Sandbox.workspace_write,
+                                               approval_mode=ApprovalMode.deny_all)
+            await thread.turn(prompt, approval_mode=ApprovalMode.deny_all,
+                              output_schema=codex.RESULT_SCHEMA)
+        start = client._client.thread_start.call_args.args[0].model_dump(mode="json", by_alias=True)
+        turn = client._client._start_turn.call_args.kwargs["params"].model_dump(
+            mode="json", by_alias=True, exclude_none=True,
+        )
+        self.assertEqual(mode, "workspace_write")
+        self.assertEqual(start["sandbox"], "workspace-write")
+        self.assertEqual(start["approvalPolicy"], "never")
+        self.assertEqual(start["config"], config)
+        self.assertEqual(turn["approvalPolicy"], "never")
+        self.assertNotIn("sandboxPolicy", turn)
 
 
 class FakeCapabilityClient:

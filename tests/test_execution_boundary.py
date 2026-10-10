@@ -24,6 +24,9 @@ def mark(name, **values):
         output.write(json.dumps({'name': name, **values}) + '\n')
 async def execute(assignment, identity, event, stopped, resume_thread_id=None, on_dispatch=None):
     mark('started', pid=os.getpid(), argv=sys.argv)
+    if mode == 'environment':
+        mark('environment', token_names=[key for key in b.PUBLISHING_TOKEN_VARIABLES if key in os.environ],
+             harmless=os.environ.get('HYDRA_TEST_HARMLESS'))
     if mode in ('startup_hang', 'resistant', 'eof'):
         if mode in ('resistant', 'eof'):
             child = subprocess.Popen([sys.executable, '-I', '-c',
@@ -131,6 +134,19 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.identities, [{'thread_id': 'thread-1'}, {'turn_id': 'turn-1'}])
         self.assertEqual(self.events[0][1]['method'], 'hydra/workerStarted')
         self.assertNotIn('private-assignment-marker', json.dumps(self.observations()[0]['argv']))
+        self.assert_pids_gone()
+
+    async def test_worker_does_not_inherit_publishing_tokens(self):
+        self.mode = 'environment'
+        environment = {name: 'synthetic-token' for name in boundary.PUBLISHING_TOKEN_VARIABLES}
+        environment['HYDRA_TEST_HARMLESS'] = 'retained'
+        with patch.dict(os.environ, environment):
+            result = await self.run_worker()
+            self.assertTrue(all(os.environ[name] == 'synthetic-token' for name in boundary.PUBLISHING_TOKEN_VARIABLES))
+        self.assertEqual(result['status'], 'completed')
+        observed = next(item for item in self.observations() if item['name'] == 'environment')
+        self.assertEqual(observed['token_names'], [])
+        self.assertEqual(observed['harmless'], 'retained')
         self.assert_pids_gone()
 
     async def test_identity_and_event_ack_follow_successful_callbacks(self):
