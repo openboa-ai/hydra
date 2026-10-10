@@ -4,7 +4,7 @@
 
 Hydra is software for operating a Codex-assisted development lifecycle across projects. Work toward a verified outcome and keep the purpose, decisions, specification, implementation, and evidence connected.
 
-The initial repository contains documentation only. The SDLC design is a draft, not authorization to implement an unreviewed execution mechanism, install a service, or change another project's controls.
+The current implementation contract is `docs/engineering/github-workflow/spec.md`. Earlier SQLite designs are superseded. Design acceptance does not establish actual delivery, installed service operation, or authority to change another project's protected controls.
 
 ## Working on a change
 

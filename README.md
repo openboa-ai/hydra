@@ -1,28 +1,86 @@
 # Hydra
 
-Hydra is an SDLC software project for developing multiple projects with Codex. Its intended outcome is to keep authorized work moving from an agreed goal through implementation, verification, review, delivery, and follow-up, while involving people when their judgment is needed.
+Hydra keeps delegated GitHub work moving through specification, implementation,
+verification, code and security review, protected merge, and follow-up. Codex handles
+reasoning; ordinary code handles GitHub waits and recovery.
+
+Product repositories own goals, specifications, Issues, branches, PRs and CI. Hydra
+has no operational repository, SQLite database, state branch, JSON journal or web
+console. One active host runs one Codex turn at a time.
+
+## Use
+
+Install Python 3.11+ with the optional pinned Codex SDK into an isolated environment:
+
+```sh
+python3 -m pip install '.[codex]'
+hydra status --repos owner/product
+hydra run --issue https://github.com/owner/product/issues/12 \
+  --workspace-root /absolute/owned/workspaces --host-alias development-mac
+hydra serve --repos owner/product owner/another-product \
+  --workspace-root /absolute/owned/workspaces --host-alias development-mac
+```
+
+The first runtime selects the existing `openboa` GitHub CLI account per operation
+and the existing ChatGPT subscription or available account credits. It neither buys credits nor switches
+to a paid model API. Configure the project's reviewed `.hydra.toml` on its protected
+default branch and delegate a ready Issue using the [registration guide](docs/registration.md).
+
+The host supplies owned workspace and storage prerequisites. Managed workspaces
+require their registered lifecycle and storage providers; Hydra refuses an internal
+disk fallback. Foreground and login-service execution use the same `serve` command.
+Enable a login service only after actual delivery and recovery qualification.
+
+## Workflow and recovery
+
+```mermaid
+flowchart LR
+  I[Ready product Issue] --> S[Specification and independent review]
+  S --> C[Codex implementation]
+  C --> V[Verification and independent review]
+  V --> P[One coherent PR]
+  P --> G[Current CI and code/security reviews]
+  G --> M[Exact-head protected merge]
+  M --> O[Main checks and Issue completion]
+  G -->|Findings| C
+```
+
+A decision or CI wait releases capacity for another repository. Active external
+waits are checked every 60 seconds; idle intake every five minutes. Unchanged state
+does not trigger a model turn or repeated output.
+
+Native ready, paused and decision labels control delegated work; `hydra:active`
+keeps unfinished work and interrupted completion cleanup discoverable. Open intake
+and closed active recovery are queried separately, without scanning closed history.
+Labels do not establish successful checks, reviews or merge.
+
+One service-authored Issue comment records attempts, revisions, checkpoint, pending
+action and next step. This directs recovery; actual branch/PR/CI/provider facts
+authorize delivery. Restart reconciles effects before retry and never creates a
+replacement PR because a response was lost. Unknown executions and foreign-host
+attempts require confirmed shutdown, not heartbeat expiry. Unpushed work cannot be
+recovered after host loss. See [the implementation contract](docs/engineering/github-workflow/spec.md).
+
+The existing OS lock retains only a boot identity and one unresolved launch nonce.
+It blocks restart after an uncertain execution even if its wrapper has disappeared;
+confirmed cleanup clears it. It contains no project/workflow state. Native included
+permission or explicit credit availability with spend permission permits a turn
+attempt; Codex accepts or rejects execution. Unknown usage and workspace denials
+hold without purchases or billing fallback. Credit attempts currently require
+availability in every selected quota bucket, so an additional bucket without credit
+information conservatively waits.
 
 ## Status
 
-This repository starts from a new foundation. It contains the project purpose, collaboration rules, repository development workflow, and a draft design. An autonomous runtime has not been implemented or installed. No release, working runtime integration, or operational reliability claim is made.
+The GitHub-native implementation replaces the earlier SQLite prototype. Deterministic
+tests and authenticated runtime qualification are recorded in the
+[verification record](docs/engineering/github-workflow/verification.md). These are
+separate from actual two-project delivery, host handover and background activation.
+The repository does not claim unattended operation merely because the CLI exists.
 
-## Intended workflow
+```sh
+python3 -m unittest discover -s tests -v
+```
 
-1. Agree on a project's goal, delegated scope, and completion evidence.
-2. Select a ready, independently verifiable unit of work.
-3. Design, implement, and verify it in an isolated workspace.
-4. Complete code and security review, address findings, and verify the resulting revision.
-5. Deliver through the project's required checks and observe the result.
-6. Continue eligible work or present the specific decision that needs a person.
-
-Deterministic software should handle routine state checks and execution bookkeeping. Codex should handle work that requires reasoning. The first operator surfaces are Codex, GitHub, and a CLI; a separate management web application is not part of the initial scope.
-
-## Design
-
-Read [the draft SDLC design](docs/engineering/sdlc-v1/spec.md) and [the collaboration rules](AGENTS.md). Runtime language, persistence, MCP integration, and scheduling are intentionally undecided until the design is reviewed.
-
-Each managed project owns its product requirements and quality criteria. Hydra must not lower those criteria to report a successful delivery. Public source and examples must remain separate from private project configuration and operating data.
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR, verification, review, and delivery workflow. Repository hygiene checks are separate from runtime tests and product acceptance.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for Hydra development. Product-agent evaluation
+criteria stay in each product; Hydra does not lower them to report successful work.

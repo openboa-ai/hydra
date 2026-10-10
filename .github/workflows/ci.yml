@@ -13,6 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  kernel:
+    name: Kernel tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.14.2']
+    steps:
+      - name: Check out merge candidate or main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up bounded execution test Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify Python and bounded execution contracts
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 11)'
+          python3 -m unittest discover -s tests -v
   hygiene:
     name: Repository hygiene
     runs-on: ubuntu-24.04

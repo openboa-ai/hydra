@@ -1,5 +1,10 @@
 # Repository development workflow
 
+> Historical record — this document records the earlier prototype. The current
+> [GitHub-native contract](../github-workflow/spec.md) supersedes its operational
+> store, private registration and CLI assumptions. Adapter evidence remains scoped
+> to the behavior actually tested; it does not establish current autonomous delivery.
+
 Revision: 1. Review status: proposed.
 
 ## Intent and scope

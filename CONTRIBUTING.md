@@ -1,6 +1,6 @@
 # Developing Hydra
 
-Use an Issue for work that needs a durable outcome, dependencies, or asynchronous coordination. Define the scope and completion evidence in a reviewed specification before implementation. The initial [runtime design](docs/engineering/sdlc-v1/spec.md) remains a draft.
+Use an Issue for work that needs a durable outcome, dependencies, or asynchronous coordination. Define the scope and completion evidence in a reviewed specification before implementation. The [GitHub-native contract](docs/engineering/github-workflow/spec.md) is the current implementation design.
 
 Work in an isolated branch or worktree. Group changes into a meaningful PR that can be understood, verified, and reverted independently. Run appropriate behavior checks and `git diff --check` before publishing. The [repository workflow specification](docs/engineering/repository-workflow/spec.md) defines the foundation controls.
 
