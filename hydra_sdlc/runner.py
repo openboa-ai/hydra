@@ -124,7 +124,10 @@ class Runner:
         head = values.get("head", record.get("head"))
         attempts = (record.get("delivery_attempt", 0) + 1 if service_action and
                     record.get("delivery_action") == action and record.get("delivery_head") == head else 1)
-        if attempts > 3 or self._latest(repo, number, config, include_stop=not checkpoint):
+        if self._latest(repo, number, config, include_stop=not checkpoint):
+            return None
+        if attempts > 3:
+            self._wait(repo, number, record, "replan_required", phase="uncertain", next_action="diagnose")
             return None
         record = self._record(repo, number, record, pending_action=action,
                               action_attempt=attempts, **values, **({"delivery_action": action,
@@ -136,11 +139,22 @@ class Runner:
             # Preserve the complete prior decision/execution/effect checkpoint;
             # restoring text must not erase another wait or adopt a live worker.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
-        self._record(repo, number, record, phase=phase, wait_reason=reason,
+        if phase == "waiting":
+            phase = record.get("phase") or phase
+        resume = record.get("resume_phase")
+        if not resume and record.get("phase") in {"ready", "design_done", "spec_accepted", "spec_review_done"}:
+            resume = "implementation"
+        self._record(repo, number, record, phase=phase, wait_reason=reason, resume_phase=resume,
                      next_action=next_action,
                      pending_action=record.get("pending_action") if phase == "uncertain" or
-                     record.get("pending_action") == "close_issue" else None)
+                     record.get("pending_action") == "close_issue" or phase == "executing" else None)
         return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+
+    def _intent_wait(self, repo, number):
+        progress = self.github.progress(repo, number) or {}
+        return {"repository": repo, "issue": number, "action": "waiting",
+                "reason": "replan_required" if progress.get("wait_reason") == "replan_required"
+                else "service_retry_or_stop_boundary"}
 
     def _handover(self, repo, number, record, config):
         phrase = f"hydra: handover {record['attempt_id']} stopped"
@@ -172,7 +186,7 @@ class Runner:
                               wait_reason=None, next_action=phase, expected_head=remote,
                               **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
         if record is None:
-            return None, {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
+            return None, self._intent_wait(repo, number)
         interrupted = False
         finished = False
 
@@ -233,9 +247,10 @@ class Runner:
             record = self._record(repo, number, record, head=head, resume_phase=record.get("resume_phase") or phase,
                                   phase=phase + "_done", pending_action=None)
             return None, self._wait(repo, number, record, "product_decision", next_action="operator_decision")
-        self._record(repo, number, record, phase=phase + "_done", pending_action=None,
-                     resume_phase=None if record.get("resume_phase") == phase else record.get("resume_phase"),
-                     next_action="reconcile", wait_reason=None)
+        if "review" in phase:
+            self._record(repo, number, record, phase=phase + "_done", pending_action=None,
+                         resume_phase=None if record.get("resume_phase") == phase else record.get("resume_phase"),
+                         next_action="reconcile", wait_reason=None)
         return candidate, None
 
     def _publish(self, repo, number, config, record, path, head, *, checkpoint=False):
@@ -253,7 +268,7 @@ class Runner:
                               expected_base=(record.get("expected_base") or record["contract_revision"]
                                              if record.get("pending_action") == "publish" else config["revision"]))
         if record is None:
-            return {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
+            return self._intent_wait(repo, number)
         try:
             self.workspace.publish(path, branch, remote)
         except Exception:
@@ -265,6 +280,41 @@ class Runner:
                      checkpoint="interrupted_committed" if record.get("checkpoint") == "interrupted_committed"
                      else "remote_committed", next_action="pr")
         return None
+
+    def _upsert_pr(self, repo, number, config, record, spec):
+        head, branch = record["head"], record["branch"]
+        intent = self._intent(repo, number, config, record, "upsert_pr", phase="publishing_pr")
+        if intent is None:
+            return record, None, self._intent_wait(repo, number)
+        try:
+            pr = self.github.ensure_pr(repo, number, branch, head, f"Implement Issue {number}",
+                f"Refs https://github.com/{repo}/issues/{number}\n\nImplements the scoped specification {spec}. "
+                "Registered local verification and independent candidate review completed. Remote checks and reviews remain delivery gates.")
+        except Exception:
+            recovered = self.github.pulls(repo, branch)
+            if len(recovered) != 1 or recovered[0].get("head", {}).get("sha") != head:
+                return intent, None, self._wait(repo, number, intent, "pr_unknown", phase="uncertain")
+            pr = recovered[0]
+        if not self.github.owns_pr(repo, number, pr):
+            return intent, None, self._wait(repo, number, intent, "foreign_pr")
+        return intent, pr, None
+
+    def _resolve_outdated(self, repo, number, config, record, observation):
+        head, pr_number = observation["head_sha"], observation["pr"]["number"]
+        for thread in self._outdated_provider_threads(observation, config):
+            intent = self._intent(repo, number, config, record, "resolve_threads", head=head)
+            if intent is None:
+                return record, self._intent_wait(repo, number)
+            try:
+                self.github.resolve_thread(repo, pr_number, thread["id"], head, config["review_provider"])
+            except RuntimeError:
+                return intent, self._wait(repo, number, intent, "review_resolution_boundary", phase="uncertain")
+            record = self._record(repo, number, intent, pending_action=None, phase="review_wait",
+                                  delivery_action=None, delivery_attempt=None, delivery_head=None)
+        if record.get("pending_action") == "resolve_threads":
+            record = self._record(repo, number, record, pending_action=None, phase="review_wait",
+                                  wait_reason=None, next_action="remote_review")
+        return record, None
 
     async def step(self, repo, number):
         if self.host_hold_reason:
@@ -307,21 +357,29 @@ class Runner:
                                   phase="implementation_done" if origin in {"correction", "change_review"} else "ready",
                                   wait_reason=None, pending_action=None,
                                   resume_phase=origin)
+        recover_dirty = False
         if record.get("wait_reason") == "replan_required":
             phrase = f"hydra: replan {record['attempt_id']} ready"
             if not any((c.get("user") or {}).get("login") in config["authorized_actors"]
                        and c.get("body", "").strip() == phrase for c in self.github.comments(repo, number)):
                 return {"repository": repo, "issue": number, "action": "waiting", "reason": "replan_required"}
             self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
-            review_retry = record.get("delivery_action") == "request_review"
+            service_retry = record.get("delivery_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
+            active_write = record.get("phase") == "executing" and record.get("pending_action") in {"design", "implementation", "correction"}
+            if active_write:
+                if not self._handover(repo, number, record, config):
+                    return {"repository": repo, "issue": number, "action": "waiting", "reason": "confirm_previous_stopped"}
+                recover_dirty = True
+            origin = record.get("resume_phase")
             record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()), checkpoint=None,
-                                  pending_action=None, delivery_action=None, delivery_attempt=None,
-                                  delivery_head=None, correction_reason=None, correction_attempt=None, wait_reason=None,
-                                  phase="review_wait" if review_retry else "ready",
-                                  resume_phase=None if review_retry else "implementation")
+                                  pending_action=record.get("pending_action") if service_retry else None,
+                                  delivery_action=None, delivery_attempt=None, delivery_head=None,
+                                  correction_reason=record.get("correction_reason") if origin == "correction" else None,
+                                  correction_attempt=None, wait_reason=None,
+                                  phase="uncertain" if service_retry else "ready",
+                                  resume_phase=None if service_retry else origin if origin in {"design", "correction"} else "implementation")
         unresolved_model = record.get("phase") == "executing" or record.get("wait_reason") in {
             "execution_unknown", "execution_failed", "invalid_model_result"}
-        recover_dirty = False
         if record.get("host_alias") != self.host or unresolved_model:
             if not self._handover(repo, number, record, config):
                 return {"repository": repo, "issue": number, "action": "waiting", "reason": "confirm_previous_stopped"}
@@ -365,7 +423,7 @@ class Runner:
                     return self._wait(repo, number, record, "delivery_boundary_changed")
                 record = self._intent(repo, number, config, record, "close_issue", phase="closing") if not closing_recovery else record
                 if record is None:
-                    return {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
+                    return self._intent_wait(repo, number)
                 if not closing_recovery:
                     try:
                         self.github.close_issue(repo, number)
@@ -385,6 +443,11 @@ class Runner:
             correcting = current_head != record.get("head") and current_head == record.get("expected_head")
             if current_head != record.get("head") and not correcting:
                 return self._wait(repo, number, record, "remote_head_changed")
+            if record.get("pending_action") == "resolve_threads":
+                if correcting:
+                    return self._wait(repo, number, record, "remote_head_changed", phase="uncertain")
+                record, wait = self._resolve_outdated(repo, number, config, record, observation)
+                return wait or {"action": "continue", "repository": repo, "issue": number}
             findings = self._findings(observation)
             failed_ci = any(c.get("head_sha") == current_head and c.get("conclusion") in {
                 "failure", "timed_out"} for c in observation.get("checks", []))
@@ -411,6 +474,15 @@ class Runner:
                 return self._wait(repo, number, record, "publish_conflict", phase="uncertain")
         elif remote and record.get("head") and remote not in {record["head"], record.get("expected_head")}:
             return self._wait(repo, number, record, "remote_head_changed")
+        if record.get("pending_action") == "upsert_pr" and not pulls:
+            if remote != record.get("head"):
+                return self._wait(repo, number, record, "remote_head_changed", phase="uncertain")
+            record, pr, wait = self._upsert_pr(repo, number, config, record, intake["spec"])
+            if wait:
+                return wait
+            self._record(repo, number, record, pr_number=pr["number"], phase="review_wait",
+                         pending_action=None, next_action="remote_review")
+            return {"action": "continue", "repository": repo, "issue": number}
         path = self.workspace.prepare(repo, number, branch, remote, recover_dirty=recover_dirty)
         self.workspace.fetch_base(path, config["revision"])
         state = self.workspace.inspect(path)
@@ -453,6 +525,7 @@ class Runner:
             result, wait = await self._model(repo, number, config, record, path, "design", task)
             if wait:
                 return wait
+            record = self.github.progress(repo, number)
             if result["outcome"] != "candidate_ready":
                 return self._wait(repo, number, record, "replan_required", next_action="diagnose")
             changed = self.workspace.changed_paths(path, config["revision"])
@@ -497,6 +570,7 @@ class Runner:
                 "Prepare actual behavior evidence; UI changes require a screen shared with the operator.\n" + issue["body"])
             if wait:
                 return wait
+            record = self.github.progress(repo, number)
             if result["outcome"] != "candidate_ready":
                 return await self._correct(repo, number, config, record, path, "implementation_failure", details=result.get("summary", ""))
             head = self.workspace.checkpoint(path, f"Implement Issue {number}")
@@ -552,33 +626,15 @@ class Runner:
         if self._latest(repo, number, config):
             return self._wait(repo, number, record, "delivery_boundary_changed")
         if not pulls:
-            record = self._intent(repo, number, config, record, "upsert_pr", phase="publishing_pr")
-            if record is None:
-                return {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
-            try:
-                pr = self.github.ensure_pr(repo, number, branch, head, f"Implement Issue {number}",
-                    f"Refs https://github.com/{repo}/issues/{number}\n\nImplements the scoped specification {intake['spec']}. "
-                    "Registered local verification and independent candidate review completed. Remote checks and reviews remain delivery gates.")
-            except Exception:
-                recovered = self.github.pulls(repo, branch)
-                if len(recovered) != 1 or recovered[0].get("head", {}).get("sha") != head:
-                    return self._wait(repo, number, record, "pr_unknown", phase="uncertain")
-                pr = recovered[0]
-            if not self.github.owns_pr(repo, number, pr):
-                return self._wait(repo, number, record, "foreign_pr")
+            record, pr, wait = self._upsert_pr(repo, number, config, record, intake["spec"])
+            if wait:
+                return wait
         record = self._record(repo, number, record, pr_number=pr["number"], phase="review_wait",
                               pending_action=None, next_action="remote_review", head=head)
         observation = self.github.observe(repo, pr["number"])
-        for thread in self._outdated_provider_threads(observation, config):
-            intent = self._intent(repo, number, config, record, "resolve_threads", head=head)
-            if intent is None:
-                return {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
-            try:
-                self.github.resolve_thread(repo, pr["number"], thread["id"], head, config["review_provider"])
-            except RuntimeError:
-                return self._wait(repo, number, intent, "review_resolution_boundary", phase="review_wait")
-            record = self._record(repo, number, intent, pending_action=None, phase="review_wait",
-                                  delivery_action=None, delivery_attempt=None, delivery_head=None)
+        record, wait = self._resolve_outdated(repo, number, config, record, observation)
+        if wait:
+            return wait
         observation = self.github.observe(repo, pr["number"])
         blockers = gate_delivery(config, observation, head, paths)
         if blockers:
@@ -626,12 +682,14 @@ class Runner:
             return self._wait(repo, number, record, "delivery_boundary_changed")
         # Gate facts are re-read immediately before the exact-head request.
         latest = self.github.observe(repo, pr_number)
+        if not self.github.owns_pr(repo, number, latest["pr"]):
+            return self._wait(repo, number, record, "foreign_pr")
         if gate_delivery(config, latest, head, paths):
             return self._wait(repo, number, record, "delivery_facts_changed")
         record = self._intent(repo, number, config, record, "merge", phase="merging",
                               expected_head=head, expected_base=latest["base_sha"])
         if record is None:
-            return {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
+            return self._intent_wait(repo, number)
         try:
             self.github.merge(repo, pr_number, head)
         except Exception:

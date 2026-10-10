@@ -218,3 +218,38 @@ Acceptance adds advanced-base unpublished integration, verification process-grou
 shutdown on deadline/signal without later commands, missing/FIFO/symlink/untracked
 spec refusal, and merged policy-change completion through step/serve/status with
 no model or repeat merge. Pending or unowned policy changes cannot use this path.
+
+## Review corrections: pending work and actionable recovery
+
+Integration is preparatory work, not proof of completed implementation. Preserve
+the pre-integration phase and any pending implementation when integrating a newer
+base. A usage or other wait before implementation must likewise retain that work;
+base-only commits cannot substitute for the Issue's requirement-linked change.
+
+At the final fresh merge observation, reapply the shared owned-PR predicate before
+recording merge intent. Head, checks and mergeability cannot substitute for current
+ownership. Unknown or removed ownership never permits the merge request.
+
+After three failed or uncertain service requests at one head, enter a durable
+diagnosis/replan wait instead of silently polling an exhausted action. Preserve any
+uncertain effect intent until remote reconciliation. Authorized replan resets the
+bounded service counter and resumes that effect's reconciliation, without starting
+unrelated implementation or creating a duplicate effect. A terminal missing or
+conflicting result still holds; replan is not permission to adopt another head.
+
+Out-of-scope implementation or correction checkpoints enter bounded correction or
+diagnosis within the original allowlist. Restore unintended candidate changes to
+the observed base; never broaden policy or delete unrelated work. After exhaustion,
+the existing explicit replan marker can resume correction. Uncertain publication
+continues to reconcile its exact request before any new candidate edit.
+
+Workspace-write phases remain active until the owned local checkpoint and its head
+are durably recorded. Model completion alone cannot mark design, implementation or
+correction done. If checkpoint creation or its progress write fails, preserve the
+active write and existing uncertainty so the stopped-work recovery route remains
+available. Never silently overwrite or adopt dirty files on restart.
+
+Acceptance adds base integration and usage waits before first implementation,
+ownership changes at the final merge observation, exhausted publication/PR/merge/
+close/thread requests with authorized reconciliation, scoped recovery of an unwanted
+path, and interruption/checkpoint failure after each workspace-write phase.

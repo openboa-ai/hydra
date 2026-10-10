@@ -372,7 +372,9 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.workspace.publish_failures = 8
         for _ in range(4):
             result = await self.runner().step('example/product', 4)
-        self.assertEqual(result['reason'], 'service_retry_or_stop_boundary')
+        self.assertEqual(result['reason'], 'replan_required')
+        self.assertEqual(self.github.note['wait_reason'], 'replan_required')
+        self.assertEqual(self.github.note['pending_action'], 'publish')
         self.assertEqual(len([x for x in self.github.writes if x[0] == 'push']), 3)
         self.assertIsNone(self.github.pr)
 
