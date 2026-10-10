@@ -32,10 +32,10 @@ def matches(path, patterns):
     return any(path == p.rstrip("/") or path.startswith(p.rstrip("/") + "/") if p.endswith("/") else fnmatch.fnmatchcase(path, p) for p in patterns)
 
 
-def load_project(github, repo):
+def load_project(github, repo, *, revision=None):
     identity = github.repository(repo)
-    revision = github.ref(repo, identity["default_branch"])
-    _require(_sha(revision), "Default branch revision unavailable")
+    revision = github.ref(repo, identity["default_branch"]) if revision is None else revision
+    _require(_sha(revision), "Project revision unavailable")
     blob = github.file(repo, ".hydra.toml", revision)
     try:
         config = tomllib.loads(blob["content"])

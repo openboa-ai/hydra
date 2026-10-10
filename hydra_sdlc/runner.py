@@ -61,6 +61,36 @@ class Runner:
         self.actions = {}
         self.host_hold_reason = None
 
+    def _work_config(self, repo, number, record):
+        error = None
+        config = None
+        try:
+            config = load_project(self.github, repo)
+            if not record or record.get("contract_revision") in {None, config["revision"]}:
+                return config
+            old = self.github.file(repo, ".hydra.toml", record["contract_revision"])
+            if old["sha"] == config["blob_sha"]:
+                return config
+        except (ValueError, RuntimeError, OSError) as exc:
+            error = exc
+        # Only authenticated progress plus actual merged ownership permits the
+        # old policy to finish its existing work. It never delegates new work.
+        if (record and record.get("intake_digest") and record.get("head")
+                and record.get("contract_revision") and record.get("branch") == f"hydra/issue-{number}"):
+            pulls = self.github.pulls(repo, record["branch"])
+            if len(pulls) == 1 and self.github.owns_pr(repo, number, pulls[0]):
+                pr = self.github.observe(repo, pulls[0]["number"])["pr"]
+                if (self.github.owns_pr(repo, number, pr) and pr.get("merged") is True and pr.get("state") == "closed"
+                        and (pr.get("head") or {}).get("sha") == record["head"]
+                        and record.get("pr_number") in {None, pr["number"]}
+                        and re.fullmatch(r"[0-9a-f]{40}", pr.get("merge_commit_sha") or "")):
+                    pinned = load_project(self.github, repo, revision=record["contract_revision"])
+                    return {**pinned, "_completion_only": True,
+                            "_completion_controls": config["labels"] if config else {}}
+        if error:
+            raise error
+        return config
+
     def _latest(self, repo, number, config, *, include_stop=True):
         if include_stop and self.stop_requested():
             return "stop_requested"
@@ -68,17 +98,19 @@ class Runner:
         if config.get("intake_digest") and intake_digest(issue) != config["intake_digest"]:
             return "intake_changed"
         labels = {item["name"] if isinstance(item, dict) else item for item in issue.get("labels", [])}
-        if issue.get("state") != "open":
-            return "issue_closed"
-        if config["labels"]["paused"] in labels:
+        controls = config.get("_completion_controls", {})
+        if labels.intersection({config["labels"]["paused"], controls.get("paused")}):
             return "paused"
-        if config["labels"]["decision"] in labels:
+        if labels.intersection({config["labels"]["decision"], controls.get("decision")}):
             return "human_decision"
         if config["labels"]["ready"] not in labels:
             return "not_delegated"
-        fresh = load_project(self.github, repo)
-        if fresh["blob_sha"] != config["blob_sha"]:
-            return "policy_changed"
+        if issue.get("state") != "open":
+            return "issue_closed"
+        if not config.get("_completion_only"):
+            fresh = load_project(self.github, repo)
+            if fresh["blob_sha"] != config["blob_sha"]:
+                return "policy_changed"
         return None
 
     def _record(self, repo, number, record, **values):
@@ -235,9 +267,9 @@ class Runner:
     async def step(self, repo, number):
         if self.host_hold_reason:
             return {"repository": repo, "issue": number, "action": "waiting", "reason": self.host_hold_reason}
-        config = load_project(self.github, repo)
         issue = self.github.issue(repo, number)
         record = self.github.progress(repo, number)
+        config = self._work_config(repo, number, record)
         previously_owned = record is not None
         branch = f"hydra/issue-{number}"
         if record is None:
@@ -306,7 +338,7 @@ class Runner:
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "foreign_branch"}
         if len(pulls) > 1:
             return self._wait(repo, number, record, "multiple_prs")
-        if closing_recovery and not pulls:
+        if (closing_recovery or config.get("_completion_only")) and not pulls:
             return self._wait(repo, number, record, "completion_pr_unavailable", phase="uncertain")
         if pulls:
             pr = pulls[0]
@@ -315,6 +347,8 @@ class Runner:
             record = {**record, "pr_number": pr["number"]}
             observation = self.github.observe(repo, pr["number"])
             pr = observation["pr"]
+            if config.get("_completion_only") and not self.github.owns_pr(repo, number, pr):
+                return self._wait(repo, number, record, "foreign_pr")
             if pr.get("merged"):
                 if pr["head"]["sha"] != record.get("head"):
                     return self._wait(repo, number, record, "unexpected_merged_head")
@@ -324,7 +358,8 @@ class Runner:
                 blockers = gate_checks(config, post, merge_sha, events=["push"])
                 if blockers:
                     return self._wait(repo, number, record, "post_merge_checks", phase="observing")
-                if self._latest(repo, number, config) and not closing_recovery:
+                boundary = self._latest(repo, number, config)
+                if boundary and not (closing_recovery and boundary == "issue_closed"):
                     return self._wait(repo, number, record, "delivery_boundary_changed")
                 record = self._intent(repo, number, config, record, "close_issue", phase="closing") if not closing_recovery else record
                 if record is None:
@@ -338,7 +373,7 @@ class Runner:
                 self._record(repo, number, record, phase="completed", pending_action=None,
                              checkpoint="merged_observed", next_action="completed", wait_reason=None)
                 return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
-            if closing_recovery:
+            if closing_recovery or config.get("_completion_only"):
                 return self._wait(repo, number, record, "completion_merge_unconfirmed", phase="uncertain")
             if pr.get("state") == "closed":
                 return self._wait(repo, number, record, "closed_unmerged_pr")
@@ -692,14 +727,21 @@ class Runner:
     def status(self, repos):
         result = []
         for repo in repos:
-            config = load_project(self.github, repo)
             for issue in self.github.issues(repo):
                 if "pull_request" in issue:
                     continue
                 progress = self.github.progress(repo, issue["number"])
+                try:
+                    config = self._work_config(repo, issue["number"], progress)
+                except (ValueError, RuntimeError, OSError):
+                    result.append({"repository": repo, "issue": issue["number"], "state": issue["state"],
+                                   "progress": progress, "wait_reason": "project_contract_unavailable"})
+                    continue
                 bound = {**config, "intake_digest": progress.get("intake_digest")} if progress else config
                 reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(repo, issue["number"], bound)
                 if reason == "issue_closed" and progress and progress.get("pending_action") == "close_issue":
+                    reason = "completion_reconciliation"
+                elif not reason and config.get("_completion_only"):
                     reason = "completion_reconciliation"
                 result.append({"repository": repo, "issue": issue["number"], "state": issue["state"],
                                "progress": progress,
@@ -713,7 +755,6 @@ class Runner:
         results = []
         for repo in repos:
             try:
-                config = load_project(self.github, repo)
                 issues = self.github.issues(repo)
             except (ValueError, RuntimeError, OSError):
                 results.append({"repository": repo, "action": "waiting", "reason": "project_contract_unavailable"})
@@ -723,8 +764,12 @@ class Runner:
                     continue
                 try:
                     progress = self.github.progress(repo, issue["number"])
+                    config = self._work_config(repo, issue["number"], progress)
+                    if progress:
+                        config = {**config, "intake_digest": progress.get("intake_digest")}
                     closing = issue.get("state") == "closed" and progress and progress.get("pending_action") == "close_issue"
-                    if self._latest(repo, issue["number"], config) and not closing:
+                    reason = self._latest(repo, issue["number"], config)
+                    if reason and not (reason == "issue_closed" and closing):
                         continue
                     intake = parse_intake({**issue, "state": "open"} if closing else issue, config)
                     ready.append((repo, issue["number"], intake, progress, issue.get("created_at", "")))
