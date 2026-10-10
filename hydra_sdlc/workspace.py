@@ -278,6 +278,21 @@ class Workspace:
                 "dirty": bool(self._git(path, "status", "--porcelain=v1", "--untracked-files=all").stdout),
                 "branch": branch, "remote_sha": self._remote_sha(path, branch)}
 
+    def fetch_base(self, path, expected_base_sha):
+        """Prepare one observed base commit for offline integration by the worker.
+
+        Fetch supplies no destination ref and never checks out or merges. The
+        runner decides whether and when the owned issue branch should integrate
+        this base; provider completion remains separate from that decision.
+        """
+        path, _, _ = self._identity(path)
+        _sha(expected_base_sha)
+        self._git(path, "fetch", "--no-tags", "--recurse-submodules=no", "origin", expected_base_sha, remote=True)
+        observed = self._git(path, "rev-parse", "--verify", "FETCH_HEAD^{commit}").stdout.decode().strip()
+        if observed != expected_base_sha:
+            raise WorkspaceWait("fetched_base_mismatch")
+        return _sha(observed)
+
     def verify(self, path, commands):
         path, _, _ = self._identity(path)
         if not isinstance(commands, list) or not commands or len(commands) > 64:

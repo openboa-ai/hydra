@@ -96,6 +96,44 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.workspace.changed_paths(self.path, self.base),
                          ["README.md", "new\nfile", "renamed file.md"])
 
+    def test_fetch_base_prepares_exact_object_without_changing_issue_workspace(self):
+        (self.seed / "new-base-file").write_text("upstream\n")
+        git(self.seed, "add", ".")
+        git(self.seed, "commit", "-m", "Advance main")
+        upstream = git(self.seed, "rev-parse", "HEAD")
+        git(self.seed, "push", "origin", "main")
+        (self.path / "README.md").write_text("unfinished owned edit\n")
+        before = git(self.path, "status", "--porcelain=v1")
+        with patch.object(self.workspace, "_git", wraps=self.workspace._git) as calls:
+            self.assertEqual(self.workspace.fetch_base(self.path, upstream), upstream)
+        fetch = next(call for call in calls.call_args_list if "fetch" in call.args)
+        self.assertEqual(fetch.args, (self.path, "fetch", "--no-tags", "--recurse-submodules=no", "origin", upstream))
+        self.assertTrue(fetch.kwargs["remote"])
+        self.assertEqual(git(self.path, "rev-parse", "FETCH_HEAD"), upstream)
+        self.assertEqual(git(self.path, "rev-parse", "HEAD"), self.base)
+        self.assertEqual(git(self.path, "symbolic-ref", "--short", "HEAD"), "hydra/issue-1")
+        self.assertEqual(git(self.path, "status", "--porcelain=v1"), before)
+        self.assertFalse((self.path / "new-base-file").exists())
+
+    def test_fetch_base_rejects_refs_foreign_remote_and_missing_object(self):
+        with self.assertRaisesRegex(WorkspaceWait, "invalid_commit"):
+            self.workspace.fetch_base(self.path, "refs/heads/main")
+        with self.assertRaises(WorkspaceWait):
+            self.workspace.fetch_base(self.path, "f" * 40)
+        git(self.path, "remote", "set-url", "origin", "https://github.com/foreign/repo.git")
+        with self.assertRaisesRegex(WorkspaceWait, "foreign_remote"):
+            self.workspace.fetch_base(self.path, self.base)
+
+    def test_fetch_base_rejects_mismatched_fetch_head(self):
+        real = self.workspace._git
+        def mismatch(path, *args, **kwargs):
+            if args == ("rev-parse", "--verify", "FETCH_HEAD^{commit}"):
+                return subprocess.CompletedProcess([], 0, b"f" * 40 + b"\n")
+            return real(path, *args, **kwargs)
+        with patch.object(self.workspace, "_git", side_effect=mismatch):
+            with self.assertRaisesRegex(WorkspaceWait, "fetched_base_mismatch"):
+                self.workspace.fetch_base(self.path, self.base)
+
     def test_checkpoint_disables_hooks_and_is_idempotent(self):
         sentinel = self.root / "hook-ran"
         hook = self.path / ".git/hooks/pre-commit"
