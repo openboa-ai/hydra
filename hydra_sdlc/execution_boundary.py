@@ -140,6 +140,8 @@ class OwnedProcess:
                             start_new_session=True)
         self.linux = sys.platform.startswith("linux")
         self.process = self.control = self._peer = self._launch = self._receipt_task = None
+        self._ready_task = None
+        self._launch_sent = False
         self._cleanup_task = None
         self._buffer = b""
         self.pid = self.pgid = self._returncode = None
@@ -180,18 +182,30 @@ class OwnedProcess:
             options["pass_fds"] = (self._peer.fileno(),)
         self._launch = asyncio.create_task(asyncio.create_subprocess_exec(*command, **options))
         self._launch.add_done_callback(self._registered)
+        if self.linux:
+            # Retain the single control reader through startup cancellation. It
+            # can still validate late identity and cleanup within the same grace.
+            self._ready_task = asyncio.create_task(self._read_ready(deadline))
+            await asyncio.wait_for(asyncio.shield(self._ready_task),
+                                  max(0.001, deadline - asyncio.get_running_loop().time()))
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError("Owned process startup deadline expired")
+            return self
         # Retain an in-flight launch so cancellation cannot discard its ownership.
         self.process = await asyncio.wait_for(asyncio.shield(self._launch),
                                              max(0.001, deadline - asyncio.get_running_loop().time()))
-        if not self.linux:
-            self.pid = self.pgid = self.process.pid
-            return self
+        self.pid = self.pgid = self.process.pid
+        return self
+
+    async def _read_ready(self, deadline):
+        self.process = await asyncio.shield(self._launch)
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError("Owned process startup deadline expired")
         await asyncio.get_running_loop().sock_sendall(self.control, _supervision_frame("launch"))
-        ready = await asyncio.wait_for(self._read_control(),
-                                       max(0.001, deadline - asyncio.get_running_loop().time()))
+        self._launch_sent = True
+        ready = await self._read_control()
         self.pid, self.pgid = _validate_ready(ready, self.process.pid)
         self._receipt_task = asyncio.create_task(self._read_receipt())
-        return self
 
     async def _read_control(self):
         while b"\n" not in self._buffer:
@@ -249,16 +263,24 @@ class OwnedProcess:
                 return self._launch is None
             if not self.linux:
                 return await _collect_direct(self.process, deadline)
-            try:
-                await loop.sock_sendall(self.control, _supervision_frame("terminate"))
-            except (OSError, RuntimeError):
-                pass
             # A failed startup still retains its helper. It never authorizes clean
             # from the helper's disappearance without the child's private receipt.
+            control_sent = False
             term_sent = False
             group_gone = False
             kill_at = min(deadline, loop.time() + 1.0)
             while loop.time() < deadline:
+                if self._launch_sent and not control_sent:
+                    try:
+                        await loop.sock_sendall(self.control, _supervision_frame("terminate"))
+                    except (OSError, RuntimeError):
+                        pass
+                    control_sent = True
+                if self._ready_task is not None and self._ready_task.done():
+                    try:
+                        self._ready_task.result()
+                    except Exception:
+                        pass
                 if self.pgid is not None and _group_absent(self.pgid):
                     group_gone = True
                 receipt_done = self._receipt_task is not None and self._receipt_task.done()
@@ -300,6 +322,11 @@ class OwnedProcess:
         except (OSError, TimeoutError, ProtocolError):
             return False
         finally:
+            if self._ready_task is not None:
+                if not self._ready_task.done():
+                    self._ready_task.cancel()
+                elif not self._ready_task.cancelled():
+                    self._ready_task.exception()
             if self._receipt_task is not None:
                 if not self._receipt_task.done():
                     self._receipt_task.cancel()
@@ -581,6 +608,13 @@ def _supervisor_main(fd, deadline, command):
         control.setblocking(False)
         killed = False
         while True:
+            # The launch read can also contain terminate. Consume complete
+            # buffered controls even when no further socket data will arrive.
+            while b"\n" in buffered:
+                line, buffered = buffered.split(b"\n", 1)
+                if json.loads(line) != {"version": 1, "kind": "terminate"}:
+                    raise ProtocolError("Invalid supervision control")
+                stopping = True
             all_reaped = False
             while True:
                 try:
@@ -630,11 +664,6 @@ def _supervisor_main(fd, deadline, command):
                 else:
                     buffered += data
                     if len(buffered) > SUPERVISION_LIMIT:
-                        stopping = True
-                    while b"\n" in buffered:
-                        line, buffered = buffered.split(b"\n", 1)
-                        if json.loads(line) != {"version": 1, "kind": "terminate"}:
-                            raise ProtocolError("Invalid supervision control")
                         stopping = True
     except (Exception, KeyboardInterrupt):
         # Any error must still attempt actual group termination and reaping; an

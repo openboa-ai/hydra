@@ -126,6 +126,18 @@ class ProjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ProjectError, 'repository writer'):
             load_project(gh, 'example/product')
 
+    def test_active_recovery_label_is_reserved_from_all_intake_controls(self):
+        for role in ['ready', 'paused', 'decision']:
+            for reserved in ['hydra:active', 'HYDRA:ACTIVE', 'HyDrA:AcTiVe']:
+                with self.subTest(role=role, reserved=reserved):
+                    content = TOML.replace(f'{role} = "hydra:{role}"', f'{role} = "{reserved}"')
+                    with self.assertRaisesRegex(ProjectError, 'reserved for service recovery'):
+                        load_project(ConfigGitHub(content), 'example/product')
+            for ordinary in [f'workflow:{role}', f'hydra:active-{role}']:
+                with self.subTest(role=role, ordinary=ordinary):
+                    content = TOML.replace(f'{role} = "hydra:{role}"', f'{role} = "{ordinary}"')
+                    self.assertEqual(load_project(ConfigGitHub(content), 'example/product')['labels'][role], ordinary)
+
     def test_ui_paths_come_only_from_pinned_contract(self):
         self.assertEqual(config()['ui_paths'], [])
         content = 'ui_paths = ["apps/web/", "src/**/*.tsx"]\n' + TOML
@@ -158,6 +170,26 @@ class ProjectTests(unittest.TestCase):
 
     def test_exact_head_genuine_checks_and_completed_provider_pass(self):
         self.assertEqual(gate_delivery(config(), observation(), HEAD, ['src/main.py']), [])
+
+    def test_self_dependency_uses_case_insensitive_repository_identity(self):
+        issue = {'number': 4, 'state': 'open', 'title': 'Scoped change', 'user': {'login': 'operator'},
+                 'labels': [{'name': 'hydra:ready'}]}
+        body = ('## Goal\nFix parsing.\n## Scope\nParser.\n## Acceptance\nTests pass.\n'
+                '```hydra\nspec = "docs/engineering/parser/spec.md"\ndependencies = ')
+        for repository in ['example/product', 'Example/Product']:
+            cfg = load_project(ConfigGitHub(repo=repository), repository)
+            for dependency_repository in ['example/product', 'EXAMPLE/product', 'example/PRODUCT', 'ExAmPlE/PrOdUcT']:
+                dependency = f'https://github.com/{dependency_repository}/issues/4'
+                with self.subTest(repository=repository, dependency=dependency):
+                    issue['body'] = body + json.dumps([dependency]) + '\n```'
+                    with self.assertRaisesRegex(ProjectError, 'cannot depend on itself'):
+                        parse_intake(issue, cfg)
+            for dependency in ['https://github.com/EXAMPLE/PRODUCT/issues/5',
+                               'https://github.com/EXAMPLE/other/issues/4',
+                               'https://github.com/other/PRODUCT/issues/4']:
+                with self.subTest(repository=repository, dependency=dependency):
+                    issue['body'] = body + json.dumps([dependency]) + '\n```'
+                    self.assertEqual(parse_intake(issue, cfg)['dependencies'], [dependency])
 
     def test_intake_spec_requires_its_concrete_path_in_candidate_allowlist(self):
         issue = {'number': 4, 'state': 'open', 'title': 'Scoped change', 'user': {'login': 'operator'},
@@ -381,6 +413,32 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(gate_delivery(config(), obs, HEAD, paths), [])
         obs['native_reviews'][0]['commit_id'] = BASE
         self.assertIn('protected_change_needs_current_human_review', gate_delivery(config(), obs, HEAD, paths))
+
+    def test_instruction_files_at_every_depth_require_current_human_approval(self):
+        cfg = config()
+        cfg['allowed_paths'].append('AGENTS.md')
+        for instruction in ['AGENTS.md', 'src/AGENTS.md', 'src/deep/component/AGENTS.md', 'docs/policy/AGENTS.md']:
+            for change in [{'filename': instruction},
+                           {'filename': 'src/retired-instructions.md', 'previous_filename': instruction},
+                           {'filename': instruction, 'previous_filename': 'src/old-notes.md'}]:
+                with self.subTest(change=change):
+                    obs = observation()
+                    obs['changed_files'] = [change]
+                    paths = list(change.values())
+                    self.assertEqual(gate_delivery(cfg, obs, HEAD, paths), ['protected_change_needs_current_human_review'])
+                    obs['review_decision'] = 'APPROVED'
+                    obs['native_reviews'] = [{'id': 1, 'user': {'login': 'operator', 'type': 'User'},
+                                              'state': 'APPROVED', 'commit_id': BASE}]
+                    self.assertEqual(gate_delivery(cfg, obs, HEAD, paths), ['protected_change_needs_current_human_review'])
+                    obs['native_reviews'][0]['commit_id'] = HEAD
+                    self.assertEqual(gate_delivery(cfg, obs, HEAD, paths), [])
+
+    def test_ordinary_files_do_not_inherit_instruction_approval_requirement(self):
+        for path in ['src/main.py', 'src/AGENTS.md.bak', 'src/NOT_AGENTS.md', 'docs/policy/instructions.md']:
+            with self.subTest(path=path):
+                obs = observation()
+                obs['changed_files'] = [{'filename': path}]
+                self.assertEqual(gate_delivery(config(), obs, HEAD, [path]), [])
 
     def test_nullable_review_authors_and_app_identity_never_authorize_delivery(self):
         obs = observation()

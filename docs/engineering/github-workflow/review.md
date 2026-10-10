@@ -199,3 +199,19 @@ service operation receives generated configuration and the service-derived remot
 candidate executable configuration is excluded. Genuine checkout/index/shared data
 and guarded nonforce publication remain in use. Unsupported metadata, including
 indexed submodules, holds. This does not establish host credential isolation.
+
+The interrupted-startup/terminal-input appendix was independently accepted before
+dependent edits at specification SHA-256
+`6ee75b565108426a97d1886c71b1cca569910e462421ae0c6e5caf09440b7ef7`.
+Independent source review accepted project SHA-256
+`981d71289a1699a9b31265e7e01ee5f29951e5c4369097c2e6682a42e6a92e57`,
+runner SHA-256
+`94806102d1773002718c49ccd204110c05542516ebdba02c17b808c36aab85a9`
+and execution boundary SHA-256
+`d04837052496200783b0472fccc565f85b274abf6df63ecbe0639d9b1dcd17d6`.
+Review corrected prior-head renewal and malformed/truncated terminal-row handling,
+plus coalesced startup/terminate controls. Reserved labels, canonical dependencies
+and nested instructions retain their existing authority boundaries. Startup keeps
+one owned reader and the original deadlines; unknown evidence still holds.
+Source acceptance remains separate from actual Linux process evidence, final-head
+CI/provider reviews, native approval and unattended product delivery.

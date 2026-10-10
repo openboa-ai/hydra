@@ -9,7 +9,7 @@ import re
 import uuid
 from pathlib import Path
 
-from .project import (gate_completed_delivery, gate_delivery, load_project, matches,
+from .project import (_provider, gate_completed_delivery, gate_delivery, load_project, matches,
                       parse_intake, terminal_required_checks)
 
 
@@ -909,6 +909,26 @@ class Runner:
             return self.github.progress(repo, number)
         body = summaries[0].get("body", "") if summaries else ""
         commits = {c["sha"] for c in observation.get("commits", [])}
+        terminal = {}
+        for kind, name in (("code", "Code Review"), ("security", "Security Review")):
+            rows = [line for line in body.splitlines() if line.startswith("|") and f"**{name}**" in line]
+            if len(rows) == 1:
+                cells = rows[0].split("|")
+                if len(cells) > 2 and cells[2].strip().startswith("✅ **Completed**"):
+                    revision = re.fullmatch(r"\s*`([0-9a-f]{7,40})`\s*", cells[3]) if len(cells) > 3 else None
+                    resolved = {sha for sha in commits if sha.startswith(revision[1])} if revision else set()
+                    terminal[kind] = "current" if resolved == {head} else "older" if len(resolved) == 1 else "malformed"
+        if set(terminal) == {"code", "security"} and ("malformed" in terminal.values() or "older" not in terminal.values()):
+            # Reuse delivery's formal envelope validation before a terminal row
+            # can settle an unknown request. Findings retain their correction path.
+            envelope_failures = {"provider_evidence_incomplete", "provider_summary_missing_or_ambiguous",
+                                 "provider_format_unknown", "provider_head_or_completion_missing",
+                                 "provider_review_not_completed", "provider_revision_ambiguous_or_stale"}
+            if envelope_failures.intersection(_provider(config, observation, head)):
+                self._wait(repo, number, record, "replan_required",
+                           phase="uncertain" if record.get("pending_action") == "request_review" else "review_wait",
+                           next_action="diagnose_review")
+                return self.github.progress(repo, number)
         missing = []
         observed = set()
         for kind, name, field in (("code", "Code Review", "review_requested_head"),

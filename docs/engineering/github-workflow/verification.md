@@ -6,8 +6,8 @@ execution use the same CLI.
 
 ## Local candidate
 
-On 2026-10-10 the final local suite collected 394 tests on macOS with Python 3.14.2
-and pinned SDK/CLI 0.162.0 installed: 376 passed, 16 Linux-only process tests and
+On 2026-10-10 the final local suite collected 413 tests on macOS with Python 3.14.2
+and pinned SDK/CLI 0.162.0 installed: 394 passed, 17 Linux-only process tests and
 2 filesystem-specific raw-filename cases were skipped. The native filesystem
 rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
@@ -60,6 +60,15 @@ and linked layouts with synthetic credentials and local remotes: candidate execu
 settings stay unexecuted, genuine checkout/index/shared data remain available, and
 mutable origin/config cannot redirect a remote read. Indexed submodules hold as
 unsupported metadata. These fixtures make no claim of host credential isolation.
+
+Interrupted-startup regressions cover actual POSIX helpers, late identity/receipt
+consumption and no late assignment dispatch. Coalesced launch/terminate controls
+must finish without further socket input. Malformed or missing readiness remains
+unknown; the additional actual Linux reaping matrix must run on CI. Configuration
+tests cover reserved active-label variants, canonical self-dependencies and nested
+instruction edits/renames with absent, stale or current human approval. Independent
+review-recovery regressions cover malformed/truncated terminal envelopes, preserved
+unknown-request budgets, ordinary prior-head renewal, active waits and findings.
 
 The shared SDK/capability/verification process owner requires actual cleanup. A
 synchronous verification facade reuses the isolated helper and receipt contract;

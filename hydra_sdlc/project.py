@@ -62,6 +62,7 @@ def load_project(github, repo, *, revision=None):
     _require(isinstance(ui_paths, list) and all(_path(p, glob=True) for p in ui_paths), "Invalid UI path policy")
     labels = config.get("labels")
     _require(isinstance(labels, dict) and set(labels) == {"ready", "paused", "decision"} and all(isinstance(x, str) and x.strip() and len(x) < 100 for x in labels.values()) and len(set(labels.values())) == 3, "Invalid intake labels")
+    _require(all(x.casefold() != "hydra:active" for x in labels.values()), "hydra:active is reserved for service recovery")
     commands = config.get("verification")
     _require(isinstance(commands, list) and commands, "Verification policy is empty")
     for command in commands:
@@ -117,7 +118,7 @@ def parse_intake(issue, config):
     _require(intake.get("spec_revision") is None or _sha(intake["spec_revision"]), "Invalid spec revision")
     dependencies = intake.get("dependencies", [])
     _require(isinstance(dependencies, list) and len(dependencies) <= 50 and all(isinstance(x, str) for x in dependencies) and len(set(dependencies)) == len(dependencies) and all(isinstance(x, str) and re.fullmatch(r"https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*", x) for x in dependencies), "Invalid dependencies")
-    _require(f"https://github.com/{config['repository']}/issues/{issue['number']}" not in dependencies, "Issue cannot depend on itself")
+    _require(f"https://github.com/{config['repository']}/issues/{issue['number']}".casefold() not in {x.casefold() for x in dependencies}, "Issue cannot depend on itself")
     priority = intake.get("priority", 0)
     _require(type(priority) is int and -1000 <= priority <= 1000, "Invalid priority")
     public = re.sub(r"(?ms)^```.*?^```\s*$", "", body)
@@ -359,7 +360,7 @@ def _gate_candidate(config, observation, head, paths, *, historical=False):
     if (any(r.get("state") == "CHANGES_REQUESTED" for r in latest.values())
             or not historical and observation.get("review_decision") not in {"APPROVED", None}):
         blockers.append("native_review_not_approved")
-    protected = [".hydra.toml", ".github/", "AGENTS.md", "SECURITY.md", "CODEOWNERS", "docs/CODEOWNERS"] + config["protected_paths"]
+    protected = [".hydra.toml", ".github/", "AGENTS.md", "**/AGENTS.md", "SECURITY.md", "CODEOWNERS", "docs/CODEOWNERS"] + config["protected_paths"]
     if any(matches(p, protected) for p in paths):
         humans = [r for login, r in latest.items() if login in config["human_reviewers"] and login != (pr.get("user") or {}).get("login") and (r.get("user") or {}).get("type") == "User" and r.get("state") == "APPROVED" and r.get("commit_id") == head]
         if not humans or not historical and observation.get("review_decision") != "APPROVED":
