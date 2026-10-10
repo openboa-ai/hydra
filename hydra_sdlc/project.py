@@ -41,7 +41,7 @@ def load_project(github, repo):
         config = tomllib.loads(blob["content"])
     except (ValueError, KeyError, TypeError) as exc:
         raise ProjectError("Invalid project TOML") from exc
-    keys = {"version", "repository_id", "authorized_actors", "human_reviewers", "spec_directory", "allowed_paths", "protected_paths", "labels", "verification", "required_checks", "review_provider", "delivery"}
+    keys = {"version", "repository_id", "authorized_actors", "human_reviewers", "spec_directory", "allowed_paths", "protected_paths", "labels", "verification", "required_checks", "review_provider", "delivery", "ui_paths"}
     _require(not set(config) - keys, "Unknown project configuration fields")
     _require(config.get("version") == 1 and type(config.get("version")) is int, "Unknown project version")
     _require(type(config.get("repository_id")) is int and config["repository_id"] == identity["id"], "Repository identity mismatch")
@@ -53,6 +53,8 @@ def load_project(github, repo):
     for name in ["allowed_paths", "protected_paths"]:
         values = config.get(name)
         _require(isinstance(values, list) and values and all(_path(x, glob=True) for x in values), f"Invalid {name}")
+    ui_paths = config.setdefault("ui_paths", [])
+    _require(isinstance(ui_paths, list) and all(_path(p, glob=True) for p in ui_paths), "Invalid UI path policy")
     labels = config.get("labels")
     _require(isinstance(labels, dict) and set(labels) == {"ready", "paused", "decision"} and all(isinstance(x, str) and x.strip() and len(x) < 100 for x in labels.values()) and len(set(labels.values())) == 3, "Invalid intake labels")
     commands = config.get("verification")
@@ -136,17 +138,31 @@ def _checks(config, observation, sha, *, post_merge):
             event = run.get("event")
             if event not in binding["events"] or (event == "push") != post_merge:
                 continue
-            target = sha
-            if event == "pull_request_target":
-                target = observation.get("base_sha")
-            if run.get("head_sha") != target:
+            if run.get("head_sha") != sha:
                 continue
             if post_merge:
                 if run.get("head_branch") != config["default_branch"]:
                     continue
             else:
-                associations = [p for p in run.get("pull_requests", []) if p.get("number") == raw.get("number") and p.get("head", {}).get("sha") == sha and p.get("base", {}).get("sha") == observation.get("base_sha") and p.get("head", {}).get("repo", {}).get("id") == config["repository_id"] and p.get("base", {}).get("repo", {}).get("id") == config["repository_id"]]
-                if len(associations) != 1:
+                if (run.get("head_branch") != raw.get("head", {}).get("ref")
+                        or raw.get("head", {}).get("sha") != sha
+                        or raw.get("head", {}).get("repo", {}).get("id") != config["repository_id"]
+                        or raw.get("base", {}).get("repo", {}).get("id") != config["repository_id"]):
+                    continue
+                associations = run.get("pull_requests")
+                if associations == [] and event == "pull_request_target":
+                    # GitHub's observed target-event producer exposes the candidate
+                    # head/branch but no PR association. Only a contract-pinned
+                    # reusable producer can attest that event's exact candidate.
+                    if not _sha(binding.get("reusable_sha")) or not binding.get("reusable_workflow"):
+                        continue
+                elif not isinstance(associations, list) or len(associations) != 1:
+                    continue
+                elif not all((associations[0].get("number") == raw.get("number"),
+                              associations[0].get("head", {}).get("sha") == sha,
+                              associations[0].get("base", {}).get("sha") == observation.get("base_sha"),
+                              associations[0].get("head", {}).get("repo", {}).get("id") == config["repository_id"],
+                              associations[0].get("base", {}).get("repo", {}).get("id") == config["repository_id"])):
                     continue
             candidates.append(run)
         if not candidates:
@@ -164,6 +180,9 @@ def _checks(config, observation, sha, *, post_merge):
         jobs = [j for j in run.get("jobs", []) if j.get("name") == label]
         if len(jobs) != 1 or jobs[0].get("status") != "completed" or jobs[0].get("conclusion") != "success" or jobs[0].get("head_sha") != run["head_sha"]:
             blockers.append(f"check_job_not_successful:{label}")
+            continue
+        if jobs[0].get("check_run_url") != f"https://api.github.com/repos/{config['repository']}/check-runs/{jobs[0].get('id')}":
+            blockers.append(f"check_job_link_missing:{label}")
             continue
         matching = [c for c in checks if c.get("id") == jobs[0].get("id") and c.get("check_suite", {}).get("id") == run.get("check_suite_id") and c.get("app", {}).get("id") == binding["app_id"] and c.get("head_sha") == run["head_sha"] and c.get("name") == label and c.get("status") == "completed" and c.get("conclusion") == "success"]
         if len(matching) != 1:

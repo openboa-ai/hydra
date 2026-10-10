@@ -2,7 +2,7 @@ import copy
 import json
 import unittest
 
-from hydra_sdlc.project import ProjectError, gate_checks, gate_delivery, gate_post_merge, load_project, parse_intake
+from hydra_sdlc.project import ProjectError, gate_checks, gate_delivery, gate_post_merge, load_project, parse_intake, _provider
 
 
 BASE, HEAD, BLOB, MERGE = 'a' * 40, 'b' * 40, 'c' * 40, 'd' * 40
@@ -83,7 +83,8 @@ def observation():
                       'head_branch': 'hydra/issue-4', 'status': 'completed', 'conclusion': 'success',
                       'run_number': 1, 'run_attempt': 1, 'check_suite_id': 80,
                       'pull_requests': [association], 'jobs': [{'id': 90, 'name': 'Unit tests',
-                      'head_sha': HEAD, 'status': 'completed', 'conclusion': 'success'}]}],
+                      'head_sha': HEAD, 'status': 'completed', 'conclusion': 'success',
+                      'check_run_url': 'https://api.github.com/repos/example/product/check-runs/90'}]}],
             'native_reviews': [], 'threads': [], 'inline_comments': [], 'review_decision': None,
             'provider_comments': [{'id': 60, 'user': {'id': 199175422, 'login': 'chatgpt-codex-connector[bot]'},
                                    'performed_via_github_app': {'id': 1144995}, 'body': summary()}],
@@ -125,6 +126,14 @@ class ProjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ProjectError, 'repository writer'):
             load_project(gh, 'example/product')
 
+    def test_ui_paths_come_only_from_pinned_contract(self):
+        self.assertEqual(config()['ui_paths'], [])
+        content = 'ui_paths = ["apps/web/", "src/**/*.tsx"]\n' + TOML
+        self.assertEqual(load_project(ConfigGitHub(content), 'example/product')['ui_paths'], ['apps/web/', 'src/**/*.tsx'])
+        for invalid in ['"apps/web"', '["/private/screen"]', '["../outside"]', '[false]']:
+            with self.subTest(invalid=invalid), self.assertRaises(ProjectError):
+                load_project(ConfigGitHub('ui_paths = ' + invalid + '\n' + TOML), 'example/product')
+
     def test_delivery_defaults_to_off_with_unknown_effect(self):
         cfg = load_project(ConfigGitHub(TOML.split('[delivery]')[0]), 'example/product')
         self.assertEqual(cfg['delivery'], {'automatic_merge': False, 'production_effect': True})
@@ -141,6 +150,7 @@ class ProjectTests(unittest.TestCase):
         for mutation in [dict(state='closed'), dict(user={'login': 'stranger'}), dict(labels=[{'name': 'hydra:ready'}, {'name': 'hydra:decision'}]),
                          dict(body=issue['body'].replace('## Acceptance', '## Notes')),
                          dict(body=issue['body'].replace('priority = 4', 'argv = ["sh", "bad.sh"]')),
+                         dict(body=issue['body'].replace('priority = 4', 'ui = false')),
                          dict(body=issue['body'].replace('docs/engineering/parser/spec.md', '../private/spec.md')),
                          dict(body=issue['body'] + '\n```hydra\nspec="x"\n```')]:
             with self.subTest(mutation=mutation), self.assertRaises(ProjectError):
@@ -173,11 +183,57 @@ class ProjectTests(unittest.TestCase):
 
     def test_target_event_requires_current_base_head_association(self):
         cfg, obs = config(), observation(); cfg['required_checks'][0]['events'] = ['pull_request_target', 'push']
-        obs['runs'][0].update(event='pull_request_target', head_sha=BASE)
-        obs['runs'][0]['jobs'][0]['head_sha'] = BASE; obs['checks'][0]['head_sha'] = BASE
+        obs['runs'][0].update(event='pull_request_target')
         self.assertEqual(gate_delivery(cfg, obs, HEAD, ['src/main.py']), [])
         obs['runs'][0]['pull_requests'][0]['head']['sha'] = BASE
         self.assertTrue(gate_delivery(cfg, obs, HEAD, ['src/main.py']))
+
+    def test_observed_target_producer_and_codex_summary_contract(self):
+        # Public API fields from ouroboros PR 2 / run 37883341081. This is a
+        # historical producer-format fixture, not permission to merge a PR.
+        head = '04de73009dd65f0bd0c0643db15dcfdc78f757b4'
+        base = '313e4a6ee63de24abb3d37ae23aed4dec4838e53'
+        pin = '83967987ca23cc8b8eda60975eda320e434fb7bd'
+        repo = 'openboa-ai/ouroboros'
+        cfg = config(); cfg.update(repository=repo, repository_id=1411114385, revision=base)
+        cfg['required_checks'] = [{'workflow_id': 379254350,
+            'workflow_path': '.github/workflows/trusted-baseline.yml',
+            'job': 'trusted-baseline / Trusted repository baseline', 'events': ['pull_request_target', 'push'],
+            'app_id': 15368, 'reusable_workflow': 'openboa-ai/.github/.github/workflows/repository-baseline.yml', 'reusable_sha': pin}]
+        obs = {'head_sha': head, 'base_sha': base,
+            'pr': {'number': 2, 'state': 'closed', 'merged': True, 'commits': 1,
+                   'head': {'sha': head, 'ref': 'codex/development-readiness', 'repo': {'id': 1411114385}},
+                   'base': {'sha': base, 'ref': 'main', 'repo': {'id': 1411114385}}},
+            'runs': [{'id': 37883341081, 'workflow_id': 379254350,
+                'path': '.github/workflows/trusted-baseline.yml', 'repository': {'id': 1411114385},
+                'event': 'pull_request_target', 'head_sha': head, 'head_branch': 'codex/development-readiness',
+                'pull_requests': [], 'referenced_workflows': [{'path': cfg['required_checks'][0]['reusable_workflow'] + '@' + pin, 'sha': pin}],
+                'check_suite_id': 102640931543, 'run_number': 2, 'run_attempt': 1, 'status': 'completed', 'conclusion': 'success',
+                'jobs': [{'id': 113667757620, 'name': 'trusted-baseline / Trusted repository baseline',
+                         'head_sha': head, 'status': 'completed', 'conclusion': 'success',
+                         'check_run_url': 'https://api.github.com/repos/openboa-ai/ouroboros/check-runs/113667757620'}]}],
+            'checks': [{'id': 113667757620, 'name': 'trusted-baseline / Trusted repository baseline',
+                        'head_sha': head, 'status': 'completed', 'conclusion': 'success',
+                        'check_suite': {'id': 102640931543}, 'app': {'id': 15368}}],
+            'commits': [{'sha': head}], 'threads': [], 'inline_comments': [],
+            'provider_comments': [{'id': 6074182170, 'user': {'id': 199175422, 'login': 'chatgpt-codex-connector[bot]'},
+                'performed_via_github_app': {'id': 1144995},
+                'body': summary(head).replace('example/product', repo).replace('"pullRequestNumber": 7', '"pullRequestNumber": 2')}]}
+        self.assertEqual(gate_checks(cfg, obs, head), [])
+        self.assertEqual(_provider(cfg, obs, head), [])
+        for path, value in [(['runs', 0, 'head_sha'], base), (['runs', 0, 'head_branch'], 'other'),
+                            (['runs', 0, 'pull_requests'], None), (['runs', 0, 'event'], 'pull_request'),
+                            (['runs', 0, 'referenced_workflows'], []),
+                            (['runs', 0, 'referenced_workflows', 0, 'sha'], BASE),
+                            (['runs', 0, 'jobs', 0, 'check_run_url'], 'https://api.github.com/repos/other/repo/check-runs/113667757620'),
+                            (['pr', 'head', 'repo', 'id'], 999), (['checks', 0, 'app', 'id'], 999)]:
+            with self.subTest(path=path):
+                broken = copy.deepcopy(obs); target = broken
+                for key in path[:-1]: target = target[key]
+                target[path[-1]] = value
+                self.assertTrue(gate_checks(cfg, broken, head))
+        del cfg['required_checks'][0]['reusable_sha']
+        self.assertTrue(gate_checks(cfg, obs, head))
 
     def test_reusable_revision_is_bound(self):
         cfg, obs = config(), observation(); b = cfg['required_checks'][0]
