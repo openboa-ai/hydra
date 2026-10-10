@@ -965,6 +965,21 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
         self.assertEqual(self.github.note['correction_reason'], 'integration_changed')
 
+    async def test_pending_publish_remembers_integrated_base_not_initial_contract(self):
+        runner = await self.publish()
+        self.github.cfg['revision'] = 'a' * 40
+        self.workspace.publish_failures = 1
+        self.workspace.changed_paths = lambda path, sha: ['src/main.py'] if sha == 'a' * 40 else ['upstream-only.txt']
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'publish_unknown')
+        self.assertEqual(self.github.note['contract_revision'], BASE)
+        self.assertEqual(self.github.note['expected_base'], 'a' * 40)
+        self.github.cfg['revision'] = 'b' * 40
+        self.calls.clear()
+        self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.github.branch, HEAD)
+        self.assertEqual(self.github.note['expected_base'], 'a' * 40)
+
     async def test_cancelled_verification_does_not_review_or_correct(self):
         from hydra_sdlc.workspace import WorkspaceWait
         runner = await self.publish()

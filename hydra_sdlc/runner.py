@@ -249,7 +249,9 @@ class Runner:
             return self._wait(repo, number, record, "remote_head_changed",
                               phase="uncertain" if record.get("pending_action") == "publish" else "waiting")
         record = self._intent(repo, number, config, record, "publish", head=head,
-                              expected_head=remote, phase="publishing", checkpoint=checkpoint)
+                              expected_head=remote, phase="publishing", checkpoint=checkpoint,
+                              expected_base=(record.get("expected_base") or record["contract_revision"]
+                                             if record.get("pending_action") == "publish" else config["revision"]))
         if record is None:
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "service_retry_or_stop_boundary"}
         try:
@@ -424,9 +426,10 @@ class Runner:
             # wait can replace it. A retry republishes only the same owned commit.
             # The request was scoped against its original base. New upstream
             # files must not be misclassified as deletions from that candidate.
-            self.workspace.fetch_base(path, record["contract_revision"])
+            scope_base = record.get("expected_base") or record["contract_revision"]
+            self.workspace.fetch_base(path, scope_base)
             if any(not matches(p, config["allowed_paths"])
-                   for p in self.workspace.changed_paths(path, record["contract_revision"])):
+                   for p in self.workspace.changed_paths(path, scope_base)):
                 return self._wait(repo, number, record, "scope_changed", phase="uncertain")
             wait = self._publish(repo, number, config, record, path, head)
             return wait or {"action": "continue", "repository": repo, "issue": number}

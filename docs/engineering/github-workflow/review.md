@@ -45,3 +45,17 @@ and project-gate SHA-256
 `b44088b5fe5bb96471e25152b1b3cac7d8487edb08446ccec6a2e0781a4a7b89`
 include fail-closed null author/app handling. These are source reviews, not native
 GitHub approval or proof of real two-project autonomous delivery.
+
+The integration/stop/artifact/completion appendix was independently accepted before
+dependent implementation at spec SHA-256
+`2ee32c347abcb7abaf4418a69e19cdb274433823a9413108559a6da7e78d550d`.
+Focused source reviews accepted the final integration and completion routing at
+runner SHA-256
+`2261b837ac78f7f4eb6a7707ff5ca747d949513fc926dd22723adcddccd4700e`
+and project SHA-256
+`0658d5d20369dc9b8249f279e49d929841d6218385c30392f50770ec63707bee`.
+Review caught and corrected publication retries using the initial policy revision
+instead of the base validated for that publication. Actual process/Git regressions
+cover verification termination, fetched-versus-integrated bases and bounded regular
+tracked spec reads. This acceptance does not replace final-head provider reviews,
+native protected-change approval or actual two-project delivery/recovery evidence.

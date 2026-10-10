@@ -4,7 +4,7 @@ The new workflow removes runtime SQLite/store imports. Old qualification files a
 outside dispatch and are not adopted. The same CLI provides foreground operation
 and eventual login-service execution.
 
-On 2026-10-10 all 201 deterministic tests passed with the pinned SDK installed
+On 2026-10-10 all 234 deterministic tests passed with the pinned SDK installed
 (Python 3.14.2, SDK/CLI 0.162.0), with no skipped tests. `git diff --check` passed.
 
 Deterministic evidence covers supervised SDK startup/interrupt/unknown outcomes,
@@ -25,6 +25,13 @@ unknown host cleanup prevents further dispatch. Predispatch usage waits consume 
 correction budget. Null author/app identity never grants decision or review authority.
 Accumulated SDK items cannot discard a valid bounded structured result; capability
 workers use the same publishing-token environment filter as execution workers.
+Unpublished candidates integrate the actual current base before scope inspection;
+pending publication retains its original validated base even after further main
+advancement. Actual process tests confirm signal/deadline termination of the owned
+verification group and no later command. Spec readiness requires the exact regular
+tracked artifact, with bounded no-follow reads rejecting special files and aliases.
+Actually merged policy changes finish under the original delivery contract, including
+missing/invalid new policy, while current Issue controls still stop completion.
 
 On 2026-10-10 the pinned Codex SDK/CLI 0.162.0 completed a fresh authenticated
 workspace-write turn on the development Mac. The temporary Git workspace contained
@@ -32,10 +39,10 @@ the exact requested file afterward, with two identity observations, 105 lifecycl
 events and no unknown cleanup. The turn used deny-all approval and the configured
 ChatGPT subscription. This proves an actual bounded edit, not autonomous delivery.
 
-Remote kernel/hygiene CI passed at `957264045e306bbc511f6aa0c3795f9dce6c3d1a`.
+Remote kernel/hygiene CI passed at `90fe583a2e39f2a02abfa2c108fe0340f13d9d2f`.
 Both coupled provider reviews completed at that head; the code review identified
-additional decision/replan, checkpoint, review-output, retry and adapter recovery
-findings. They are covered by the revised candidate and regressions. A prior-head
+additional integration, verification cancellation, spec artifact and merged-policy
+completion findings. They are covered by the revised candidate and regressions. A prior-head
 review or CI result does not qualify this revision; check its current remote facts
 before merge.
 
