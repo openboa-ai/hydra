@@ -784,6 +784,12 @@ class Runner:
         integrating = reason == "integration_changed"
         completed_phase = record["phase"] if integrating else "design_done" if spec_only else "implementation_done"
         resume_phase = record.get("resume_phase")
+        if (integrating and completed_phase in {"ready", "design_done", "spec_accepted", "spec_review_done"}
+                and resume_phase in {None, "spec_review"}):
+            # Record the remaining requirement work with the dispatch intent,
+            # so interruption or a decision cannot turn base-only work into delivery.
+            resume_phase = "implementation"
+            record = {**record, "resume_phase": resume_phase}
         result, wait = await self._model(repo, number, config, record, path, "design" if spec_only else "correction",
             f"Resolve {reason} for Issue {number}. Inspect current registered checks and actual PR findings. "
             "Correct implementation without weakening accepted scope, policy, tests or evaluation. Do not publish. "
