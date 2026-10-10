@@ -786,9 +786,10 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.github.extra_comments.append({'user': {'login': 'operator'},
             'body': f"hydra: replan {self.github.note['attempt_id']} ready"})
         before = len(self.calls)
-        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'review_request_unknown')
         self.assertEqual(len(calls), 4)
+        self.assertEqual(self.github.note['pending_review_kind'], 'code')
+        self.assertEqual(self.github.note['delivery_attempt'], 1)
         self.assertEqual(len(self.calls), before)
 
     async def test_cycle_and_status_recover_closed_pending_completion_without_model_or_close(self):
