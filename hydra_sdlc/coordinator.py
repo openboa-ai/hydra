@@ -36,4 +36,4 @@ def residual_workers():
     result = subprocess.run(["ps", "-axo", "pid=,args="], capture_output=True,
                             text=True, timeout=5, check=True)
     return [line.split(None, 1)[0] for line in result.stdout.splitlines()
-            if re.search(r"hydra_sdlc/(?:codex|execution_boundary)\.py\s+--execution-worker(?:\s|$)", line)]
+            if re.search(r"hydra_sdlc/(?:codex|execution_boundary)\.py\s+--(?:execution|capability)-worker(?:\s|$)", line)]

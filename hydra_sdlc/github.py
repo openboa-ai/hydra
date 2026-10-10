@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -72,6 +73,7 @@ class GitHub:
             raise GitHubError("Runtime identity must be openboa")
         self.user = user
         self.transport = transport or self._gh
+        self._authenticated_fingerprint = None
 
     def _gh(self, method, path, payload):
         try:
@@ -82,12 +84,17 @@ class GitHub:
             if not token:
                 raise GitHubError("GitHub authentication unavailable")
             env = {**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com", "GH_PROMPT_DISABLED": "1"}
-            identity = subprocess.run(
-                ["gh", "api", "--hostname", "github.com", "user"],
-                env=env, capture_output=True, text=True, timeout=30, check=True,
-            )
-            if json.loads(identity.stdout).get("login") != self.user:
-                raise GitHubError("GitHub identity mismatch")
+            fingerprint = hashlib.sha256(token.encode()).digest()
+            # Select credentials each call, but avoid doubling every polling API
+            # request with the same credential's immutable account identity.
+            if self._authenticated_fingerprint != fingerprint:
+                identity = subprocess.run(
+                    ["gh", "api", "--hostname", "github.com", "user"],
+                    env=env, capture_output=True, text=True, timeout=30, check=True,
+                )
+                if json.loads(identity.stdout).get("login") != self.user:
+                    raise GitHubError("GitHub identity mismatch")
+                self._authenticated_fingerprint = fingerprint
             argv = ["gh", "api", "--hostname", "github.com", "--method", method,
                     "-H", "Accept: application/vnd.github+json", path.lstrip("/")]
             if payload is not None:
@@ -179,7 +186,7 @@ class GitHub:
 
     @staticmethod
     def _validate_record(record, *, metadata=False):
-        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head"}
+        allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "pr_number", "pending_action", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "intake_digest", "correction_reason", "correction_attempt"}
         if metadata:
             allowed |= {"repository_id", "issue_number", "version"}
         if not isinstance(record, dict) or set(record) - allowed:
@@ -187,7 +194,10 @@ class GitHub:
         for key, value in record.items():
             if value is None:
                 continue
-            if key in {"contract_revision", "spec_revision", "head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head"}:
+            if key == "intake_digest":
+                if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                    raise GitHubError("Invalid delegated intake digest")
+            elif key in {"contract_revision", "spec_revision", "head", "expected_head", "expected_base", "review_requested_head", "delivery_head", "review_requested_security_head"}:
                 _sha(value)
             elif key == "attempt_id":
                 try:
@@ -195,7 +205,7 @@ class GitHub:
                         raise ValueError()
                 except (ValueError, AttributeError, TypeError) as exc:
                     raise GitHubError("Invalid attempt UUID") from exc
-            elif key in {"action_attempt", "delivery_attempt"}:
+            elif key in {"action_attempt", "delivery_attempt", "correction_attempt"}:
                 if type(value) is not int or not 1 <= value <= 3:
                     raise GitHubError("Service action retry bound exceeded")
             elif key in {"pr_number", "repository_id", "issue_number", "version"}:
@@ -243,7 +253,7 @@ class GitHub:
         owner, name = _repo(repo).split("/")
         cursor = None
         threads = []
-        query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewDecision reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId}pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}}}"""
+        query = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewDecision reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login}}pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}}}"""
         for _ in range(100):
             data = self.api("POST", "/graphql", {"query": query, "variables": {"owner": owner, "name": name, "number": n, "cursor": cursor}})
             try:

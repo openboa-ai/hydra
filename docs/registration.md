@@ -33,6 +33,11 @@ priority = 0
 ```
 ````
 
+Hydra binds the exact delegated Issue title/body before execution. Editing its goal,
+acceptance or intake holds the existing attempt while preserving its checkpoint and
+other waits. Restore the delegated text to continue; use a new Issue for changed scope.
+Labels/comments remain available for pause, decision and handover without rebinding it.
+
 `spec_revision` may pin a previously accepted specification commit. A SHA alone is
 not acceptance: Hydra independently examines the actual specification before
 dependent implementation. Issue text cannot supply executable verification commands.

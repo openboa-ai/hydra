@@ -13,6 +13,15 @@ from hydra_sdlc.runner import Runner, usage_allowed
 from test_project import BASE, HEAD, MERGE, config, observation, summary
 
 
+def complete_capabilities(used=10):
+    from hydra_sdlc.codex import SDK_VERSION
+    return {'available': True, 'sdk_version': SDK_VERSION, 'runtime_version': SDK_VERSION,
+            'account': {'status': 'known', 'type': 'chatgpt', 'authenticated': True},
+            'models': {'status': 'known', 'ids': ['configured-default']},
+            'usage': {'status': 'known', 'data': {'ordinaryUsageAllowed': True,
+                      'rateLimits': {'primary': {'usedPercent': used}}}}}
+
+
 class GitHub:
     user = "openboa"
 
@@ -155,13 +164,17 @@ class Workspace:
         self.head = BASE
         self.dirty = False
         spec = self.path / 'docs/engineering/task/spec.md'
-        spec.parent.mkdir(parents=True)
+        spec.parent.mkdir(parents=True, exist_ok=True)
         spec.write_text('Requirement-linked specification')
         self.verification_calls = 0
         self.publish_failures = 0
         self.fetch_calls = 0
+        self.prepared_recovery = []
 
-    def prepare(self, *args):
+    def prepare(self, *args, recover_dirty=False):
+        self.prepared_recovery.append(recover_dirty)
+        if self.dirty and not recover_dirty:
+            raise RuntimeError('Owned workspace has unreviewed edits')
         return self.path
 
     def inspect(self, path):
@@ -172,7 +185,7 @@ class Workspace:
 
     def checkpoint(self, path, message):
         if self.dirty:
-            self.head = HEAD if self.head == BASE else 'f' * 40
+            self.head = HEAD if self.head == BASE else ('e' if self.head == 'f' * 40 else 'f') * 40
             self.dirty = False
         return self.head
 
@@ -190,6 +203,8 @@ class Workspace:
             self.publish_failures -= 1
             raise RuntimeError('not submitted')
         self.gh.branch = self.head
+        if self.gh.pr:
+            self.gh.pr['head']['sha'] = self.head
         if self.gh.lose_publish:
             self.gh.lose_publish = False
             raise RuntimeError('response lost')
@@ -220,7 +235,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         return {'status': 'completed', 'detail': {'result': {'outcome': 'candidate_ready', 'summary': '', 'evidence': [], 'next_action': ''}}}
 
     async def capabilities(self, cwd):
-        return {'usage': {'status': 'known', 'data': {'rateLimits': {'primary': {'usedPercent': 10}}}}}
+        return complete_capabilities()
 
     def runner(self, host='host-a'):
         return Runner(self.github, self.workspace, host_alias=host, execute=self.execute,
@@ -278,6 +293,50 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.github.on_record = lambda record: setattr(self, 'stop', True) if record.get('pending_action') == 'upsert_pr' else None
         await runner.step('example/product', 4)
         self.assertFalse(any(x[0] == 'pr' for x in self.github.writes))
+
+    async def test_changed_goal_holds_old_candidate_after_restart(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        digest = self.github.note['intake_digest']
+        self.github.work['body'] += '\nDifferent acceptance after delegation.'
+        self.github.remote_pending = False
+        before = len(self.calls)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'intake_changed')
+        self.assertEqual(self.github.note['intake_digest'], digest)
+        self.assertEqual(len(self.calls), before)
+        self.assertFalse(any(x[0] in {'merge', 'close'} for x in self.github.writes))
+
+    async def test_intake_change_during_intent_blocks_external_write_and_preserves_intent(self):
+        runner = await self.publish()
+        self.github.on_record = lambda r: self.github.work.update(title='Changed delegated goal') if r.get('pending_action') == 'publish' else None
+        await runner.step('example/product', 4)
+        self.assertEqual(self.github.note['pending_action'], 'publish')
+        self.assertFalse(any(x[0] == 'push' for x in self.github.writes))
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'intake_changed')
+        self.assertEqual(self.github.note['pending_action'], 'publish')
+
+    async def test_unbound_existing_attempt_is_observed_without_adoption(self):
+        await self.publish()
+        self.github.note.pop('intake_digest')
+        count = len(self.calls)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'intake_unbound')
+        self.assertEqual(len(self.calls), count)
+
+    async def test_restored_intake_preserves_existing_execution_and_decision_waits(self):
+        await self.publish()
+        original = self.github.work['body']
+        for phase, reason, expected in [('implementation_done', 'product_decision', 'product_decision'),
+                                         ('executing', None, 'confirm_previous_stopped'),
+                                         ('waiting', 'replan_required', 'replan_required')]:
+            with self.subTest(phase=phase, reason=reason):
+                self.github.note.update(phase=phase, wait_reason=reason, pending_action='correction')
+                record = copy.deepcopy(self.github.note)
+                self.github.work['body'] = original + '\nChanged acceptance.'
+                self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'intake_changed')
+                self.assertEqual(self.github.note, record)
+                self.github.work['body'] = original
+                self.assertEqual((await self.runner().step('example/product', 4))['reason'], expected)
 
     async def test_decision_wait_does_not_dispatch_again(self):
         await self.publish()
@@ -383,9 +442,9 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             return value
         self.github.transform_observation = behind
         self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
-        self.assertEqual(self.workspace.fetch_calls, 1)
+        count = self.workspace.fetch_calls
         await self.runner().step('example/product', 4)
-        self.assertEqual(self.workspace.fetch_calls, 1)
+        self.assertEqual(self.workspace.fetch_calls, count + 1)
         self.assertEqual(self.github.branch, 'f' * 40)
 
     async def test_failed_ci_dispatches_correction(self):
@@ -400,6 +459,45 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         result = await self.runner().step('example/product', 4)
         self.assertEqual(result['action'], 'continue')
         self.assertEqual(self.calls[before:], ['read_only', 'read_only', 'workspace_write'])
+
+    async def test_actual_inline_finding_body_reaches_private_correction_prompt(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        def finding(value):
+            value['threads'] = [{'id': 'thread-1', 'isResolved': False, 'isOutdated': False,
+                                 'comments': {'nodes': [{'databaseId': 77,
+                                     'author': {'login': 'chatgpt-codex-connector'}}]}}]
+            value['inline_comments'] = [{'id': 77, 'body': 'Reconcile missing main object before diff',
+                                         'path': 'src/main.py', 'line': 42, 'diff_hunk': '@@ example @@'}]
+            return value
+        self.github.transform_observation = finding
+        prompts = []
+        async def execute(assignment, **kwargs):
+            prompts.append(assignment['prompt'])
+            return await self.execute(assignment, **kwargs)
+        runner = self.runner()
+        runner.execute = execute
+        self.assertEqual((await runner.step('example/product', 4))['action'], 'continue')
+        self.assertIn('Reconcile missing main object before diff', prompts[-1])
+        self.assertIn('src/main.py', prompts[-1])
+        self.assertIn('42', prompts[-1])
+
+    async def test_correction_budget_survives_publication_and_restart(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        def failed(value):
+            value['checks'][0]['conclusion'] = 'failure'
+            return value
+        self.github.transform_observation = failed
+        for attempt in [1, 2]:
+            self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+            self.assertEqual(self.github.note['correction_attempt'], attempt)
+            self.github.note.update(checkpoint='await_auto_review')
+        count = len(self.calls)
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'replan_required')
+        self.assertEqual(len(self.calls), count + 2)  # Read-only recheck; no third correction.
 
     async def test_completed_thread_resolution_does_not_consume_next_threads_budget(self):
         self.github.remote_pending = True
@@ -455,8 +553,8 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         path.mkdir()
         workspace2 = Workspace(path, second)
         class Workspaces:
-            def prepare(self, repo, *args):
-                return (self_outer.workspace if repo == 'example/product' else workspace2).prepare(repo, *args)
+            def prepare(self, repo, *args, **kwargs):
+                return (self_outer.workspace if repo == 'example/product' else workspace2).prepare(repo, *args, **kwargs)
             def __getattr__(self, name):
                 return lambda path, *args: getattr(self_outer.workspace if Path(path) == self_outer.workspace.path else workspace2, name)(path, *args)
         self_outer = self
@@ -482,8 +580,123 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_usage_threshold_and_unknown_windows(self):
         self.assertFalse(usage_allowed({'usage': {'status': 'unknown'}}))
-        self.assertTrue(usage_allowed({'usage': {'status': 'known', 'data': {'rateLimits': {'primary': {'usedPercent': 80}}}}}))
-        self.assertFalse(usage_allowed({'usage': {'status': 'known', 'data': {'rateLimits': {'primary': {'usedPercent': 81}}}}}))
+        self.assertTrue(usage_allowed(complete_capabilities(80)))
+        for value in [81, None, True, '10', float('nan'), float('inf')]:
+            self.assertFalse(usage_allowed(complete_capabilities(value)))
+
+    async def test_incomplete_capabilities_never_dispatch_worker(self):
+        for field, value in [('available', False), ('cleanup', 'unknown'), ('sdk_version', None),
+                             ('account', {'status': 'unknown'}), ('models', {'status': 'unknown'}),
+                             ('models', {'status': 'known', 'ids': []})]:
+            with self.subTest(field=field, value=value):
+                async def incomplete(cwd):
+                    return {**complete_capabilities(), field: value}
+                runner = self.runner()
+                runner.capabilities = incomplete
+                self.assertEqual((await runner.step('example/product', 4))['reason'], 'usage_unavailable_or_low')
+        self.assertEqual(self.calls, [])
+        for value in [None, False]:
+            caps = complete_capabilities()
+            caps['usage']['data']['ordinaryUsageAllowed'] = value
+            self.assertFalse(usage_allowed(caps))
+
+    async def test_advanced_base_is_fetched_before_unpublished_diff(self):
+        self.github.cfg['revision'] = 'a' * 40
+        fetched = set()
+        def fetch(path, sha):
+            fetched.add(sha)
+        def diff(path, sha):
+            if sha not in fetched:
+                raise RuntimeError('new main object is absent from local clone')
+            return ['src/main.py']
+        self.workspace.fetch_base = fetch
+        self.workspace.changed_paths = diff
+        self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+        self.assertEqual(fetched, {'a' * 40})
+
+    async def test_lost_pr_response_cannot_adopt_foreign_same_head_pr(self):
+        runner = await self.publish()
+        original = self.github.ensure_pr
+        def foreign(*args):
+            original(*args)
+            self.github.pr['user']['login'] = 'another-writer'
+            raise RuntimeError('creation response lost')
+        self.github.ensure_pr = foreign
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'foreign_pr')
+        self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
+
+    async def test_confirmed_stopped_handover_recovers_owned_dirty_edits(self):
+        await self.publish()
+        self.workspace.dirty = True
+        self.github.note.update(phase='executing', pending_action='correction')
+        runner = self.runner()
+        self.assertEqual((await runner.step('example/product', 4))['reason'], 'confirm_previous_stopped')
+        self.assertTrue(self.workspace.dirty)
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f"hydra: handover {self.github.note['attempt_id']} stopped"})
+        self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
+        self.assertTrue(self.workspace.prepared_recovery[-1])
+        self.assertFalse(self.workspace.dirty)
+        self.assertEqual(self.workspace.verification_calls, 1)
+
+    async def test_interrupted_checkpoint_requires_local_verification_after_restart(self):
+        for failed_push in [False, True]:
+            with self.subTest(failed_push=failed_push):
+                self.github = GitHub()
+                self.workspace = Workspace(self.directory.name, self.github)
+                self.stop = False
+                self.github.remote_pending = True
+                runner = await self.publish()
+                await runner.step('example/product', 4)
+                config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+                async def interrupted(assignment, **kwargs):
+                    self.workspace.dirty = True
+                    self.stop = True
+                    return {'status': 'interrupted', 'detail': {'cleanup': 'confirmed'}}
+                runner.execute = interrupted
+                self.workspace.publish_failures = int(failed_push)
+                _, result = await runner._model('example/product', 4, config,
+                    self.github.note, self.workspace.path, 'correction', 'Fix actual finding')
+                self.assertEqual(result['reason'], 'stop_requested')
+                self.assertEqual(self.github.note['checkpoint'], 'interrupted_committed')
+                if failed_push:
+                    self.assertEqual(self.github.note['pending_action'], 'publish')
+                    self.assertEqual(self.github.note['delivery_attempt'], 1)
+                self.stop = False
+                self.github.remote_pending = False
+                before = self.workspace.verification_calls
+                self.calls.clear()
+                restarted = self.runner()
+                await restarted.step('example/product', 4)
+                if failed_push:
+                    self.assertEqual(self.github.note['checkpoint'], 'interrupted_committed')
+                    self.assertEqual(self.workspace.verification_calls, before)
+                    self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
+                    await restarted.step('example/product', 4)
+                self.assertEqual(self.workspace.verification_calls, before + 1)
+                self.assertIn('read_only', self.calls)
+                self.assertNotEqual(self.github.note['checkpoint'], 'interrupted_committed')
+
+    async def test_paused_interruption_reuses_unpublished_checkpoint_after_resume(self):
+        self.github.remote_pending = True
+        runner = await self.publish()
+        await runner.step('example/product', 4)
+        config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}
+        async def interrupted(assignment, **kwargs):
+            self.workspace.dirty = True
+            self.github.work['labels'].append({'name': self.github.cfg['labels']['paused']})
+            return {'status': 'interrupted', 'detail': {'cleanup': 'confirmed'}}
+        runner.execute = interrupted
+        await runner._model('example/product', 4, config, self.github.note,
+                            self.workspace.path, 'correction', 'Fix actual finding')
+        self.assertEqual(self.github.branch, HEAD)
+        self.assertEqual(self.github.note['expected_head'], HEAD)
+        self.assertEqual(self.github.note['checkpoint'], 'interrupted_committed')
+        self.github.work['labels'] = [{'name': 'hydra:ready'}]
+        before = self.workspace.verification_calls
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
+        self.assertEqual(self.workspace.verification_calls, before + 1)
+        self.assertEqual(self.github.branch, 'f' * 40)
 
 
 if __name__ == '__main__':

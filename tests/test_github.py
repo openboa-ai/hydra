@@ -172,11 +172,33 @@ class GitHubTests(unittest.TestCase):
             gh = GitHub(); gh.repository(REPO); gh.repository(REPO)
         self.assertEqual(os.environ, before)
         self.assertEqual(sum(argv[1:3] == ['auth', 'token'] for argv, _ in calls), 2)
+        self.assertEqual(sum(argv[-1] == 'user' for argv, _ in calls), 1)
         for argv, options in calls:
             self.assertIn('timeout', options)
             self.assertNotIn('runtime-test-token', argv)
             if argv[1] == 'api': self.assertEqual(options['env']['GH_TOKEN'], 'runtime-test-token')
         with self.assertRaises(GitHubError): GitHub(user='operator')
+
+    def test_changed_credential_is_reauthenticated_before_polling_or_writing(self):
+        token = 'first'
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[1] == 'auth':
+                return subprocess.CompletedProcess(argv, 0, token, '')
+            if argv[-1] == 'user':
+                identity = IDENTITY if token == 'first' else {'login': 'operator'}
+                return subprocess.CompletedProcess(argv, 0, json.dumps(identity), '')
+            return subprocess.CompletedProcess(argv, 0, json.dumps(REPOSITORY), '')
+        with patch('hydra_sdlc.github.subprocess.run', side_effect=run):
+            gh = GitHub()
+            gh.repository(REPO)
+            before = len(calls)
+            token = 'changed'
+            with self.assertRaises(GitHubError):
+                gh.api('PATCH', '/repos/' + REPO, {'description': 'never sent'})
+        self.assertEqual(len(calls) - before, 2)
+        self.assertFalse(any('PATCH' in argv for argv in calls))
 
     def test_transport_failure_does_not_expose_token_or_diagnostic(self):
         def run(argv, **kwargs):
@@ -309,7 +331,14 @@ class GitHubTests(unittest.TestCase):
             if '/git/ref/' in path: return {'object': {'sha': BASE}}
             if path == '/graphql':
                 more = payload['variables']['cursor'] is None
-                return {'data': {'repository': {'pullRequest': {'reviewDecision': None, 'reviewThreads': {'nodes': [], 'pageInfo': {'hasNextPage': more, 'endCursor': 'next' if more else None}}}}}}
+                # Simulate GraphQL selection: omitted author fields must not be
+                # supplied by a runner-shaped fixture and hide a query defect.
+                comment = {'databaseId': 81}
+                if 'nodes{databaseId author{login}}' in payload['query']:
+                    comment['author'] = {'login': 'chatgpt-codex-connector[bot]'}
+                thread = {'id': 'PRRT_provider', 'isResolved': False, 'isOutdated': True,
+                          'comments': {'nodes': [comment], 'pageInfo': {'hasNextPage': False}}}
+                return {'data': {'repository': {'pullRequest': {'reviewDecision': None, 'reviewThreads': {'nodes': [thread] if more else [], 'pageInfo': {'hasNextPage': more, 'endCursor': 'next' if more else None}}}}}}
             if '/check-runs?' in path: return {'check_runs': []}
             if '/actions/runs?' in path: return {'workflow_runs': []}
             if '/files?' in path: return [{'filename': 'src/main.py'}]
@@ -321,6 +350,8 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual(got['head_sha'], HEAD); self.assertEqual(got['base_sha'], BASE)
         self.assertEqual(got['changed_files'], [{'filename': 'src/main.py'}])
         self.assertEqual(got['commits'], [{'sha': HEAD}])
+        self.assertEqual(got['threads'][0]['comments']['nodes'][0].get('author'),
+                         {'login': 'chatgpt-codex-connector[bot]'})
         self.assertEqual(len([c for c in requests if c[1] == '/graphql']), 2)
         raw['changed_files'] = 2
         with self.assertRaises(GitHubError): GitHub(transport=transport).observe(REPO, 7)
