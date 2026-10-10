@@ -253,3 +253,38 @@ Acceptance adds base integration and usage waits before first implementation,
 ownership changes at the final merge observation, exhausted publication/PR/merge/
 close/thread requests with authorized reconciliation, scoped recovery of an unwanted
 path, and interruption/checkpoint failure after each workspace-write phase.
+
+## Review corrections: acquisition and terminal observations
+
+A progress comment created for a dependency or resource wait does not acquire an
+existing remote branch. Reconcile the fixed branch and PR before durable waits and
+again before workspace/model/effect dispatch. A remote branch is explained only by
+an actual owned PR, a previously confirmed published head recorded by the service,
+or the exact target of its authenticated pending publication. A local checkpoint
+or progress ownership alone cannot explain a newly appeared remote branch. Preserve
+unexplained refs/PRs and wait without checking them out or marking them owned. Record
+the confirmed published head only after actual remote read-back; it is not a gate.
+
+An uncertain merge remains the original exact-head effect until actual remote
+reconciliation. New findings, behind state or changed delivery facts do not authorize
+another model, integration, correction, publication or replacement PR. Re-read the
+owned PR; finish an actual matching merge, or retry the exact effect only while its
+current delivery gates hold. Otherwise retain the pending head/base and uncertainty.
+Issue/policy controls still apply; no stale observation or human comment proves merge.
+
+Artifact validation and descriptor reads share the same 1 MiB maximum spec size.
+Oversized regular files enter diagnosis before recording design readiness. CLI
+timeouts must be finite and positive before runtime/provider/lock acquisition; NaN,
+infinity and overflow cannot disable the run deadline.
+
+Current-head provider rows count as active only for recognized queued/running
+states, and as successful only for completed states accepted by the delivery gate.
+Failed, cancelled, error or unknown terminal status enters durable diagnosis rather
+than an endless review wait. Operator/provider recovery may start another review;
+diagnosis itself is neither completion nor permission to bypass the provider gate.
+
+Acceptance adds foreign refs present before or appearing during dependency/resource
+waits; pending merge with new findings/behind state and later actual merge read-back;
+regular oversized specs; non-finite parsed CLI timeouts; and terminal code/security
+review rows without findings. Preserve the original scope, credentials and native
+protection. These are recovery clarifications, not a new operating component.
