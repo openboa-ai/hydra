@@ -128,21 +128,31 @@ class Runner:
         self.github.record(repo, number, record)
         return record
 
-    def _intent(self, repo, number, config, record, action, *, checkpoint=False, **values):
+    def _intent(self, repo, number, config, record, action, *, stopped_checkpoint=False, **values):
         service_action = action in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}
         head = values.get("head", record.get("head"))
         attempts = (record.get("delivery_attempt", 0) + 1 if service_action and
                     record.get("delivery_action") == action and record.get("delivery_head") == head
                     and (action != "request_review" or record.get("pending_review_kind") == values.get("pending_review_kind")) else 1)
-        if self._latest(repo, number, config, include_stop=not checkpoint):
+        if self._latest(repo, number, config, include_stop=not stopped_checkpoint):
             return None
         if attempts > 3:
             self._wait(repo, number, record, "replan_required", phase="uncertain", next_action="diagnose")
             return None
+        previous = record
         record = self._record(repo, number, record, pending_action=action,
                               action_attempt=attempts, **values, **({"delivery_action": action,
                               "delivery_attempt": attempts, "delivery_head": head} if service_action else {}))
-        return None if self._latest(repo, number, config, include_stop=not checkpoint) else record
+        reason = self._latest(repo, number, config, include_stop=not stopped_checkpoint)
+        if reason:
+            # This guard precedes the worker/verifier call. Restore only a new,
+            # known-undispatched execution; uncertain effects retain their intent.
+            if (values.get("phase") == "executing" and previous.get("phase") != "executing"
+                    and previous.get("wait_reason") not in {
+                        "execution_unknown", "execution_failed", "invalid_model_result"}):
+                self._record(repo, number, previous, wait_reason=reason)
+            return None
+        return record
 
     def _wait(self, repo, number, record, reason, *, phase="waiting", next_action="reconcile"):
         if reason in {"intake_changed", "intake_unbound"}:
@@ -311,7 +321,7 @@ class Runner:
             return self._wait(repo, number, record, "remote_head_changed",
                               phase="uncertain" if record.get("pending_action") == "publish" else "waiting")
         record = self._intent(repo, number, config, record, "publish", head=head,
-                              expected_head=remote, phase="publishing", checkpoint=checkpoint,
+                              expected_head=remote, phase="publishing", stopped_checkpoint=checkpoint,
                               expected_base=(record.get("expected_base") or record["contract_revision"]
                                              if record.get("pending_action") == "publish" else config["revision"]))
         if record is None:
@@ -430,22 +440,25 @@ class Runner:
                        and c.get("body", "").strip() == phrase for c in self.github.comments(repo, number)):
                 return {"repository": repo, "issue": number, "action": "waiting", "reason": "replan_required"}
             self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
-            service_retry = (record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
-                             and record.get("delivery_action") == record.get("pending_action"))
+            # A prior replan resets the retry counter, never the uncertain effect.
+            # Its pending action remains authoritative even before a fresh request.
+            service_retry = record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
             active_write = record.get("phase") == "executing" and record.get("pending_action") in {"design", "implementation", "correction", "verification"}
             if active_write:
                 if not self._handover(repo, number, record, config):
                     return {"repository": repo, "issue": number, "action": "waiting", "reason": "confirm_previous_stopped"}
                 recover_dirty = True
             origin = record.get("resume_phase")
+            review_reconcile = (record.get("next_action") in {"diagnose_review", "diagnose_review_request"}
+                                and record.get("phase") != "executing")
             record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()), checkpoint=None,
                                   pending_action=record.get("pending_action") if service_retry else None,
                                   delivery_action=None, delivery_attempt=None, delivery_head=None,
                                   pending_review_kind=record.get("pending_review_kind") if service_retry else None,
                                   correction_reason=record.get("correction_reason") if origin == "correction" else None,
                                   correction_attempt=None, wait_reason=None,
-                                  phase="uncertain" if service_retry else "ready",
-                                  resume_phase=None if service_retry else origin if origin in {"design", "correction"} else "implementation")
+                                  phase="uncertain" if service_retry else "review_wait" if review_reconcile else "ready",
+                                  resume_phase=None if service_retry or review_reconcile else origin if origin in {"design", "correction"} else "implementation")
         unresolved_model = record.get("phase") == "executing" or record.get("wait_reason") in {
             "execution_unknown", "execution_failed", "invalid_model_result"}
         if record.get("host_alias") != self.host or unresolved_model:
@@ -866,7 +879,10 @@ class Runner:
                    and (c.get("performed_via_github_app") or {}).get("id") == provider["app_id"]
                    and "<!-- codex-pull-request-review-summary -->" in c.get("body", "")]
         if len(summaries) > 1:
-            return record  # Ambiguous provider evidence needs investigation, not repeated mentions.
+            self._wait(repo, number, record, "replan_required",
+                       phase="uncertain" if record.get("pending_action") == "request_review" else "review_wait",
+                       next_action="diagnose_review")
+            return self.github.progress(repo, number)
         body = summaries[0].get("body", "") if summaries else ""
         commits = {c["sha"] for c in observation.get("commits", [])}
         missing = []
@@ -875,7 +891,10 @@ class Runner:
                                   ("security", "Security Review", "review_requested_security_head")):
             rows = [line for line in body.splitlines() if line.startswith("|") and f"**{name}**" in line]
             if len(rows) > 1:
-                continue
+                self._wait(repo, number, record, "replan_required",
+                           phase="uncertain" if record.get("pending_action") == "request_review" else "review_wait",
+                           next_action="diagnose_review")
+                return self.github.progress(repo, number)
             revision = re.search(r"`([0-9a-f]{7,40})`", rows[0]) if rows else None
             if revision and {sha for sha in commits if sha.startswith(revision[1])} == {head}:
                 cells = rows[0].split("|")
