@@ -100,10 +100,14 @@ class _HostOwner:
         value = prefix + (self.boot + "\n" + ticket[1] + "\n").encode("ascii")
         if native_step:
             value += (native_scope + "\n").encode("ascii")
-        # Preserve the flock-held inode. A failed/partial write never permits a
-        # spawn, and malformed bytes cannot be mistaken for an idle owner.
-        if os.pwrite(self.fd, value, 0) != len(value):
-            raise HostBusy("Host ownership write was incomplete")
+        # Finish positive short writes on the same flock-held inode. A real
+        # write failure retains fail-closed bytes and never permits dispatch.
+        offset = 0
+        while offset < len(value):
+            written = os.pwrite(self.fd, value[offset:], offset)
+            if not isinstance(written, int) or not 0 < written <= len(value) - offset:
+                raise HostBusy("Host ownership write was incomplete")
+            offset += written
         os.ftruncate(self.fd, len(value))
         os.fsync(self.fd)
         self.ticket = ticket

@@ -67,3 +67,19 @@ Independent source review found no additional actionable defect. Reviewed SHA256
 
 Actual native installation, product delivery and final-head external review remain
 separate acceptance evidence.
+
+## Short-write correction
+
+Review of `016c25af0e7d10fa1c886cf99c74d8e37c77a228` identified a positive
+short-write branch leaving a truncated ownership ticket. Independent design review
+accepted finishing the bounded payload at increasing offsets on the same locked
+inode, within R2/R4/R5. Zero/invalid progress and actual I/O failure retain the
+existing fail-closed ownership boundary; no rollback or automatic adoption is added.
+Complete-ticket persistence failure retains its existing scoped recovery identity.
+
+Independent source review found no further actionable defect in this correction.
+Reviewed `coordinator.py` SHA256:
+`59685c38f24f3fa4655c6a9a98ffa498bbd526bb3aaeb88386fe464001f2af65`.
+Native and CLI regressions exercise successful positive short writes, scoped stop,
+partial write failure without dispatch, and the retained persistence-failure hold.
+Final-head CI, coupled reviews and native policy approval remain required.

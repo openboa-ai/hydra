@@ -156,25 +156,28 @@ class OwnershipRecordTests(unittest.TestCase):
                             self.fail("unreadable ownership admitted")
                 self.assertEqual(self.lock.read_bytes(), before)
 
-    def test_partial_registration_and_failed_fsync_leave_a_blocking_record(self):
-        for failure in ("partial", "fsync"):
-            with self.subTest(failure=failure):
-                self.lock.write_bytes(b"")
-                with coordinator.coordinator_lock(self.lock):
-                    real_write = os.pwrite
+    def test_positive_short_registration_finishes_before_cleanup(self):
+        real_write = os.pwrite
+        with coordinator.coordinator_lock(self.lock):
+            with patch.object(coordinator.os, "pwrite", side_effect=lambda fd, value, offset:
+                              real_write(fd, value[:9], offset)):
+                ticket = coordinator.register_owned_process()
+            self.assertEqual(self.lock.read_bytes(), coordinator._OWNER_PREFIX +
+                             (BOOT + "\n" + ticket[1] + "\n").encode())
+            with self.assertRaises(coordinator.HostBusy):
+                coordinator.register_owned_process()
+            coordinator.confirm_owned_cleanup(ticket)
+        self.assertEqual(self.lock.read_bytes(), b"")
 
-                    def partial(fd, value, offset):
-                        return real_write(fd, value[:9], offset)
-
-                    target = "pwrite" if failure == "partial" else "fsync"
-                    effect = partial if failure == "partial" else OSError("synthetic fsync failure")
-                    with patch.object(coordinator.os, target, side_effect=effect):
-                        with self.assertRaises((coordinator.HostBusy, OSError)):
-                            coordinator.register_owned_process()
-                    self.assertTrue(self.lock.read_bytes())
-                    with self.assertRaises(coordinator.HostBusy):
-                        coordinator.register_owned_process()
-                self.assert_held()
+    def test_failed_registration_fsync_leaves_a_blocking_record(self):
+        with coordinator.coordinator_lock(self.lock):
+            with patch.object(coordinator.os, "fsync", side_effect=OSError("synthetic fsync failure")):
+                with self.assertRaises(OSError):
+                    coordinator.register_owned_process()
+            self.assertTrue(self.lock.read_bytes())
+            with self.assertRaises(coordinator.HostBusy):
+                coordinator.register_owned_process()
+        self.assert_held()
 
     def test_failed_clear_preserves_exact_marker_and_holds_same_boot_restart(self):
         for failure in ("ftruncate", "fsync"):

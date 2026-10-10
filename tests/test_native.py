@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +55,47 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         stopped = await self.result(recovery, "stopped")
         self.assertEqual(stopped["reason"], "stop_requested")
         self.assertEqual(self.lock.read_bytes(), b"")
+
+    async def test_positive_short_ticket_writes_complete_and_allow_scoped_stop(self):
+        real_write = os.pwrite
+        writes = []
+
+        def short_write(fd, value, offset):
+            writes.append(offset)
+            return real_write(fd, value[:7], offset)
+
+        with patch("hydra_sdlc.coordinator.os.pwrite", side_effect=short_write):
+            assignment = await self.controller.begin(self.url)
+        self.assertEqual(assignment["action"], "native_task")
+        self.assertEqual(writes, list(range(0, len(self.lock.read_bytes()), 7)))
+        with self.assertRaises(HostBusy):
+            await self.new_controller().begin(self.url)
+        await self.result(assignment, "stopped")
+        self.assertEqual(self.lock.read_bytes(), b"")
+
+    async def test_partial_ticket_write_failure_remains_closed_without_dispatch(self):
+        real_write = os.pwrite
+        for failure in ("zero", "io", "invalid"):
+            with self.subTest(failure=failure):
+                self.lock.write_bytes(b"")
+                writes = []
+
+                def failed_write(fd, value, offset):
+                    writes.append(offset)
+                    if not offset:
+                        return real_write(fd, value[:7], offset)
+                    if failure == "io":
+                        raise OSError("synthetic disk failure")
+                    return 0 if failure == "zero" else len(value) + 1
+
+                with patch("hydra_sdlc.coordinator.os.pwrite", side_effect=failed_write):
+                    result = await self.controller.begin(self.url)
+                self.assertEqual(result["action"], "waiting")
+                self.assertEqual(result["reason"], "assignment_ticket_unknown")
+                self.assertEqual(self.lock.read_bytes(), b"hydra-n")
+                self.assertIsNone(self.gh.progress("example/product", 4))
+                with self.assertRaises(HostBusy):
+                    await self.new_controller().begin(self.url)
 
     async def test_review_accepts_exactly_the_run_in_its_prompt(self):
         review = await self.change_review()

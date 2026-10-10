@@ -30,6 +30,12 @@ Provider timeout/failure fixtures preserve delivered progress, reconcile other
 repositories and retry cleanup without redelivery. Final-head CI and coupled
 external reviews remain required after publication of this batch.
 
+The short-write follow-up passed all 34 native tests in 25.334 seconds and
+16 ownership tests in 0.778 seconds (one platform-specific skip). These exercise
+complete bounded positive short writes before dispatch, scoped explicit stop,
+zero/invalid progress and I/O failures retaining admission holds. Final-head full
+regression, CI and coupled reviews must still qualify this correction.
+
 The native fixtures exercise spec review, implementation, verification, independent
 change review, existing exact-head merge/post-merge gates, interrupted result and
 callback recovery, stale results, policy/intake/head changes and shared host admission.
