@@ -510,3 +510,14 @@ control-filename bytes and no-publication/no-verification assertions are unchang
 The related 18 tests passed. The final macOS suite collected 591 tests: 571 passed
 and 20 platform-specific cases skipped. Source and local evidence do not replace
 fresh-head Linux CI, Code/Security Review, native approval or actual product delivery.
+
+Independent fixture review accepted the shared proc prerequisite at SHA-256
+`8a8557e8f1caa0f1174f8b7e7f365c79c2398773307ac644183efe4eadbaf3e9`,
+restart fixture
+`fca2ed3d99b8683bf6a1120896464396db72bef9b8f3fd1e81e8a3ee991d584d`
+and startup fixture
+`f1f9a5add7ebfa250d70f927599304f15e87204fb94cc329b28b28589f0409c6`.
+All three proc-dependent entry points check before temporary allocation or child
+creation, under the same accepted specification. Existing missing, denied and
+unexpected-error controls now cover every entry point. The macOS restart path,
+production supervisor and supported Linux topology assertions are unchanged.

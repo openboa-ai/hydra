@@ -13,6 +13,12 @@ rejects those filenames with EILSEQ; an actual raw Git tree case passed without
 changing the checkout or index. `git diff --check` passed. Skipped tests are not
 Linux execution evidence.
 
+The optional proc prerequisite is shared by supervision, restart and startup
+topology fixtures. Missing and denied interfaces skip before temporary allocation
+or child creation at every entry point; unexpected read errors still fail.
+Portable controls exercise all three paths. Supported Linux topology assertions
+and the native macOS restart path remain unchanged.
+
 ```sh
 python3 -B -m unittest discover -s tests
 ```

@@ -498,6 +498,8 @@ def _portable_driver(directory):
 
 class RestartTopologyTests(unittest.TestCase):
     def check_driver(self, linux):
+        if linux:
+            _support()._require_proc_children()
         with tempfile.TemporaryDirectory() as directory:
             completed = subprocess.run(_command("--driver", "unused", directory),
                                        capture_output=True, text=True, timeout=22)

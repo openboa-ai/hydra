@@ -274,6 +274,7 @@ class StartupRecoveryTests(unittest.IsolatedAsyncioTestCase):
 @unittest.skipUnless(sys.platform == "linux", "requires actual Linux subreaper and /proc semantics")
 class LinuxStartupRecoveryTests(unittest.TestCase):
     def test_late_ready_recovery_and_invalid_controls_under_nonreaping_ancestor(self):
+        _support()._require_proc_children()
         for mode in ("cancel", "deadline", "execution_cancel", "execution_deadline", "malformed", "missing", "coalesced"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 completed = subprocess.run(
