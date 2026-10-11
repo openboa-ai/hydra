@@ -688,6 +688,12 @@ class Runner:
             # An authenticated but unpinned record cannot inherit today's policy.
             # Preserve it unchanged for diagnosis and refuse model or delivery work.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
+        # Compare the attempt's pin before consuming a decision/replan marker,
+        # rotating ownership, retiring a handover, or publishing any progress.
+        # Read-only status exposes the changed policy without rewriting the old
+        # attempt, so a later policy transition can reconcile one exact record.
+        if self._policy_changed(repo, config, record):
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
         intake = parse_intake({**issue, "state": "open"} if closing_recovery else issue, config)
         config = {**config, "_scoped_spec": intake["spec"]}
         boundary, _, _ = self._branch_boundary(repo, number, record, previously_owned=previously_owned)
@@ -752,11 +758,6 @@ class Runner:
                 recover_dirty = True
                 record.update(pending_action=None, phase="checkpoint",
                               checkpoint="interrupted_committed", wait_reason=None)
-        # Pin policy contents, allowing default-branch advancement with the same config blob.
-        if self._policy_changed(repo, config, record):
-            if recover_dirty:
-                return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
-            return self._wait(repo, number, record, "policy_changed")
         if recover_dirty:
             # Settle explicitly stopped writes before PR/completion shortcuts
             # can overlook local changes or their accepted-spec binding.

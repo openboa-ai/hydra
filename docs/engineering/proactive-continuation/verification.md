@@ -14,12 +14,12 @@
 The implementation was verified through the repository storage wrapper on the pinned
 development volume.
 
-- Runner-focused suite after the pull-request corrections: 70 tests passed.
+- Runner-focused suite after the pull-request corrections: 71 tests passed.
 - Native-assignment suite after the pull-request corrections: 36 tests passed.
 - GitHub-adapter suite: 37 tests passed.
 - Independent full suite: 677 tests ran and returned `OK`, with 27 skipped in
   that review environment.
-- Final candidate full suite: 683 tests ran and returned `OK`, with 25 skipped
+- Final candidate full suite: 684 tests ran and returned `OK`, with 27 skipped
   on the delivery host.
 - Real stdio MCP initialization, tool listing, read, and status path: 2 tests passed.
 - Python bytecode compilation completed successfully.
@@ -32,7 +32,9 @@ bounded escaped JSON, progress-marker lifecycle, rollback parsing by the 0.2.0 r
 status propagation through the MCP boundary, repeated recovery-attempt rotation, marker
 removal after resume completion, and fail-closed behavior when the preserved source
 decision context or its pinned policy revision disappears. Native begin also proves that
-an unpinned stopped assignment is not retired or rewritten.
+an unpinned stopped assignment is not retired or rewritten. Runner begin proves that a
+changed policy cannot consume either a decision or replan marker, rotate the attempt, call
+the model, or write progress.
 
 ## Evidence boundary
 

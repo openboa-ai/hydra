@@ -37,13 +37,16 @@ Pull-request review then identified recovery boundaries that required correction
 - the source context follows repeated recovery-attempt rotations and is removed when the
   resumed phase completes;
 - progress without a policy revision fails closed before model work or an external write;
-- native begin performs the same policy-pin check before retiring a stopped assignment.
+- native begin performs the same policy-pin check before retiring a stopped assignment;
+- runner begin checks a changed policy before consuming decision or replan markers, so it
+  leaves the exact attempt unchanged and produces no progress or model write.
 
 Independent review reproduced and verified the edge cases, including direct completion
 with the original context action still present, missing policy pins in both runner and
-native entry paths, and valid healthy status fixtures. The final review found no remaining
-actionable issue and returned `candidate_ready`. The focused Runner, Native and GitHub
-suites covered 143 tests.
+native entry paths, valid healthy status fixtures, and changed-policy decision and replan
+entry. The independently reviewed earlier candidate returned `candidate_ready`; the final
+correction is covered by the same accepted boundary and remains subject to the normal
+exact-head PR review gate. The focused Runner, Native and GitHub suites covered 144 tests.
 
 This result does not establish merge, installation, scheduled advancement, or a real
 native question-answer-resumption cycle. Those remain delivery and operational evidence.

@@ -468,6 +468,36 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('resume_hint', item)
         self.assertEqual(self.github.writes, [])
 
+    async def test_changed_policy_is_checked_before_decision_or_replan_consumption(self):
+        await self.publish()
+        base = copy.deepcopy(self.github.note)
+        self.github.cfg.update(revision='c' * 40, blob_sha='d' * 40)
+        self.github.file = lambda repo, path, revision: {'sha': 'e' * 40, 'content': ''}
+
+        for reason in ('product_decision', 'replan_required'):
+            with self.subTest(reason=reason):
+                self.github.note = {**copy.deepcopy(base), 'wait_reason': reason,
+                                    'phase': 'waiting', 'resume_phase': 'implementation'}
+                attempt = self.github.note['attempt_id']
+                if reason == 'product_decision':
+                    self.github.extra_comments = []
+                    self.github.resolve_decision(attempt)
+                else:
+                    self.github.extra_comments = [
+                        {'user': {'login': 'operator'},
+                         'body': f'hydra: replan {attempt} ready'}]
+                before = copy.deepcopy(self.github.note)
+                self.github.writes.clear()
+                self.calls.clear()
+
+                result = await self.runner().step('example/product', 4)
+
+                self.assertEqual(result['action'], 'waiting')
+                self.assertEqual(result['reason'], 'policy_changed')
+                self.assertEqual(self.github.note, before)
+                self.assertEqual(self.github.writes, [])
+                self.assertEqual(self.calls, [])
+
     async def test_missing_policy_pin_blocks_hint_model_and_external_writes(self):
         await self.publish()
         attempt = self.github.note['attempt_id']
