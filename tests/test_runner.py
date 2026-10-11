@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import os
 import signal
 import tempfile
@@ -42,6 +43,7 @@ class GitHub:
         self.transform_observation = lambda value: value
         self.closed_response_lost = False
         self.merge_message = "External merge without a service request"
+        self.decision_context_link = None
 
     def issue(self, repo, n):
         return copy.deepcopy(self.work)
@@ -58,11 +60,35 @@ class GitHub:
     def record(self, repo, n, record):
         self.note = copy.deepcopy(record)
         self.note.update(version=1, issue_number=n, repository_id=self.cfg['repository_id'])
+        action = record.get('next_action') or ''
+        if action.startswith('decision_context_') and record.get('resume_phase'):
+            self.decision_context_link = (action.removeprefix('decision_context_'),
+                                          record.get('attempt_id'))
+        elif self.decision_context_link:
+            if not record.get('resume_phase'):
+                self.decision_context_link = None
+            elif self.decision_context_link[1] != record.get('attempt_id'):
+                self.decision_context_link = (self.decision_context_link[0],
+                                              record.get('attempt_id'))
         self.writes.append(('record', record.get('pending_action')))
         self.on_record(record)
 
     def comments(self, repo, n):
         return copy.deepcopy(self.extra_comments)
+
+    def decision_context_attempt(self, repo, n, resume_attempt):
+        if self.decision_context_link and self.decision_context_link[1] == resume_attempt:
+            return self.decision_context_link[0]
+        return None
+
+    def resolve_decision(self, attempt=None, summary="Use the accepted safe behavior."):
+        attempt = attempt or self.note["attempt_id"]
+        self.extra_comments.extend([
+            {"user": {"login": "operator"},
+             "body": f"hydra: decision {attempt} context\n{summary}"},
+            {"user": {"login": "operator"},
+             "body": f"hydra: decision {attempt} resolved"},
+        ])
 
     def ref(self, repo, branch):
         return self.branch
@@ -370,6 +396,224 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'product_decision')
         self.assertEqual(len(self.calls), count)
 
+    async def test_status_reports_exact_resolution_hints_without_writes(self):
+        await self.publish()
+        attempt = self.github.note['attempt_id']
+        self.github.note.update(wait_reason='product_decision', phase='waiting',
+                                resume_phase='implementation')
+        self.github.resolve_decision(attempt)
+        marker = self.github.extra_comments[-1]
+        self.github.extra_comments.append(copy.deepcopy(marker))
+        self.github.writes.clear()
+
+        for _ in range(2):
+            item = self.runner().status(['example/product'])[0]
+            self.assertEqual(item['wait_reason'], 'product_decision')
+            self.assertEqual(item['resume_hint'], 'decision_resolved')
+        self.assertEqual(self.github.writes, [])
+
+        self.github.note.update(wait_reason='replan_required', pending_action='merge')
+        self.github.extra_comments = [{'user': {'login': 'operator'},
+            'body': f'hydra: replan {attempt} ready'}]
+        item = self.runner().status(['example/product'])[0]
+        self.assertEqual(item['wait_reason'], 'replan_required')
+        self.assertEqual(item['resume_hint'], 'replan_ready')
+        self.assertEqual(self.github.writes, [])
+
+    async def test_status_omits_resolution_hint_for_stale_or_stronger_waits(self):
+        await self.publish()
+        attempt = self.github.note['attempt_id']
+        self.github.note.update(wait_reason='product_decision', phase='waiting',
+                                resume_phase='implementation')
+        exact = {'user': {'login': 'operator'},
+                 'body': f'hydra: decision {attempt} resolved'}
+
+        for comments in ([{'user': {'login': 'stranger'}, 'body': exact['body']}],
+                         [{'user': {'login': 'operator'},
+                           'body': 'hydra: decision 00000000-0000-0000-0000-000000000000 resolved'}],
+                         [{'user': {'login': 'operator'}, 'body': exact['body'] + ' now'}]):
+            with self.subTest(comments=comments):
+                self.github.extra_comments = comments
+                self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+
+        self.github.resolve_decision(attempt)
+        self.github.note['native_step'] = '12345678-1234-1234-1234-123456789abc'
+        self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+        self.github.note.pop('native_step')
+
+        self.github.work['labels'].append({'name': self.github.cfg['labels']['decision']})
+        item = self.runner().status(['example/product'])[0]
+        self.assertEqual(item['wait_reason'], 'human_decision')
+        self.assertNotIn('resume_hint', item)
+        self.github.work['labels'] = [{'name': self.github.cfg['labels']['ready']}]
+
+        self.github.work['body'] += '\nChanged delegated acceptance.'
+        item = self.runner().status(['example/product'])[0]
+        self.assertEqual(item['wait_reason'], 'intake_changed')
+        self.assertNotIn('resume_hint', item)
+
+    async def test_status_omits_resolution_hint_when_pinned_policy_changed(self):
+        await self.publish()
+        attempt = self.github.note['attempt_id']
+        self.github.note.update(wait_reason='product_decision', phase='waiting',
+                                resume_phase='implementation')
+        self.github.resolve_decision(attempt)
+        self.github.cfg.update(revision='c' * 40, blob_sha='d' * 40)
+        self.github.file = lambda repo, path, revision: {'sha': 'e' * 40, 'content': ''}
+        self.github.writes.clear()
+
+        item = self.runner().status(['example/product'])[0]
+
+        self.assertEqual(item['wait_reason'], 'policy_changed')
+        self.assertNotIn('resume_hint', item)
+        self.assertEqual(self.github.writes, [])
+
+    async def test_changed_policy_is_checked_before_decision_or_replan_consumption(self):
+        await self.publish()
+        base = copy.deepcopy(self.github.note)
+        self.github.cfg.update(revision='c' * 40, blob_sha='d' * 40)
+        self.github.file = lambda repo, path, revision: {'sha': 'e' * 40, 'content': ''}
+
+        for reason in ('product_decision', 'replan_required'):
+            with self.subTest(reason=reason):
+                self.github.note = {**copy.deepcopy(base), 'wait_reason': reason,
+                                    'phase': 'waiting', 'resume_phase': 'implementation'}
+                attempt = self.github.note['attempt_id']
+                if reason == 'product_decision':
+                    self.github.extra_comments = []
+                    self.github.resolve_decision(attempt)
+                else:
+                    self.github.extra_comments = [
+                        {'user': {'login': 'operator'},
+                         'body': f'hydra: replan {attempt} ready'}]
+                before = copy.deepcopy(self.github.note)
+                self.github.writes.clear()
+                self.calls.clear()
+
+                result = await self.runner().step('example/product', 4)
+
+                self.assertEqual(result['action'], 'waiting')
+                self.assertEqual(result['reason'], 'policy_changed')
+                self.assertEqual(self.github.note, before)
+                self.assertEqual(self.github.writes, [])
+                self.assertEqual(self.calls, [])
+
+    async def test_missing_policy_pin_blocks_hint_model_and_external_writes(self):
+        await self.publish()
+        attempt = self.github.note['attempt_id']
+        self.github.note.update(wait_reason='product_decision', phase='waiting',
+                                resume_phase='implementation')
+        self.github.note.pop('contract_revision')
+        self.github.resolve_decision(attempt)
+        self.github.writes.clear()
+        self.calls.clear()
+
+        item = self.runner().status(['example/product'])[0]
+        result = await self.runner().step('example/product', 4)
+
+        self.assertEqual(item['wait_reason'], 'policy_changed')
+        self.assertNotIn('resume_hint', item)
+        self.assertEqual(result['action'], 'waiting')
+        self.assertEqual(result['reason'], 'policy_changed')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.github.writes, [])
+        self.assertNotIn('contract_revision', self.github.note)
+
+    async def test_decision_hint_requires_attempt_context_before_marker(self):
+        await self.publish()
+        attempt = self.github.note['attempt_id']
+        self.github.note.update(wait_reason='product_decision', phase='waiting',
+                                resume_phase='implementation')
+        marker = {'user': {'login': 'operator'},
+                  'body': f'hydra: decision {attempt} resolved'}
+        generic = {'user': {'login': 'operator'}, 'body': 'Use the accepted behavior.'}
+        context = {'user': {'login': 'operator'},
+                   'body': f'hydra: decision {attempt} context\nUse the accepted behavior.'}
+
+        for comments in ([marker], [generic, marker], [marker, context],
+                         [{**context, 'body': context['body'].splitlines()[0]}, marker]):
+            with self.subTest(comments=comments):
+                self.github.extra_comments = comments
+                self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+                self.assertEqual((await self.runner().step('example/product', 4))['reason'],
+                                 'product_decision')
+
+        self.github.extra_comments = [context, marker]
+        self.assertEqual(self.runner().status(['example/product'])[0]['resume_hint'],
+                         'decision_resolved')
+
+        for separator in (' ', '\r\n', '\t'):
+            with self.subTest(separator=repr(separator)):
+                self.github.extra_comments = [
+                    {'user': {'login': 'operator'},
+                     'body': f'hydra: decision {attempt} context{separator}Use the accepted behavior.'},
+                    marker,
+                ]
+                self.assertEqual(self.runner().status(['example/product'])[0]['resume_hint'],
+                                 'decision_resolved')
+
+        for suffix in ('ual summary', '-extra summary'):
+            with self.subTest(suffix=suffix):
+                self.github.extra_comments = [
+                    {'user': {'login': 'operator'},
+                     'body': f'hydra: decision {attempt} context{suffix}'},
+                    marker,
+                ]
+                self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+                self.assertEqual((await self.runner().step('example/product', 4))['reason'],
+                                 'product_decision')
+
+    async def test_hint_omits_foreign_executing_and_invalid_decision_checkpoints(self):
+        await self.publish()
+        attempt = self.github.note['attempt_id']
+        self.github.note.update(wait_reason='product_decision', phase='waiting',
+                                resume_phase='implementation')
+        self.github.resolve_decision(attempt)
+
+        for changes in ({'host_alias': 'other'}, {'phase': 'executing'},
+                        {'resume_phase': None}, {'resume_phase': 'delivery'}):
+            with self.subTest(changes=changes):
+                before = copy.deepcopy(self.github.note)
+                self.github.note.update(changes)
+                self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+                self.github.note = before
+
+    async def test_begin_consumes_hidden_resolution_only_after_exact_handover(self):
+        await self.publish()
+        self.github.note.update(host_alias='host-b', wait_reason='product_decision',
+                                phase='waiting', resume_phase='implementation')
+        attempt = self.github.note['attempt_id']
+        self.github.resolve_decision(attempt)
+        self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'],
+                         'confirm_previous_stopped')
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f'hydra: handover {attempt} stopped'})
+        result = await self.runner().step('example/product', 4)
+        self.assertNotEqual(result.get('reason'), 'product_decision')
+        self.assertEqual(self.github.note['host_alias'], 'host-a')
+        self.assertNotEqual(self.github.note['attempt_id'], attempt)
+
+        self.github.note.update(wait_reason='replan_required', phase='executing',
+                                pending_action='implementation', resume_phase='implementation')
+        attempt = self.github.note['attempt_id']
+        self.github.extra_comments.extend([
+            {'user': {'login': 'operator'}, 'body': f'hydra: replan {attempt} ready'},
+            {'user': {'login': 'operator'}, 'body': f'hydra: handover {attempt} stopped'},
+        ])
+        self.assertNotIn('resume_hint', self.runner().status(['example/product'])[0])
+        result = await self.runner().step('example/product', 4)
+        self.assertNotEqual(result.get('reason'), 'replan_required')
+        self.assertNotEqual(result.get('reason'), 'confirm_previous_stopped')
+
+    def test_operator_context_json_is_bounded_after_escaping(self):
+        value = ('"\\\n😀' * 10000) + 'end'
+        encoded = Runner._bounded_context_json([value])
+        self.assertLessEqual(len(encoded), 24000)
+        decoded = json.loads(encoded)
+        self.assertEqual(len(decoded), 1)
+        self.assertTrue(value.startswith(decoded[0]))
+
     async def test_partial_review_requests_only_missing_security_once(self):
         self.github.remote_pending = True
         runner = await self.publish()
@@ -628,7 +872,8 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.github.note['head'], partial_head)
                 self.assertEqual(self.github.note['resume_phase'], phase)
                 attempt = self.github.note['attempt_id']
-                self.github.extra_comments += [{'user': {'login': 'operator'}, 'body': 'Choose the existing safe behavior.'},
+                self.github.extra_comments += [{'user': {'login': 'operator'},
+                    'body': f'hydra: decision {attempt} context\nChoose the existing safe behavior.'},
                     {'user': None, 'body': f'hydra: decision {attempt} resolved'},
                     {'user': {'login': 'operator'}, 'body': f'hydra: decision {attempt} resolved'}]
                 prompts = []
@@ -650,7 +895,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         runner = await self.publish()
         self.github.note.update(phase='waiting', wait_reason='product_decision', resume_phase='implementation')
         attempt = self.github.note['attempt_id']
-        self.github.extra_comments.append({'user': {'login': 'operator'}, 'body': f'hydra: decision {attempt} resolved'})
+        self.github.resolve_decision(attempt)
         async def needs_decision(assignment, **kwargs):
             return {'status': 'completed', 'detail': {'result': {'outcome': 'needs_decision' if assignment['mode'] == 'workspace_write' else 'candidate_ready'}}}
         runner.execute = needs_decision
@@ -658,6 +903,90 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         current = self.github.note['attempt_id']
         self.assertNotEqual(current, attempt)
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'product_decision')
+
+    async def test_rotated_attempt_waits_if_its_preserved_decision_context_disappears(self):
+        await self.publish()
+        self.github.note.update(phase='waiting', wait_reason='product_decision',
+                                resume_phase='implementation')
+        source_attempt = self.github.note['attempt_id']
+        self.github.resolve_decision(source_attempt, 'CURRENT-DECISION')
+
+        # Stop after begin rotates the attempt but before a resumed model dispatch.
+        self.github.on_record = lambda record: setattr(
+            self, 'stop', True) if (record.get('next_action') or '').startswith(
+                'decision_context_') else None
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'],
+                         'stop_requested')
+        self.github.on_record = lambda record: None
+        resume_attempt = self.github.note['attempt_id']
+        self.assertNotEqual(resume_attempt, source_attempt)
+        self.assertEqual(self.github.decision_context_attempt(
+            'example/product', 4, resume_attempt), source_attempt)
+
+        self.github.extra_comments = [comment for comment in self.github.extra_comments
+                                      if not comment['body'].startswith(
+                                          f'hydra: decision {source_attempt} context\n')]
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+                                           'body': 'Unrelated recent comment.'})
+        self.stop = False
+        self.calls.clear()
+        result = await self.runner().step('example/product', 4)
+        self.assertEqual(result['reason'], 'decision_context_missing')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.github.note['attempt_id'], resume_attempt)
+
+        self.github.resolve_decision(source_attempt, 'RESTORED-DECISION')
+        prompts = []
+        resumed = self.runner()
+        async def capture(assignment, **kwargs):
+            prompts.append(assignment['prompt'])
+            return await self.execute(assignment, **kwargs)
+        resumed.execute = capture
+        self.assertEqual((await resumed.step('example/product', 4))['action'], 'continue')
+        self.assertTrue(prompts)
+        self.assertTrue(all('RESTORED-DECISION' in prompt for prompt in prompts))
+        self.assertTrue(all('Unrelated recent comment.' in prompt for prompt in prompts))
+
+    async def test_decision_context_survives_a_second_recovery_attempt_rotation(self):
+        await self.publish()
+        self.github.note.update(phase='waiting', wait_reason='product_decision',
+                                resume_phase='implementation')
+        source_attempt = self.github.note['attempt_id']
+        self.github.resolve_decision(source_attempt, 'CURRENT-DECISION')
+
+        resumed = self.runner()
+        async def fail_after_dispatch(assignment, **kwargs):
+            self.calls.append(assignment['mode'])
+            return {'status': 'failed', 'detail': {'cleanup': 'confirmed'}}
+        resumed.execute = fail_after_dispatch
+        failed = await resumed.step('example/product', 4)
+        self.assertEqual(failed['reason'], 'execution_failed')
+        first_resume_attempt = self.github.note['attempt_id']
+        self.assertEqual(self.github.decision_context_attempt(
+            'example/product', 4, first_resume_attempt), source_attempt)
+
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+            'body': f'hydra: handover {first_resume_attempt} stopped'})
+        self.stop = False
+        self.github.on_record = lambda record: setattr(
+            self, 'stop', True) if (record.get('attempt_id') != first_resume_attempt
+                                    and record.get('checkpoint') == 'interrupted_committed') else None
+        stopped = await self.runner().step('example/product', 4)
+        self.github.on_record = lambda record: None
+        self.assertEqual(stopped['reason'], 'stop_requested')
+        second_resume_attempt = self.github.note['attempt_id']
+        self.assertNotEqual(second_resume_attempt, first_resume_attempt)
+        self.assertEqual(self.github.decision_context_attempt(
+            'example/product', 4, second_resume_attempt), source_attempt)
+
+        self.github.extra_comments = [comment for comment in self.github.extra_comments
+                                      if not comment['body'].startswith(
+                                          f'hydra: decision {source_attempt} context')]
+        self.stop = False
+        self.calls.clear()
+        waiting = await self.runner().step('example/product', 4)
+        self.assertEqual(waiting['reason'], 'decision_context_missing')
+        self.assertEqual(self.calls, [])
 
     async def test_read_only_decision_resumes_review_before_delivery(self):
         runner = await self.publish()
@@ -667,12 +996,22 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         runner.execute = needs_decision
         await runner._model('example/product', 4, config, self.github.note,
                             self.workspace.path, 'change_review', 'Review actual candidate')
-        self.github.extra_comments.append({'user': {'login': 'operator'},
-            'body': f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.github.resolve_decision(summary='CURRENT-REVIEW-DECISION')
+        self.github.resolve_decision('00000000-0000-0000-0000-000000000002',
+                                     'STALE-REVIEW-DECISION ' + 'z' * 30000)
         self.calls.clear()
         self.github.remote_pending = True
-        self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'remote_delivery_gates')
+        prompts = []
+        resumed = self.runner()
+        async def capture(assignment, **kwargs):
+            prompts.append(assignment['prompt'])
+            return await self.execute(assignment, **kwargs)
+        resumed.execute = capture
+        self.assertEqual((await resumed.step('example/product', 4))['reason'], 'remote_delivery_gates')
         self.assertEqual(self.calls, ['read_only', 'read_only'])
+        self.assertEqual(len(prompts), 2)
+        self.assertTrue(all('CURRENT-REVIEW-DECISION' in prompt for prompt in prompts))
+        self.assertTrue(all('STALE-REVIEW-DECISION' not in prompt for prompt in prompts))
         self.assertEqual(self.workspace.verification_calls, 1)
         self.assertFalse(any(x[0] == 'merge' for x in self.github.writes))
         count = len(self.calls)
@@ -690,8 +1029,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         runner.execute = needs_decision
         await runner._model('example/product', 4, config, self.github.note,
                             self.workspace.path, 'design', 'Complete only the scoped spec')
-        self.github.extra_comments.append({'user': {'login': 'operator'},
-            'body': f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.github.resolve_decision()
         self.calls.clear()
         self.assertEqual((await self.runner().step('example/product', 4))['action'], 'continue')
         self.assertEqual(self.calls, ['workspace_write'])
@@ -902,7 +1240,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result[0]['reason'], 'product_decision')
             self.assertEqual(result[1]['action'], 'continue')
             self.assertEqual(second.note['phase'], 'implementation_done')
-            first.extra_comments.append({'user': {'login': 'operator'}, 'body': f"hydra: decision {first.note['attempt_id']} resolved"})
+            first.resolve_decision()
             # Different repository values are passed through the same Runner, not project-specific execution branches.
             for _ in range(3):
                 await runner.cycle(['example/product', 'example/another'])

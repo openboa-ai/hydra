@@ -239,8 +239,7 @@ class SpecReacceptanceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.step())["reason"], "product_decision")
             self.assertEqual(self.github.note["correction_attempt"], attempts)
             self.assertEqual(self.calls, calls)
-        self.github.extra_comments.append({"user": {"login": "operator"},
-            "body": f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.github.resolve_decision()
         await self.assert_review_then_implementation()
 
     async def test_explicit_stopped_handover_checkpoints_spec_before_reacceptance(self):
@@ -506,8 +505,7 @@ class SpecReacceptanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.root / SPEC).exists())
         self.assertEqual(self.workspace.verification_calls, 0)
         self.assertFalse(any(write[0] in {"push", "pr", "merge"} for write in self.github.writes))
-        self.github.extra_comments.append({"user": {"login": "operator"},
-            "body": f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.github.resolve_decision()
         self.queue("design", lambda: None)
         self.calls.clear()
         self.assertEqual((await self.step())["reason"], "replan_required")
@@ -550,8 +548,7 @@ class SpecReacceptanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.github.note["spec_revision"], BASE)
         self.assertEqual(self.workspace.head, HEAD)
         self.assertEqual(self.workspace.verification_calls, 0)
-        self.github.extra_comments.append({"user": {"login": "operator"},
-            "body": f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.github.resolve_decision()
         self.calls.clear()
         self.queue("spec_review", outcome="failed")
         self.queue("design", self.edit_spec)

@@ -111,6 +111,9 @@ class NativeRunner(Runner):
         origin_resume = record.get("resume_phase")
         if phase == "design" and not record.get("resume_phase"):
             record = {**record, "resume_phase": "design"}
+        task = self._operator_context(repo, number, config, record, task)
+        if task is None:
+            return None, self._wait(repo, number, record, "decision_context_missing")
         step = str(uuid.uuid4())
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
@@ -172,6 +175,11 @@ class NativeController:
             record = self.runner.github.progress(repo, n)
             if record and record.get("native_step"):
                 if record.get("native_outcome") == "stopped":
+                    config = self.runner._work_config(repo, n, record)
+                    target = config["repository"]
+                    if self.runner._policy_changed(target, config, record):
+                        return {"repository": target, "issue": n, "action": "waiting",
+                                "reason": "policy_changed"}
                     self.runner.consumed.add(record["native_step"])
                     self.runner._record(repo, n, record)
                 else:

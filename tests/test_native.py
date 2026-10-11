@@ -355,11 +355,54 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.ws.dirty)
         self.assertEqual(self.gh.note["resume_phase"], "implementation")
         old_attempt = self.gh.note["attempt_id"]
-        self.gh.extra_comments.append({"user": {"login": "openboa"},
-            "body": f"hydra: decision {old_attempt} resolved"})
+        self.gh.extra_comments.append({"user": {"login": "operator"},
+                                       "body": "noise:" + "x" * 30000})
+        self.gh.resolve_decision(old_attempt, "Continue the checkpointed implementation.")
+        stale = "00000000-0000-0000-0000-000000000001"
+        self.gh.resolve_decision(stale, "STALE-CONTEXT " + "z" * 30000)
         result = await self.controller.begin(self.url)
         self.assertEqual(result["phase"], "implementation")
         self.assertNotEqual(result["attempt_id"], old_attempt)
+        self.assertIn("Continue the checkpointed implementation.", result["prompt"])
+        self.assertNotIn("STALE-CONTEXT", result["prompt"])
+
+    async def test_restart_does_not_dispatch_when_preserved_decision_context_disappears(self):
+        first = await self.controller.begin(self.url)
+        implementation = await self.result(first)
+        pending = await self.result(implementation, "needs_decision")
+        self.assertEqual(pending["reason"], "product_decision")
+        source_attempt = self.gh.note["attempt_id"]
+        self.gh.resolve_decision(source_attempt, "CURRENT-DECISION")
+
+        original_prepare = self.ws.prepare
+        self.ws.prepare = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic restart after attempt rotation"))
+        try:
+            with self.assertRaisesRegex(RuntimeError, "synthetic restart"):
+                await self.controller.begin(self.url)
+        finally:
+            self.ws.prepare = original_prepare
+        resume_attempt = self.gh.note["attempt_id"]
+        self.assertNotEqual(resume_attempt, source_attempt)
+        self.assertEqual(self.gh.decision_context_attempt(
+            "example/product", 4, resume_attempt), source_attempt)
+
+        self.gh.extra_comments = [comment for comment in self.gh.extra_comments
+                                  if not comment["body"].startswith(
+                                      f"hydra: decision {source_attempt} context\n")]
+        self.gh.extra_comments.append({"user": {"login": "operator"},
+                                       "body": "Unrelated recent comment."})
+        self.controller = self.new_controller()
+        result = await self.controller.begin(self.url)
+        self.assertEqual(result["reason"], "decision_context_missing")
+        self.assertNotIn("native_step", self.gh.note)
+        self.assertEqual(self.lock.read_bytes(), b"")
+
+        self.gh.resolve_decision(source_attempt, "RESTORED-DECISION")
+        resumed = await self.controller.begin(self.url)
+        self.assertEqual(resumed["action"], "native_task")
+        self.assertIn("RESTORED-DECISION", resumed["prompt"])
+        await self.result(resumed, "stopped")
 
     async def test_stopped_checkpoint_retries_after_response_loss(self):
         assignment = await self.controller.begin(self.url)
@@ -375,6 +418,30 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "stop_requested")
         with coordinator_lock(self.lock):
             pass
+
+    async def test_begin_does_not_retire_stopped_assignment_without_policy_pin(self):
+        assignment = await self.controller.begin(self.url)
+        def lose_after_stopped_record(record):
+            if record.get("native_outcome") == "stopped":
+                self.gh.on_record = lambda record: None
+                raise RuntimeError("response lost")
+        self.gh.on_record = lose_after_stopped_record
+        with self.assertRaisesRegex(RuntimeError, "response lost"):
+            await self.result(assignment, "stopped")
+        self.assertEqual(self.gh.note["native_outcome"], "stopped")
+        # Model the confirmed host cleanup whose progress-retirement response was lost.
+        self.lock.write_bytes(b"")
+        self.gh.note.pop("contract_revision")
+        before = copy.deepcopy(self.gh.note)
+        self.gh.writes.clear()
+        self.controller = self.new_controller()
+
+        result = await self.controller.begin(self.url)
+
+        self.assertEqual(result["action"], "waiting")
+        self.assertEqual(result["reason"], "policy_changed")
+        self.assertEqual(self.gh.note, before)
+        self.assertEqual(self.gh.writes, [])
 
     async def test_changed_accepted_spec_consumes_old_write_before_new_review(self):
         first = await self.controller.begin(self.url)
@@ -564,8 +631,7 @@ class ActualGitNativeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(pending["reason"], "product_decision")
                 self.assertFalse(workspace.inspect(path)["dirty"])
                 self.assertEqual(git(path, "show", "HEAD:src/main.py"), "implementation = True")
-                gh.extra_comments.append({"user": {"login": "openboa"},
-                    "body": f"hydra: decision {gh.note['attempt_id']} resolved"})
+                gh.resolve_decision(gh.note["attempt_id"], "Use the checkpointed implementation.")
                 c = controller()
                 review = await c.begin(url)
                 self.assertEqual(review["phase"], "spec_review")

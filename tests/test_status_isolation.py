@@ -25,6 +25,7 @@ class StatusGitHub(GitHub):
                 self.rows[repo].append(issue)
                 self.records[repo, number] = dict(phase='review_wait', pending_action=None,
                                                  wait_reason='remote_delivery_gates',
+                                                 contract_revision=self.cfg['revision'],
                                                  intake_digest=intake_digest(issue))
         self.discovery_error = self.progress_error = None
         self.discovery_calls, self.progress_calls = [], []

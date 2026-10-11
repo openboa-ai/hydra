@@ -76,6 +76,19 @@ keeps unfinished work and interrupted completion cleanup discoverable. Open inta
 and closed active recovery are queried separately, without scanning closed history.
 Labels do not establish successful checks, reviews or merge.
 
+`not_delegated` blocks Hydra execution; it does not erase an already delegated goal.
+The native operating task may continue read-only research, public-safe Issue preparation
+or work in an already designated private planning area, but it must not create a Hydra
+attempt, worktree, branch or product edit before the Issue is formally delegated.
+Read-only status may return `resume_hint=decision_resolved` or `replan_ready` when an
+exact current authorized marker exists and no stronger intake or policy wait applies.
+The hint requests a fresh reconciliation through `hydra_begin`; it never authorizes a
+repeated external effect.
+
+A decision marker is valid only after an authorized, non-empty companion comment of
+the form `hydra: decision <attempt-id> context` followed by its public-safe summary.
+The exact `hydra: decision <attempt-id> resolved` marker must be a later comment.
+
 One service-authored Issue comment records attempts, revisions, checkpoint, pending
 action and next step. This directs recovery; actual branch/PR/CI/provider facts
 authorize delivery. Restart reconciles effects before retry and never creates a

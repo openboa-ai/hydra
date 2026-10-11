@@ -110,8 +110,7 @@ class ScopedRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await runner.step('example/product', 4))['reason'], 'product_decision')
         self.assertEqual(self.github.note['resume_phase'], 'implementation')
         self.assertEqual(self.effects(), [])
-        self.github.extra_comments.append({'user': {'login': 'operator'},
-            'body': f"hydra: decision {self.github.note['attempt_id']} resolved"})
+        self.github.resolve_decision()
 
         self.assertEqual((await self.step())['action'], 'continue')
         self.assertTrue(self.prompts[-2].startswith('Independently review the ACTUAL specification'))

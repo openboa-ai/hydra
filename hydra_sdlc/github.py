@@ -64,6 +64,21 @@ def _marker(body, name):
     return value
 
 
+def _decision_context_marker(body):
+    value = _marker(body, "hydra-decision-context")
+    if value is None:
+        return None
+    if set(value) != {"source_attempt", "resume_attempt"}:
+        raise GitHubError("Malformed decision context marker")
+    for key in ("source_attempt", "resume_attempt"):
+        try:
+            if str(uuid.UUID(value[key])) != value[key]:
+                raise ValueError()
+        except (ValueError, AttributeError, TypeError, KeyError) as exc:
+            raise GitHubError("Malformed decision context marker") from exc
+    return value
+
+
 class GitHub:
     """The injected transport has signature (method, path, payload) -> JSON value.
 
@@ -241,6 +256,15 @@ class GitHub:
         self._validate_record(value, metadata=True)
         return value
 
+    def decision_context_attempt(self, repo, n, resume_attempt):
+        comment = self._progress_comment(repo, n)
+        if comment is None:
+            return None
+        value = _decision_context_marker(comment.get("body"))
+        if value is None or value["resume_attempt"] != resume_attempt:
+            return None
+        return value["source_attempt"]
+
     @staticmethod
     def _validate_record(record, *, metadata=False):
         allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "published_head", "pr_number", "pending_action", "pending_thread", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "pending_review_kind", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
@@ -295,11 +319,26 @@ class GitHub:
         if metadata.get("branch") not in {None, f"hydra/issue-{n}"}:
             raise GitHubError("Progress branch mismatch")
         previous = self._progress_comment(repo, n)
+        context = None
         if previous:
             old = _marker(previous.get("body"), "hydra-progress")
             if old.get("repository_id") != metadata["repository_id"] or old.get("issue_number") != n or old.get("version") != 1:
                 raise GitHubError("Existing progress identity mismatch")
             self._validate_record(old, metadata=True)
+            context = _decision_context_marker(previous.get("body"))
+        source = re.fullmatch(r"decision_context_([0-9a-f-]{36})", metadata.get("next_action") or "")
+        if source and metadata.get("resume_phase"):
+            context = {"source_attempt": source.group(1), "resume_attempt": metadata.get("attempt_id")}
+            _decision_context_marker("<!-- hydra-decision-context:v1 "
+                                     + json.dumps(context, separators=(",", ":")) + " -->")
+        elif context:
+            if not metadata.get("resume_phase"):
+                context = None
+            elif context["resume_attempt"] != metadata.get("attempt_id"):
+                context = {"source_attempt": context["source_attempt"],
+                           "resume_attempt": metadata.get("attempt_id")}
+                _decision_context_marker("<!-- hydra-decision-context:v1 "
+                                         + json.dumps(context, separators=(",", ":")) + " -->")
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
                      and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
         if not completed:
@@ -311,6 +350,9 @@ class GitHub:
         human = ["## Hydra progress", ""]
         human += [f"- {key.replace('_', ' ').capitalize()}: `{value}`" for key, value in metadata.items() if value is not None and key not in {"version", "repository_id", "issue_number"}]
         body = "\n".join(human) + "\n\n<!-- hydra-progress:v1 " + json.dumps(metadata, sort_keys=True, separators=(",", ":")) + " -->"
+        if context:
+            body += "\n<!-- hydra-decision-context:v1 " + json.dumps(
+                context, sort_keys=True, separators=(",", ":")) + " -->"
         if previous:
             result = self.api("PATCH", f"/repos/{_repo(repo)}/issues/comments/{_number(previous['id'])}", {"body": body})
         else:
