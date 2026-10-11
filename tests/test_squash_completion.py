@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from hydra_sdlc.github import GitHub, GitHubError
-from hydra_sdlc.project import (ProjectError, gate_completed_delivery, gate_squash_result,
+from hydra_sdlc.project import (ProjectError, _bound_runs, gate_completed_delivery, gate_squash_result,
                                 squash_message, squash_message_matches)
 from hydra_sdlc.runner import Runner
 from test_github import REPO, REPOSITORY, IDENTITY, owned_pr
@@ -29,6 +29,126 @@ def merged_observation():
 
 
 class SquashEvidenceTests(unittest.TestCase):
+    def complete(self, value, *, cfg=None, base=BASE, checkpoint='squash_' + MERGE):
+        return gate_completed_delivery(cfg or config(), value, HEAD, ['src/main.py'],
+                                       expected_base=base, checkpoint=checkpoint)
+
+    def test_historical_empty_association_retains_candidate_after_main_advances(self):
+        cfg, value = config(), merged_observation()
+        value['runs'][0]['pull_requests'] = []
+        cfg['revision'] = value['base_sha'] = LATER
+        self.assertEqual(self.complete(value, cfg=cfg), [])
+
+    def test_historical_empty_association_requires_exact_merged_state(self):
+        for update in [dict(merged=False), dict(merged=1), dict(merged=None),
+                       dict(state='open'), dict(merge_commit_sha=None),
+                       dict(merge_commit_sha='not-a-sha')]:
+            with self.subTest(update=update):
+                cfg, value = config(), merged_observation()
+                value['runs'][0]['pull_requests'] = []
+                value['pr'].update(update)
+                self.assertEqual(_bound_runs(cfg, value, HEAD, cfg['required_checks'][0],
+                                             historical=True), [])
+                self.assertTrue(self.complete(value))
+
+    def test_historical_association_missing_malformed_or_wrong_stays_rejected(self):
+        good = observation()['runs'][0]['pull_requests'][0]
+        wrong = []
+        for path, replacement in [('number', 8), ('head.sha', LATER),
+                                  ('head.repo.id', 999), ('base.sha', 'invalid'),
+                                  ('base.repo.id', 999)]:
+            item = copy.deepcopy(good)
+            target = item
+            keys = path.split('.')
+            for key in keys[:-1]:
+                target = target[key]
+            target[keys[-1]] = replacement
+            wrong.append([item])
+        for associations in [None, {}, '', False, [good, good], [{}], *wrong]:
+            with self.subTest(associations=associations):
+                value = merged_observation()
+                value['runs'][0]['pull_requests'] = associations
+                self.assertIn('check_identity_missing:Unit tests', self.complete(value))
+        value = merged_observation()
+        del value['runs'][0]['pull_requests']
+        self.assertIn('check_identity_missing:Unit tests', self.complete(value))
+        self.assertEqual(self.complete(merged_observation()), [])
+
+    def test_historical_empty_association_preserves_each_producer_identity(self):
+        changes = [(['runs', 0, 'workflow_id'], 999),
+                   (['runs', 0, 'path'], '.github/workflows/other.yml'),
+                   (['runs', 0, 'repository', 'id'], 999),
+                   (['runs', 0, 'event'], 'workflow_dispatch'),
+                   (['runs', 0, 'head_sha'], LATER),
+                   (['runs', 0, 'head_branch'], 'hydra/issue-9'),
+                   (['pr', 'head', 'repo', 'id'], 999),
+                   (['pr', 'base', 'repo', 'id'], 999),
+                   (['runs', 0, 'jobs', 0, 'name'], 'Other job'),
+                   (['runs', 0, 'jobs', 0, 'head_sha'], LATER),
+                   (['runs', 0, 'jobs', 0, 'status'], 'in_progress'),
+                   (['runs', 0, 'jobs', 0, 'conclusion'], 'failure'),
+                   (['runs', 0, 'jobs', 0, 'check_run_url'], 'https://api.github.com/repos/other/repo/check-runs/90'),
+                   (['checks', 0, 'id'], 91),
+                   (['checks', 0, 'check_suite', 'id'], 81),
+                   (['checks', 0, 'app', 'id'], 999),
+                   (['checks', 0, 'head_sha'], LATER),
+                   (['checks', 0, 'name'], 'Other job'),
+                   (['checks', 0, 'conclusion'], 'failure')]
+        for path, replacement in changes:
+            with self.subTest(path=path):
+                value = merged_observation()
+                value['runs'][0]['pull_requests'] = []
+                target = value
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = replacement
+                self.assertTrue(self.complete(value))
+
+    def test_historical_empty_association_does_not_bypass_target_reusable_pin(self):
+        cfg, value = config(), merged_observation()
+        binding = cfg['required_checks'][0]
+        binding['events'] = ['pull_request_target', 'push']
+        value['runs'][0].update(event='pull_request_target', pull_requests=[])
+        self.assertIn('check_identity_missing:Unit tests', self.complete(value, cfg=cfg))
+        binding.update(reusable_workflow='example/controls/.github/workflows/check.yml',
+                       reusable_sha=LATER)
+        value['runs'][0]['referenced_workflows'] = [{
+            'path': binding['reusable_workflow'] + '@' + LATER, 'sha': LATER}]
+        self.assertEqual(self.complete(value, cfg=cfg), [])
+        value['runs'][0]['referenced_workflows'][0]['sha'] = BASE
+        self.assertIn('check_reusable_identity_missing:Unit tests', self.complete(value, cfg=cfg))
+
+    def test_historical_empty_association_newer_failed_rerun_blocks(self):
+        value = merged_observation()
+        value['runs'][0]['pull_requests'] = []
+        rerun = copy.deepcopy(value['runs'][0])
+        rerun['run_attempt'] = 2
+        rerun['conclusion'] = 'failure'
+        rerun['jobs'][0]['conclusion'] = 'failure'
+        value['runs'].append(rerun)
+        self.assertIn('check_job_not_successful:Unit tests', self.complete(value))
+
+    def test_historical_empty_association_preserves_review_receipt_and_squash_gates(self):
+        changes = [(['provider_comments'], []),
+                   (['threads'], [{'isResolved': False}]),
+                   (['pr', 'head', 'sha'], LATER),
+                   (['head_sha'], LATER),
+                   (['merge_commit', 'parents'], [{'sha': LATER}]),
+                   (['merge_commit', 'tree', 'sha'], LATER)]
+        for path, replacement in changes:
+            with self.subTest(path=path):
+                value = merged_observation()
+                value['runs'][0]['pull_requests'] = []
+                target = value
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = replacement
+                self.assertTrue(self.complete(value))
+        value = merged_observation()
+        value['runs'][0]['pull_requests'] = []
+        self.assertIn('squash_method_unknown', self.complete(value, checkpoint=None))
+        self.assertIn('squash_expected_base_unknown', self.complete(value, base=None))
+
     def test_historical_result_and_receipt_remain_bound_after_main_advances(self):
         cfg, value = config(), merged_observation()
         cfg['revision'] = value['base_sha'] = LATER
@@ -176,6 +296,81 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.step())['action'], 'continue')
         self.assertEqual((await self.step())['reason'], 'remote_delivery_gates')
         self.github.remote_pending = False
+
+    async def merged_with_empty_association(self):
+        await self.opened_pr()
+        self.assertEqual((await self.step())['action'], 'continue')
+        self.assertTrue(self.github.pr['merged'])
+        self.assertEqual(self.github.note['checkpoint'], 'squash_' + MERGE)
+        self.github.branch = None
+        self.github.cfg['revision'] = MERGE
+        def historical(value):
+            value['runs'][0]['pull_requests'] = []
+            value['base_sha'] = MERGE
+            return value
+        self.github.transform_observation = historical
+
+    async def test_empty_historical_association_restart_closes_once_without_model_or_merge(self):
+        await self.merged_with_empty_association()
+        calls, writes = len(self.calls), len(self.github.writes)
+        observed = []
+        original = self.github.observe_commit
+        def post_merge(repo, sha):
+            observed.append(sha)
+            return original(repo, sha)
+        self.github.observe_commit = post_merge
+        self.assertEqual((await self.step())['action'], 'completed')
+        self.assertEqual(observed, [MERGE, MERGE])
+        self.assertEqual((await self.step())['action'], 'completed')
+        self.assertEqual(observed, [MERGE] * 4)
+        self.assertEqual(self.github.work['state'], 'closed')
+        self.assertEqual(len(self.calls), calls)
+        self.assertEqual([x[0] for x in self.github.writes[writes:] if x[0] != 'record'], ['close'])
+        self.assertEqual(len([x for x in self.github.writes if x[0] == 'merge']), 1)
+        self.assertEqual(self.github.note['checkpoint'], 'squash_' + MERGE)
+
+    async def test_empty_historical_association_pending_or_failed_main_checks_wait(self):
+        await self.merged_with_empty_association()
+        calls, writes = len(self.calls), len(self.github.writes)
+        original = self.github.observe_commit
+        for status, conclusion in [('in_progress', None), ('completed', 'failure')]:
+            with self.subTest(status=status, conclusion=conclusion):
+                def post_merge(repo, sha):
+                    self.assertEqual(sha, MERGE)
+                    value = original(repo, sha)
+                    value['runs'][0].update(status=status, conclusion=conclusion)
+                    value['runs'][0]['jobs'][0].update(status=status, conclusion=conclusion)
+                    value['checks'][0].update(status=status, conclusion=conclusion)
+                    return value
+                self.github.observe_commit = post_merge
+                self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+                self.assertEqual(self.github.work['state'], 'open')
+        self.assertEqual(len(self.calls), calls)
+        self.assertFalse(any(x[0] != 'record' for x in self.github.writes[writes:]))
+        self.github.observe_commit = original
+        self.assertEqual((await self.step())['action'], 'completed')
+        self.assertEqual([x[0] for x in self.github.writes[writes:] if x[0] != 'record'], ['close'])
+
+    async def test_empty_historical_association_failed_rerun_before_close_still_holds(self):
+        await self.merged_with_empty_association()
+        calls, writes = len(self.calls), len(self.github.writes)
+        historical = self.github.transform_observation
+        def on_record(record):
+            if record.get('pending_action') == 'close_issue':
+                def failed_rerun(value):
+                    value = historical(value)
+                    rerun = copy.deepcopy(value['runs'][0])
+                    rerun['run_attempt'] = 2
+                    rerun['conclusion'] = 'failure'
+                    rerun['jobs'][0]['conclusion'] = 'failure'
+                    value['runs'].append(rerun)
+                    return value
+                self.github.transform_observation = failed_rerun
+        self.github.on_record = on_record
+        self.assertEqual((await self.step())['reason'], 'completion_evidence_missing')
+        self.assertEqual(self.github.work['state'], 'open')
+        self.assertEqual(len(self.calls), calls)
+        self.assertFalse(any(x[0] != 'record' for x in self.github.writes[writes:]))
 
     async def test_lost_squash_response_and_readback_recover_after_restart_without_remerge(self):
         await self.opened_pr()

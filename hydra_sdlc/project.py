@@ -157,7 +157,13 @@ def _bound_runs(config, observation, sha, binding, *, post_merge=False, historic
                     or raw.get("base", {}).get("repo", {}).get("id") != config["repository_id"]):
                 continue
             associations = run.get("pull_requests")
-            if associations == [] and event == "pull_request_target":
+            if (associations == [] and historical and event == "pull_request"
+                    and raw.get("merged") is True and raw.get("state") == "closed"
+                    and _sha(raw.get("merge_commit_sha"))):
+                # GitHub may omit a merged PR's association from its candidate
+                # run. Historical completion still binds every producer field.
+                pass
+            elif associations == [] and event == "pull_request_target":
                 # GitHub's observed target-event producer exposes the candidate
                 # head/branch but no PR association. Only a contract-pinned
                 # reusable producer can attest that event's exact candidate.

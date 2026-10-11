@@ -323,6 +323,17 @@ class ProjectTests(unittest.TestCase):
         obs['runs'][0]['pull_requests'][0]['head']['sha'] = BASE
         self.assertTrue(gate_delivery(cfg, obs, HEAD, ['src/main.py']))
 
+    def test_empty_pull_request_association_never_authorizes_live_checks(self):
+        for merged in (False, True):
+            with self.subTest(merged=merged):
+                cfg, obs = config(), observation()
+                obs['pr'].update(merged=merged, state='closed' if merged else 'open',
+                                 merge_commit_sha=MERGE)
+                obs['runs'][0]['pull_requests'] = []
+                missing = 'check_identity_missing:Unit tests'
+                self.assertIn(missing, gate_checks(cfg, obs, HEAD))
+                self.assertIn(missing, gate_delivery(cfg, obs, HEAD, ['src/main.py']))
+
     def test_observed_target_producer_and_codex_summary_contract(self):
         # Public API fields from ouroboros PR 2 / run 37883341081. This is a
         # historical producer-format fixture, not permission to merge a PR.
