@@ -276,11 +276,12 @@ class Runner:
                    for c in self.github.comments(repo, number))
 
     def _decision_context_before(self, comments, index, config, attempt):
-        prefix = f"hydra: decision {attempt} context\n"
+        prefix = f"hydra: decision {attempt} context"
         for prior in reversed(comments[:index]):
             body = prior.get("body", "").strip()
+            remainder = body[len(prefix):] if body.startswith(prefix) else ""
             if ((prior.get("user") or {}).get("login") in config["authorized_actors"]
-                    and body.startswith(prefix) and body[len(prefix):].strip()):
+                    and remainder and remainder[0].isspace() and remainder.strip()):
                 return body
         return None
 
@@ -371,6 +372,16 @@ class Runner:
                     "design", "implementation", "correction", "spec_review", "change_review"}):
             return None
         return self._resolution_marker(repo, number, config, record)
+
+    def _policy_changed(self, repo, config, record):
+        if not record or config.get("_completion_only"):
+            return False
+        if not record.get("contract_revision"):
+            return True
+        if record["contract_revision"] == config["revision"]:
+            return False
+        old = self.github.file(repo, ".hydra.toml", record["contract_revision"])
+        return old["sha"] != config["blob_sha"]
 
     def _branch_boundary(self, repo, number, record, *, previously_owned=True):
         remote = self.github.ref(repo, record["branch"])
@@ -673,6 +684,10 @@ class Runner:
                 return self._wait(repo, number, record, reason, phase="uncertain")
             # Closed/paused tasks are observations, not a reason to write or take ownership.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+        if record and not record.get("contract_revision"):
+            # An authenticated but unpinned record cannot inherit today's policy.
+            # Preserve it unchanged for diagnosis and refuse model or delivery work.
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
         intake = parse_intake({**issue, "state": "open"} if closing_recovery else issue, config)
         config = {**config, "_scoped_spec": intake["spec"]}
         boundary, _, _ = self._branch_boundary(repo, number, record, previously_owned=previously_owned)
@@ -738,12 +753,10 @@ class Runner:
                 record.update(pending_action=None, phase="checkpoint",
                               checkpoint="interrupted_committed", wait_reason=None)
         # Pin policy contents, allowing default-branch advancement with the same config blob.
-        if record.get("contract_revision") != config["revision"]:
-            old = self.github.file(repo, ".hydra.toml", record["contract_revision"])
-            if old["sha"] != config["blob_sha"]:
-                if recover_dirty:
-                    return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
-                return self._wait(repo, number, record, "policy_changed")
+        if self._policy_changed(repo, config, record):
+            if recover_dirty:
+                return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
+            return self._wait(repo, number, record, "policy_changed")
         if recover_dirty:
             # Settle explicitly stopped writes before PR/completion shortcuts
             # can overlook local changes or their accepted-spec binding.
@@ -1453,7 +1466,9 @@ class Runner:
                 bound = {**config, "intake_digest": progress.get("intake_digest")} if progress else config
                 target = config["repository"]
                 try:
-                    reason = "intake_unbound" if progress and not progress.get("intake_digest") else self._latest(target, issue["number"], bound)
+                    reason = ("intake_unbound" if progress and not progress.get("intake_digest")
+                              else "policy_changed" if self._policy_changed(target, config, progress)
+                              else self._latest(target, issue["number"], bound))
                 except (ValueError, RuntimeError, OSError):
                     reason = "intake_unavailable"
                 if reason == "issue_closed" and progress and (progress.get("pending_action") == "close_issue"

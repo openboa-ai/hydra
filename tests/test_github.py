@@ -435,6 +435,11 @@ class GitHubTests(unittest.TestCase):
         self.assertIn("<!-- hydra-decision-context:v1 ", body)
 
         own = {"id": 77, "user": IDENTITY, "body": body}
+        direct_finished = {**record, "resume_phase": None}
+        direct = self.progress_fake([own])
+        GitHub(transport=direct).record(REPO, 4, direct_finished)
+        self.assertNotIn("<!-- hydra-decision-context:v1 ", direct.calls[-1][2]["body"])
+
         updated = {**record, "next_action": "spec_review"}
         second = self.progress_fake([own])
         GitHub(transport=second).record(REPO, 4, updated)
@@ -444,6 +449,21 @@ class GitHubTests(unittest.TestCase):
         reader = GitHub(transport=self.progress_fake([own]))
         self.assertEqual(reader.decision_context_attempt(REPO, 4, record["attempt_id"]),
                          old_attempt)
+
+        rotated = {**updated, "attempt_id": "32345678-1234-1234-1234-123456789abc"}
+        third = self.progress_fake([own])
+        GitHub(transport=third).record(REPO, 4, rotated)
+        rotated_body = third.calls[-1][2]["body"]
+        own = {"id": 77, "user": IDENTITY, "body": rotated_body}
+        reader = GitHub(transport=self.progress_fake([own]))
+        self.assertEqual(reader.decision_context_attempt(REPO, 4, rotated["attempt_id"]),
+                         old_attempt)
+        self.assertIsNone(reader.decision_context_attempt(REPO, 4, record["attempt_id"]))
+
+        finished = {**rotated, "resume_phase": None}
+        fourth = self.progress_fake([own])
+        GitHub(transport=fourth).record(REPO, 4, finished)
+        self.assertNotIn("<!-- hydra-decision-context:v1 ", fourth.calls[-1][2]["body"])
 
     def test_delivery_retry_record_round_trips_independently_of_model_action(self):
         fields = {'delivery_action': 'merge', 'delivery_attempt': 3, 'delivery_head': HEAD,

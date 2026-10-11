@@ -21,20 +21,29 @@ Result: `candidate_ready` for implementation. This review accepts the specificat
 boundary.
 
 The implementation was independently re-reviewed after each material correction. The
-review covered the exact decision-context protocol, the separation between a read-only
-resume hint and ownership recovery, bounded selection of the current attempt's context,
-rollback compatibility through an authenticated auxiliary marker outside the v1 progress
-payload, and a compatibility fixture that does not depend on local Git history. The final
-review found no material issue and returned `candidate_ready` for commit and pull-request
-review. Its independent full suite ran 677 tests and returned `OK` with 27 skipped.
+initial review covered the exact decision-context protocol, the separation between a
+read-only resume hint and ownership recovery, bounded selection of the current attempt's
+context, rollback compatibility through an authenticated auxiliary marker outside the v1
+progress payload, and a compatibility fixture independent of local Git history. Its full
+suite ran 677 tests and returned `OK` with 27 skipped.
 
-Pull-request Code Review then found one P2 recovery gap: after attempt rotation, removal
-of the preserved source decision context could allow an unrelated recent comment to reach
-a resumed worker. The correction makes both the base runner and native runner wait with
-`decision_context_missing` before model dispatch, native assignment registration, or a
-native task response. Restoring the exact source-attempt context resumes the same work.
-An independent correction review inspected both execution paths and their regressions,
-found no further issue, and returned `candidate_ready`.
+Pull-request review then identified recovery boundaries that required correction:
+
+- both runner paths now stop with `decision_context_missing` if the exact preserved source
+  context disappears after attempt rotation;
+- status suppresses a resume hint when the pinned policy changed;
+- whitespace-delimited inline, CRLF and tab decision summaries are accepted while
+  ambiguous prefixes are rejected;
+- the source context follows repeated recovery-attempt rotations and is removed when the
+  resumed phase completes;
+- progress without a policy revision fails closed before model work or an external write;
+- native begin performs the same policy-pin check before retiring a stopped assignment.
+
+Independent review reproduced and verified the edge cases, including direct completion
+with the original context action still present, missing policy pins in both runner and
+native entry paths, and valid healthy status fixtures. The final review found no remaining
+actionable issue and returned `candidate_ready`. The focused Runner, Native and GitHub
+suites covered 143 tests.
 
 This result does not establish merge, installation, scheduled advancement, or a real
 native question-answer-resumption cycle. Those remain delivery and operational evidence.

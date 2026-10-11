@@ -419,6 +419,30 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         with coordinator_lock(self.lock):
             pass
 
+    async def test_begin_does_not_retire_stopped_assignment_without_policy_pin(self):
+        assignment = await self.controller.begin(self.url)
+        def lose_after_stopped_record(record):
+            if record.get("native_outcome") == "stopped":
+                self.gh.on_record = lambda record: None
+                raise RuntimeError("response lost")
+        self.gh.on_record = lose_after_stopped_record
+        with self.assertRaisesRegex(RuntimeError, "response lost"):
+            await self.result(assignment, "stopped")
+        self.assertEqual(self.gh.note["native_outcome"], "stopped")
+        # Model the confirmed host cleanup whose progress-retirement response was lost.
+        self.lock.write_bytes(b"")
+        self.gh.note.pop("contract_revision")
+        before = copy.deepcopy(self.gh.note)
+        self.gh.writes.clear()
+        self.controller = self.new_controller()
+
+        result = await self.controller.begin(self.url)
+
+        self.assertEqual(result["action"], "waiting")
+        self.assertEqual(result["reason"], "policy_changed")
+        self.assertEqual(self.gh.note, before)
+        self.assertEqual(self.gh.writes, [])
+
     async def test_changed_accepted_spec_consumes_old_write_before_new_review(self):
         first = await self.controller.begin(self.url)
         implementation = await self.result(first)

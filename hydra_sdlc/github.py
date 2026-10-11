@@ -327,12 +327,18 @@ class GitHub:
             self._validate_record(old, metadata=True)
             context = _decision_context_marker(previous.get("body"))
         source = re.fullmatch(r"decision_context_([0-9a-f-]{36})", metadata.get("next_action") or "")
-        if source:
+        if source and metadata.get("resume_phase"):
             context = {"source_attempt": source.group(1), "resume_attempt": metadata.get("attempt_id")}
             _decision_context_marker("<!-- hydra-decision-context:v1 "
                                      + json.dumps(context, separators=(",", ":")) + " -->")
-        elif context and context["resume_attempt"] != metadata.get("attempt_id"):
-            context = None
+        elif context:
+            if not metadata.get("resume_phase"):
+                context = None
+            elif context["resume_attempt"] != metadata.get("attempt_id"):
+                context = {"source_attempt": context["source_attempt"],
+                           "resume_attempt": metadata.get("attempt_id")}
+                _decision_context_marker("<!-- hydra-decision-context:v1 "
+                                         + json.dumps(context, separators=(",", ":")) + " -->")
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
                      and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
         if not completed:
