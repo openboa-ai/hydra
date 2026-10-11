@@ -1,7 +1,7 @@
 # Goal-driven native continuation specification review
 
 Reviewed specification SHA-256:
-`191a6ef3a0ba6a37635ae8f19283fdd861b13ec1bdef2b4bd37810b8d3d6d596`.
+`b5e2aab537d05fd9d64cd44cf7e736f0657fae00f70145c31fce2a06c90712d0`.
 
 Independent review initially identified four blocking ambiguities: decision content
 was not tied to resumption, preparation under `not_delegated` lacked a write boundary,
@@ -18,5 +18,15 @@ The accepted revision resolves them by:
   completion reconciliation, and uncertain external effects.
 
 Result: `candidate_ready` for implementation. This review accepts the specification
-boundary; it does not accept implementation, tests, installation, scheduled progress,
-or native question/resumption behavior.
+boundary.
+
+The implementation was independently re-reviewed after each material correction. The
+review covered the exact decision-context protocol, the separation between a read-only
+resume hint and ownership recovery, bounded selection of the current attempt's context,
+rollback compatibility through an authenticated auxiliary marker outside the v1 progress
+payload, and a compatibility fixture that does not depend on local Git history. The final
+review found no material issue and returned `candidate_ready` for commit and pull-request
+review. Its independent full suite ran 677 tests and returned `OK` with 27 skipped.
+
+This result does not establish merge, installation, scheduled advancement, or a real
+native question-answer-resumption cycle. Those remain delivery and operational evidence.

@@ -19,6 +19,15 @@ Within a delegated goal, propose or create a bounded Issue and continue. A new
 direction requires evidence, options, recommended experiment and the exact decision.
 Do not invent features for projects whose product planning is pending.
 
+Issue completion is not goal completion. After a delivered outcome, reconcile the
+goal and choose its next bounded result in the same turn when possible. If an open
+Issue is `not_delegated`, do not allocate an attempt, workspace, branch or ready label.
+Continue only preparation already allowed by the goal: read repositories and GitHub,
+record public-safe findings on the existing Issue, or use an already designated private
+planning area. Do not edit a product checkout before formal delegation. Avoid duplicate
+Issues, documents and workers. A heartbeat re-enters an ended turn; it is not the normal
+way to advance every immediately available step.
+
 Use native create_thread/read_thread/wait_threads/send_message_to_thread for
 outcome tasks only when the user explicitly delegated creation and messaging.
 Connect the Issue and goal in each task; use the owned workspace returned by Hydra.
@@ -50,6 +59,15 @@ options and recommendation. Record only a publishable actual user decision in
 the Issue, including the exact-attempt resolution marker expected by Hydra.
 Do not manufacture a human decision or substitute chat answers for GitHub approval.
 The operating task may continue another eligible project while an answer is pending.
+The checkpoint itself is not a delivered question. For attempt `<id>`, record a
+non-empty public-safe comment beginning `hydra: decision <id> context`, then record
+`hydra: decision <id> resolved` in a later comment. A generic earlier comment does
+not count; raw private answer text stays in the native task.
+If no safe operational summary can be published, do not publish the marker. Before
+an attempt exists, ask a planning question without manufacturing Hydra progress.
+Repeated current-attempt markers are idempotent; stale markers cannot resume a new
+attempt. A `resume_hint` from status means call begin to reconcile current facts, not
+that an external effect is safe to repeat.
 
 An interrupted assignment retains its host admission ticket. Inspect/stop the
 previous native task and its owned processes before submitting stopped with its
@@ -62,6 +80,10 @@ Reconcile remote effects before retrying. Unknown GitHub results remain waits.
 Report goal, selected work/reason, stage, latest verification, PR/merge state,
 next action and required decision. Verify actual merge and post-merge checks before
 calling an Issue complete. Record unmeasured time/cost as unknown.
+
+Before ending a turn, state the next action and its real wait condition. If the next
+action is available now, continue it instead of asking for a generic proceed message.
+Do not repeat completed research or create proposals merely to appear active.
 
 After real task and recovery qualification, use one native 30-minute heartbeat in
 the operating chat. Quiet while unchanged; notify completion, meaningful failure or

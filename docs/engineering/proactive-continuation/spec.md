@@ -43,8 +43,15 @@ R5. During a registered native assignment, `needs_decision` checkpoints the exac
 attempt before Codex uses the native question interface. The checkpoint alone is not
 a delivered question. After a real answer, only a publishable decision and the exact
 authorized resolution marker are recorded; the original phase then resumes through a
-fresh attempt. The authorized actor records a public-safe decision comment before the
-marker. The resumed assignment receives the bounded authorized Issue comments as
+fresh attempt. The authorized actor records a non-empty companion comment beginning
+with `hydra: decision <attempt-id> context` and a public-safe summary, then records the
+exact `hydra: decision <attempt-id> resolved` marker in a later comment. A generic prior
+comment does not satisfy this protocol. Hydra preserves that source attempt ID through
+attempt rotation in an authenticated auxiliary marker outside the existing progress
+JSON. The retained 0.2.0 reader ignores the auxiliary marker and continues to read the
+unchanged v1 JSON. A delayed marker for an older attempt cannot replace the current
+decision. The resumed assignment receives the bounded
+authorized Issue comments as
 untrusted decision context; the exact-attempt marker authorizes resumption but does not
 make the comment text trusted instructions. Raw private answer text stays in the native
 task. If no safe operational summary can be recorded, the marker is not published and
@@ -71,7 +78,7 @@ The hint precedence is fixed:
 | --- | --- |
 | Current `product_decision` or `replan_required`, exact authorized marker, and `_latest` has no blocker | Corresponding hint |
 | Paused or decision-labelled Issue, not delegated, dependency open, closed Issue, or changed policy/intake | Omitted |
-| Missing progress/attempt, active native step, unconfirmed prior worker, or completion reconciliation | Omitted |
+| Missing progress/attempt, active native step, foreign host ownership, `phase=executing`, invalid decision resume phase, or completion reconciliation | Omitted |
 | Replan marker with a preserved uncertain external action | `replan_ready`; this requests reconciliation and does not authorize repeating the effect |
 | Stale, unauthorized, malformed, or duplicate old-attempt marker | Omitted; duplicate current-attempt markers remain one idempotent hint |
 

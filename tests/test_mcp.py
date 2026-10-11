@@ -11,7 +11,8 @@ from hydra_sdlc.mcp import create_server
 
 class ControllerFixture:
     def status(self):
-        return [{"repository": "example/product", "wait_reason": "human_decision"}]
+        return [{"repository": "example/product", "wait_reason": "product_decision",
+                 "resume_hint": "decision_resolved"}]
 
     async def begin(self, url):
         if url != "https://github.com/example/product/issues/4":
@@ -50,7 +51,8 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             result = await client.call_tool("hydra_status", {})
             self.assertFalse(result.is_error)
             data = result.structured_content or json.loads(result.content[0].text)
-            self.assertEqual(data["projects"][0]["wait_reason"], "human_decision")
+            self.assertEqual(data["projects"][0]["wait_reason"], "product_decision")
+            self.assertEqual(data["projects"][0]["resume_hint"], "decision_resolved")
 
 
 if __name__ == "__main__":

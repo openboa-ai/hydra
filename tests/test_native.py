@@ -355,11 +355,16 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.ws.dirty)
         self.assertEqual(self.gh.note["resume_phase"], "implementation")
         old_attempt = self.gh.note["attempt_id"]
-        self.gh.extra_comments.append({"user": {"login": "openboa"},
-            "body": f"hydra: decision {old_attempt} resolved"})
+        self.gh.extra_comments.append({"user": {"login": "operator"},
+                                       "body": "noise:" + "x" * 30000})
+        self.gh.resolve_decision(old_attempt, "Continue the checkpointed implementation.")
+        stale = "00000000-0000-0000-0000-000000000001"
+        self.gh.resolve_decision(stale, "STALE-CONTEXT " + "z" * 30000)
         result = await self.controller.begin(self.url)
         self.assertEqual(result["phase"], "implementation")
         self.assertNotEqual(result["attempt_id"], old_attempt)
+        self.assertIn("Continue the checkpointed implementation.", result["prompt"])
+        self.assertNotIn("STALE-CONTEXT", result["prompt"])
 
     async def test_stopped_checkpoint_retries_after_response_loss(self):
         assignment = await self.controller.begin(self.url)
@@ -564,8 +569,7 @@ class ActualGitNativeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(pending["reason"], "product_decision")
                 self.assertFalse(workspace.inspect(path)["dirty"])
                 self.assertEqual(git(path, "show", "HEAD:src/main.py"), "implementation = True")
-                gh.extra_comments.append({"user": {"login": "openboa"},
-                    "body": f"hydra: decision {gh.note['attempt_id']} resolved"})
+                gh.resolve_decision(gh.note["attempt_id"], "Use the checkpointed implementation.")
                 c = controller()
                 review = await c.begin(url)
                 self.assertEqual(review["phase"], "spec_review")

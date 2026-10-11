@@ -6,6 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
+from fixtures_hydra_0_2_0_progress import read_progress as read_progress_0_2_0
 from hydra_sdlc.github import GitHub, GitHubError
 
 
@@ -417,6 +418,32 @@ class GitHubTests(unittest.TestCase):
                          {'pending_thread': 'a' * 201}]:
             with self.subTest(mutation=mutation), self.assertRaises(GitHubError):
                 GitHub(transport=fake).record(REPO, 4, {**record, **mutation})
+
+    def test_decision_context_progress_is_readable_by_retained_0_2_0_runtime(self):
+        old_attempt = "12345678-1234-1234-1234-123456789abc"
+        record = {
+            "attempt_id": "22345678-1234-1234-1234-123456789abc",
+            "host_alias": "host-a", "phase": "ready",
+            "next_action": f"decision_context_{old_attempt}",
+            "resume_phase": "implementation",
+        }
+        fake = self.progress_fake([])
+        GitHub(transport=fake).record(REPO, 4, record)
+        body = fake.calls[-1][2]["body"]
+        self.assertEqual(read_progress_0_2_0(body, 123, 4)["attempt_id"],
+                         record["attempt_id"])
+        self.assertIn("<!-- hydra-decision-context:v1 ", body)
+
+        own = {"id": 77, "user": IDENTITY, "body": body}
+        updated = {**record, "next_action": "spec_review"}
+        second = self.progress_fake([own])
+        GitHub(transport=second).record(REPO, 4, updated)
+        carried = second.calls[-1][2]["body"]
+        self.assertEqual(read_progress_0_2_0(carried, 123, 4)["next_action"], "spec_review")
+        own = {"id": 77, "user": IDENTITY, "body": carried}
+        reader = GitHub(transport=self.progress_fake([own]))
+        self.assertEqual(reader.decision_context_attempt(REPO, 4, record["attempt_id"]),
+                         old_attempt)
 
     def test_delivery_retry_record_round_trips_independently_of_model_action(self):
         fields = {'delivery_action': 'merge', 'delivery_attempt': 3, 'delivery_head': HEAD,
