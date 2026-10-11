@@ -51,6 +51,45 @@ class SquashEvidenceTests(unittest.TestCase):
                                              historical=True), [])
                 self.assertTrue(self.complete(value))
 
+    def test_historical_same_head_and_branch_fork_run_cannot_attest_owned_pr(self):
+        value = merged_observation()
+        run = value['runs'][0]
+        run['pull_requests'] = []
+        self.assertEqual(self.complete(value), [])
+        run['head_repository'] = {'id': 999, 'full_name': 'other/product', 'fork': True}
+        self.assertEqual(run['repository']['id'], value['pr']['head']['repo']['id'])
+        self.assertEqual(run['head_sha'], value['pr']['head']['sha'])
+        self.assertEqual(run['head_branch'], value['pr']['head']['ref'])
+        self.assertEqual(self.complete(value), ['check_identity_missing:Unit tests'])
+
+    def test_historical_empty_association_requires_exact_integer_head_repository(self):
+        for head_repository in [None, [], '', 123, {}, {'id': None}, {'id': True},
+                                {'id': '123'}, {'id': 123.0}, {'id': 999}]:
+            with self.subTest(head_repository=head_repository):
+                value = merged_observation()
+                value['runs'][0].update(pull_requests=[], head_repository=head_repository)
+                self.assertEqual(self.complete(value), ['check_identity_missing:Unit tests'])
+        value = merged_observation()
+        del value['runs'][0]['head_repository']
+        self.assertEqual(self.complete(value), [])  # Populated association path is unchanged.
+        value['runs'][0]['pull_requests'] = []
+        self.assertEqual(self.complete(value), ['check_identity_missing:Unit tests'])
+
+    def test_historical_fork_success_cannot_hide_latest_owned_failed_run(self):
+        value = merged_observation()
+        value['runs'][0]['pull_requests'] = []
+        for number, repository_id, conclusion in [(2, 123, 'failure'), (3, 999, 'success')]:
+            run = copy.deepcopy(value['runs'][0])
+            run.update(id=50 + number, run_number=number, check_suite_id=80 + number,
+                       head_repository={'id': repository_id}, conclusion=conclusion)
+            run['jobs'][0].update(id=90 + number, conclusion=conclusion,
+                check_run_url=f'https://api.github.com/repos/example/product/check-runs/{90 + number}')
+            check = copy.deepcopy(value['checks'][0])
+            check.update(id=90 + number, check_suite={'id': 80 + number}, conclusion=conclusion)
+            value['runs'].append(run)
+            value['checks'].append(check)
+        self.assertEqual(self.complete(value), ['check_job_not_successful:Unit tests'])
+
     def test_historical_association_missing_malformed_or_wrong_stays_rejected(self):
         good = observation()['runs'][0]['pull_requests'][0]
         wrong = []

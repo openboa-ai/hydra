@@ -4,12 +4,16 @@ Date: 2026-10-11. Base: `679c3d0cd7d71beaa9cbfe33b35e8818e1d14c4e`.
 Accepted specification SHA-256:
 `bcce542c16e9996f813110b1b1f828f760c5b3cd746c8775a9a66e2588d2f02b`.
 
-## Change and local evidence
+## Change and initial local evidence
 
 Only the historical `pull_request` association case in `project._bound_runs`
 changes. An explicitly empty array is eligible only for an observed closed,
 merged PR with a valid merge SHA. Existing producer, check, review and squash
 evidence requirements remain in place. No Runner, workflow or policy changes.
+
+The following initial results apply to revision
+`a4e44faa6cb060b67951040c2bf0386e9b6642b3`, before the head-repository review
+correction below; they do not establish the corrected revision's full-suite result.
 
 Tests ran on macOS with Python 3.14.2 through the task-owned storage wrapper.
 Each invocation printed and asserted that `hydra_sdlc.project.__file__` resolved
@@ -49,6 +53,28 @@ or errors. This is not a warning-free test-output claim.
 Independent read-only review of the frozen source and regression diff found no
 blocking issue against the accepted specification. This is local source review,
 not a GitHub provider review or CI result.
+
+## Head-repository review correction
+
+Subsequent Code Review identified a missing producer-repository binding in the
+new historical exception. That exception now requires `head_repository` to be an
+object whose `id` is an exact integer matching the registered repository ID.
+Populated association checks, live gates and the target-event reusable producer
+path are unchanged. The observed successful run `38097834649` exposes the expected
+integer head-repository ID `1411114385` for `openboa-ai/ouroboros`.
+
+Two new regressions failed against the initial source: a same-head/same-branch
+fork run was accepted, and a newer fork success hid an owned failed run. Both now
+reject that evidence. Missing, null, non-object, absent-ID, boolean, string,
+floating-point and foreign head-repository values also remain ineligible, while
+the owned-repository positive control passes.
+
+Current focused verification (`test_project`, `test_squash_completion`,
+`test_runner`): **111 passed, 0 skipped, 0.369 s**. The checkout module assertion
+and task-owned storage wrapper were retained. Full-suite verification of this
+correction and current-head CI/provider reviews are pending at this document's
+freeze; the initial revision's full-suite result above is not substituted for
+them.
 
 ## Remaining delivery evidence
 

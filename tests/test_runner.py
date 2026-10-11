@@ -108,6 +108,7 @@ class GitHub:
             c['head_sha'] = head
         for r in value['runs']:
             r['repository']['id'] = self.cfg['repository_id']
+            r['head_repository']['id'] = self.cfg['repository_id']
             for side in ('head', 'base'):
                 r['pull_requests'][0][side]['repo']['id'] = self.cfg['repository_id']
             r['head_sha'] = head
