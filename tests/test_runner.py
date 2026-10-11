@@ -813,6 +813,49 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(current, attempt)
         self.assertEqual((await self.runner().step('example/product', 4))['reason'], 'product_decision')
 
+    async def test_rotated_attempt_waits_if_its_preserved_decision_context_disappears(self):
+        await self.publish()
+        self.github.note.update(phase='waiting', wait_reason='product_decision',
+                                resume_phase='implementation')
+        source_attempt = self.github.note['attempt_id']
+        self.github.resolve_decision(source_attempt, 'CURRENT-DECISION')
+
+        # Stop after begin rotates the attempt but before a resumed model dispatch.
+        self.github.on_record = lambda record: setattr(
+            self, 'stop', True) if (record.get('next_action') or '').startswith(
+                'decision_context_') else None
+        self.assertEqual((await self.runner().step('example/product', 4))['reason'],
+                         'stop_requested')
+        self.github.on_record = lambda record: None
+        resume_attempt = self.github.note['attempt_id']
+        self.assertNotEqual(resume_attempt, source_attempt)
+        self.assertEqual(self.github.decision_context_attempt(
+            'example/product', 4, resume_attempt), source_attempt)
+
+        self.github.extra_comments = [comment for comment in self.github.extra_comments
+                                      if not comment['body'].startswith(
+                                          f'hydra: decision {source_attempt} context\n')]
+        self.github.extra_comments.append({'user': {'login': 'operator'},
+                                           'body': 'Unrelated recent comment.'})
+        self.stop = False
+        self.calls.clear()
+        result = await self.runner().step('example/product', 4)
+        self.assertEqual(result['reason'], 'decision_context_missing')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.github.note['attempt_id'], resume_attempt)
+
+        self.github.resolve_decision(source_attempt, 'RESTORED-DECISION')
+        prompts = []
+        resumed = self.runner()
+        async def capture(assignment, **kwargs):
+            prompts.append(assignment['prompt'])
+            return await self.execute(assignment, **kwargs)
+        resumed.execute = capture
+        self.assertEqual((await resumed.step('example/product', 4))['action'], 'continue')
+        self.assertTrue(prompts)
+        self.assertTrue(all('RESTORED-DECISION' in prompt for prompt in prompts))
+        self.assertTrue(all('Unrelated recent comment.' in prompt for prompt in prompts))
+
     async def test_read_only_decision_resumes_review_before_delivery(self):
         runner = await self.publish()
         config = {**self.github.cfg, 'intake_digest': self.github.note['intake_digest']}

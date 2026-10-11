@@ -112,6 +112,8 @@ class NativeRunner(Runner):
         if phase == "design" and not record.get("resume_phase"):
             record = {**record, "resume_phase": "design"}
         task = self._operator_context(repo, number, config, record, task)
+        if task is None:
+            return None, self._wait(repo, number, record, "decision_context_missing")
         step = str(uuid.uuid4())
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}

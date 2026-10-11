@@ -14,12 +14,12 @@
 The implementation was verified through the repository storage wrapper on the pinned
 development volume.
 
-- Runner-focused suite: 66 tests passed.
-- Native-assignment suite: 34 tests passed.
+- Runner-focused suite after the pull-request correction: 67 tests passed.
+- Native-assignment suite after the pull-request correction: 35 tests passed.
 - GitHub-adapter suite: 37 tests passed.
 - Independent full suite: 677 tests ran and returned `OK`, with 27 skipped in
   that review environment.
-- Final candidate full suite: 677 tests ran and returned `OK`, with 25 skipped
+- Final candidate full suite: 679 tests ran and returned `OK`, with 25 skipped
   on the delivery host.
 - Real stdio MCP initialization, tool listing, read, and status path: 2 tests passed.
 - Python bytecode compilation completed successfully.
@@ -29,7 +29,8 @@ development volume.
 The tests cover current-attempt decision context, stale and malformed markers, restart
 after review and verification steps, resume-hint blocker precedence, ownership handover,
 bounded escaped JSON, progress-marker lifecycle, rollback parsing by the 0.2.0 reader,
-and status propagation through the MCP boundary.
+status propagation through the MCP boundary, and fail-closed restart behavior when the
+preserved source decision context disappears from either runner path.
 
 ## Evidence boundary
 

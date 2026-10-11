@@ -28,5 +28,13 @@ payload, and a compatibility fixture that does not depend on local Git history. 
 review found no material issue and returned `candidate_ready` for commit and pull-request
 review. Its independent full suite ran 677 tests and returned `OK` with 27 skipped.
 
+Pull-request Code Review then found one P2 recovery gap: after attempt rotation, removal
+of the preserved source decision context could allow an unrelated recent comment to reach
+a resumed worker. The correction makes both the base runner and native runner wait with
+`decision_context_missing` before model dispatch, native assignment registration, or a
+native task response. Restoring the exact source-attempt context resumes the same work.
+An independent correction review inspected both execution paths and their regressions,
+found no further issue, and returned `candidate_ready`.
+
 This result does not establish merge, installation, scheduled advancement, or a real
 native question-answer-resumption cycle. Those remain delivery and operational evidence.

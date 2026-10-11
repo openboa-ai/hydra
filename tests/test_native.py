@@ -366,6 +366,44 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Continue the checkpointed implementation.", result["prompt"])
         self.assertNotIn("STALE-CONTEXT", result["prompt"])
 
+    async def test_restart_does_not_dispatch_when_preserved_decision_context_disappears(self):
+        first = await self.controller.begin(self.url)
+        implementation = await self.result(first)
+        pending = await self.result(implementation, "needs_decision")
+        self.assertEqual(pending["reason"], "product_decision")
+        source_attempt = self.gh.note["attempt_id"]
+        self.gh.resolve_decision(source_attempt, "CURRENT-DECISION")
+
+        original_prepare = self.ws.prepare
+        self.ws.prepare = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic restart after attempt rotation"))
+        try:
+            with self.assertRaisesRegex(RuntimeError, "synthetic restart"):
+                await self.controller.begin(self.url)
+        finally:
+            self.ws.prepare = original_prepare
+        resume_attempt = self.gh.note["attempt_id"]
+        self.assertNotEqual(resume_attempt, source_attempt)
+        self.assertEqual(self.gh.decision_context_attempt(
+            "example/product", 4, resume_attempt), source_attempt)
+
+        self.gh.extra_comments = [comment for comment in self.gh.extra_comments
+                                  if not comment["body"].startswith(
+                                      f"hydra: decision {source_attempt} context\n")]
+        self.gh.extra_comments.append({"user": {"login": "operator"},
+                                       "body": "Unrelated recent comment."})
+        self.controller = self.new_controller()
+        result = await self.controller.begin(self.url)
+        self.assertEqual(result["reason"], "decision_context_missing")
+        self.assertNotIn("native_step", self.gh.note)
+        self.assertEqual(self.lock.read_bytes(), b"")
+
+        self.gh.resolve_decision(source_attempt, "RESTORED-DECISION")
+        resumed = await self.controller.begin(self.url)
+        self.assertEqual(resumed["action"], "native_task")
+        self.assertIn("RESTORED-DECISION", resumed["prompt"])
+        await self.result(resumed, "stopped")
+
     async def test_stopped_checkpoint_retries_after_response_loss(self):
         assignment = await self.controller.begin(self.url)
         def lose_after_write(record):
