@@ -79,7 +79,8 @@ def observation():
             'checks': [{'id': 90, 'check_suite': {'id': 80}, 'app': {'id': 15368}, 'head_sha': HEAD,
                         'name': 'Unit tests', 'status': 'completed', 'conclusion': 'success'}],
             'runs': [{'id': 50, 'workflow_id': 40, 'path': '.github/workflows/ci.yml',
-                      'repository': {'id': 123}, 'event': 'pull_request', 'head_sha': HEAD,
+                      'repository': {'id': 123}, 'head_repository': {'id': 123},
+                      'event': 'pull_request', 'head_sha': HEAD,
                       'head_branch': 'hydra/issue-4', 'status': 'completed', 'conclusion': 'success',
                       'run_number': 1, 'run_attempt': 1, 'check_suite_id': 80,
                       'pull_requests': [association], 'jobs': [{'id': 90, 'name': 'Unit tests',
@@ -322,6 +323,17 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(gate_delivery(cfg, obs, HEAD, ['src/main.py']), [])
         obs['runs'][0]['pull_requests'][0]['head']['sha'] = BASE
         self.assertTrue(gate_delivery(cfg, obs, HEAD, ['src/main.py']))
+
+    def test_empty_pull_request_association_never_authorizes_live_checks(self):
+        for merged in (False, True):
+            with self.subTest(merged=merged):
+                cfg, obs = config(), observation()
+                obs['pr'].update(merged=merged, state='closed' if merged else 'open',
+                                 merge_commit_sha=MERGE)
+                obs['runs'][0]['pull_requests'] = []
+                missing = 'check_identity_missing:Unit tests'
+                self.assertIn(missing, gate_checks(cfg, obs, HEAD))
+                self.assertIn(missing, gate_delivery(cfg, obs, HEAD, ['src/main.py']))
 
     def test_observed_target_producer_and_codex_summary_contract(self):
         # Public API fields from ouroboros PR 2 / run 37883341081. This is a
