@@ -3,6 +3,8 @@
 import asyncio
 import copy
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -10,6 +12,7 @@ from unittest.mock import patch
 
 from hydra_sdlc.cli import operate, parser
 from hydra_sdlc.github import GitHub as Client
+from hydra_sdlc.operations import OperatingControl
 from hydra_sdlc.project import ProjectError, load_project, parse_intake
 from hydra_sdlc.runner import Runner, intake_digest
 from test_active_labels import NativeIssueTransport
@@ -188,10 +191,16 @@ class DependencyIdentityTests(unittest.IsolatedAsyncioTestCase):
 
 class WaitCadenceTests(unittest.IsolatedAsyncioTestCase):
     async def observe(self, command, result, *, timeout=1000, signal_stop=False):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        lock = Path(directory.name).resolve() / 'host.lock'
+        operations = OperatingControl(lock, [REPO])
+        operations.set_mode('start')
         clock, observed = [0.0], []
         class SecondObservation(Exception):
             pass
         class FakeRunner:
+            host_hold_reason = None
             def __init__(self, *args, stop_requested, **kwargs):
                 self.stop_requested = stop_requested
             async def step(self, *args):
@@ -211,7 +220,7 @@ class WaitCadenceTests(unittest.IsolatedAsyncioTestCase):
                 handlers[signal.SIGTERM](signal.SIGTERM, None)
         target = ['--issue', f'https://github.com/{REPO}/issues/1'] if command == 'run' else ['--repos', REPO]
         args = parser().parse_args([command, *target, '--workspace-root', '/unused', '--host-alias', 'host-a',
-                                    '--timeout', str(timeout)])
+                                    '--lock-path', str(lock), '--timeout', str(timeout)])
         with patch('hydra_sdlc.runner.Runner', FakeRunner), \
                 patch('hydra_sdlc.cli.coordinator_lock', return_value=nullcontext()), \
                 patch('hydra_sdlc.cli.residual_workers', return_value=[]), \
@@ -219,7 +228,8 @@ class WaitCadenceTests(unittest.IsolatedAsyncioTestCase):
                 patch('hydra_sdlc.cli.asyncio.sleep', sleep), \
                 patch('hydra_sdlc.cli.signal.signal', side_effect=handler):
             try:
-                outcome = await operate(args, github=object(), workspace=object(), emit=lambda text: None)
+                outcome = await operate(args, github=object(), workspace=object(),
+                                        operations=operations, emit=lambda text: None)
             except SecondObservation:
                 outcome = None
         return observed, clock[0], outcome

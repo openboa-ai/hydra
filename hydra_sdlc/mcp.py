@@ -5,22 +5,15 @@ import argparse
 import importlib
 import os
 from pathlib import Path
-import re
-import tomllib
 
 
 def controller_from_file(path):
     from .github import GitHub
     from .native import NativeController
     from .workspace import Workspace
+    from .control import load_host_config, control_from_config
 
-    with Path(path).expanduser().open("rb") as source:
-        cfg = tomllib.load(source)
-    allowed = {"repos", "host_alias", "workspace_root", "lock_path", "lifecycle_provider", "storage_provider", "knowledge_repo", "runtime_python"}
-    if set(cfg) - allowed or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", cfg.get("host_alias", "")):
-        raise ValueError("Invalid installed host settings")
-    if not isinstance(cfg.get("repos"), list) or not cfg["repos"]:
-        raise ValueError("Installed repository allowlist missing")
+    cfg = load_host_config(path)
     def provider(key):
         value = cfg.get(key)
         if not value:
@@ -37,7 +30,7 @@ def controller_from_file(path):
         return None
     return NativeController(github, workspace, repos=cfg["repos"], host_alias=cfg["host_alias"],
         lock_path=Path(cfg.get("lock_path", "~/.local/share/hydra/host.lock")).expanduser(),
-        knowledge_revision=knowledge_revision)
+        knowledge_revision=knowledge_revision, operations=control_from_config(cfg))
 
 
 def create_server(controller):
@@ -47,7 +40,15 @@ def create_server(controller):
     @server.tool()
     def hydra_status() -> dict:
         """Read registered GitHub work and waiting reasons without claiming it."""
-        return {"projects": controller.status()}
+        result = {"projects": controller.status()}
+        operations = getattr(getattr(controller, "runner", None), "operations", None)
+        if operations is not None:
+            from .operations import OperationDenied
+            try:
+                result["controls"] = operations.snapshot()
+            except OperationDenied as exc:
+                result["controls"] = {"reason": exc.reason, "gate_status": "unknown"}
+        return result
 
     @server.tool()
     async def hydra_begin(issue_url: str) -> dict:

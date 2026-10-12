@@ -7,7 +7,12 @@ import hashlib
 import json
 import re
 import uuid
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
+
+from .coordinator import operation_scope
+from .operations import OperationDenied
 
 from .project import (_provider, gate_completed_delivery, gate_delivery, gate_squash_result,
                       load_project, matches, parse_intake, squash_message,
@@ -83,7 +88,7 @@ def intake_digest(issue):
 
 class Runner:
     def __init__(self, github, workspace, *, host_alias, execute, capabilities,
-                 stop_requested=lambda: False, knowledge_revision=lambda: None):
+                 stop_requested=lambda: False, knowledge_revision=lambda: None, operations=None):
         self.github, self.workspace, self.host = github, workspace, host_alias
         self.execute, self.capabilities = execute, capabilities
         self.stop_requested, self.knowledge_revision = stop_requested, knowledge_revision
@@ -92,6 +97,37 @@ class Runner:
         self.failures = {}
         self.actions = {}
         self.host_hold_reason = None
+        self.operations = operations
+        self._cleanup_scope = ContextVar("hydra_cleanup_scope", default=None)
+        self._ended_execution = ContextVar("hydra_ended_execution", default=None)
+
+    def _operation_reason(self, repo=None):
+        return self.operations.reason(repo) if self.operations is not None else None
+
+    def _stopping(self, repo):
+        return self.stop_requested() or bool(self._operation_reason(repo))
+
+    def _guard(self, repo, *, cleanup=False):
+        return self.operations.guard(repo, cleanup=cleanup) if self.operations is not None else nullcontext()
+
+    def _effect(self, repo, callback, *args, cleanup=False, **kwargs):
+        with self._guard(repo, cleanup=cleanup):
+            return callback(*args, **kwargs)
+
+    def _workspace_effect(self, repo, method, *args, **kwargs):
+        current = self._cleanup_scope.get()
+        cleanup = method == "checkpoint" and current is not None and current[0] == repo
+        return self._effect(repo, getattr(self.workspace, method), *args, cleanup=cleanup, **kwargs)
+
+    @contextmanager
+    def _confirmed_cleanup(self, repo, number, record):
+        # Internal callers enter only after owned cleanup or an exact stopped
+        # native checkpoint. This is not a caller-supplied permission override.
+        token = self._cleanup_scope.set((repo, number, record["attempt_id"]))
+        try:
+            yield
+        finally:
+            self._cleanup_scope.reset(token)
 
     def _work_config(self, repo, number, record):
         error = None
@@ -124,6 +160,9 @@ class Runner:
         return config
 
     def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True):
+        reason = self._operation_reason(repo)
+        if reason:
+            return reason
         if include_stop and self.stop_requested():
             return "stop_requested"
         issue = self.github.issue(repo, number)
@@ -163,7 +202,22 @@ class Runner:
     def _record(self, repo, number, record, **values):
         record = {k: v for k, v in {**record, **values}.items()
                   if k not in {"version", "repository_id", "issue_number"}}
-        self.github.record(repo, number, record)
+        cleanup = self._cleanup_scope.get() == (repo, number, record.get("attempt_id"))
+        writer = self.github.record
+        if cleanup and self.operations is not None:
+            writer = getattr(self.github, "record_checkpoint", None)
+            if not callable(writer):
+                raise OperationDenied("checkpoint_recording_unavailable")
+        self._effect(repo, writer, repo, number, record, cleanup=cleanup)
+        if cleanup and self.operations is not None:
+            observed = self.github.progress(repo, number)
+            if not observed or any(observed.get(key) != value for key, value in record.items()):
+                raise RuntimeError("Stopped checkpoint read-back is unconfirmed")
+        ended = self._ended_execution.get()
+        if (ended is not None and ended[:2] == (repo, number)
+                and ended[3].get("attempt_id") == record.get("attempt_id")
+                and record.get("phase") != "executing" and record.get("pending_action") is None):
+            self._ended_execution.set(None)
         return record
 
     def _completion_callback(self):
@@ -174,7 +228,8 @@ class Runner:
                 if hasattr(type(self.workspace), "completed") or "completed" in getattr(self.workspace, "__dict__", {}) else None)
 
     def _verify_candidate(self, path, config, evidence_key):
-        return self.workspace.verify(path, config["verification"], stop_requested=self.stop_requested)
+        return self.workspace.verify(path, config["verification"],
+                                     stop_requested=lambda: self._stopping(evidence_key[0]))
 
     def _resource_completion(self, repo, number, config, record, pr_number, merge_sha):
         result = {"repository": repo, "issue": number, "action": "completed", "pr": pr_number}
@@ -188,7 +243,7 @@ class Runner:
                     or any(current.get(key) != value for key, value in record.items())
                     or self._latest(repo, number, config) != "issue_closed"):
                 result["resource_wait_reason"] = "resource_completion_unconfirmed"
-            elif complete(repo, number, record["branch"], record["head"], pr_number, merge_sha):
+            elif self._effect(repo, complete, repo, number, record["branch"], record["head"], pr_number, merge_sha):
                 self._record(repo, number, current, next_action="completed")
                 result["resource_status"] = "retired"
         except (ValueError, RuntimeError, OSError):
@@ -243,11 +298,20 @@ class Runner:
             if (values.get("phase") == "executing" and previous.get("phase") != "executing"
                     and previous.get("wait_reason") not in {
                         "execution_unknown", "execution_failed", "invalid_model_result"}):
-                self._record(repo, number, previous, wait_reason=reason)
+                if self._operation_reason(repo):
+                    # This function has not returned an execution grant. The
+                    # recorded intent is positively known to be undispatched.
+                    with self._confirmed_cleanup(repo, number, previous):
+                        self._record(repo, number, previous, wait_reason=reason)
+                else:
+                    self._record(repo, number, previous, wait_reason=reason)
             return None
         return record
 
     def _wait(self, repo, number, record, reason, *, phase="waiting", next_action="reconcile"):
+        blocked = self._operation_reason(repo)
+        if blocked and self._cleanup_scope.get() != (repo, number, record.get("attempt_id")):
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": blocked}
         if reason in {"intake_changed", "intake_unbound"}:
             # Preserve the complete prior decision/execution/effect checkpoint;
             # restoring text must not erase another wait or adopt a live worker.
@@ -266,8 +330,9 @@ class Runner:
     def _intent_wait(self, repo, number):
         progress = self.github.progress(repo, number) or {}
         return {"repository": repo, "issue": number, "action": "waiting",
-                "reason": "replan_required" if progress.get("wait_reason") == "replan_required"
-                else "service_retry_or_stop_boundary"}
+                "reason": self._operation_reason(repo) or
+                ("replan_required" if progress.get("wait_reason") == "replan_required"
+                 else "service_retry_or_stop_boundary")}
 
     def _handover(self, repo, number, record, config):
         phrase = f"hydra: handover {record['attempt_id']} stopped"
@@ -398,11 +463,12 @@ class Runner:
         return None, remote, pulls
 
     async def _model(self, repo, number, config, record, path, phase, task, *, correction=None, spec_record=None):
+        self._ended_execution.set(None)
         spec_record = spec_record or record
         if self.host_hold_reason:
             return None, {"repository": repo, "issue": number, "action": "waiting", "reason": self.host_hold_reason}
         reason = self._latest(repo, number, config)
-        if reason or self.stop_requested():
+        if reason or self._stopping(repo):
             return None, self._wait(repo, number, record, reason or "stop_requested")
         config = {**config, "_scoped_spec": self._scoped_spec(repo, number, config, record)}
         if phase == "design" and not record.get("resume_phase"):
@@ -449,7 +515,7 @@ class Runner:
                 {"cwd": str(path), "prompt": task, "mode": "read_only" if "review" in phase else "workspace_write",
                  "writable_roots": []},
                 on_identity=lambda **values: None, on_event=lambda *args: None,
-                stop_requested=lambda: self.stop_requested() or interrupted,
+                stop_requested=lambda: self._stopping(repo) or interrupted,
                 resume_thread_id=None,
             )
         except (Exception, asyncio.CancelledError):
@@ -464,27 +530,39 @@ class Runner:
         if status != "completed" or result.get("detail", {}).get("cleanup") == "unknown":
             cleanup = result.get("detail", {}).get("cleanup") != "unknown"
             if status == "interrupted" and cleanup:
-                head = self.workspace.checkpoint(path, f"Checkpoint Issue {number} after stop")
-                record, revised, wait = self._spec_checkpoint(repo, number, config, record, path, head,
-                                                              previous=spec_record)
-                if wait:
-                    return None, wait
-                record = self._record(repo, number, record, head=head, phase="checkpoint",
-                                      pending_action=None, checkpoint="interrupted_committed", next_action="publish")
-                paths = self.workspace.changed_paths(path, config["revision"])
-                design_paths = (self.workspace.changed_paths(path, spec_record["head"])
-                                if correction and spec_record.get("spec_revision") else paths)
-                if phase == "design" and not self._design_checkpoint_valid(repo, number, config, path, design_paths):
-                    return None, self._wait(repo, number, record, "replan_required", phase="checkpoint",
-                                            next_action="diagnose_spec_artifact")
-                if not revised and all(matches(p, config["allowed_paths"]) for p in paths):
-                    self._publish(repo, number, config, record, path, head, checkpoint=True)
-                    record = self.github.progress(repo, number)
-                return None, self._wait(repo, number, record, "stop_requested",
-                                       phase="uncertain" if record.get("pending_action") == "publish" else "checkpoint",
-                                       next_action="publish")
+                with self._confirmed_cleanup(repo, number, record):
+                    head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint Issue {number} after stop")
+                    record, revised, wait = self._spec_checkpoint(repo, number, config, record, path, head,
+                                                                  previous=spec_record)
+                    if wait:
+                        return None, wait
+                    record = self._record(repo, number, record, head=head, phase="checkpoint",
+                                          pending_action=None, checkpoint="interrupted_committed", next_action="publish")
+                    paths = self.workspace.changed_paths(path, config["revision"])
+                    design_paths = (self.workspace.changed_paths(path, spec_record["head"])
+                                    if correction and spec_record.get("spec_revision") else paths)
+                    if phase == "design" and not self._design_checkpoint_valid(repo, number, config, path, design_paths):
+                        return None, self._wait(repo, number, record, "replan_required", phase="checkpoint",
+                                                next_action="diagnose_spec_artifact")
+                    if not self._operation_reason(repo) and not revised and all(matches(p, config["allowed_paths"]) for p in paths):
+                        self._publish(repo, number, config, record, path, head, checkpoint=True)
+                        record = self.github.progress(repo, number)
+                    return None, self._wait(repo, number, record, "stop_requested",
+                                           phase="uncertain" if record.get("pending_action") == "publish" else "checkpoint",
+                                           next_action="publish")
             return None, self._wait(repo, number, record, "execution_unknown" if status == "transport_unknown" or self.host_hold_reason
                                     else "execution_failed", phase="uncertain", next_action="confirm_stopped")
+        # The trusted parent adapter has confirmed terminal completion and
+        # cleanup. Retain this exact, ephemeral proof until progress catches up;
+        # Pause can arrive between return and the caller's local checkpoint.
+        candidate = result.get("detail", {}).get("result")
+        if isinstance(candidate, str):
+            try:
+                candidate = json.loads(candidate)
+            except ValueError:
+                candidate = None
+        needs_decision = isinstance(candidate, dict) and candidate.get("outcome") == "needs_decision"
+        self._ended_execution.set((repo, number, config, record, path, phase, spec_record, needs_decision))
         return self._candidate_result(repo, number, config, record, path, phase,
                                       result, correction=correction, spec_record=spec_record)
 
@@ -501,22 +579,24 @@ class Runner:
             return None, self._wait(repo, number, record, "invalid_model_result", phase="uncertain")
         # Model prose/transcripts never flow into comments or PR bodies.
         if candidate["outcome"] == "needs_decision":
-            head = (self.workspace.checkpoint(path, f"Checkpoint Issue {number} before decision")
-                    if "review" not in phase else record.get("head"))
-            if "review" not in phase:
-                record, _, wait = self._spec_checkpoint(repo, number, config, record, path, head,
-                                                       previous=spec_record)
-                if wait:
-                    return None, wait
-            if phase == "design":
-                design_base = spec_record["head"] if correction and spec_record.get("spec_revision") else config["revision"]
-                if any(name != config["_scoped_spec"]
-                       for name in self.workspace.changed_paths(path, design_base)):
-                    record = self._record(repo, number, record, head=head, pending_action=None)
-                    return None, self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
-            record = self._record(repo, number, record, head=head, resume_phase=record.get("resume_phase") or phase,
-                                  phase=phase + "_done", pending_action=None)
-            return None, self._wait(repo, number, record, "product_decision", next_action="operator_decision")
+            with self._guard(repo):
+                head = (self._workspace_effect(repo, "checkpoint", path, f"Checkpoint Issue {number} before decision")
+                        if "review" not in phase else record.get("head"))
+                if "review" not in phase:
+                    record, _, wait = self._spec_checkpoint(repo, number, config, record, path, head,
+                                                           previous=spec_record, preserve_decision=True)
+                if phase == "design":
+                    design_base = spec_record["head"] if correction and spec_record.get("spec_revision") else config["revision"]
+                    if any(name != config["_scoped_spec"]
+                           for name in self.workspace.changed_paths(path, design_base)):
+                        record = {**record, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
+                # The decision hold and finished phase are one durable write. A
+                # Pause between them must never turn an unanswered question into
+                # permission to resume implementation.
+                self._record(repo, number, record, head=head, resume_phase=record.get("resume_phase") or phase,
+                             phase=phase + "_done", pending_action=None,
+                             wait_reason="product_decision", next_action="operator_decision")
+                return None, {"repository": repo, "issue": number, "action": "waiting", "reason": "product_decision"}
         if "review" in phase:
             self._record(repo, number, record, phase=phase + "_done", pending_action=None,
                          resume_phase=None if record.get("resume_phase") == phase else record.get("resume_phase"),
@@ -547,7 +627,9 @@ class Runner:
         # including dirty edits; an unavailable anchor must propagate a hold.
         return spec in self.workspace.changed_paths(path, anchor)
 
-    def _spec_checkpoint(self, repo, number, config, record, path, head, *, previous=None):
+    def _spec_checkpoint(self, repo, number, config, record, path, head, *, previous=None, preserve_decision=False):
+        if preserve_decision:
+            record = {**record, "wait_reason": "product_decision", "next_action": "operator_decision"}
         if not self._spec_changed(repo, number, config, record, path):
             return record, False, None
         if record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}:
@@ -558,9 +640,12 @@ class Runner:
         if head != record.get("head"):
             attempts = min(3, attempts + 1)
         record = self._record(repo, number, record, head=head, phase="design_done",
-                              pending_action=None, resume_phase="implementation", next_action="spec_review",
+                              pending_action=None, resume_phase="implementation",
+                              next_action="operator_decision" if preserve_decision else "spec_review",
                               correction_reason="accepted_spec_changed", correction_attempt=attempts or None)
-        wait = (self._wait(repo, number, record, "replan_required", next_action="diagnose")
+        wait = ({"repository": repo, "issue": number, "action": "waiting", "reason": "product_decision"}
+                if attempts >= 3 and preserve_decision else
+                self._wait(repo, number, record, "replan_required", next_action="diagnose")
                 if attempts >= 3 else None)
         return record, True, wait
 
@@ -591,7 +676,7 @@ class Runner:
         if record is None:
             return self._intent_wait(repo, number)
         try:
-            self.workspace.publish(path, branch, remote)
+            self._workspace_effect(repo, "publish", path, branch, remote)
         except Exception:
             if self.github.ref(repo, branch) != head:
                 return self._wait(repo, number, record, "publish_unknown", phase="uncertain")
@@ -608,7 +693,7 @@ class Runner:
         if intent is None:
             return record, None, self._intent_wait(repo, number)
         try:
-            pr = self.github.ensure_pr(repo, number, branch, head, f"Implement Issue {number}",
+            pr = self._effect(repo, self.github.ensure_pr, repo, number, branch, head, f"Implement Issue {number}",
                 f"Refs https://github.com/{repo}/issues/{number}\n\nImplements the scoped specification {spec}. "
                 "Registered local verification and independent candidate review completed. Remote checks and reviews remain delivery gates.")
         except Exception:
@@ -642,7 +727,7 @@ class Runner:
             if intent is None:
                 return record, self._intent_wait(repo, number)
             try:
-                self.github.resolve_thread(repo, pr_number, thread["id"], head, config["review_provider"], issue_number=number)
+                self._effect(repo, self.github.resolve_thread, repo, pr_number, thread["id"], head, config["review_provider"], issue_number=number)
             except RuntimeError:
                 return intent, self._wait(repo, number, intent, "review_resolution_boundary", phase="uncertain")
             record = self._record(repo, number, intent, pending_action=None, pending_thread=None, phase="review_wait",
@@ -652,7 +737,54 @@ class Runner:
                                   wait_reason=None, next_action="remote_review")
         return record, None
 
+    def _checkpoint_ended_on_hold(self, repo, number, reason):
+        ended = self._ended_execution.get()
+        if ended is None or ended[0].casefold() != repo.casefold() or ended[1] != number:
+            return
+        repo, _, config, prior, path, phase, spec_record, needs_decision = ended
+        current = self.github.progress(repo, number)
+        if (not current or current.get("phase") != "executing" or current.get("pending_action") != phase
+                or any(current.get(key) != prior.get(key)
+                       for key in ("attempt_id", "contract_revision", "host_alias"))):
+            # In particular never overwrite a pending publish, merge, review,
+            # close or other request whose remote result may still be uncertain.
+            return
+        with self._confirmed_cleanup(repo, number, current):
+            head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint completed Issue {number} after hold")
+            from .workspace import WorkspaceWait
+            try:
+                current, _, wait = self._spec_checkpoint(repo, number, config, current, path, head,
+                                                        previous=spec_record, preserve_decision=needs_decision)
+            except WorkspaceWait as exc:
+                if exc.reason != "intake_changed":
+                    raise
+                current = {**current, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
+                wait = {"reason": "replan_required"}
+            self._record(repo, number, current, head=head, phase="checkpoint", pending_action=None,
+                         checkpoint="interrupted_committed", resume_phase=current.get("resume_phase") or phase,
+                         wait_reason="product_decision" if needs_decision else wait["reason"] if wait else reason,
+                         next_action="operator_decision" if needs_decision else "diagnose" if wait else "reconcile")
+
     async def step(self, repo, number):
+        with operation_scope(self.operations, repo):
+            token = self._ended_execution.set(None)
+            try:
+                reason = self._operation_reason(repo)
+                if reason:
+                    return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+                try:
+                    result = await self._step(repo, number)
+                    blocked = self._operation_reason(repo)
+                    if blocked:
+                        self._checkpoint_ended_on_hold(repo, number, blocked)
+                    return result
+                except OperationDenied as exc:
+                    self._checkpoint_ended_on_hold(repo, number, exc.reason)
+                    return {"repository": repo, "issue": number, "action": "waiting", "reason": exc.reason}
+            finally:
+                self._ended_execution.reset(token)
+
+    async def _step(self, repo, number):
         if self.host_hold_reason:
             return {"repository": repo, "issue": number, "action": "waiting", "reason": self.host_hold_reason}
         issue = self.github.issue(repo, number)
@@ -770,11 +902,11 @@ class Runner:
             if boundary or fresh_remote != recovery_remote:
                 return {"repository": repo, "issue": number, "action": "waiting",
                         "reason": boundary or "remote_head_changed"}
-            recovery_path = self.workspace.prepare(repo, number, branch, recovery_remote, recover_dirty=True)
-            self.workspace.fetch_base(recovery_path, config["revision"])
+            recovery_path = self._workspace_effect(repo, "prepare", repo, number, branch, recovery_remote, recover_dirty=True)
+            self._workspace_effect(repo, "fetch_base", recovery_path, config["revision"])
             state = self.workspace.inspect(recovery_path)
             mutated = state["dirty"] or state["head"] != record.get("head")
-            recovered_head = self.workspace.checkpoint(recovery_path, f"Recover stopped Issue {number}")
+            recovered_head = self._workspace_effect(repo, "checkpoint", recovery_path, f"Recover stopped Issue {number}")
             record, revised, wait = self._spec_checkpoint(repo, number, config, record, recovery_path, recovered_head)
             if wait:
                 return wait
@@ -843,7 +975,7 @@ class Runner:
                     return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
                 if not closing_recovery:
                     try:
-                        self.github.close_issue(repo, number)
+                        self._effect(repo, self.github.close_issue, repo, number)
                     except Exception:
                         if self.github.issue(repo, number).get("state") != "closed":
                             return self._wait(repo, number, record, "close_unknown", phase="uncertain")
@@ -922,13 +1054,13 @@ class Runner:
         if fresh_remote != remote:
             return self._wait(repo, number, record, "remote_head_changed",
                               phase="uncertain" if record.get("pending_action") else "waiting")
-        path = recovered_path or self.workspace.prepare(repo, number, branch, remote,
+        path = recovered_path or self._workspace_effect(repo, "prepare", repo, number, branch, remote,
             recover_dirty=recover_dirty or bool(getattr(self, "native", False) and record.get("native_outcome")))
-        self.workspace.fetch_base(path, config["revision"])
+        self._workspace_effect(repo, "fetch_base", path, config["revision"])
         state = self.workspace.inspect(path)
         head = state["head"]
         if recover_dirty:
-            head = self.workspace.checkpoint(path, f"Recover stopped Issue {number}")
+            head = self._workspace_effect(repo, "checkpoint", path, f"Recover stopped Issue {number}")
             state = self.workspace.inspect(path)
             record = self._record(repo, number, record, head=head, expected_head=remote)
         if record.get("head") and head != record["head"]:
@@ -939,7 +1071,7 @@ class Runner:
             # The request was scoped against its original base. New upstream
             # files must not be misclassified as deletions from that candidate.
             scope_base = record.get("expected_base") or record["contract_revision"]
-            self.workspace.fetch_base(path, scope_base)
+            self._workspace_effect(repo, "fetch_base", path, scope_base)
             if any(not matches(p, config["allowed_paths"])
                    for p in self.workspace.changed_paths(path, scope_base)):
                 return self._wait(repo, number, record, "scope_changed", phase="uncertain")
@@ -954,7 +1086,7 @@ class Runner:
             return await self._correct(repo, number, config, record, path, "integration_changed",
                 details=f"Merge the observed default-branch commit {config['revision']} into the owned Issue branch. "
                         "Preserve the branch's published ancestry; normal non-force publication is required. Resolve conflicts within the accepted spec.")
-        if self.stop_requested():
+        if self._stopping(repo):
             return self._wait(repo, number, record, "stop_requested")
         spec_path = Path(path) / intake["spec"]
         safe_spec = self.workspace.valid_spec(path, intake["spec"], require_tracked=False)
@@ -1018,7 +1150,7 @@ class Runner:
                 return wait
             return await self._finish_implementation(repo, number, config, record, path, result)
         if state["dirty"]:
-            head = self.workspace.checkpoint(path, f"Checkpoint Issue {number}")
+            head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint Issue {number}")
         paths = self.workspace.changed_paths(path, config["revision"])
         if any(not matches(p, config["allowed_paths"]) for p in paths):
             return await self._correct(repo, number, config, record, path, "scope_changed")
@@ -1041,24 +1173,25 @@ class Runner:
                 verification = []
             # Cleanup is confirmed here. Preserve mutations before any review,
             # stop wait or failed-check correction can strand the owned checkout.
-            state = self.workspace.inspect(path)
-            mutated = state["dirty"] or state["head"] != head
-            if mutated:
-                head = self.workspace.checkpoint(path, f"Checkpoint verification changes for Issue {number}")
-            record, revised, wait = self._spec_checkpoint(repo, number, config, record, path, head)
-            if revised:
-                if wait:
-                    return wait
-                if self.stop_requested() or verification_error == "verification_stopped":
-                    return self._wait(repo, number, record, "stop_requested", next_action="spec_review")
-                return {"action": "continue", "repository": repo, "issue": number}
-            record = self._record(repo, number, record, head=head, phase="implementation_done", pending_action=None,
-                                  **({"resume_phase": "correction", "correction_reason": "verification_mutation",
-                                      "checkpoint": "verification_mutation_pending",
-                                      "correction_attempt": record.get("correction_attempt")}
-                                     if mutated else {}))
-            if self.stop_requested() or verification_error == "verification_stopped":
-                return self._wait(repo, number, record, "stop_requested", next_action="verification")
+            with self._confirmed_cleanup(repo, number, record):
+                state = self.workspace.inspect(path)
+                mutated = state["dirty"] or state["head"] != head
+                if mutated:
+                    head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint verification changes for Issue {number}")
+                record, revised, wait = self._spec_checkpoint(repo, number, config, record, path, head)
+                if revised:
+                    if wait:
+                        return wait
+                    if self._stopping(repo) or verification_error == "verification_stopped":
+                        return self._wait(repo, number, record, "stop_requested", next_action="spec_review")
+                    return {"action": "continue", "repository": repo, "issue": number}
+                record = self._record(repo, number, record, head=head, phase="implementation_done", pending_action=None,
+                                      **({"resume_phase": "correction", "correction_reason": "verification_mutation",
+                                          "checkpoint": "verification_mutation_pending",
+                                          "correction_attempt": record.get("correction_attempt")}
+                                         if mutated else {}))
+                if self._stopping(repo) or verification_error == "verification_stopped":
+                    return self._wait(repo, number, record, "stop_requested", next_action="verification")
             if mutated:
                 return await self._correct(repo, number, config, record, path, "verification_mutation",
                     details="Registered verification changed the owned checkout. Inspect and correct those changes and the verifier; "
@@ -1201,7 +1334,7 @@ class Runner:
         message = squash_message(config["repository_id"], number, pr_number, head,
                                  record["expected_base"], record["intake_digest"])
         try:
-            receipt = self.github.merge(repo, pr_number, head, commit_message=message, issue_number=number)
+            receipt = self._effect(repo, self.github.merge, repo, pr_number, head, commit_message=message, issue_number=number)
         except Exception:
             observed = self.github.observe(repo, pr_number)
             if not self.github.owns_pr(repo, number, observed["pr"]):
@@ -1319,7 +1452,7 @@ class Runner:
             if intent is None:
                 return record
             try:
-                self.github.request_review(repo, observation["pr"]["number"], kind=kind, head=head, issue_number=number)
+                self._effect(repo, self.github.request_review, repo, observation["pr"]["number"], kind=kind, head=head, issue_number=number)
             except RuntimeError:
                 return self._record(repo, number, intent, phase="uncertain", wait_reason="review_request_unknown")
             record = self._record(repo, number, intent, pending_action=None, **{field: head},
@@ -1384,7 +1517,7 @@ class Runner:
             return self._wait(repo, number, record, "implementation_before_design_acceptance")
         if set(changed) != {intake["spec"]} or not self.workspace.valid_spec(path, intake["spec"], require_tracked=False):
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
-        head = self.workspace.checkpoint(path, f"Specify Issue {number}")
+        head = self._workspace_effect(repo, "checkpoint", path, f"Specify Issue {number}")
         if not self.workspace.valid_spec(path, intake["spec"]):
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         self._record(repo, number, record, head=head, phase="design_done", resume_phase=None, next_action="spec_review")
@@ -1392,7 +1525,7 @@ class Runner:
 
     async def _finish_implementation(self, repo, number, config, record, path, result):
         record = self.github.progress(repo, number)
-        head = self.workspace.checkpoint(path, f"Implement Issue {number}")
+        head = self._workspace_effect(repo, "checkpoint", path, f"Implement Issue {number}")
         record, changed, wait = self._spec_checkpoint(repo, number, config, record, path, head)
         if changed:
             return wait or {"action": "continue", "repository": repo, "issue": number}
@@ -1417,7 +1550,7 @@ class Runner:
             if (set(self.workspace.changed_paths(path, spec_base)) != {spec} or
                     not self.workspace.valid_spec(path, spec, require_tracked=False)):
                 return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
-        head = self.workspace.checkpoint(path, f"Correct Issue {number}")
+        head = self._workspace_effect(repo, "checkpoint", path, f"Correct Issue {number}")
         if spec_only and not self.workspace.valid_spec(path, spec):
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
         record, revised, wait = self._spec_checkpoint(repo, number, config, record, path, head,
@@ -1502,6 +1635,10 @@ class Runner:
             if repo.casefold() in seen:
                 continue
             seen.add(repo.casefold())
+            blocked = self._operation_reason(repo)
+            if blocked:
+                results.append({"repository": repo, "action": "waiting", "reason": blocked})
+                continue
             try:
                 issues, resource_wait = self._issues(repo)
             except (ValueError, RuntimeError, OSError):

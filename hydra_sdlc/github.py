@@ -313,7 +313,7 @@ class GitHub:
             elif not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,119}", value):
                 raise GitHubError("Progress requires public codes, not raw text")
 
-    def record(self, repo, n, record):
+    def record(self, repo, n, record, *, cleanup=False):
         self._validate_record(record)
         metadata = {**record, "version": 1, "repository_id": self.repository(repo)["id"], "issue_number": _number(n)}
         if metadata.get("branch") not in {None, f"hydra/issue-{n}"}:
@@ -341,10 +341,10 @@ class GitHub:
                                          + json.dumps(context, separators=(",", ":")) + " -->")
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
                      and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
-        if not completed:
+        if not completed and not cleanup:
             self._active(repo, n, True)
         if previous and old == metadata:
-            if completed:
+            if completed and not cleanup:
                 self._active(repo, n, False)
             return previous
         human = ["## Hydra progress", ""]
@@ -357,9 +357,13 @@ class GitHub:
             result = self.api("PATCH", f"/repos/{_repo(repo)}/issues/comments/{_number(previous['id'])}", {"body": body})
         else:
             result = self.api("POST", f"/repos/{_repo(repo)}/issues/{n}/comments", {"body": body})
-        if completed:
+        if completed and not cleanup:
             self._active(repo, n, False)
         return result
+
+    def record_checkpoint(self, repo, n, record):
+        """Only a caller-confirmed stopped checkpoint; leave discovery labels alone."""
+        return self.record(repo, n, record, cleanup=True)
 
     def ref(self, repo, branch):
         try:

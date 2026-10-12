@@ -521,6 +521,16 @@ class Workspace:
         identity = hashlib.sha256(os.fsencode(path)).hexdigest()
         return "hydra.workspace-" + identity + "." + key
 
+    def existing(self, repo, number, branch):
+        """Read the already owned checkout; never allocate or invoke providers."""
+        repo = self._repository(repo)
+        if type(number) is not int or number <= 0 or branch != f"hydra/issue-{number}":
+            raise WorkspaceWait("invalid_issue_branch")
+        path, observed_repo, observed_branch = self._identity(self.root / repo / f"issue-{number}")
+        if observed_repo != repo or observed_branch != branch:
+            raise WorkspaceWait("foreign_workspace")
+        return path
+
     def prepare(self, repo, number, branch, expected_remote_sha, *, recover_dirty=False):
         """Prepare an owned checkout, optionally preserving a stopped worker's edits.
 
@@ -745,7 +755,13 @@ class Workspace:
                     wrap = getattr(self.storage_provider, "wrap_command", None)
                     if not callable(wrap):
                         raise WorkspaceWait("invalid_storage_provider_contract")
-                    execution_argv = wrap(path, list(argv), cwd)
+                    from .coordinator import operation_guard
+                    from .operations import OperationDenied
+                    try:
+                        with operation_guard():
+                            execution_argv = wrap(path, list(argv), cwd)
+                    except OperationDenied as exc:
+                        raise WorkspaceWait("verification_stopped") from exc
                     if (not isinstance(execution_argv, list) or not execution_argv
                             or not all(isinstance(arg, str) and arg and "\0" not in arg for arg in execution_argv)):
                         raise WorkspaceWait("invalid_storage_provider_contract")

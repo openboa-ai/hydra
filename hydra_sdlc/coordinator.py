@@ -211,3 +211,80 @@ def residual_workers():
     return [line.split(None, 1)[0] for line in result.stdout.splitlines()
             if re.search(r"hydra_sdlc/(?:(?:codex|execution_boundary)\.py\s+--(?:execution|capability)-worker"
                          r"|execution_boundary\.py\s+--owned-process-helper)(?:\s|$)", line)]
+
+
+_operating_scope = ContextVar("hydra_operating_scope", default=None)
+
+
+@contextmanager
+def operation_scope(control, repository):
+    """Bind host admission settings to one parent-side repository operation."""
+    token = _operating_scope.set((control, repository) if control is not None else None)
+    try:
+        yield
+    finally:
+        _operating_scope.reset(token)
+
+
+def operation_scope_active():
+    """Whether this execution is bound to installed operating controls."""
+    return _operating_scope.get() is not None
+
+
+@contextmanager
+def operation_guard():
+    """Barrier for one launch/grant, never an entire model or verification run."""
+    current = _operating_scope.get()
+    if current is None:
+        yield
+    else:
+        control, repository = current
+        with control.guard(repository):
+            yield
+
+
+def observe_coordinator(path):
+    """Inspect admission without creating, truncating or retiring its inode.
+
+    A free admission lock is not proof that every managed execution has ended.
+    Callers must separately account for scoped progress and residual execution.
+    """
+    path = Path(path).expanduser().absolute()
+    fd = None
+    try:
+        if path != path.resolve():
+            return {"state": "unknown", "reason": "ownership_file_unsafe"}
+        before = path.lstat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                or before.st_nlink != 1 or before.st_mode & 0o077):
+            return {"state": "unknown", "reason": "ownership_file_unsafe"}
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK)
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            return {"state": "unknown", "reason": "ownership_file_changed"}
+        held = False
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            held = True
+        except BlockingIOError:
+            pass
+        value = os.pread(fd, len(_NATIVE_PREFIX) + 140, 0)
+        owner = _read_owner(fd)
+        after = path.lstat()
+        if ((after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+                or os.pread(fd, len(_NATIVE_PREFIX) + 140, 0) != value):
+            return {"state": "unknown", "reason": "ownership_changed_during_observation"}
+        if owner is None:
+            return {"state": "free" if held else "busy", "ticket": None}
+        result = {"state": "native" if value.startswith(_NATIVE_PREFIX) else "owned",
+                  "busy": not held, "boot_id": owner[0], "nonce": owner[1]}
+        if value.startswith(_NATIVE_PREFIX):
+            result["scope_digest"] = value.decode("ascii").split("\n")[3]
+        return result
+    except FileNotFoundError:
+        return {"state": "absent", "ticket": None}
+    except (OSError, ValueError, HostBusy):
+        return {"state": "unknown", "reason": "ownership_observation_unavailable"}
+    finally:
+        if fd is not None:
+            os.close(fd)
