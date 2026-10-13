@@ -382,7 +382,9 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
                     value['checks'][0].update(status=status, conclusion=conclusion)
                     return value
                 self.github.observe_commit = post_merge
-                self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+                result = await self.step()
+                self.assertEqual(result['reason'], 'post_merge_checks' if status == 'in_progress' else 'post_merge_failed')
+                self.assertEqual(result['progress_hint']['kind'], 'external' if status == 'in_progress' else 'actionable')
                 self.assertEqual(self.github.work['state'], 'open')
         self.assertEqual(len(self.calls), calls)
         self.assertFalse(any(x[0] != 'record' for x in self.github.writes[writes:]))

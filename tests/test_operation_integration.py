@@ -96,8 +96,10 @@ class OperationIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await controller.begin(URL))["reason"], "host_paused")
         self.assertEqual((await runner.step(REPO, 4))["reason"], "host_paused")
         self.assertEqual(await runner.cycle([REPO, OTHER]), [
-            {"repository": REPO, "action": "waiting", "reason": "host_paused"},
-            {"repository": OTHER, "action": "waiting", "reason": "host_paused"}])
+            {"repository": REPO, "action": "waiting", "reason": "host_paused",
+             "progress_hint": {"kind": "human", "next_action": "await_control_change", "wake_source": "control_change"}},
+            {"repository": OTHER, "action": "waiting", "reason": "host_paused",
+             "progress_hint": {"kind": "human", "next_action": "await_control_change", "wake_source": "control_change"}}])
         self.assertEqual(self.calls, [])
         self.assertEqual(self.gh.writes, [])
         self.assertFalse(self.lock.exists())

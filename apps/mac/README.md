@@ -9,6 +9,15 @@ admission gate. Execution termination is a separate observation. Unknown ownersh
 and unverified schedule coverage remain visible and can hold Stop and Quit.
 Closing the window hides it; the menu bar can reopen it.
 
+The operations window requires control protocol v2. It displays the runtime's
+reported package version and source/configuration identity, and discards remote
+observations when that identity changes. These digests compare observations; they
+do not certify installation, native execution ownership or schedule coverage.
+Inspect the same identity without loading project providers with
+`hydra identity --config /absolute/host.toml`. Global Resume preserves individual
+project restrictions. Issue and PR links belong to each observed work item;
+the configured project chat is a separate destination.
+
 ## Build and verification
 
 Use the host's approved build/storage runner for these commands, with this

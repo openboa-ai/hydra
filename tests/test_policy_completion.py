@@ -177,7 +177,7 @@ class PolicyCompletionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await runner.cycle([REPO]), [])
                 self.assertEqual(github.writes, [])
 
-    async def test_post_merge_failure_still_waits_on_original_required_check(self):
+    async def test_post_merge_failure_requires_diagnosis_of_original_required_check(self):
         github = PolicyGitHub('missing')
         observe = github.observe_commit
         def failed(repo, sha):
@@ -185,7 +185,9 @@ class PolicyCompletionTests(unittest.IsolatedAsyncioTestCase):
             result['checks'][0]['conclusion'] = 'failure'
             return result
         github.observe_commit = failed
-        self.assertEqual((await self.runner(github).step(REPO, 4))['reason'], 'post_merge_checks')
+        result = await self.runner(github).step(REPO, 4)
+        self.assertEqual(result['reason'], 'post_merge_failed')
+        self.assertEqual(result['progress_hint']['next_action'], 'diagnose_post_merge')
         self.assertFalse(any(x[0] == 'close' for x in github.writes))
         github.observe_commit = observe
         self.assertEqual((await self.runner(github).step(REPO, 4))['action'], 'completed')

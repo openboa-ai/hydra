@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from .coordinator import observe_coordinator, residual_workers
 from .operations import MAX_PROJECTS, MAX_REVISION, OperatingControl, OperationDenied
+from .runtime_identity import capture_runtime_identity
 
 
 _CONFIG_KEYS = {"repos", "host_alias", "workspace_root", "lock_path", "lifecycle_provider",
@@ -143,7 +144,7 @@ def _remote_observations(cfg, ownership):
     observations = {}
     retained = 0
     for repo in cfg["repos"]:
-        row = {"work": [], "links": {"issue": None, "pr": None}, "complete": False,
+        row = {"work": [], "complete": False,
                "bound_native": False, "unresolved": False}
         observations[repo] = row
         try:
@@ -161,16 +162,15 @@ def _remote_observations(cfg, ownership):
                     continue
                 if retained >= _MAX_TOTAL_WORK:
                     raise ValueError("Work observation bound reached")
+                pr = record.get("pr_number")
                 work = {"issue": number, "phase": _public_code(record.get("phase")),
                         "wait_reason": _public_code(record.get("wait_reason")),
-                        "next_action": _public_code(record.get("next_action"))}
+                        "next_action": _public_code(record.get("next_action")),
+                        "links": {"issue": f"https://github.com/{repo}/issues/{number}",
+                                  "pr": f"https://github.com/{repo}/pull/{pr}"
+                                  if type(pr) is int and 1 <= pr <= MAX_REVISION else None}}
                 row["work"].append(work)
                 retained += 1
-                if row["links"]["issue"] is None:
-                    row["links"]["issue"] = f"https://github.com/{repo}/issues/{number}"
-                pr = record.get("pr_number")
-                if row["links"]["pr"] is None and type(pr) is int and 1 <= pr <= MAX_REVISION:
-                    row["links"]["pr"] = f"https://github.com/{repo}/pull/{pr}"
                 bound = _native_binding(repo, number, record, ownership, cfg["host_alias"])
                 row["bound_native"] |= bound
                 if record.get("host_alias") == cfg["host_alias"]:
@@ -262,7 +262,8 @@ def control_result(cfg, action="status", repository=None, refresh=False):
     if error:
         execution = {"state": "unknown", "active_count": None, "reason": error}
     observed_at = _now()
-    result = {"schema_version": 1, "observed_at": observed_at, "host_alias": cfg["host_alias"],
+    result = {"schema_version": 2, "runtime": capture_runtime_identity(cfg, control),
+              "observed_at": observed_at, "host_alias": cfg["host_alias"],
               "revision": snapshot["revision"], "global_mode": mode,
               "gate_status": "unknown" if error else "blocked" if gate_reason else "allowed",
               "gate_reason": gate_reason, "native_turn_control": "unsupported", "execution": execution,
@@ -291,8 +292,7 @@ def control_result(cfg, action="status", repository=None, refresh=False):
         result["projects"].append({"repository": repo, "override_mode": override, "effective_mode": effective,
             "gate_status": "unknown" if error else "blocked" if reason else "allowed", "gate_reason": reason,
             "execution": project_execution, "work": row.get("work", []),
-            "links": {"issue": row.get("links", {}).get("issue"), "pr": row.get("links", {}).get("pr"),
-                      "chat": "codex://threads/" + thread if thread else None}})
+            "links": {"chat": "codex://threads/" + thread if thread else None}})
     if (mode == "stopped" and not error and coverage["state"] == "confirmed"
             and execution["state"] == "stopped" and execution["active_count"] == 0):
         result["can_quit"], result["quit_reason"] = True, None

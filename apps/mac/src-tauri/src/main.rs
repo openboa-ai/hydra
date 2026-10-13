@@ -98,7 +98,13 @@ impl Bridge {
         self.call(None, None, refresh).await
     }
 
-    async fn open_record(&self, repository: &str, kind: RecordKind) -> Result<(), BridgeError> {
+    async fn open_record(
+        &self,
+        repository: &str,
+        kind: RecordKind,
+        issue: Option<u64>,
+        expected_pr: Option<u64>,
+    ) -> Result<(), BridgeError> {
         if self.quitting.load(Ordering::Acquire) || self.exit_confirmed.load(Ordering::Acquire) {
             return Err(BridgeError::new("quit_in_progress"));
         }
@@ -107,8 +113,8 @@ impl Bridge {
             return Err(BridgeError::new("quit_in_progress"));
         }
         let snapshot = self.snapshot(!matches!(kind, RecordKind::Chat)).await?;
-        let url =
-            protocol::selected_record(&snapshot, repository, kind).map_err(BridgeError::new)?;
+        let url = protocol::selected_record(&snapshot, repository, kind, issue, expected_pr)
+            .map_err(BridgeError::new)?;
         process::open_record_url(&url)
             .await
             .map_err(BridgeError::new)
@@ -134,6 +140,12 @@ impl Bridge {
         match self.call(Some(action), Some(target), false).await {
             Ok(snapshot) if snapshot.acknowledges(action, target) => Ok(snapshot),
             Err(error) if error.code == "backend_unavailable" => Err(error),
+            Err(error) if error.code == "unsupported_runtime" => {
+                // An incompatible response cannot confirm whether the effect
+                // happened. Preserve its cause and reconcile without retrying.
+                let status = self.call(None, None, false).await.ok();
+                Err(BridgeError::with_status("unsupported_runtime", status))
+            }
             _ => {
                 // The effect may have happened before the response was lost.
                 // Reconcile once; never resend the mutation automatically.
@@ -184,18 +196,22 @@ async fn control(
     state.mutate(action, target).await
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 async fn open_record(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, Arc<Bridge>>,
     repository: String,
     kind: RecordKind,
+    issue: Option<u64>,
+    expected_pr: Option<u64>,
 ) -> Result<(), BridgeError> {
     main_window(&window)?;
     if !protocol::repository_valid(&repository) {
         return Err(BridgeError::new("project_unregistered"));
     }
-    state.open_record(&repository, kind).await
+    state
+        .open_record(&repository, kind, issue, expected_pr)
+        .await
 }
 
 #[derive(Clone, Serialize)]
@@ -264,6 +280,7 @@ async fn quit_flow(app: tauri::AppHandle) -> Result<Snapshot, BridgeError> {
         let snapshot = bridge.call(None, None, true).await?;
         if !snapshot.permits_quit()
             || !snapshot.same_targets(&stopped)
+            || !snapshot.same_runtime(&stopped)
             || stopped.revision.is_none()
             || snapshot.revision < stopped.revision
         {

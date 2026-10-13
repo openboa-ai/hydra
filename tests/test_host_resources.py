@@ -161,7 +161,8 @@ class ProviderTests(unittest.TestCase):
             ws = RealWorkspace(Path(directory), lifecycle_provider=Provider())
             runner = Runner(gh, ws, host_alias="test", execute=None, capabilities=None)
             self.assertEqual(runner.status(["example/unavailable", "example/healthy"]),
-                             [{"repository": "example/unavailable", "wait_reason": "resource_discovery_unavailable"}])
+                             [{"repository": "example/unavailable", "wait_reason": "resource_discovery_unavailable",
+                               "progress_hint": {"kind": "unknown", "next_action": "reconcile", "wake_source": "none"}}])
             self.assertEqual(seen, ["example/unavailable", "example/healthy"])
 
     def test_completed_path_is_derived_and_receipt_is_required(self):

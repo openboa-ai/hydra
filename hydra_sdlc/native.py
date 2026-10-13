@@ -15,6 +15,7 @@ from .coordinator import (confirm_native_assignment, coordinator_lock,
 from .runner import Runner, intake_digest, issue_url
 from .project import load_project
 from .operations import OperationDenied
+from .progress import with_progress_hint
 
 NATIVE_FIELDS = {"native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest",
                  "native_origin_phase", "native_resume_phase", "native_correction"}
@@ -56,7 +57,7 @@ class NativeRunner(Runner):
                 and record.get("phase") == "checkpoint" and record.get("checkpoint") == "interrupted_committed"
                 and self.github.ref(repo, record["branch"]) != record.get("expected_head")):
             # Local shutdown grants no authority to adopt a changed/deleted ref.
-            return {"repository": repo, "issue": number, "action": "waiting", "reason": "remote_head_changed"}
+            return with_progress_hint({"repository": repo, "issue": number, "action": "waiting", "reason": "remote_head_changed"})
         return await super().step(repo, number)
 
     async def _model(self, repo, number, config, record, path, phase, task, *, correction=None, spec_record=None):
@@ -90,7 +91,7 @@ class NativeRunner(Runner):
             if record.get("native_phase") != phase:
                 return None, {"action": "waiting", "reason": "native_phase_changed"}
             if not record.get("native_outcome"):
-                return None, {"action": "waiting", "reason": "native_task_active", "step_id": step}
+                return None, {"action": "waiting", "reason": "native_assignment_pending", "step_id": step}
             outcome = record["native_outcome"]
             self.consumed.add(step)
             clean = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
@@ -140,7 +141,7 @@ class NativeRunner(Runner):
                 native_head=state["head"], native_spec_digest=digest, native_outcome=None,
                 native_origin_phase=record["phase"], native_resume_phase=origin_resume,
                 native_correction=correction[0] if correction else None,
-                wait_reason="native_task_active", next_action=phase, expected_head=remote,
+                wait_reason="native_assignment_pending", next_action=phase, expected_head=remote,
                 **({"resume_phase": record.get("resume_phase") or phase}
                    if phase in {"implementation", "correction"} else {}),
                 **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
@@ -181,11 +182,11 @@ class NativeController:
             if not cleanup:
                 reason = self.runner._operation_reason(repo)
                 if reason:
-                    return {"repository": repo, "issue": n, "action": "waiting", "reason": reason}
+                    return with_progress_hint({"repository": repo, "issue": n, "action": "waiting", "reason": reason})
             try:
-                return await callback(url, *args)
+                return with_progress_hint(await callback(url, *args))
             except OperationDenied as exc:
-                return {"repository": repo, "issue": n, "action": "waiting", "reason": exc.reason}
+                return with_progress_hint({"repository": repo, "issue": n, "action": "waiting", "reason": exc.reason})
 
     async def begin(self, url):
         return await self._entry(url, self._begin)

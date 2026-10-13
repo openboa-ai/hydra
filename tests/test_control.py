@@ -153,13 +153,21 @@ class ControlResultTests(unittest.TestCase):
 
     def test_schema_keys_are_stable_and_private_config_paths_are_not_returned(self):
         status = control_result(self.cfg)
-        self.assertEqual(set(status), {"schema_version", "observed_at", "host_alias", "revision", "global_mode",
+        self.assertEqual(status["schema_version"], 2)
+        self.assertEqual(set(status), {"schema_version", "runtime", "observed_at", "host_alias", "revision", "global_mode",
             "gate_status", "gate_reason", "native_turn_control", "execution", "coverage", "can_quit",
             "quit_reason", "remote", "projects", "request"})
+        self.assertEqual(set(status["runtime"]), {"identity_schema", "package", "version", "code_digest",
+            "code_digest_scope", "config_digest", "control_binding_digest", "identity_reason"})
+        self.assertEqual(status["runtime"]["identity_schema"], 1)
+        self.assertEqual(status["runtime"]["package"], "openboa-hydra-sdlc")
+        self.assertEqual(status["runtime"]["code_digest_scope"], "package_sources_at_startup")
+        for key in ("config_digest", "control_binding_digest"):
+            self.assertRegex(status["runtime"][key], r"\A[0-9a-f]{64}\Z")
         self.assertEqual(set(status["projects"][0]), {"repository", "override_mode", "effective_mode", "gate_status",
             "gate_reason", "execution", "work", "links"})
-        self.assertEqual(status["projects"][0]["links"]["chat"], "codex://threads/" + THREAD)
-        self.assertIsNone(status["projects"][1]["links"]["chat"])
+        self.assertEqual(status["projects"][0]["links"], {"chat": "codex://threads/" + THREAD})
+        self.assertEqual(status["projects"][1]["links"], {"chat": None})
         self.assertNotIn(str(self.root), json.dumps(status))
 
     def test_mode_update_is_applied_and_read_back_without_remote_refresh(self):
@@ -248,12 +256,47 @@ class ControlResultTests(unittest.TestCase):
             status = control_result(self.cfg, refresh=True)
         self.assertEqual(status["remote"]["state"], "unavailable")
         project = status["projects"][0]
-        self.assertEqual(project["work"], [{"issue": 7, "phase": "verification", "wait_reason": "ci_pending", "next_action": None}])
-        self.assertEqual(project["links"]["issue"], "https://github.com/example/alpha/issues/7")
-        self.assertEqual(project["links"]["pr"], "https://github.com/example/alpha/pull/9")
+        self.assertEqual(project["work"], [{"issue": 7, "phase": "verification", "wait_reason": "ci_pending", "next_action": None,
+            "links": {"issue": "https://github.com/example/alpha/issues/7", "pr": "https://github.com/example/alpha/pull/9"}}])
+        self.assertEqual(project["links"], {"chat": "codex://threads/" + THREAD})
         self.assertFalse(status["can_quit"])
         self.assertNotIn("credential", json.dumps(status))
         self.assertNotIn("<script>", json.dumps(status))
+
+    def test_each_issue_retains_its_own_links_when_other_records_change(self):
+        github = FakeGitHub({REPOS[0]: {
+            7: {"phase": "verification", "pr_number": 9},
+            8: {"phase": "delivery", "pr_number": 12},
+            11: {"phase": "specification", "pr_number": "https://untrusted.example/private"},
+        }})
+        with patch("hydra_sdlc.github.GitHub", return_value=github):
+            first = control_result(self.cfg, refresh=True)
+            github.records[REPOS[0]].pop(7)
+            github.records[REPOS[0]][8]["pr_number"] = 15
+            later = control_result(self.cfg, refresh=True)
+        links = {work["issue"]: work["links"] for work in first["projects"][0]["work"]}
+        self.assertEqual(links, {
+            7: {"issue": "https://github.com/example/alpha/issues/7", "pr": "https://github.com/example/alpha/pull/9"},
+            8: {"issue": "https://github.com/example/alpha/issues/8", "pr": "https://github.com/example/alpha/pull/12"},
+            11: {"issue": "https://github.com/example/alpha/issues/11", "pr": None},
+        })
+        later_links = {work["issue"]: work["links"] for work in later["projects"][0]["work"]}
+        self.assertEqual(set(later_links), {8, 11})
+        self.assertEqual(later_links[8], {"issue": "https://github.com/example/alpha/issues/8",
+                                        "pr": "https://github.com/example/alpha/pull/15"})
+        self.assertEqual(later_links[11], links[11])
+        for result in (first, later):
+            self.assertEqual(result["projects"][0]["links"], {"chat": "codex://threads/" + THREAD})
+            self.assertNotIn("untrusted.example", json.dumps(result))
+
+    def test_admission_changes_preserve_runtime_identity_and_unknown_execution(self):
+        initial = control_result(self.cfg)
+        for action, repository in (("start", None), ("pause", REPOS[0]), ("stop", None)):
+            with self.subTest(action=action, repository=repository):
+                result = control_result(self.cfg, action, repository)
+                self.assertEqual(result["runtime"], initial["runtime"])
+                self.assertIsNone(result["execution"]["active_count"])
+                self.assertFalse(result["can_quit"])
 
     def test_fresh_empty_github_and_free_coordinator_do_not_certify_schedule_coverage(self):
         with patch("hydra_sdlc.github.GitHub", return_value=FakeGitHub()):

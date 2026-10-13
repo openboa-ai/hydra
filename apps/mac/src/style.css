@@ -66,6 +66,11 @@ dd { margin-top: var(--space-4); font-size: var(--small-size); line-height: var(
 .empty { padding: var(--space-24) var(--space-16); background: var(--surface); border: var(--border-thin) dashed var(--border); border-radius: var(--radius-md); color: var(--secondary); }
 footer { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-12); padding: var(--space-16) var(--space-24); border-top: var(--border-thin) solid var(--border); }
 .health p + p { margin-top: var(--space-4); }
+.health { min-width: 0; }
+.runtime-identity { margin-top: var(--space-8); }
+.runtime-identity p { overflow-wrap: anywhere; }
+.runtime-identity summary { cursor: pointer; }
+.runtime-identity summary:focus-visible { outline: var(--border-focusRing) solid var(--focus); outline-offset: var(--border-focusOffset); }
 .footer-actions { display: flex; gap: var(--space-4); }
 .coverage-reason { max-width: 320px; }
 @media (max-width: 560px) { .app-header, main { padding: var(--space-16); } .host, .project { padding: var(--space-16); } .host-top, .project-heading { align-items: flex-start; } .host-top { flex-wrap: wrap; } .utilities button { font-size: var(--caption-size); padding-right: var(--space-0); } footer { padding: var(--space-16); flex-direction: column; } .project-bottom { align-items: flex-start; flex-direction: column; } .controls { gap: var(--space-4); } .controls button { padding: var(--space-8); } }

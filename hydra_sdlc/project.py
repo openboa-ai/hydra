@@ -266,6 +266,92 @@ def gate_checks(config, observation, sha, *, events=None):
     return _checks(config, observation, sha, post_merge=events == ["push"])
 
 
+def _post_merge_binding_state(config, observation, sha, binding):
+    candidates = _bound_runs(config, observation, sha, binding, post_merge=True)
+    if not candidates or any(type(run.get(key)) is not int or run[key] <= 0
+                             for run in candidates for key in ("run_number", "run_attempt", "id")):
+        return "unknown"
+    run = max(candidates, key=_run_order)
+    if sum(_run_order(candidate) == _run_order(run) for candidate in candidates) != 1:
+        return "unknown"
+    if (type(run.get("workflow_id")) is not int or type(run.get("check_suite_id")) is not int
+            or run["check_suite_id"] <= 0 or not _reusable_bound(binding, run)):
+        return "unknown"
+    repository_id = run.get("repository", {}).get("id", run.get("repository_id"))
+    if type(repository_id) is not int:
+        return "unknown"
+    jobs = run.get("jobs")
+    if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
+        return "unknown"
+    required = [job for job in jobs if job.get("name") == binding["job"]]
+    if len(required) != 1:
+        return "unknown"
+    job = required[0]
+    if (type(job.get("id")) is not int or job["id"] <= 0 or job.get("head_sha") != sha
+            or job.get("check_run_url") != f"https://api.github.com/repos/{config['repository']}/check-runs/{job['id']}"
+            or ("run_id" in job and (type(job["run_id"]) is not int or job["run_id"] != run["id"]))
+            or ("run_attempt" in job and (type(job["run_attempt"]) is not int or job["run_attempt"] != run["run_attempt"]))):
+        return "unknown"
+    matching = [check for check in observation["checks"] if check.get("id") == job["id"]]
+    if len(matching) != 1:
+        return "unknown"
+    check = matching[0]
+    suite, app = check.get("check_suite"), check.get("app")
+    if (type(check.get("id")) is not int or not isinstance(suite, dict) or not isinstance(app, dict)
+            or type(suite.get("id")) is not int or suite["id"] != run["check_suite_id"]
+            or type(app.get("id")) is not int or app["id"] != binding["app_id"]
+            or check.get("head_sha") != sha or check.get("name") != binding["job"]):
+        return "unknown"
+    pending = {"queued", "in_progress", "waiting", "pending", "requested"}
+    terminal = {"success", "failure", "timed_out", "cancelled", "startup_failure",
+                "skipped", "neutral", "action_required", "stale"}
+    run_status, job_status, check_status = run.get("status"), job.get("status"), check.get("status")
+    if (run_status not in pending | {"completed"}
+            or (run_status in pending and run.get("conclusion") is not None)):
+        return "unknown"
+    if job_status == check_status == "completed":
+        conclusions = (job.get("conclusion"), check.get("conclusion"))
+        if any(conclusion not in terminal for conclusion in conclusions):
+            return "unknown"
+        if any(conclusion != "success" for conclusion in conclusions):
+            return "failed"
+        # Optional jobs may fail without failing the required checks. Retain the
+        # existing completion gate's wait for a workflow still in progress.
+        return "success" if run_status == "completed" else "pending"
+    if (run_status in pending and job_status in pending and check_status in pending
+            and job.get("conclusion") is None and check.get("conclusion") is None):
+        return "pending"
+    return "unknown"
+
+
+def post_merge_check_state(config, observation, merge_sha) -> str:
+    """Classify exact required push evidence without authorizing a retry or merge."""
+    try:
+        if (not _sha(merge_sha) or not isinstance(config, dict) or not isinstance(observation, dict)
+                or type(config.get("repository_id")) is not int or config["repository_id"] <= 0
+                or not isinstance(observation.get("repository"), dict)
+                or type(observation["repository"].get("id")) is not int
+                or observation["repository"]["id"] != config["repository_id"]
+                or observation.get("head_sha") != merge_sha):
+            return "unknown"
+        bindings, runs, checks = config.get("required_checks"), observation.get("runs"), observation.get("checks")
+        if (not isinstance(bindings, list) or not bindings or not isinstance(runs, list)
+                or not isinstance(checks, list)
+                or any(not isinstance(item, dict) for item in bindings + runs + checks)):
+            return "unknown"
+        states = []
+        for binding in bindings:
+            try:
+                states.append(_post_merge_binding_state(config, observation, merge_sha, binding))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                states.append("unknown")
+        # A confirmed required failure is actionable even while other required
+        # evidence is unavailable. Uncertainty must never become a polling wait.
+        return next((state for state in ("failed", "unknown", "pending") if state in states), "success")
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return "unknown"
+
+
 def _provider(config, observation, head):
     provider = config["review_provider"]
     if provider.get("format") != "codex_summary_v1":

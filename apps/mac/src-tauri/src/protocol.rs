@@ -38,7 +38,9 @@ pub enum ExecutionState {
 #[serde(deny_unknown_fields)]
 pub struct Execution {
     pub state: ExecutionState,
+    #[serde(deserialize_with = "required_nullable")]
     pub active_count: Option<u64>,
+    #[serde(deserialize_with = "required_nullable")]
     pub reason: Option<String>,
 }
 
@@ -46,6 +48,7 @@ pub struct Execution {
 #[serde(deny_unknown_fields)]
 pub struct Coverage {
     pub state: CoverageState,
+    #[serde(deserialize_with = "required_nullable")]
     pub reason: Option<String>,
 }
 
@@ -60,6 +63,7 @@ pub enum CoverageState {
 #[serde(deny_unknown_fields)]
 pub struct Remote {
     pub state: RemoteState,
+    #[serde(deserialize_with = "required_nullable")]
     pub observed_at: Option<String>,
 }
 
@@ -75,16 +79,28 @@ pub enum RemoteState {
 #[serde(deny_unknown_fields)]
 pub struct Work {
     pub issue: u64,
+    #[serde(deserialize_with = "required_nullable")]
     pub phase: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub wait_reason: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub next_action: Option<String>,
+    pub links: WorkLinks,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Links {
+pub struct WorkLinks {
+    #[serde(deserialize_with = "required_nullable")]
     pub issue: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub pr: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectLinks {
+    #[serde(deserialize_with = "required_nullable")]
     pub chat: Option<String>,
 }
 
@@ -92,13 +108,15 @@ pub struct Links {
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub repository: String,
+    #[serde(deserialize_with = "required_nullable")]
     pub override_mode: Option<Mode>,
     pub effective_mode: Mode,
     pub gate_status: Gate,
+    #[serde(deserialize_with = "required_nullable")]
     pub gate_reason: Option<String>,
     pub execution: Execution,
     pub work: Vec<Work>,
-    pub links: Links,
+    pub links: ProjectLinks,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -163,7 +181,9 @@ pub struct Request {
     pub action: Action,
     pub target: String,
     pub status: RequestState,
+    #[serde(deserialize_with = "required_nullable")]
     pub revision: Option<u64>,
+    #[serde(deserialize_with = "required_nullable")]
     pub reason: Option<String>,
 }
 
@@ -181,23 +201,99 @@ pub enum NativeControl {
     Unsupported,
 }
 
+fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeIdentity {
+    pub identity_schema: u64,
+    pub package: String,
+    #[serde(deserialize_with = "required_nullable")]
+    pub version: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub code_digest: Option<String>,
+    pub code_digest_scope: String,
+    #[serde(deserialize_with = "required_nullable")]
+    pub config_digest: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub control_binding_digest: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub identity_reason: Option<String>,
+}
+
+impl RuntimeIdentity {
+    fn valid(&self) -> bool {
+        self.identity_schema == 1
+            && self.package == "openboa-hydra-sdlc"
+            && self.code_digest_scope == "package_sources_at_startup"
+            && self.version.as_ref().is_none_or(|version| {
+                !version.is_empty()
+                    && version.len() <= 128
+                    && version.bytes().all(|c| (b' '..=b'~').contains(&c))
+            })
+            && [
+                &self.code_digest,
+                &self.config_digest,
+                &self.control_binding_digest,
+            ]
+            .iter()
+            .all(|digest| {
+                digest.as_ref().is_none_or(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                })
+            })
+            && self.identity_reason.as_ref().is_none_or(|reason| {
+                !reason.is_empty()
+                    && reason.len() <= 120
+                    && (reason.as_bytes()[0].is_ascii_lowercase()
+                        || reason.as_bytes()[0].is_ascii_digit())
+                    && reason
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"_-".contains(&c))
+            })
+    }
+
+    fn known(&self) -> bool {
+        self.valid()
+            && self.version.is_some()
+            && self.identity_reason.is_none()
+            && self.code_digest.is_some()
+            && self.config_digest.is_some()
+            && self.control_binding_digest.is_some()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
     pub schema_version: u64,
+    pub runtime: RuntimeIdentity,
     pub observed_at: String,
     pub host_alias: String,
+    #[serde(deserialize_with = "required_nullable")]
     pub revision: Option<u64>,
     pub global_mode: Mode,
     pub gate_status: Gate,
+    #[serde(deserialize_with = "required_nullable")]
     pub gate_reason: Option<String>,
     pub native_turn_control: NativeControl,
     pub execution: Execution,
     pub coverage: Coverage,
     pub can_quit: bool,
+    #[serde(deserialize_with = "required_nullable")]
     pub quit_reason: Option<String>,
     pub remote: Remote,
     pub projects: Vec<Project>,
+    #[serde(deserialize_with = "required_nullable")]
     pub request: Option<Request>,
 }
 
@@ -241,8 +337,17 @@ impl Snapshot {
         if bytes.len() > MAX_OUTPUT {
             return Err("backend_output_too_large");
         }
+        #[derive(Deserialize)]
+        struct Version {
+            schema_version: u64,
+        }
+        let version: Version =
+            serde_json::from_slice(bytes).map_err(|_| "backend_response_invalid")?;
+        if version.schema_version != 2 {
+            return Err("unsupported_runtime");
+        }
         let value: Self = serde_json::from_slice(bytes).map_err(|_| "backend_response_invalid")?;
-        if value.schema_version != 1
+        if !value.runtime.valid()
             || timestamp_millis(&value.observed_at).is_none()
             || value.host_alias.is_empty()
             || value.host_alias.len() > 255
@@ -262,21 +367,23 @@ impl Snapshot {
         }
         let mut seen = BTreeSet::new();
         for project in &value.projects {
+            let mut seen_work = BTreeSet::new();
             if !repository_valid(&project.repository)
                 || !seen.insert(&project.repository)
                 || project.override_mode == Some(Mode::Unknown)
                 || project.work.len() > 1024
                 || !valid_execution(&project.execution)
                 || !bounded_text(&project.gate_reason)
-                || !bounded_text(&project.links.issue)
-                || !bounded_text(&project.links.pr)
                 || !bounded_text(&project.links.chat)
                 || project.work.iter().any(|work| {
                     work.issue == 0
                         || work.issue > MAX_INTEGER
+                        || !seen_work.insert(work.issue)
                         || !bounded_text(&work.phase)
                         || !bounded_text(&work.wait_reason)
                         || !bounded_text(&work.next_action)
+                        || !bounded_text(&work.links.issue)
+                        || !bounded_text(&work.links.pr)
                 })
             {
                 return Err("backend_response_invalid");
@@ -309,6 +416,10 @@ impl Snapshot {
                 .iter()
                 .map(|project| &project.repository)
                 .collect::<BTreeSet<_>>()
+    }
+
+    pub fn same_runtime(&self, other: &Self) -> bool {
+        self.runtime.known() && other.runtime.known() && self.runtime == other.runtime
     }
 
     pub fn acknowledges(&self, action: Action, target: &Target) -> bool {
@@ -360,6 +471,7 @@ impl Snapshot {
             .as_deref()
             .and_then(timestamp_millis);
         self.can_quit
+            && self.runtime.known()
             && self
                 .revision
                 .is_some_and(|revision| revision > 0 && revision <= MAX_INTEGER)
@@ -405,12 +517,37 @@ pub fn selected_record(
     snapshot: &Snapshot,
     repository: &str,
     kind: RecordKind,
+    issue: Option<u64>,
+    expected_pr: Option<u64>,
 ) -> Result<String, &'static str> {
     let project = snapshot.project(repository).ok_or("project_unregistered")?;
+    let valid_number = |number: u64| number > 0 && number <= MAX_INTEGER;
+    let record_number = match kind {
+        RecordKind::Chat if issue.is_none() && expected_pr.is_none() => None,
+        RecordKind::Issue if issue.is_some_and(valid_number) && expected_pr.is_none() => issue,
+        RecordKind::Pr
+            if issue.is_some_and(valid_number) && expected_pr.is_some_and(valid_number) =>
+        {
+            expected_pr
+        }
+        _ => return Err("record_unavailable"),
+    };
     let selected = match kind {
-        RecordKind::Issue => &project.links.issue,
-        RecordKind::Pr => &project.links.pr,
         RecordKind::Chat => &project.links.chat,
+        RecordKind::Issue | RecordKind::Pr => {
+            if snapshot.remote.state != RemoteState::Fresh {
+                return Err("record_unavailable");
+            }
+            let work = project
+                .work
+                .iter()
+                .find(|work| Some(work.issue) == issue)
+                .ok_or("record_unavailable")?;
+            match kind {
+                RecordKind::Issue => &work.links.issue,
+                _ => &work.links.pr,
+            }
+        }
     };
     let text = selected.as_ref().ok_or("record_unavailable")?;
     if text.len() > 2048
@@ -445,12 +582,16 @@ pub fn selected_record(
             };
             let prefix = format!("/{repository}/{segment}/");
             let number = url.path().strip_prefix(&prefix).unwrap_or_default();
-            url.scheme() == "https"
+            let valid = url.scheme() == "https"
                 && url.host_str() == Some("github.com")
                 && !number.is_empty()
                 && number.bytes().all(|c| c.is_ascii_digit())
-                && number.parse::<u64>().is_ok_and(|n| n > 0)
-                && text == &format!("https://github.com{prefix}{number}")
+                && number.parse::<u64>().is_ok_and(valid_number)
+                && text == &format!("https://github.com{prefix}{number}");
+            if valid && number.parse::<u64>().ok() != record_number {
+                return Err("record_unavailable");
+            }
+            valid && record_number.is_some_and(|n| number == n.to_string())
         }
     };
     if valid {
@@ -476,14 +617,22 @@ mod tests {
     use super::*;
     fn snapshot() -> Snapshot {
         serde_json::from_value(serde_json::json!({
-            "schema_version":1,"observed_at":"2026-10-12T00:00:00Z","host_alias":"test",
+            "schema_version":2,"observed_at":"2026-10-12T00:00:00Z","host_alias":"test",
+            "runtime":{"identity_schema":1,"package":"openboa-hydra-sdlc","version":"0.2.1",
+                "code_digest":"a".repeat(64),"code_digest_scope":"package_sources_at_startup",
+                "config_digest":"b".repeat(64),"control_binding_digest":"c".repeat(64),"identity_reason":null},
             "revision":1,"global_mode":"stopped","gate_status":"blocked","gate_reason":"host_stopped",
             "native_turn_control":"unsupported","execution":{"state":"stopped","active_count":0,"reason":null},
             "coverage":{"state":"confirmed","reason":null},"can_quit":true,"quit_reason":null,
             "remote":{"state":"fresh","observed_at":"2026-10-12T00:00:00Z"},
             "projects":[{"repository":"example/project","override_mode":null,"effective_mode":"stopped",
                 "gate_status":"blocked","gate_reason":"host_stopped","execution":{"state":"stopped","active_count":0,"reason":null},
-                "work":[],"links":{"issue":"https://github.com/example/project/issues/3","pr":null,"chat":"codex://threads/00000000-0000-0000-0000-000000000001"}}],"request":null
+                "work":[
+                    {"issue":3,"phase":null,"wait_reason":null,"next_action":null,
+                        "links":{"issue":"https://github.com/example/project/issues/3","pr":"https://github.com/example/project/pull/7"}},
+                    {"issue":4,"phase":null,"wait_reason":null,"next_action":null,
+                        "links":{"issue":"https://github.com/example/project/issues/4","pr":"https://github.com/example/project/pull/8"}}
+                ],"links":{"chat":"codex://threads/00000000-0000-0000-0000-000000000001"}}],"request":null
         })).unwrap()
     }
     #[test]
@@ -534,12 +683,105 @@ mod tests {
         )
         .is_err());
         assert!(Snapshot::parse(s.replacen("{", "{\"can_quit\":true,", 1).as_bytes()).is_err());
-        assert!(Snapshot::parse(
-            s.replace("\"schema_version\":1", "\"schema_version\":2")
-                .as_bytes()
-        )
-        .is_err());
+        assert_eq!(
+            Snapshot::parse(
+                s.replace("\"schema_version\":2", "\"schema_version\":1")
+                    .as_bytes()
+            )
+            .unwrap_err(),
+            "unsupported_runtime"
+        );
+        assert_eq!(
+            Snapshot::parse(br#"{"schema_version":1}"#).unwrap_err(),
+            "unsupported_runtime"
+        );
         assert!(Snapshot::parse(s.as_bytes()).is_ok());
+    }
+    #[test]
+    fn runtime_identity_is_strict_but_unavailable_fields_remain_unknown() {
+        let original = serde_json::to_value(snapshot()).unwrap();
+        for (key, invalid) in [
+            ("identity_schema", serde_json::json!(2)),
+            ("package", serde_json::json!("another-package")),
+            ("version", serde_json::json!("\n0.2.1")),
+            ("version", serde_json::json!("x".repeat(129))),
+            ("version", serde_json::json!("")),
+            ("code_digest", serde_json::json!("A".repeat(64))),
+            ("config_digest", serde_json::json!("a".repeat(63))),
+            ("control_binding_digest", serde_json::json!("g".repeat(64))),
+            ("code_digest_scope", serde_json::json!("current_disk")),
+            ("identity_reason", serde_json::json!("private detail/path")),
+            ("identity_reason", serde_json::json!("x".repeat(121))),
+            ("identity_reason", serde_json::json!("")),
+        ] {
+            let mut value = original.clone();
+            value["runtime"][key] = invalid;
+            assert!(
+                Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err(),
+                "accepted {key}"
+            );
+        }
+        for key in [
+            "identity_schema",
+            "package",
+            "version",
+            "code_digest",
+            "code_digest_scope",
+            "config_digest",
+            "control_binding_digest",
+            "identity_reason",
+        ] {
+            let mut value = original.clone();
+            value["runtime"].as_object_mut().unwrap().remove(key);
+            assert!(
+                Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err(),
+                "missing {key}"
+            );
+        }
+        let mut value = original.clone();
+        value["runtime"]["extra"] = serde_json::json!(true);
+        assert!(Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        let now = timestamp_millis("2026-10-12T00:00:00Z").unwrap();
+        for key in ["code_digest", "config_digest", "control_binding_digest"] {
+            let mut value = original.clone();
+            value["runtime"][key] = serde_json::Value::Null;
+            let unavailable = Snapshot::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(!unavailable.same_runtime(&unavailable));
+            assert!(!unavailable.permits_quit_at(now));
+        }
+        for (key, unavailable_value) in [
+            ("version", serde_json::Value::Null),
+            (
+                "identity_reason",
+                serde_json::json!("runtime_version_unavailable"),
+            ),
+        ] {
+            let mut value = original.clone();
+            value["runtime"][key] = unavailable_value;
+            let unavailable = Snapshot::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(!unavailable.same_runtime(&unavailable));
+            assert!(!unavailable.permits_quit_at(now));
+        }
+    }
+    #[test]
+    fn runtime_continuity_requires_the_same_known_identity() {
+        let original = snapshot();
+        assert!(original.same_runtime(&snapshot()));
+        for field in [
+            "version",
+            "code_digest",
+            "config_digest",
+            "control_binding_digest",
+        ] {
+            let mut value = serde_json::to_value(&original).unwrap();
+            value["runtime"][field] = serde_json::json!(if field == "version" {
+                "0.2.2".to_string()
+            } else {
+                "d".repeat(64)
+            });
+            let changed = Snapshot::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(!changed.same_runtime(&original));
+        }
     }
     #[test]
     fn targets_never_default_to_host() {
@@ -591,8 +833,8 @@ mod tests {
     #[test]
     fn links_are_selected_records_in_the_registered_repository() {
         let mut s = snapshot();
-        assert!(selected_record(&s, "example/project", RecordKind::Issue).is_ok());
-        assert!(selected_record(&s, "example/project", RecordKind::Chat).is_ok());
+        assert!(selected_record(&s, "example/project", RecordKind::Issue, Some(3), None).is_ok());
+        assert!(selected_record(&s, "example/project", RecordKind::Chat, None, None).is_ok());
         for url in [
             "javascript:alert(1)",
             "https://github.com.attacker.invalid/example/project/issues/3",
@@ -600,11 +842,96 @@ mod tests {
             "https://github.com/example/project/issues/3?redirect=x",
             "https://github.com/example/project/issues/%33",
         ] {
-            s.projects[0].links.issue = Some(url.into());
-            assert!(selected_record(&s, "example/project", RecordKind::Issue).is_err());
+            s.projects[0].work[0].links.issue = Some(url.into());
+            assert!(
+                selected_record(&s, "example/project", RecordKind::Issue, Some(3), None).is_err()
+            );
         }
         s.projects[0].links.chat =
             Some("codex://threads/00000000-0000-0000-0000-000000000001?prompt=run".into());
-        assert!(selected_record(&s, "example/project", RecordKind::Chat).is_err());
+        assert!(selected_record(&s, "example/project", RecordKind::Chat, None, None).is_err());
+    }
+    #[test]
+    fn work_records_never_fall_back_to_another_issue_or_changed_pr() {
+        let mut s = snapshot();
+        for (issue, pr) in [(3, 7), (4, 8)] {
+            assert_eq!(
+                selected_record(&s, "example/project", RecordKind::Issue, Some(issue), None)
+                    .unwrap(),
+                format!("https://github.com/example/project/issues/{issue}")
+            );
+            assert_eq!(
+                selected_record(&s, "example/project", RecordKind::Pr, Some(issue), Some(pr))
+                    .unwrap(),
+                format!("https://github.com/example/project/pull/{pr}")
+            );
+        }
+        for (kind, issue, pr) in [
+            (RecordKind::Issue, None, None),
+            (RecordKind::Issue, Some(0), None),
+            (RecordKind::Issue, Some(3), Some(7)),
+            (RecordKind::Pr, Some(3), None),
+            (RecordKind::Pr, Some(3), Some(8)),
+            (RecordKind::Pr, Some(9), Some(7)),
+            (RecordKind::Pr, Some(3), Some(MAX_INTEGER + 1)),
+            (RecordKind::Chat, Some(3), None),
+            (RecordKind::Chat, None, Some(7)),
+        ] {
+            assert_eq!(
+                selected_record(&s, "example/project", kind, issue, pr).unwrap_err(),
+                "record_unavailable"
+            );
+        }
+        s.projects[0].work[0].links.pr = Some("https://github.com/example/project/pull/9".into());
+        assert_eq!(
+            selected_record(&s, "example/project", RecordKind::Pr, Some(3), Some(7)).unwrap_err(),
+            "record_unavailable"
+        );
+        s.projects[0].work[0].links.issue =
+            Some("https://github.com/example/project/issues/4".into());
+        assert_eq!(
+            selected_record(&s, "example/project", RecordKind::Issue, Some(3), None).unwrap_err(),
+            "record_unavailable"
+        );
+        s.projects[0].work.remove(0);
+        assert_eq!(
+            selected_record(&s, "example/project", RecordKind::Issue, Some(3), None).unwrap_err(),
+            "record_unavailable"
+        );
+        s.remote.state = RemoteState::Unavailable;
+        assert_eq!(
+            selected_record(&s, "example/project", RecordKind::Issue, Some(4), None).unwrap_err(),
+            "record_unavailable"
+        );
+    }
+    #[test]
+    fn work_identity_and_link_ownership_are_unambiguous() {
+        let mut s = snapshot();
+        s.projects[0].work[1].issue = 3;
+        assert!(Snapshot::parse(&serde_json::to_vec(&s).unwrap()).is_err());
+        let original = serde_json::to_value(snapshot()).unwrap();
+        for key in ["issue", "pr"] {
+            let mut value = original.clone();
+            value["projects"][0]["work"][0]["links"]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+            let mut value = original.clone();
+            value["projects"][0]["links"][key] =
+                serde_json::json!("https://github.com/example/project/issues/3");
+            assert!(Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        for key in ["phase", "wait_reason", "next_action"] {
+            let mut value = original.clone();
+            value["projects"][0]["work"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        let mut value = original;
+        value.as_object_mut().unwrap().remove("request");
+        assert!(Snapshot::parse(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 }

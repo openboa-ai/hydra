@@ -5,6 +5,7 @@ import argparse
 import importlib
 import os
 from pathlib import Path
+from .runtime_identity import capture_runtime_identity
 
 
 def controller_from_file(path):
@@ -28,19 +29,23 @@ def controller_from_file(path):
         if repo:
             return github.ref(repo, github.repository(repo)["default_branch"])
         return None
-    return NativeController(github, workspace, repos=cfg["repos"], host_alias=cfg["host_alias"],
+    operations = control_from_config(cfg)
+    controller = NativeController(github, workspace, repos=cfg["repos"], host_alias=cfg["host_alias"],
         lock_path=Path(cfg.get("lock_path", "~/.local/share/hydra/host.lock")).expanduser(),
-        knowledge_revision=knowledge_revision, operations=control_from_config(cfg))
+        knowledge_revision=knowledge_revision, operations=operations)
+    controller.runtime_identity = capture_runtime_identity(cfg, operations)
+    return controller
 
 
 def create_server(controller):
     from mcp.server import MCPServer
     server = MCPServer("Hydra", log_level="WARNING")
+    runtime = dict(getattr(controller, "runtime_identity", None) or capture_runtime_identity())
 
     @server.tool()
     def hydra_status() -> dict:
         """Read registered GitHub work and waiting reasons without claiming it."""
-        result = {"projects": controller.status()}
+        result = {"projects": controller.status(), "runtime": dict(runtime)}
         operations = getattr(getattr(controller, "runner", None), "operations", None)
         if operations is not None:
             from .operations import OperationDenied

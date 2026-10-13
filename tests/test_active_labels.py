@@ -197,7 +197,7 @@ class CompletionCleanupTests(unittest.IsolatedAsyncioTestCase):
 
         def pending(repo, sha):
             value = actual(repo, sha)
-            value['runs'][0]['status'] = 'in_progress'
+            value['runs'][0].update(status='in_progress', conclusion=None)
             return value
 
         self.github.observe_commit = pending

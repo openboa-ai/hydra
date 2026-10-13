@@ -13,10 +13,11 @@ from pathlib import Path
 
 from .coordinator import operation_scope
 from .operations import OperationDenied
+from .progress import with_progress_hint
 
 from .project import (_provider, gate_completed_delivery, gate_delivery, gate_squash_result,
                       load_project, matches, parse_intake, squash_message,
-                      squash_message_matches, terminal_required_checks)
+                      squash_message_matches, terminal_required_checks, post_merge_check_state)
 
 
 def issue_url(value):
@@ -326,6 +327,38 @@ class Runner:
                      pending_action=record.get("pending_action") if phase == "uncertain" or
                      record.get("pending_action") in {"close_issue", "merge"} or phase == "executing" else None)
         return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+
+    def _post_merge_wait(self, repo, number, record, check_state):
+        reason, action = {
+            "pending": ("post_merge_checks", "observe_post_merge_checks"),
+            "failed": ("post_merge_failed", "diagnose_post_merge"),
+        }.get(check_state, ("post_merge_evidence_unknown", "reconcile_post_merge_evidence"))
+        if check_state is None:
+            # A failed read can coincide with a complete provider outage. Report
+            # the unknown observation without attempting another provider call.
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+        try:
+            return self._wait(repo, number, record, reason, phase="observing", next_action=action)
+        except OperationDenied:
+            raise
+        except (RuntimeError, OSError, ValueError):
+            if check_state != "unknown":
+                raise
+            # An evidence outage can also prevent publishing its wait reason.
+            # Keep this observation transient; the existing close intent stays
+            # authoritative whether the attempted progress write landed or not.
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+
+    def _observe_post_merge(self, repo, config, merge_sha):
+        try:
+            observation = self.github.observe_commit(repo, merge_sha)
+        except OperationDenied:
+            raise
+        except (RuntimeError, OSError, ValueError):
+            # Includes GitHubError. A failed read proves neither pending CI nor
+            # terminal failure, and its raw diagnostic is not public progress.
+            return None
+        return post_merge_check_state(config, observation, merge_sha)
 
     def _intent_wait(self, repo, number):
         progress = self.github.progress(repo, number) or {}
@@ -771,16 +804,16 @@ class Runner:
             try:
                 reason = self._operation_reason(repo)
                 if reason:
-                    return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+                    return with_progress_hint({"repository": repo, "issue": number, "action": "waiting", "reason": reason})
                 try:
                     result = await self._step(repo, number)
                     blocked = self._operation_reason(repo)
                     if blocked:
                         self._checkpoint_ended_on_hold(repo, number, blocked)
-                    return result
+                    return with_progress_hint(result)
                 except OperationDenied as exc:
                     self._checkpoint_ended_on_hold(repo, number, exc.reason)
-                    return {"repository": repo, "issue": number, "action": "waiting", "reason": exc.reason}
+                    return with_progress_hint({"repository": repo, "issue": number, "action": "waiting", "reason": exc.reason})
             finally:
                 self._ended_execution.reset(token)
 
@@ -947,12 +980,10 @@ class Runner:
                 if gate_completed_delivery(config, observation, record["head"], self._paths(observation),
                                            expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint")):
                     return self._wait(repo, number, record, "completion_evidence_missing", phase="observing")
-                from .project import gate_checks
                 merge_sha = pr.get("merge_commit_sha")
-                post = self.github.observe_commit(repo, merge_sha)
-                blockers = gate_checks(config, post, merge_sha, events=["push"])
-                if blockers:
-                    return self._wait(repo, number, record, "post_merge_checks", phase="observing")
+                check_state = self._observe_post_merge(repo, config, merge_sha)
+                if check_state != "success":
+                    return self._post_merge_wait(repo, number, record, check_state)
                 boundary = self._latest(repo, number, config)
                 if boundary and not (closing_recovery and boundary == "issue_closed"):
                     return self._wait(repo, number, record, "delivery_boundary_changed")
@@ -967,9 +998,9 @@ class Runner:
                     return self._wait(repo, number, record, "completion_evidence_missing", phase="uncertain")
                 # A push rerun can start while publishing the close intent.
                 # Candidate evidence does not substitute for current merge CI.
-                post = self.github.observe_commit(repo, merge_sha)
-                if gate_checks(config, post, merge_sha, events=["push"]):
-                    return self._wait(repo, number, record, "post_merge_checks", phase="observing")
+                check_state = self._observe_post_merge(repo, config, merge_sha)
+                if check_state != "success":
+                    return self._post_merge_wait(repo, number, record, check_state)
                 boundary = self._latest(repo, number, config)
                 if boundary and not (closing_recovery and boundary == "issue_closed"):
                     return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
@@ -1622,11 +1653,11 @@ class Runner:
                 if hint:
                     item["resume_hint"] = hint
                 result.append(item)
-        return result
+        return [with_progress_hint(item) for item in result]
 
     async def cycle(self, repos):
         if self.host_hold_reason:
-            return [{"action": "waiting", "reason": self.host_hold_reason}]
+            return [with_progress_hint({"action": "waiting", "reason": self.host_hold_reason})]
         ready = []
         results = []
         dependents = {}
@@ -1683,4 +1714,4 @@ class Runner:
                 results.append({"repository": repo, "issue": number, "action": "waiting", "reason": "prerequisite_unavailable"})
             if self.host_hold_reason:
                 break
-        return results
+        return [with_progress_hint(item) for item in results]

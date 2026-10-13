@@ -1,20 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { acceptSnapshot, actionDisabled, count, displayMode, isStale, parseSnapshot, pendingLabel, title } from './model.ts';
-import type { Action, Project, Snapshot, Target } from './model.ts';
+import { Observations, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, pendingLabel, title, waitReasonLabel, workRecord } from './model.ts';
+import type { Action, ObservationTicket, Project, RecordRequest, Snapshot, Target } from './model.ts';
 import './tokens.css';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 let snapshot: Snapshot | null = null;
 let remoteSnapshot: Snapshot | null = null;
+const observations = new Observations();
 let pending: { action: Action; target: Target } | null = null;
 let localBusy = false;
 let remoteBusy = false;
 let quitting = false;
+let quitTicket: ObservationTicket | null = null;
 let notice = '';
 let error = '';
 let theme: 'system' | 'light' | 'dark' = 'system';
+let runtimeDetailsOpen = false;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -38,12 +41,13 @@ function targetName(target: Target): string { return target.scope === 'all' ? 'a
 function equalTarget(a: Target, b: Target): boolean { return a.scope === b.scope && (a.scope === 'all' || (b.scope === 'project' && a.repository === b.repository)); }
 function restoreFocus(label: string | null): void {
   if (!label) return;
-  Array.from(app.querySelectorAll<HTMLButtonElement>('button[aria-label]')).find(node => node.getAttribute('aria-label') === label && !node.disabled)?.focus({ preventScroll: true });
+  Array.from(app.querySelectorAll<HTMLElement>('button[aria-label], summary[aria-label]')).find(node => node.getAttribute('aria-label') === label && !(node instanceof HTMLButtonElement && node.disabled))?.focus({ preventScroll: true });
 }
 function restorePendingFocus(label: string | null): void { if (document.activeElement === document.body) restoreFocus(label); }
 
 const messages: Record<string, string> = {
   launch_configuration_invalid: 'Launch Hydra with an installed runtime and host configuration. No operation has been enabled.',
+  unsupported_runtime: 'This runtime uses an unsupported control protocol. Connect a compatible Hydra runtime; no current control state is confirmed.',
   invalid_response: 'The runtime returned an invalid response. Execution state remains unconfirmed.',
   backend_unavailable: 'The installed Hydra runtime could not be reached. Refresh to reconcile its state.',
   process_failed: 'The runtime could not complete this request. Its execution state remains unconfirmed.',
@@ -67,57 +71,65 @@ const messages: Record<string, string> = {
   record_url_rejected: 'This record link is not an allowed GitHub or Codex destination.',
   record_open_failed: 'The original record could not be opened in its native surface.',
 };
-function receiveFailure(value: unknown): void {
+function receiveFailure(value: unknown, ticket?: ObservationTicket): void {
+  if (ticket && !observations.current(ticket)) return;
+  const failureCode = value instanceof Error ? value.message : typeof value === 'string' ? value : value && typeof value === 'object' ? (value as { code?: string }).code : null;
+  if (failureCode === 'unsupported_runtime') {
+    if (!observations.invalidate(ticket ?? observations.begin())) return;
+    snapshot = null; remoteSnapshot = null; notice = '';
+    error = messages.unsupported_runtime!; return;
+  }
   if (value && typeof value === 'object') {
     const e = value as { code?: string; status?: unknown };
-    if (e.status) { try { receive(e.status); } catch { /* Keep the last confirmed snapshot. */ } }
-    error = messages[e.code ?? ''] ?? 'The operation could not be confirmed. Refresh to reconcile its state.';
-  } else {
-    const code = value instanceof Error ? value.message : typeof value === 'string' ? value : '';
-    error = messages[code] ?? 'The operation could not be confirmed. Refresh to reconcile its state.';
+    if (e.status) { try { receive(e.status, ticket ?? observations.begin()); } catch { /* Keep the last confirmed snapshot. */ } }
   }
+  error = messages[failureCode ?? ''] ?? 'The operation could not be confirmed. Refresh to reconcile its state.';
 }
-function receive(value: unknown): Snapshot {
+function receive(value: unknown, ticket: ObservationTicket): Snapshot | null {
   const next = parseSnapshot(value);
-  if (acceptSnapshot(snapshot, next)) snapshot = next;
-  if (next.remote.state !== 'not_requested' && (!remoteSnapshot || Date.parse(next.observed_at) >= Date.parse(remoteSnapshot.observed_at))) remoteSnapshot = next;
+  if (!observations.accept(next, ticket)) return null;
+  snapshot = observations.snapshot;
+  remoteSnapshot = observations.remote;
   return next;
 }
 
 async function refresh(remote = false, manual = false): Promise<void> {
   if (quitting || (remote ? remoteBusy : localBusy)) return;
   const focus = manual ? document.activeElement?.getAttribute('aria-label') ?? null : null;
+  const ticket = observations.begin();
   if (remote) remoteBusy = true; else localBusy = true;
   render();
-  try { receive(await invoke('status', { refresh: remote })); if (manual && !pending) error = ''; }
-  catch (value) { receiveFailure(value); }
+  try { const accepted = receive(await invoke('status', { refresh: remote }), ticket); if (accepted && manual && !pending) error = ''; }
+  catch (value) { receiveFailure(value, ticket); }
   finally { if (remote) remoteBusy = false; else localBusy = false; render(); restorePendingFocus(focus); }
 }
 
 async function control(action: Action, target: Target): Promise<void> {
   if (actionDisabled(action, target, snapshot, !!pending || quitting)) return;
+  const ticket = observations.begin();
   pending = { action, target }; error = ''; notice = ''; render();
   try {
-    const result = receive(await invoke('control', { action, target }));
+    const result = receive(await invoke('control', { action, target }), ticket);
+    if (!result) { error = 'A newer runtime observation replaced this request. Refresh to reconcile its result.'; return; }
     if (result.request?.status === 'applied') {
-      notice = action === 'start' || action === 'resume'
-        ? `Admission is allowed for ${targetName(target)}. Native continuation remains unavailable.`
-        : `The ${action === 'pause' ? 'Pause' : 'Stop'} gate is applied to ${targetName(target)}. Execution confirmation is shown separately.`;
+      notice = appliedNotice(action, target, result);
     } else error = result.request?.reason ? title(result.request.reason) : 'This request is held. No enabling change was confirmed.';
-  } catch (value) { receiveFailure(value); }
+  } catch (value) { receiveFailure(value, ticket); }
   finally { pending = null; render(); restorePendingFocus(`${title(action)} ${targetName(target)}`); }
 }
 
-async function openRecord(repository: string, kind: 'issue' | 'pr' | 'chat'): Promise<void> {
-  try { await invoke('open_record', { repository, kind }); }
-  catch (value) { receiveFailure(value); render(); }
+async function openRecord(request: RecordRequest): Promise<void> {
+  const ticket = observations.begin();
+  try { await invoke('open_record', { ...request }); }
+  catch (value) { receiveFailure(value, ticket); render(); }
 }
 
 async function requestQuit(): Promise<void> {
   if (quitting || pending) return;
+  quitTicket = observations.begin();
   quitting = true; error = ''; notice = 'Stopping new work and checking owned executions before quitting…'; render();
   try { await invoke('request_quit'); }
-  catch (value) { receiveFailure(value); quitting = false; notice = ''; render(); restorePendingFocus('Stop and quit Hydra'); }
+  catch (value) { receiveFailure(value, quitTicket ?? undefined); quitting = false; quitTicket = null; notice = ''; render(); restorePendingFocus('Stop and quit Hydra'); }
 }
 
 function controls(target: Target): HTMLElement {
@@ -137,12 +149,13 @@ function projectCard(project: Project): HTMLElement {
   const card = element('article', undefined, 'project');
   const header = element('div', undefined, 'project-heading');
   const identity = element('div'); identity.append(element('p', project.repository.split('/')[0], 'owner'), element('h3', project.repository.split('/')[1]));
-  const state = pending && equalTarget(pending.target, target) ? pendingLabel(pending.action) : displayMode(project.effective_mode);
+  const state = pending && equalTarget(pending.target, target) ? pendingLabel(pending.action) : `New work ${project.gate_status === 'unknown' ? 'unconfirmed' : project.gate_status}`;
   header.append(identity, badge(state, project.effective_mode === 'unknown' ? 'warning' : 'neutral', project.effective_mode === 'running' ? '▷' : project.effective_mode === 'paused' ? 'Ⅱ' : project.effective_mode === 'unknown' ? '?' : '□'));
   card.append(header);
   const facts = element('dl', undefined, 'facts');
   facts.append(description('Admission', project.gate_status === 'allowed' ? 'New work allowed' : project.gate_status === 'blocked' ? 'New work blocked' : 'Unconfirmed'), description('Execution', title(project.execution.state)), description('Active', count(project.execution.active_count)));
   card.append(facts);
+  card.append(element('p', `Individual setting · ${project.override_mode === null ? 'Inherit global' : title(project.override_mode)} · Effective setting · ${title(project.effective_mode)}`, 'helper'));
   if (project.override_mode && project.override_mode !== 'running') card.append(element('p', `Individual ${project.override_mode === 'paused' ? 'Pause' : 'Stop'} is preserved when all projects resume.`, 'preserved'));
   if (project.execution.reason || project.gate_reason) card.append(element('p', title(project.execution.reason ?? project.gate_reason!), 'reason'));
   const remoteProject = remoteSnapshot?.projects.find(row => row.repository === project.repository);
@@ -152,9 +165,19 @@ function projectCard(project: Project): HTMLElement {
     for (const item of workSource.work.slice(0, 3)) {
       const row = element('div', undefined, 'work-row');
       row.append(element('span', `#${item.issue}`, 'issue-id'), element('span', item.phase ? title(item.phase) : 'Phase unknown'));
-      if (item.wait_reason) row.append(element('span', title(item.wait_reason), 'wait-reason'));
+      if (item.wait_reason) row.append(element('span', waitReasonLabel(item.wait_reason), 'wait-reason'));
       work.append(row);
-      if (item.next_action) work.append(element('p', `Next · ${title(item.next_action)}`, 'next-action'));
+      if (item.next_action) work.append(element('p', `Next · ${nextActionLabel(item.next_action)}`, 'next-action'));
+      const links = element('div', undefined, 'record-links');
+      for (const kind of ['issue', 'pr'] as const) {
+        const request = workRecord(project.repository, item, kind);
+        if (!request) continue;
+        const text = kind === 'issue' ? `Issue #${item.issue}` : `PR #${request.expectedPr}`;
+        const link = button(`${text} ↗`, () => { void openRecord(request); }, 'link');
+        link.disabled = quitting;
+        link.setAttribute('aria-label', `Open ${text} for ${project.repository} issue ${item.issue}`); links.append(link);
+      }
+      work.append(links);
     }
     if (workSource.work.length > 3) work.append(element('p', `${workSource.work.length - 3} more work records`, 'next-action'));
     if (workSource === remoteProject) work.append(element('p', `◷ GitHub ${remoteLabel()} · ${formatTime(remoteSnapshot!.remote.observed_at)}`, 'evidence-time'));
@@ -163,11 +186,10 @@ function projectCard(project: Project): HTMLElement {
   const bottom = element('div', undefined, 'project-bottom');
   bottom.append(controls(target));
   const links = element('div', undefined, 'record-links');
-  for (const [kind, text] of [['issue', 'Issue'], ['pr', 'PR'], ['chat', 'Codex']] as const) {
-    if (project.links[kind] || remoteProject?.links[kind]) {
-      const link = button(`${text} ↗`, () => { void openRecord(project.repository, kind); }, 'link');
-      link.setAttribute('aria-label', `Open ${text} for ${project.repository}`); links.append(link);
-    }
+  if (project.links.chat) {
+    const link = button('Project Codex ↗', () => { void openRecord({ repository: project.repository, kind: 'chat', issue: null, expectedPr: null }); }, 'link');
+    link.disabled = quitting;
+    link.setAttribute('aria-label', `Open project Codex for ${project.repository}`); links.append(link);
   }
   bottom.append(links); card.append(bottom); return card;
 }
@@ -201,11 +223,12 @@ function render(): void {
   const host = element('section', undefined, 'host'); host.setAttribute('aria-label', 'Host controls');
   const top = element('div', undefined, 'host-top');
   const hostTitle = element('div'); hostTitle.append(element('h2', 'All projects'), element('p', snapshot?.host_alias ?? 'Connecting to installed runtime', 'host-name'));
-  const label = quitting ? 'Stopping…' : pending?.target.scope === 'all' ? pendingLabel(pending.action) : snapshot ? `Admission ${displayMode(snapshot.global_mode).toLowerCase()}` : 'Unconfirmed';
+  const label = quitting ? 'Stopping…' : pending?.target.scope === 'all' ? pendingLabel(pending.action) : snapshot ? `New work ${snapshot.gate_status === 'unknown' ? 'unconfirmed' : snapshot.gate_status}` : 'Unconfirmed';
   const hostSymbol = snapshot?.global_mode === 'running' ? '▷' : snapshot?.global_mode === 'paused' ? 'Ⅱ' : snapshot?.global_mode === 'stopped' ? '□' : '?';
   top.append(hostTitle, badge(label, !snapshot || snapshot.global_mode === 'unknown' ? 'warning' : 'neutral', hostSymbol));
   host.append(top, controls({ scope: 'all' }));
-  host.append(element('p', 'Global Resume keeps every individual Pause and Stop.', 'helper'));
+  host.append(element('p', 'Start / Resume allow new work. Pause / Stop block new work. Global Resume preserves individual settings.', 'helper'));
+  if (snapshot) host.append(element('p', `Global setting · ${title(snapshot.global_mode)} · ${admissionSummary(snapshot)}`, 'helper'));
   const hostFacts = element('dl', undefined, 'facts host-facts');
   hostFacts.append(description('Gate', snapshot ? title(snapshot.gate_status) : 'Unconfirmed'), description('Execution', snapshot ? title(snapshot.execution.state) : 'Unknown'), description('Active', snapshot ? count(snapshot.execution.active_count) : 'Unknown'));
   host.append(hostFacts);
@@ -235,6 +258,18 @@ function render(): void {
   health.append(element('p', `Local · ${formatTime(snapshot?.observed_at ?? null)}${snapshot?.revision !== null && snapshot ? ` · revision ${snapshot.revision}` : ''}`));
   health.append(element('p', `Coverage · ${snapshot?.coverage.state === 'confirmed' ? 'Confirmed' : 'Unverified'} · GitHub ${remoteLabel()}`));
   if (snapshot?.coverage.reason) health.append(element('p', title(snapshot.coverage.reason), 'coverage-reason'));
+  if (snapshot) {
+    const runtime = snapshot.runtime;
+    health.append(element('p', `Runtime · ${runtime.version ?? 'version unknown'} · control schema ${snapshot.schema_version}`));
+    const identity = element('details', undefined, 'runtime-identity');
+    identity.open = runtimeDetailsOpen;
+    identity.addEventListener('toggle', () => { if (identity.isConnected) runtimeDetailsOpen = identity.open; });
+    const summary = element('summary', 'Reported runtime identity'); summary.setAttribute('aria-label', 'Reported runtime identity'); identity.append(summary);
+    for (const [label, value] of [['Package', runtime.package], ['Code SHA-256 at startup', runtime.code_digest], ['Configuration SHA-256', runtime.config_digest], ['Control binding SHA-256', runtime.control_binding_digest]]) identity.append(element('p', `${label} · ${value ?? 'unavailable'}`));
+    if (runtime.identity_reason) identity.append(element('p', title(runtime.identity_reason)));
+    identity.append(element('p', 'Identity is observation metadata. It does not qualify this installation, schedule coverage or native control.'));
+    health.append(identity);
+  }
   const footerActions = element('div', undefined, 'footer-actions');
   const localRefresh = button(localBusy ? 'Reading…' : 'Refresh', () => { void refresh(false, true); }, 'quiet'); localRefresh.disabled = localBusy || quitting; localRefresh.setAttribute('aria-label', 'Refresh local status');
   const quit = button(quitting ? 'Stopping…' : 'Stop & Quit', () => { void requestQuit(); }, 'quiet'); quit.disabled = quitting || !!pending; quit.setAttribute('aria-label', 'Stop and quit Hydra'); quit.title = snapshot?.quit_reason ? title(snapshot.quit_reason) : 'Request global Stop and quit only after owned execution termination is confirmed.';
@@ -245,10 +280,12 @@ function render(): void {
 
 render();
 void listen<{ state: 'stopping' | 'blocked'; code?: string; status?: unknown }>('hydra:quit', ({ payload }) => {
+  if (payload.state === 'stopping' && !quitTicket) quitTicket = observations.begin();
   quitting = payload.state === 'stopping';
-  if (payload.status) { try { receive(payload.status); } catch { receiveFailure(new Error('invalid_response')); } }
+  if (payload.status) { try { receive(payload.status, quitTicket ?? observations.begin()); } catch { receiveFailure(new Error('invalid_response')); } }
   if (payload.state === 'blocked') { error = messages[payload.code ?? 'quit_blocked'] ?? messages.quit_blocked!; notice = ''; }
   else notice = 'Stopping new work and checking owned executions before quitting…';
+  if (payload.state === 'blocked') quitTicket = null;
   render();
 }).catch(() => { error = 'The desktop connection is unavailable. Open the installed Hydra application.'; render(); });
 void refresh();

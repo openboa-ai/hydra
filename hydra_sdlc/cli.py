@@ -14,6 +14,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from .coordinator import coordinator_lock, residual_workers
+from .runtime_identity import capture_runtime_identity
 
 
 def parser():
@@ -33,6 +34,8 @@ def parser():
             command.add_argument("--storage-provider", help="Trusted installed host module:factory")
             command.add_argument("--knowledge-repo", help="Private knowledge repository configured by the host operator")
             command.add_argument("--timeout", type=float, default=1800 if name == "run" else None)
+    identity = sub.add_parser("identity", help="Report this runtime's source and configuration identity")
+    identity.add_argument("--config", type=Path)
     control = sub.add_parser("control", help="Inspect or change installed admission controls")
     control.add_argument("action", choices=("status", "start", "pause", "resume", "stop"))
     control.add_argument("--config", type=Path, required=True)
@@ -63,6 +66,12 @@ def operate_control(args):
 
 async def operate(args, *, github=None, workspace=None, execute=None, capabilities=None,
                   operations=None, emit=print):
+    if args.command == "identity":
+        from .control import load_host_config, control_from_config
+        cfg = load_host_config(args.config) if args.config else None
+        result = capture_runtime_identity(cfg, control_from_config(cfg) if cfg else None)
+        emit(json.dumps(result, ensure_ascii=False))
+        return result
     if args.command == "control":
         result = operate_control(args)
         emit(json.dumps(result, ensure_ascii=False))
