@@ -283,6 +283,84 @@ class OperationIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(len(runner._pending_ended), 1)
                     self.assertFalse(any(row[0] in {"push", "pr", "merge", "close"} for row in self.gh.writes))
 
+    async def test_local_checkpoint_failure_can_retry_before_any_remote_write(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                async with self.completed_during_control_update(action="pause") as (
+                        runner, task, release, writers, checkpoints):
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                    release.set()
+                    await asyncio.gather(*writers)
+                    checkpoint = self.ws.checkpoint
+                    attempts = []
+                    before_head, before_writes = self.ws.head, len(self.gh.writes)
+                    def fail_once(*args):
+                        attempts.append(args)
+                        if len(attempts) == 1:
+                            if committed:
+                                checkpoint(*args)
+                            raise WorkspaceWait("git_operation_failed")
+                        return checkpoint(*args)
+                    self.ws.checkpoint = fail_once
+                    first = (await runner.drain_completed())[0]
+                    self.assertEqual((first["action"], first["reason"]),
+                                     ("waiting", "checkpoint_recording_unconfirmed"))
+                    failed_head = self.ws.head
+                    self.assertEqual(failed_head == before_head, not committed)
+                    self.assertEqual(len(runner._pending_ended), 1)
+                    self.assertEqual(runner._unconfirmed_checkpoints, {})
+                    self.assertEqual(len(self.gh.writes), before_writes)
+                    self.assertEqual(self.gh.cleanup_records, [])
+                    result = (await runner.drain_completed())[0]
+                    self.assertEqual((result["action"], result["checkpoint_status"]), ("continue", "recorded"))
+                    self.assertEqual(len(attempts), 2)
+                    self.assertEqual(len(checkpoints), 2 if committed else 1)
+                    if committed:
+                        self.assertEqual(self.ws.head, failed_head)
+                    self.assertEqual(self.gh.note["head"], self.ws.head)
+                    self.assertEqual(len(self.gh.cleanup_records), 1)
+                    self.assertEqual(runner._pending_ended, {})
+                    self.assertEqual(runner._unconfirmed_checkpoints, {})
+                    self.assertEqual(self.calls.count("implementation"), 1)
+                    self.assertFalse(any(row[0] in {"push", "pr", "merge", "close"} for row in self.gh.writes))
+
+    async def test_spec_read_failure_can_retry_after_local_checkpoint(self):
+        async with self.completed_during_control_update(action="pause") as (runner, task, release, writers, checkpoints):
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            release.set()
+            await asyncio.gather(*writers)
+            spec_changed = runner._spec_changed
+            reads = []
+            def unavailable_once(*args):
+                reads.append(args)
+                if len(reads) == 1:
+                    raise WorkspaceWait("git_operation_failed")
+                return spec_changed(*args)
+            with patch.object(runner, "_spec_changed", side_effect=unavailable_once):
+                first = (await runner.drain_completed())[0]
+                self.assertEqual(first["reason"], "checkpoint_recording_unconfirmed")
+                checkpoint_head = self.ws.head
+                self.assertFalse(self.ws.dirty)
+                self.assertEqual(len(checkpoints), 1)
+                self.assertEqual(self.gh.cleanup_records, [])
+                self.assertEqual(runner._unconfirmed_checkpoints, {})
+                self.assertEqual(len(runner._pending_ended), 1)
+                result = (await runner.drain_completed())[0]
+            self.assertEqual(result["checkpoint_status"], "recorded")
+            self.assertEqual(len(reads), 2)
+            self.assertEqual(len(checkpoints), 2)
+            self.assertEqual(self.ws.head, checkpoint_head)
+            self.assertEqual(self.gh.note["head"], checkpoint_head)
+            self.assertEqual(len(self.gh.cleanup_records), 1)
+            self.assertEqual(runner._pending_ended, {})
+            self.assertEqual(runner._unconfirmed_checkpoints, {})
+            self.assertEqual(self.calls.count("implementation"), 1)
+            self.assertFalse(any(row[0] in {"push", "pr", "merge", "close"} for row in self.gh.writes))
+
     async def test_exact_readback_rejects_changed_checkpoint_after_lost_response(self):
         async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
             task.cancel()

@@ -98,6 +98,142 @@ class HostConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.config("#" * 65537)
 
+    def test_nested_physical_config_preserves_relative_path_binding(self):
+        parent = self.root / "installed" / "settings"
+        parent.mkdir(parents=True, mode=0o700)
+        path = parent / "host.toml"
+        path.write_text(self.base + 'lock_path="locks/host.lock"\n')
+        path.chmod(0o600)
+        cfg = load_host_config(path)
+        self.assertEqual(cfg["repos"], REPOS)
+        self.assertEqual(cfg["workspace_root"], str(parent / "work"))
+        self.assertEqual(cfg["lock_path"], str(parent / "locks/host.lock"))
+
+    def test_symlink_in_any_config_ancestor_is_rejected_before_read(self):
+        physical = self.root / "physical"
+        nested = physical / "nested"
+        nested.mkdir(parents=True, mode=0o700)
+        path = nested / "host.toml"
+        path.write_text(self.base)
+        path.chmod(0o600)
+        ancestor_link = self.root / "ancestor-link"
+        ancestor_link.symlink_to(physical, target_is_directory=True)
+        parent_link = physical / "parent-link"
+        parent_link.symlink_to(nested, target_is_directory=True)
+        for candidate in (ancestor_link / "nested" / path.name, parent_link / path.name):
+            with self.subTest(path=candidate.relative_to(self.root)), \
+                    patch("hydra_sdlc.control.os.read", side_effect=AssertionError("config read")), \
+                    self.assertRaises(ValueError) as raised:
+                load_host_config(candidate)
+            self.assertEqual(str(raised.exception), "Invalid installed host settings")
+            self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_writable_config_parent_is_rejected(self):
+        parent = self.root / "writable"
+        parent.mkdir(mode=0o700)
+        path = parent / "host.toml"
+        path.write_text(self.base)
+        path.chmod(0o600)
+        parent.chmod(0o777)
+        with self.assertRaises(ValueError):
+            load_host_config(path)
+
+    def test_ancestor_rebinding_is_rejected_before_and_after_read(self):
+        # Preserve the final directory and file inodes while replacing an upper
+        # directory. Checking only the file or its immediate parent misses this.
+        real_open, real_read = os.open, os.read
+        for boundary in ("before_read", "during_read"):
+            with self.subTest(boundary=boundary):
+                ancestor = self.root / boundary
+                nested = ancestor / "nested"
+                nested.mkdir(parents=True, mode=0o700)
+                path = nested / "host.toml"
+                path.write_text(self.base)
+                path.chmod(0o600)
+                before = path.stat()
+                parent_before = nested.stat()
+                swapped = False
+
+                def replace_ancestor():
+                    nonlocal swapped
+                    if swapped:
+                        return
+                    swapped = True
+                    retired = ancestor.with_name(ancestor.name + "-retired")
+                    ancestor.rename(retired)
+                    ancestor.mkdir(mode=0o700)
+                    (retired / "nested").rename(nested)
+
+                def open_then_swap(name, flags, *args, **kwargs):
+                    fd = real_open(name, flags, *args, **kwargs)
+                    if name == path.name and kwargs.get("dir_fd") is not None:
+                        replace_ancestor()
+                    return fd
+
+                def read_then_swap(fd, size):
+                    result = real_read(fd, size)
+                    replace_ancestor()
+                    return result
+
+                target = "os.open" if boundary == "before_read" else "os.read"
+                replacement = open_then_swap if boundary == "before_read" else read_then_swap
+                with patch("hydra_sdlc.control." + target, side_effect=replacement), \
+                        self.assertRaises(ValueError) as raised:
+                    load_host_config(path)
+                self.assertTrue(swapped)
+                self.assertEqual((path.stat().st_dev, path.stat().st_ino), (before.st_dev, before.st_ino))
+                self.assertEqual((nested.stat().st_dev, nested.stat().st_ino),
+                                 (parent_before.st_dev, parent_before.st_ino))
+                self.assertEqual(str(raised.exception), "Invalid installed host settings")
+
+    def test_ancestor_replaced_with_symlink_during_read_is_rejected(self):
+        parent = self.root / "installed"
+        parent.mkdir(mode=0o700)
+        path = parent / "host.toml"
+        path.write_text(self.base)
+        path.chmod(0o600)
+        real_read = os.read
+        swapped = False
+
+        def read_then_swap(fd, size):
+            nonlocal swapped
+            result = real_read(fd, size)
+            if not swapped:
+                swapped = True
+                retired = self.root / "retired"
+                parent.rename(retired)
+                parent.symlink_to(retired, target_is_directory=True)
+            return result
+
+        with patch("hydra_sdlc.control.os.read", side_effect=read_then_swap), \
+                self.assertRaises(ValueError) as raised:
+            load_host_config(path)
+        self.assertTrue(swapped)
+        self.assertEqual(str(raised.exception), "Invalid installed host settings")
+        self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_config_replaced_during_read_is_rejected(self):
+        self.path.write_text(self.base)
+        self.path.chmod(0o600)
+        replacement = self.root / "replacement.toml"
+        replacement.write_text(self.base)
+        replacement.chmod(0o600)
+        real_read = os.read
+        replaced = False
+
+        def read_then_replace(fd, size):
+            nonlocal replaced
+            result = real_read(fd, size)
+            if not replaced:
+                replaced = True
+                os.replace(replacement, self.path)
+            return result
+
+        with patch("hydra_sdlc.control.os.read", side_effect=read_then_replace), \
+                self.assertRaises(ValueError):
+            load_host_config(self.path)
+        self.assertTrue(replaced)
+
     def test_malformed_and_duplicate_toml_has_bounded_error(self):
         for text in ("not valid", self.base + 'host_alias="duplicate"', "\x00"):
             with self.assertRaises(ValueError) as raised:

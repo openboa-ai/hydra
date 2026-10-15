@@ -76,6 +76,38 @@ test('unregistered targets and overlapping mutations are disabled', () => {
   assert.equal(actionDisabled('stop', { scope: 'all' }, snapshot(), true, now), true);
 });
 
+test('failed cold status leaves only global blocking controls available', () => {
+  for (const failure of ['backend_unavailable', 'invalid_response', 'unsupported_runtime']) {
+    const observations = new Observations();
+    const feedback = new ObservationFeedback(observations);
+    const initial = observations.begin();
+    if (failure === 'unsupported_runtime') assert.equal(observations.invalidate(initial), true);
+    else feedback.fail(failure, initial, 'observation');
+    assert.equal(observations.snapshot, null);
+    assert.equal(actionDisabled('pause', { scope: 'all' }, observations.snapshot, false, now), false);
+    assert.equal(actionDisabled('stop', { scope: 'all' }, observations.snapshot, false, now), false);
+    assert.equal(actionDisabled('start', { scope: 'all' }, observations.snapshot, false, now), true);
+    assert.equal(actionDisabled('resume', { scope: 'all' }, observations.snapshot, false, now), true);
+    for (const action of ['start', 'pause', 'resume', 'stop'] as const) {
+      assert.equal(actionDisabled(action, { scope: 'project', repository: 'example/service' }, observations.snapshot, false, now), true);
+      assert.equal(actionDisabled(action, { scope: 'all' }, observations.snapshot, true, now), true);
+    }
+  }
+});
+
+test('losing a previously valid snapshot cannot reuse its project control targets', () => {
+  const observations = new Observations();
+  assert.equal(observations.accept(snapshot(), observations.begin()), true);
+  const project = { scope: 'project' as const, repository: 'example/service' };
+  assert.equal(actionDisabled('pause', project, observations.snapshot, false, now), false);
+  assert.equal(observations.invalidate(observations.begin()), true);
+  for (const action of ['pause', 'stop'] as const) {
+    assert.equal(actionDisabled(action, project, observations.snapshot, false, now), true);
+    assert.equal(actionDisabled(action, { scope: 'all' }, observations.snapshot, false, now), false);
+    assert.equal(actionDisabled(action, { scope: 'all' }, observations.snapshot, true, now), true);
+  }
+});
+
 function work(issue = 7, pr = 11): Work {
   return { issue, phase: 'reviewing', wait_reason: 'reviews_pending', next_action: 'observe_reviews',
     links: { issue: `https://github.com/example/service/issues/${issue}`, pr: `https://github.com/example/service/pull/${pr}` } };

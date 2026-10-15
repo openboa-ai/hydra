@@ -220,7 +220,10 @@ export function isStale(snapshot: Snapshot | null, now = Date.now()): boolean {
 }
 
 export function actionDisabled(action: Action, target: Target, snapshot: Snapshot | null, pending: boolean, now = Date.now()): boolean {
-  if (pending || !snapshot) return true;
+  if (pending) return true;
+  // The installed host can block admission even when its first status read fails.
+  if (target.scope === 'all' && (action === 'pause' || action === 'stop')) return false;
+  if (!snapshot) return true;
   if (target.scope === 'project' && !snapshot.projects.some(p => p.repository === target.repository)) return true;
   // Blocking controls remain available through stale remote/ownership observations.
   if (action === 'pause' || action === 'stop') return false;

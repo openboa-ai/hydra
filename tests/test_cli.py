@@ -228,6 +228,98 @@ class CliTests(unittest.TestCase):
                     self.assertEqual(controls.snapshot(), before)
                     self.assertFalse((root / 'host.lock').exists())
 
+    def test_project_pause_or_stop_blocks_run_before_missing_providers_or_host_admission(self):
+        for action, reason in (('pause', 'project_paused'), ('stop', 'project_stopped')):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                lock_path = root / 'host.lock'
+                controls = OperatingControl(lock_path, ['example/product'])
+                controls.set_mode('start')
+                controls.set_mode(action, 'example/product')
+                before = controls.snapshot()
+                args = parser().parse_args(['run', '--issue', 'https://github.com/Example/Product/issues/1',
+                    '--workspace-root', str(root), '--host-alias', 'host-a', '--lock-path', str(lock_path),
+                    '--lifecycle-provider', 'nonexistent.lifecycle:create',
+                    '--storage-provider', 'nonexistent.storage:create'])
+                emitted = []
+                with ExitStack() as stack:
+                    effects = [stack.enter_context(patch(name)) for name in (
+                        'hydra_sdlc.cli._provider', 'hydra_sdlc.workspace.Workspace',
+                        'hydra_sdlc.runner.Runner', 'hydra_sdlc.cli.coordinator_lock',
+                        'hydra_sdlc.cli.residual_workers', 'hydra_sdlc.codex.execute',
+                        'hydra_sdlc.codex.capabilities')]
+                    result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+                    for effect in effects:
+                        effect.assert_not_called()
+                self.assertEqual(result, {'action': 'waiting', 'reason': reason,
+                    'progress_hint': {'kind': 'human', 'next_action': 'await_control_change',
+                                      'wake_source': 'control_change'}})
+                self.assertEqual([json.loads(value) for value in emitted], [result])
+                self.assertEqual(controls.snapshot(), before)
+                self.assertFalse(lock_path.exists())
+
+    def test_project_override_changed_after_preflight_blocks_host_admission(self):
+        for action, reason in (('pause', 'project_paused'), ('stop', 'project_stopped')):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                lock_path = root / 'host.lock'
+                controls = OperatingControl(lock_path, ['example/product'])
+                controls.set_mode('start')
+                args = parser().parse_args(['run', '--issue', 'https://github.com/example/product/issues/1',
+                    '--workspace-root', str(root), '--host-alias', 'host-a', '--lock-path', str(lock_path)])
+                emitted = []
+
+                def changed_workspace(*_args, **_kwargs):
+                    controls.set_mode(action, 'example/product')
+                    return object()
+
+                with patch('hydra_sdlc.workspace.Workspace', side_effect=changed_workspace) as workspace, \
+                        patch('hydra_sdlc.cli.coordinator_lock') as acquire, \
+                        patch('hydra_sdlc.cli.residual_workers') as residual, \
+                        patch('hydra_sdlc.runner.Runner') as runner:
+                    result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+                    workspace.assert_called_once()
+                    acquire.assert_not_called()
+                    residual.assert_not_called()
+                    runner.return_value.step.assert_not_called()
+                    runner.return_value.cycle.assert_not_called()
+                self.assertEqual(result['reason'], reason)
+                self.assertEqual(result['progress_hint']['wake_source'], 'control_change')
+                self.assertEqual([json.loads(value) for value in emitted], [result])
+                self.assertFalse(lock_path.exists())
+
+    def test_serve_keeps_global_admission_when_one_project_is_paused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repos = ['example/product', 'example/another']
+            controls = OperatingControl(root / 'host.lock', repos)
+            controls.set_mode('start')
+            controls.set_mode('pause', repos[0])
+            args = parser().parse_args(['serve', '--repos', *repos, '--workspace-root', str(root),
+                '--host-alias', 'host-a', '--lock-path', str(root / 'host.lock')])
+            runtime = Mock(host_hold_reason=None, drain_completed=AsyncMock(return_value=[]))
+
+            async def cycle(_repos):
+                controls.set_mode('stop')
+                return [{'repository': repos[0], 'action': 'waiting', 'reason': 'project_paused'}]
+
+            runtime.cycle = AsyncMock(side_effect=cycle)
+
+            def make_runner(*_args, **kwargs):
+                runtime.stop_requested = kwargs['stop_requested']
+                return runtime
+
+            with patch('hydra_sdlc.runner.Runner', side_effect=make_runner), \
+                    patch.object(controls, 'guard', wraps=controls.guard) as guard, \
+                    patch('hydra_sdlc.cli.coordinator_lock') as acquire, \
+                    patch('hydra_sdlc.cli.residual_workers', return_value=[]):
+                asyncio.run(operate(args, github=object(), workspace=object(),
+                                    operations=controls, emit=lambda _: None))
+                guard.assert_called_once_with(None)
+                acquire.assert_called_once_with(args.lock_path)
+            runtime.cycle.assert_awaited_once_with(repos)
+            runtime.step.assert_not_called()
+
     def test_stopped_result_retains_unconfirmed_execution_and_derived_wake(self):
         for command in ('run', 'serve'):
             for change in (None, 'pause', 'stop'):
@@ -270,7 +362,7 @@ class CliTests(unittest.TestCase):
             '--workspace-root', '/owned/workspaces', '--host-alias', 'host-a'])
         mode = None
         controls = Mock()
-        controls.reason.side_effect = lambda: mode
+        controls.reason.side_effect = lambda repo=None: mode
         controls.interruption_reason.side_effect = lambda: None if mode == 'operation_state_busy' else mode
         controls.guard.return_value = nullcontext()
         runtime = Mock(host_hold_reason=None)

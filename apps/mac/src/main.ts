@@ -266,7 +266,7 @@ function render(): void {
   const refreshButton = button(remoteBusy ? 'Refreshing…' : 'Refresh GitHub', () => { void refresh(true, true); }, 'link', '↻'); refreshButton.disabled = remoteBusy || quitting; refreshButton.setAttribute('aria-label', 'Refresh GitHub');
   sectionHeader.append(refreshButton); section.append(sectionHeader);
   if (snapshot?.projects.length) for (const project of snapshot.projects) section.append(projectCard(project));
-  else section.append(element('p', snapshot ? 'No registered projects are available.' : 'Waiting for a validated host observation. Controls remain disabled.', 'empty'));
+  else section.append(element('p', snapshot ? 'No registered projects are available.' : 'Waiting for a validated host observation. Project controls remain disabled.', 'empty'));
   main.append(section); fragment.append(main);
 
   const footer = element('footer');

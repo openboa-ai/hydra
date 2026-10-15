@@ -54,20 +54,65 @@ def _path(value, base):
     return str(expanded.absolute())
 
 
+def _config_parent(path):
+    """Open the physical parent and retain every named directory's identity."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open("/", flags)
+    try:
+        root = os.fstat(fd)
+        binding = [(root.st_dev, root.st_ino)]
+        parts = path.parent.parts[1:]
+        for index, part in enumerate(parts):
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            mode = stat.S_IMODE(info.st_mode)
+            final = index == len(parts) - 1
+            sticky_root = info.st_uid == 0 and bool(mode & stat.S_ISVTX) and not final
+            if (info.st_uid not in {0, os.geteuid()} or (final and info.st_uid != os.geteuid())
+                    or ((mode & 0o022) and not sticky_root)):
+                raise ValueError("Invalid installed host settings")
+            binding.append((info.st_dev, info.st_ino))
+        return fd, tuple(binding)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _config_fingerprint(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _check_config_binding(path, binding, opened):
+    current, observed = _config_parent(path)
+    try:
+        visible = os.stat(path.name, dir_fd=current, follow_symlinks=False)
+        if observed != binding or _config_fingerprint(opened) != _config_fingerprint(visible):
+            raise ValueError("Invalid installed host settings")
+    finally:
+        os.close(current)
+
+
 def load_host_config(path):
     """Load bounded installed TOML without importing provider factories.
 
     Relative configured paths are anchored to the installed configuration's
     directory, never to a repository or the app's current working directory.
     """
-    fd = None
+    fd = parent = None
     try:
         path = Path(path).expanduser().absolute()
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        if not path.name or ".." in path.parts or any(ord(c) < 32 for c in str(path)):
+            raise ValueError("Invalid installed host settings")
+        parent, binding = _config_parent(path)
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                     dir_fd=parent)
         before = os.fstat(fd)
         if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
                 or before.st_nlink != 1 or before.st_mode & 0o022 or before.st_size > _MAX_CONFIG_BYTES):
             raise ValueError("Invalid installed host settings")
+        _check_config_binding(path, binding, before)
         raw = bytearray()
         while len(raw) <= _MAX_CONFIG_BYTES:
             part = os.read(fd, min(8192, _MAX_CONFIG_BYTES + 1 - len(raw)))
@@ -75,11 +120,9 @@ def load_host_config(path):
                 break
             raw.extend(part)
         after = os.fstat(fd)
-        visible = path.lstat()
-        fingerprint = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-        if (len(raw) > _MAX_CONFIG_BYTES or fingerprint(before) != fingerprint(after)
-                or fingerprint(after) != fingerprint(visible)):
+        if len(raw) > _MAX_CONFIG_BYTES or _config_fingerprint(before) != _config_fingerprint(after):
             raise ValueError("Invalid installed host settings")
+        _check_config_binding(path, binding, after)
         cfg = tomllib.loads(raw.decode("utf-8"))
         if (set(cfg) - _CONFIG_KEYS or not isinstance(cfg.get("host_alias"), str)
                 or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", cfg["host_alias"])):
@@ -109,11 +152,13 @@ def load_host_config(path):
                 raise ValueError("Invalid installed project threads")
         cfg["project_threads"] = threads
         return cfg
-    except (OSError, ValueError, TypeError, RuntimeError, UnicodeError) as exc:
-        raise ValueError("Invalid installed host settings") from exc
+    except (OSError, ValueError, TypeError, RuntimeError, UnicodeError):
+        raise ValueError("Invalid installed host settings") from None
     finally:
         if fd is not None:
             os.close(fd)
+        if parent is not None:
+            os.close(parent)
 
 
 def control_from_config(cfg):

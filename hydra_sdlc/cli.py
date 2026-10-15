@@ -93,9 +93,11 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
         return result
     if not __import__("re").fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.host_alias):
         raise ValueError("Host alias must be a public-safe slug")
-    targets = [issue_url(args.issue)[0]] if args.command == "run" else args.repos
+    run_target = issue_url(args.issue) if args.command == "run" else None
+    admission_repo = run_target[0] if run_target else None
+    targets = [admission_repo] if run_target else args.repos
     operations = operations if operations is not None else OperatingControl(args.lock_path, targets)
-    reason = operations.reason()
+    reason = operations.reason(admission_repo)
     if reason:
         result = with_progress_hint({"action": "waiting", "reason": reason})
         emit(json.dumps(result))
@@ -145,13 +147,13 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
         with ExitStack() as ownership:
             # Hold the mode barrier only while acquiring admission, never for
             # a worker turn, verification or the foreground polling loop.
-            with operations.guard():
+            with operations.guard(admission_repo):
                 ownership.enter_context(coordinator_lock(args.lock_path))
             if residual_workers():
                 raise RuntimeError("An earlier worker remains; confirm shutdown before starting Hydra")
             while not runner.stop_requested():
                 if args.command == "run":
-                    repo, number = issue_url(args.issue)
+                    repo, number = run_target
                     result = await runner.step(repo, number)
                 else:
                     result = await runner.cycle(args.repos)

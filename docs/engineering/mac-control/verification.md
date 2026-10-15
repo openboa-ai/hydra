@@ -241,6 +241,52 @@ before and after the run. Application and workflow files are unchanged from the
 head above. The correction still requires its own current-head CI and provider
 reviews before protected delivery.
 
+## Cold-start controls and admission-boundary corrections (2026-10-15)
+
+Head `1225d26d768e291c6cef2a15097b22151c18f837` passed all
+[four CI jobs](https://github.com/openboa-ai/hydra/actions/runs/38747184564).
+Both Python jobs ran 852 tests with eight skips. The macOS job passed 30 frontend
+tests, 15 locked Rust tests, theme/type checks and both builds. Trusted history
+and source secret scans reported zero findings. Both provider reviews completed;
+Code Review identified four further corrections:
+
+- Global Pause/Stop remain available before the first validated snapshot. Pending
+  requests still block every control; enabling and project actions still require
+  valid observations. The empty Projects message now names project controls.
+- CLI `run` checks its repository's gate before provider/workspace setup and again
+  while acquiring coordinator admission. `serve` retains its global admission and
+  per-project isolation. Existing cleanup drains are unchanged.
+- Local checkpoint and specification-read failures before a remote write retain
+  completion proof and can retry the idempotent local checkpoint. The first remote
+  write still records its exact attempted values before dispatch, so uncertain
+  remote effects remain read-back only.
+- Installed configuration loading walks every ancestor with no-follow directory
+  descriptors and checks the complete directory identity chain and final file
+  binding before and after reading. Unsafe ownership/modes, symlinks and changed
+  paths are rejected without exposing configuration contents or private paths.
+
+Independent static reviews accepted all nine changed source/test files. The
+isolated Python 3.14.2 suite passed 863 tests with 20 skips in 262.157 seconds.
+All 143 source, validation and saved-snapshot files matched. New cases include
+project preflight and admission races, local checkpoint failures before and after
+commit, pre-write specification reads, and configuration ancestor/file replacement.
+
+The same 29-file app snapshot passed 32 frontend tests, TypeScript/Vite build,
+theme verification and debug packaging. The packaged executable SHA-256 is
+`ccc495d8325550ace9e7b8f85aff645eb5f39447ee65e88549e3f7a0e1e31772`.
+In two separate cold-launch synthetic fixtures, every initial response was invalid.
+The actual app displayed enabled global Pause/Stop, disabled Start/Resume and no
+project controls. One fixture received exactly one Pause and the other exactly one
+Stop, both targeting all projects before any valid snapshot. Invalid mutation
+responses displayed uncertainty. After restoring valid responses and explicitly
+refreshing, each app displayed revision 11 and the matching paused/stopped blocked
+gate; execution and coverage remained unknown/unverified. Relevant screens were
+shared before publication. Both owned fixture processes were stopped by the
+harness; this is not product Quit or production runtime evidence.
+
+These local results do not replace the correction's own current-head CI, provider
+reviews or protected delivery gates. No production settings or schedules changed.
+
 ## Remaining delivery and operating evidence
 
 - Require current-head GitHub CI and code/security review before protected

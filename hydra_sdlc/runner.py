@@ -803,8 +803,9 @@ class Runner:
             return None
         repo, _, config, prior, path, phase, spec_record, needs_decision = ended
         key = self._ended_key(ended)
-        # Contention happens before any effect. Once admitted, retain this short
-        # barrier through checkpoint/read-back; do not replay a partial cleanup.
+        # Retain this short barrier through checkpoint/read-back. Local
+        # checkpointing is idempotent; only an attempted remote record forbids
+        # another write until its exact read-back is confirmed.
         with self._guard(repo, cleanup=True):
             current = self.github.progress(repo, number)
             expected = self._unconfirmed_checkpoints.get(key)
@@ -826,7 +827,6 @@ class Runner:
             if key in self._unconfirmed_checkpoints:
                 return "unconfirmed"
             with self._confirmed_cleanup(repo, number, current):
-                self._unconfirmed_checkpoints[key] = None
                 head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint completed Issue {number} after hold")
                 from .workspace import WorkspaceWait
                 try:
