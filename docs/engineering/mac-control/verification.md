@@ -287,6 +287,53 @@ harness; this is not product Quit or production runtime evidence.
 These local results do not replace the correction's own current-head CI, provider
 reviews or protected delivery gates. No production settings or schedules changed.
 
+## Native replan recovery and settings observation corrections (2026-10-16)
+
+Head `45259b41c90a2b1056c47d4d40d90bd31f582411` passed all
+[four CI jobs](https://github.com/openboa-ai/hydra/actions/runs/38753335940).
+Both Python jobs ran 863 tests with eight skips. The macOS job passed 32 frontend
+tests, 15 locked Rust tests, theme/type checks and both builds. Trusted history
+and source secret scans reported zero findings. Both provider reviews completed;
+Code Review identified two further corrections:
+
+- Native specification recovery persists the terminal `replan_required` reason
+  and `diagnose` action before read-back and ticket retirement. An unanswered
+  product decision retains precedence. Fresh-controller tests cover durable
+  status, refusal of unauthorized/stale resolution markers, and exact authorized
+  resolution returning to specification review with a new attempt.
+- A later observation request can reconcile a lower settings revision or recovery
+  from an unreadable state. Entering unreadable settings, accepting a reset, or
+  recovering starts a response boundary: already-issued successes cannot restore
+  the previous gate. Runtime identity and operation-error handling are preserved,
+  so pending action uncertainty remains visible. Same-runtime remote work retains
+  its original observation time. Standalone comparisons do not infer recovery
+  from a timestamp alone; ticketed recovery also retains the timestamp check.
+
+Independent static review accepted the four changed code/test files. The isolated
+Python 3.14.2 full suite passed 865 tests with 20 skips in 266.171 seconds. All 143
+source, validation and saved-snapshot files matched before and after the run.
+
+The same 29-file app snapshot passed 39 frontend tests, TypeScript/Vite build,
+theme verification and debug packaging. The packaged executable SHA-256 is
+`adb21709f8bade1fcf25245c74cffdde1087840c9f93c29b5d71fc0f5e818338`.
+In the actual packaged app, an isolated synthetic runtime first reported revision
+10/running. Changing only its synthetic response state to revision 0/stopped was
+reflected by automatic local polling as zero allowed projects and two blocked
+projects. After restoring the revision-10 baseline, a revision-3/paused response
+was also reflected automatically. Neither transition required an app restart or
+manual refresh. One fixture remote refresh preceded these transitions; all 33
+runtime invocations were status reads, with no control mutations.
+
+Relevant running screens, including the final revision and unknown execution /
+unverified coverage, were shared before publication. Late-response rejection and
+cache timestamp preservation are model-test evidence, not packaged UI race
+observations. The fixture injected response-state changes; it did not delete or
+restore installed settings. The owned process was stopped by its harness, which
+does not qualify product Quit or production control.
+
+These corrections still require their own current-head CI and provider reviews
+before protected delivery. No production settings, schedules or runtime changed.
+
 ## Remaining delivery and operating evidence
 
 - Require current-head GitHub CI and code/security review before protected

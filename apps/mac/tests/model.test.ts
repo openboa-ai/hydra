@@ -49,6 +49,130 @@ test('slow refresh from before Pause cannot replace its confirmed newer revision
   assert.equal(acceptSnapshot(current, next), true);
 });
 
+test('standalone snapshot comparison cannot infer settings recovery from a timestamp', () => {
+  const current = snapshot();
+  const reset = snapshot(); reset.revision = 0; reset.observed_at = new Date(now + 1000).toISOString();
+  assert.equal(acceptSnapshot(current, reset), false);
+  current.revision = null; current.global_mode = 'unknown'; current.gate_status = 'unknown';
+  assert.equal(acceptSnapshot(current, reset), false);
+});
+
+test('a newer request observes missing or restored settings without discarding same-runtime work', () => {
+  for (const [revision, mode] of [[0, 'stopped'], [2, 'paused']] as const) {
+    const observations = new Observations();
+    const initial = snapshot(); initial.revision = 9; initial.global_mode = 'running'; initial.gate_status = 'allowed'; initial.gate_reason = null;
+    initial.remote = { state: 'fresh', observed_at: initial.observed_at }; initial.projects[0]!.work = [work()];
+    observations.accept(initial, observations.begin());
+    const reset = snapshot(); reset.revision = revision; reset.global_mode = mode; reset.gate_reason = `host_${mode}`;
+    reset.observed_at = new Date(now + 1000).toISOString();
+    reset.projects[0]!.override_mode = null; reset.projects[0]!.effective_mode = mode; reset.projects[0]!.gate_reason = `host_${mode}`;
+    assert.equal(observations.accept(parseSnapshot(reset), observations.begin()), true);
+    assert.equal(observations.snapshot, reset);
+    assert.equal(observations.snapshot.gate_status, 'blocked');
+    assert.equal(sameRuntime(observations.snapshot.runtime, initial.runtime), true);
+    assert.equal(observations.remote, initial);
+    assert.equal(observations.remote.observed_at, initial.observed_at);
+    assert.equal(observations.snapshot.execution.active_count, null);
+    assert.equal(observations.snapshot.can_quit, false);
+  }
+});
+
+test('settings reset fences every already-issued success but preserves action uncertainty', () => {
+  const observations = new Observations();
+  const initial = snapshot(); initial.revision = 9; initial.remote = { state: 'fresh', observed_at: initial.observed_at };
+  observations.accept(initial, observations.begin());
+  const older = observations.begin(); const resetTicket = observations.begin(); const overlapping = observations.begin();
+  const reset = snapshot(); reset.revision = 0; reset.global_mode = 'stopped'; reset.observed_at = new Date(now + 1000).toISOString();
+  assert.equal(observations.accept(reset, resetTicket), true);
+  const late = snapshot(); late.revision = 10; late.global_mode = 'running'; late.gate_status = 'allowed';
+  late.observed_at = new Date(now + 2000).toISOString(); late.remote = { state: 'fresh', observed_at: late.observed_at };
+  for (const ticket of [older, overlapping]) {
+    assert.equal(observations.accept(late, ticket), false);
+    assert.equal(observations.snapshot, reset);
+    assert.equal(observations.remote, initial);
+  }
+  const feedback = new ObservationFeedback(observations);
+  assert.equal(feedback.fail('The pending mutation result is uncertain.', overlapping, 'operation'), true);
+  const next = snapshot(); next.revision = 1; next.observed_at = new Date(now + 3000).toISOString();
+  assert.equal(observations.accept(next, observations.begin()), true);
+  feedback.reconcileRefresh(true, { manual: false, pending: false, quitting: false });
+  assert.equal(feedback.error, 'The pending mutation result is uncertain.');
+  assert.equal(observations.snapshot, next);
+  assert.equal(observations.remote, initial);
+});
+
+test('unreadable settings followed by lower-revision recovery cannot revive an old allowed response', () => {
+  const observations = new Observations();
+  const initial = snapshot(); initial.revision = 9; initial.global_mode = 'running'; initial.gate_status = 'allowed';
+  observations.accept(initial, observations.begin());
+  const old = observations.begin();
+  const unreadable = snapshot(); unreadable.revision = null; unreadable.global_mode = 'unknown'; unreadable.gate_status = 'unknown';
+  unreadable.observed_at = new Date(now + 1000).toISOString();
+  assert.equal(observations.accept(unreadable, observations.begin()), true);
+  const late = snapshot(); late.revision = 10; late.global_mode = 'running'; late.gate_status = 'allowed';
+  late.observed_at = new Date(now + 3000).toISOString();
+  assert.equal(observations.accept(late, old), false);
+  assert.equal(observations.snapshot, unreadable);
+  const recovered = snapshot(); recovered.revision = 2; recovered.observed_at = new Date(now + 2000).toISOString();
+  assert.equal(observations.accept(recovered, observations.begin()), true);
+  assert.equal(observations.accept(late, old), false);
+  assert.equal(observations.snapshot, recovered);
+});
+
+test('entering unreadable settings fences overlapping success without dropping action uncertainty', () => {
+  const observations = new Observations();
+  const initial = snapshot(); initial.revision = 9; initial.remote = { state: 'fresh', observed_at: initial.observed_at };
+  observations.accept(initial, observations.begin());
+  observations.begin();
+  const unreadableTicket = observations.begin(); const overlapping = observations.begin();
+  const unreadable = snapshot(); unreadable.revision = null; unreadable.global_mode = 'unknown'; unreadable.gate_status = 'unknown';
+  unreadable.observed_at = new Date(now + 1000).toISOString();
+  assert.equal(observations.accept(unreadable, unreadableTicket), true);
+  const late = snapshot(); late.revision = 10; late.global_mode = 'running'; late.gate_status = 'allowed';
+  late.observed_at = new Date(now + 2000).toISOString(); late.remote = { state: 'fresh', observed_at: late.observed_at };
+  assert.equal(observations.accept(late, overlapping), false);
+  assert.equal(observations.snapshot, unreadable);
+  assert.equal(observations.remote, initial);
+  const feedback = new ObservationFeedback(observations);
+  assert.equal(feedback.fail('The pending mutation result is uncertain.', overlapping, 'operation'), true);
+  const recovered = snapshot(); recovered.revision = 2; recovered.observed_at = new Date(now + 3000).toISOString();
+  assert.equal(observations.accept(recovered, observations.begin()), true);
+  feedback.reconcileRefresh(true, { manual: false, pending: false, quitting: false });
+  assert.equal(feedback.error, 'The pending mutation result is uncertain.');
+  assert.equal(observations.snapshot, recovered);
+  assert.equal(observations.remote, initial);
+});
+
+test('superseded or older-dated lower revisions are rejected without fencing valid successes', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const old = observations.begin(); const mutation = observations.begin();
+  const applied = snapshot(); applied.revision = 5;
+  assert.equal(observations.accept(applied, mutation), true);
+  const lower = snapshot(); lower.revision = 0; lower.observed_at = new Date(now + 1000).toISOString();
+  assert.equal(observations.accept(lower, old), false);
+  lower.observed_at = new Date(now - 1000).toISOString();
+  assert.equal(observations.accept(lower, observations.begin()), false);
+  const valid = snapshot(); valid.revision = 6; valid.observed_at = new Date(now + 2000).toISOString();
+  assert.equal(observations.accept(valid, old), true);
+  assert.equal(observations.snapshot, valid);
+});
+
+test('runtime replacement and incompatible invalidation retain their boundaries after settings recovery', () => {
+  const observations = new Observations();
+  const initial = snapshot(); initial.remote = { state: 'fresh', observed_at: initial.observed_at };
+  observations.accept(initial, observations.begin());
+  const reset = snapshot(); reset.revision = 0; reset.observed_at = new Date(now + 1000).toISOString();
+  assert.equal(observations.accept(reset, observations.begin()), true);
+  const pending = observations.begin(); const replacement = snapshot(); replacement.revision = 0;
+  replacement.runtime.code_digest = 'd'.repeat(64); replacement.observed_at = new Date(now + 2000).toISOString();
+  assert.equal(observations.accept(replacement, observations.begin()), true);
+  assert.equal(observations.remote, null);
+  assert.equal(observations.accept(initial, pending), false);
+  assert.equal(observations.invalidate(pending), false);
+  assert.equal(observations.invalidate(observations.begin()), true);
+  assert.equal(observations.snapshot, null);
+});
+
 test('newer unreadable gate is surfaced instead of retaining a previous allowed display', () => {
   const current = snapshot(); current.global_mode = 'running';
   const next = snapshot(); next.revision = null; next.global_mode = 'unknown'; next.observed_at = new Date(now + 1000).toISOString();
@@ -242,7 +366,7 @@ test('a rejected or still-pending refresh cannot dismiss an observation error', 
   const observations = new Observations(); observations.accept(snapshot(), observations.begin());
   const feedback = new ObservationFeedback(observations);
   feedback.fail('Observation is unavailable.', observations.begin(), 'observation');
-  const older = snapshot(); older.revision = 3;
+  const older = snapshot(); older.revision = 3; older.observed_at = new Date(now - 1000).toISOString();
   feedback.reconcileRefresh(observations.accept(older, observations.begin()), { manual: false, pending: false, quitting: false });
   assert.equal(feedback.error, 'Observation is unavailable.');
   for (const state of [{ manual: false, pending: true, quitting: false }, { manual: true, pending: false, quitting: true }]) {

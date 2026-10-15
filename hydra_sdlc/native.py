@@ -346,7 +346,8 @@ class NativeController:
                 recovery = self.runner._record(repo, n, fresh, head=current_head, phase="checkpoint",
                     checkpoint="interrupted_committed", pending_action=None,
                     resume_phase=record.get("native_resume_phase") or phase,
-                    next_action="operator_decision" if decision else "reconcile")
+                    wait_reason="product_decision" if decision else spec_wait["reason"] if spec_wait else fresh.get("wait_reason"),
+                    next_action="operator_decision" if decision else "diagnose" if spec_wait else "reconcile")
                 observed = self.runner.github.progress(repo, n)
                 if any(observed.get(k) != v for k, v in recovery.items()):
                     raise RuntimeError("Native recovery checkpoint is unconfirmed")

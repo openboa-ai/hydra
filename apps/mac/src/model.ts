@@ -113,12 +113,14 @@ export function parseSnapshot(input: unknown): Snapshot {
   return input as Snapshot;
 }
 
-/** A slow refresh cannot overwrite a newer gate acknowledgement. */
-export function acceptSnapshot(current: Snapshot | null, incoming: Snapshot): boolean {
+/** Without request ordering, a lower stored revision is not evidence of recovery. */
+export function acceptSnapshot(current: Snapshot | null, incoming: Snapshot, newerRequest = false): boolean {
   if (!current || !sameRuntime(current.runtime, incoming.runtime)) return true;
   // A failed read must remain visible even if no revision can be established.
   if (incoming.revision === null) return Date.parse(incoming.observed_at) >= Date.parse(current.observed_at);
-  if (current.revision !== null && incoming.revision < current.revision) return false;
+  if (current.revision === null || incoming.revision < current.revision) {
+    return newerRequest && Date.parse(incoming.observed_at) >= Date.parse(current.observed_at);
+  }
   return incoming.revision !== current.revision || Date.parse(incoming.observed_at) >= Date.parse(current.observed_at);
 }
 
@@ -138,6 +140,7 @@ export class Observations {
   private generation = 0;
   private sequence = 0;
   private acceptedSequence = 0;
+  private minimumResponseSequence = 0;
   begin(): ObservationTicket { return { generation: this.generation, sequence: ++this.sequence }; }
   current(ticket: ObservationTicket): boolean { return ticket.generation === this.generation; }
   canReportFailure(ticket: ObservationTicket): boolean {
@@ -150,10 +153,16 @@ export class Observations {
     return true;
   }
   accept(next: Snapshot, ticket: ObservationTicket): boolean {
-    if (!this.current(ticket)) return false;
+    if (!this.current(ticket) || ticket.sequence < this.minimumResponseSequence) return false;
     const changed = !this.snapshot || !sameRuntime(this.snapshot.runtime, next.runtime);
     if (changed && ticket.sequence < this.acceptedSequence) return false;
-    if (!acceptSnapshot(this.snapshot, next)) return false;
+    if (!acceptSnapshot(this.snapshot, next, ticket.sequence > this.acceptedSequence)) return false;
+    if (!changed && this.snapshot && next.revision !== this.snapshot.revision
+      && (next.revision === null || this.snapshot.revision === null || next.revision < this.snapshot.revision)) {
+      // Unreadable or reset settings fence every already-issued success, but
+      // retain the runtime epoch for action errors and require a fresh request.
+      this.minimumResponseSequence = this.sequence + 1;
+    }
     if (changed) { this.remote = null; this.generation += 1; }
     this.snapshot = next;
     this.acceptedSequence = Math.max(this.acceptedSequence, ticket.sequence);
