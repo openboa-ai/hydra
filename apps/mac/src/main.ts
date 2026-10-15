@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Observations, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, pendingLabel, title, waitReasonLabel, workRecord } from './model.ts';
-import type { Action, ObservationTicket, Project, RecordRequest, Snapshot, Target } from './model.ts';
+import { ObservationFeedback, Observations, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, pendingLabel, title, waitReasonLabel, workRecord } from './model.ts';
+import type { Action, FeedbackSource, ObservationTicket, Project, RecordRequest, Snapshot, Target } from './model.ts';
 import './tokens.css';
 import './style.css';
 
@@ -9,13 +9,13 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 let snapshot: Snapshot | null = null;
 let remoteSnapshot: Snapshot | null = null;
 const observations = new Observations();
+const feedback = new ObservationFeedback(observations);
 let pending: { action: Action; target: Target } | null = null;
 let localBusy = false;
 let remoteBusy = false;
 let quitting = false;
 let quitTicket: ObservationTicket | null = null;
 let notice = '';
-let error = '';
 let theme: 'system' | 'light' | 'dark' = 'system';
 let runtimeDetailsOpen = false;
 let focusIntent = 0;
@@ -79,19 +79,18 @@ const messages: Record<string, string> = {
   record_url_rejected: 'This record link is not an allowed GitHub or Codex destination.',
   record_open_failed: 'The original record could not be opened in its native surface.',
 };
-function receiveFailure(value: unknown, ticket?: ObservationTicket): void {
-  if (ticket && !observations.current(ticket)) return;
+function receiveFailure(value: unknown, ticket?: ObservationTicket, source: FeedbackSource = 'operation'): void {
   const failureCode = value instanceof Error ? value.message : typeof value === 'string' ? value : value && typeof value === 'object' ? (value as { code?: string }).code : null;
   if (failureCode === 'unsupported_runtime') {
     if (!observations.invalidate(ticket ?? observations.begin())) return;
     snapshot = null; remoteSnapshot = null; notice = '';
-    error = messages.unsupported_runtime!; return;
+    feedback.show(messages.unsupported_runtime!, source); return;
   }
+  if (!feedback.fail(messages[failureCode ?? ''] ?? 'The operation could not be confirmed. Refresh to reconcile its state.', ticket, source)) return;
   if (value && typeof value === 'object') {
     const e = value as { code?: string; status?: unknown };
     if (e.status) { try { receive(e.status, ticket ?? observations.begin()); } catch { /* Keep the last confirmed snapshot. */ } }
   }
-  error = messages[failureCode ?? ''] ?? 'The operation could not be confirmed. Refresh to reconcile its state.';
 }
 function receive(value: unknown, ticket: ObservationTicket): Snapshot | null {
   const next = parseSnapshot(value);
@@ -109,8 +108,11 @@ async function refresh(remote = false, manual = false): Promise<void> {
   const ticket = observations.begin();
   if (remote) remoteBusy = true; else localBusy = true;
   render();
-  try { const accepted = receive(await invoke('status', { refresh: remote }), ticket); if (accepted && manual && !pending) error = ''; }
-  catch (value) { receiveFailure(value, ticket); }
+  try {
+    const accepted = receive(await invoke('status', { refresh: remote }), ticket);
+    feedback.reconcileRefresh(accepted !== null, { manual, pending: !!pending, quitting });
+  }
+  catch (value) { receiveFailure(value, ticket, 'observation'); }
   finally {
     if (remote) remoteBusy = false; else localBusy = false;
     render();
@@ -121,13 +123,13 @@ async function refresh(remote = false, manual = false): Promise<void> {
 async function control(action: Action, target: Target): Promise<void> {
   if (actionDisabled(action, target, snapshot, !!pending || quitting)) return;
   const ticket = observations.begin();
-  pending = { action, target }; error = ''; notice = ''; render();
+  pending = { action, target }; feedback.clear(); notice = ''; render();
   try {
     const result = receive(await invoke('control', { action, target }), ticket);
-    if (!result) { error = 'A newer runtime observation replaced this request. Refresh to reconcile its result.'; return; }
+    if (!result) { feedback.show('A newer runtime observation replaced this request. Refresh to reconcile its result.'); return; }
     if (result.request?.status === 'applied') {
       notice = appliedNotice(action, target, result);
-    } else error = result.request?.reason ? title(result.request.reason) : 'This request is held. No enabling change was confirmed.';
+    } else feedback.show(result.request?.reason ? title(result.request.reason) : 'This request is held. No enabling change was confirmed.');
   } catch (value) { receiveFailure(value, ticket); }
   finally { pending = null; render(); restorePendingFocus(`${title(action)} ${targetName(target)}`); }
 }
@@ -141,7 +143,7 @@ async function openRecord(request: RecordRequest): Promise<void> {
 async function requestQuit(): Promise<void> {
   if (quitting || pending) return;
   quitTicket = observations.begin();
-  quitting = true; error = ''; notice = 'Stopping new work and checking owned executions before quitting…'; render();
+  quitting = true; feedback.clear(); notice = 'Stopping new work and checking owned executions before quitting…'; render();
   try { await invoke('request_quit'); }
   catch (value) { receiveFailure(value, quitTicket ?? undefined); quitting = false; quitTicket = null; notice = ''; render(); restorePendingFocus('Stop and quit Hydra'); }
 }
@@ -253,7 +255,7 @@ function render(): void {
   limits.append(icon('ⓘ'), element('p', 'Native continuation is unavailable. Start and Resume allow eligible Hydra work; they do not start Codex turns or change external schedules.'));
   main.append(limits);
   const live = element('div', undefined, 'feedback'); live.setAttribute('aria-live', 'polite'); live.setAttribute('role', 'status');
-  if (error) { const p = element('p', undefined, 'error'); p.append(icon('!'), element('span', error)); live.append(p); }
+  if (feedback.error) { const p = element('p', undefined, 'error'); p.append(icon('!'), element('span', feedback.error)); live.append(p); }
   else if (notice) live.append(element('p', notice, 'notice'));
   if (snapshot && isStale(snapshot)) { const p = element('p', undefined, 'stale'); p.append(icon('◷'), element('span', 'Local observation is stale. Refresh before enabling new work.')); live.append(p); }
   main.append(live);
@@ -298,10 +300,10 @@ void listen<{ state: 'stopping' | 'blocked'; code?: string; status?: unknown }>(
   if (payload.state === 'stopping' && !quitTicket) quitTicket = observations.begin();
   quitting = payload.state === 'stopping';
   if (payload.status) { try { receive(payload.status, quitTicket ?? observations.begin()); } catch { receiveFailure(new Error('invalid_response')); } }
-  if (payload.state === 'blocked') { error = messages[payload.code ?? 'quit_blocked'] ?? messages.quit_blocked!; notice = ''; }
+  if (payload.state === 'blocked') { feedback.show(messages[payload.code ?? 'quit_blocked'] ?? messages.quit_blocked!); notice = ''; }
   else notice = 'Stopping new work and checking owned executions before quitting…';
   if (payload.state === 'blocked') quitTicket = null;
   render();
-}).catch(() => { error = 'The desktop connection is unavailable. Open the installed Hydra application.'; render(); });
+}).catch(() => { feedback.show('The desktop connection is unavailable. Open the installed Hydra application.'); render(); });
 void refresh();
 setInterval(() => { if (!pending && !quitting) void refresh(); }, 5_000);

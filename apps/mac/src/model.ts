@@ -140,6 +140,9 @@ export class Observations {
   private acceptedSequence = 0;
   begin(): ObservationTicket { return { generation: this.generation, sequence: ++this.sequence }; }
   current(ticket: ObservationTicket): boolean { return ticket.generation === this.generation; }
+  canReportFailure(ticket: ObservationTicket): boolean {
+    return this.current(ticket) && ticket.sequence >= this.acceptedSequence;
+  }
   invalidate(ticket: ObservationTicket): boolean {
     if (!this.current(ticket) || ticket.sequence < this.acceptedSequence) return false;
     this.snapshot = null; this.remote = null; this.generation += 1;
@@ -156,6 +159,28 @@ export class Observations {
     this.acceptedSequence = Math.max(this.acceptedSequence, ticket.sequence);
     if (next.remote.state !== 'not_requested' && (!this.remote || Date.parse(next.observed_at) >= Date.parse(this.remote.observed_at))) this.remote = next;
     return true;
+  }
+}
+
+export type FeedbackSource = 'observation' | 'operation';
+/** Observation recovery must not erase an unresolved operator action. */
+export class ObservationFeedback {
+  error = '';
+  private source: FeedbackSource = 'observation';
+  private observations: Observations;
+  constructor(observations: Observations) { this.observations = observations; }
+  clear(): void { this.error = ''; this.source = 'observation'; }
+  show(error: string, source: FeedbackSource = 'operation'): void {
+    if (this.error && this.source === 'operation' && source === 'observation') return;
+    this.error = error; this.source = source;
+  }
+  fail(error: string, ticket: ObservationTicket | undefined, source: FeedbackSource): boolean {
+    if (ticket && !(source === 'observation' ? this.observations.canReportFailure(ticket) : this.observations.current(ticket))) return false;
+    this.show(error, source);
+    return true;
+  }
+  reconcileRefresh(accepted: boolean, state: { manual: boolean; pending: boolean; quitting: boolean }): void {
+    if (accepted && !state.pending && !state.quitting && (state.manual || this.source === 'observation')) this.clear();
   }
 }
 

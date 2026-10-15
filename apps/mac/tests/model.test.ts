@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Observations, acceptSnapshot, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, runtimeKey, sameRuntime, waitReasonLabel, workRecord } from '../src/model.ts';
+import { ObservationFeedback, Observations, acceptSnapshot, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, runtimeKey, sameRuntime, waitReasonLabel, workRecord } from '../src/model.ts';
 import type { Snapshot, Work } from '../src/model.ts';
 
 const now = Date.parse('2026-10-12T00:00:00Z');
@@ -180,6 +180,96 @@ test('an old incompatible-runtime failure cannot erase a newer successful v2 obs
   assert.equal(observations.snapshot, recent);
   assert.equal(observations.invalidate(observations.begin()), true);
   assert.equal(observations.snapshot, null);
+});
+
+test('an older refresh failure cannot cover a newer accepted mutation', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const feedback = new ObservationFeedback(observations);
+  const refresh = observations.begin(); const mutation = observations.begin();
+  const paused = snapshot(); paused.revision = 5;
+  assert.equal(observations.accept(paused, mutation), true);
+  assert.equal(feedback.fail('The runtime did not answer in time.', refresh, 'observation'), false);
+  assert.equal(feedback.error, '');
+  assert.equal(observations.snapshot, paused);
+  assert.equal(feedback.fail('The latest refresh failed.', observations.begin(), 'observation'), true);
+  assert.equal(feedback.error, 'The latest refresh failed.');
+});
+
+test('an accepted automatic refresh clears a recovered observation error', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const feedback = new ObservationFeedback(observations);
+  assert.equal(feedback.fail('The runtime could not be reached.', observations.begin(), 'observation'), true);
+  const recovered = snapshot(); recovered.observed_at = new Date(now + 5000).toISOString();
+  const accepted = observations.accept(recovered, observations.begin());
+  feedback.reconcileRefresh(accepted, { manual: false, pending: false, quitting: false });
+  assert.equal(feedback.error, '');
+  assert.equal(observations.snapshot, recovered);
+});
+
+test('a rejected or still-pending refresh cannot dismiss an observation error', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const feedback = new ObservationFeedback(observations);
+  feedback.fail('Observation is unavailable.', observations.begin(), 'observation');
+  const older = snapshot(); older.revision = 3;
+  feedback.reconcileRefresh(observations.accept(older, observations.begin()), { manual: false, pending: false, quitting: false });
+  assert.equal(feedback.error, 'Observation is unavailable.');
+  for (const state of [{ manual: false, pending: true, quitting: false }, { manual: true, pending: false, quitting: true }]) {
+    feedback.reconcileRefresh(observations.accept(snapshot(), observations.begin()), state);
+    assert.equal(feedback.error, 'Observation is unavailable.');
+  }
+});
+
+test('later status acceptance cannot hide a pending mutation response loss', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const feedback = new ObservationFeedback(observations);
+  const mutation = observations.begin(); const refresh = observations.begin();
+  feedback.reconcileRefresh(observations.accept(snapshot(), refresh), { manual: false, pending: true, quitting: false });
+  assert.equal(feedback.fail('The mutation result is uncertain.', mutation, 'operation'), true);
+  feedback.reconcileRefresh(observations.accept(snapshot(), observations.begin()), { manual: false, pending: false, quitting: false });
+  assert.equal(feedback.error, 'The mutation result is uncertain.');
+  feedback.fail('A later refresh failed.', observations.begin(), 'observation');
+  assert.equal(feedback.error, 'The mutation result is uncertain.');
+  feedback.reconcileRefresh(observations.accept(snapshot(), observations.begin()), { manual: true, pending: true, quitting: false });
+  assert.equal(feedback.error, 'The mutation result is uncertain.');
+  feedback.reconcileRefresh(observations.accept(snapshot(), observations.begin()), { manual: true, pending: false, quitting: false });
+  assert.equal(feedback.error, '');
+});
+
+test('automatic polling preserves a held Quit result until explicit reconciliation', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const feedback = new ObservationFeedback(observations);
+  feedback.show('Quit is held because termination is unconfirmed.');
+  feedback.reconcileRefresh(observations.accept(snapshot(), observations.begin()), { manual: false, pending: false, quitting: false });
+  assert.equal(feedback.error, 'Quit is held because termination is unconfirmed.');
+  feedback.reconcileRefresh(observations.accept(snapshot(), observations.begin()), { manual: true, pending: false, quitting: false });
+  assert.equal(feedback.error, '');
+});
+
+test('failure ordering does not reject a valid older same-runtime success or its remote cache', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const slowRemote = observations.begin(); const local = observations.begin();
+  const newer = snapshot(); newer.revision = 5;
+  assert.equal(observations.accept(newer, local), true);
+  assert.equal(observations.canReportFailure(slowRemote), false);
+  const remote = snapshot(); remote.revision = 6; remote.observed_at = new Date(now + 1000).toISOString();
+  remote.remote = { state: 'fresh', observed_at: remote.observed_at }; remote.projects[0]!.work = [work()];
+  assert.equal(observations.accept(remote, slowRemote), true);
+  const poll = snapshot(); poll.revision = 6; poll.observed_at = new Date(now + 2000).toISOString();
+  assert.equal(observations.accept(poll, observations.begin()), true);
+  assert.equal(observations.snapshot, poll);
+  assert.equal(observations.remote, remote);
+});
+
+test('failure feedback cannot cross a changed runtime generation', () => {
+  const observations = new Observations(); observations.accept(snapshot(), observations.begin());
+  const feedback = new ObservationFeedback(observations);
+  const old = observations.begin();
+  const next = snapshot(); next.runtime.config_digest = 'd'.repeat(64);
+  assert.equal(observations.accept(next, observations.begin()), true);
+  assert.equal(feedback.fail('Old observation failed.', old, 'observation'), false);
+  assert.equal(feedback.fail('Old operation failed.', old, 'operation'), false);
+  assert.equal(feedback.error, '');
+  assert.equal(observations.snapshot, next);
 });
 
 test('decision context provenance is not presented as an executable next action', () => {

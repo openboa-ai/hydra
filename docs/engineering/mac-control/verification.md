@@ -156,6 +156,49 @@ files. The subsequent PR head still requires fresh CI and provider review.
 Application source and the packaged-UI evidence above are unchanged. These Python
 checks do not replace an installed runtime or qualify production operation.
 
+## Observation feedback and app CI corrections (2026-10-15)
+
+Head `be8c6b82c1867616865c61ce32e630d83b0940ed` passed all
+[three CI jobs](https://github.com/openboa-ai/hydra/actions/runs/38736830352).
+Python 3.11 and 3.14.2 each ran 840 tests with eight skips; trusted history and
+source secret scans reported zero leaks. Both provider reviews completed. Code
+Review then identified two observation-feedback defects and missing app CI coverage.
+
+Observation failures now check both the runtime generation and accepted request
+sequence. An older failed refresh cannot cover a newer successful control response.
+Successful response revision, identity and remote-cache rules are unchanged.
+An accepted automatic refresh clears a recovered observation error, while pending
+operations, uncertain mutation results and held Quit feedback remain visible.
+A deliberate refresh can reconcile those operation messages after the request ends.
+
+The actual feedback model used by the renderer has seven new behavioral regressions.
+All 30 frontend tests, TypeScript/Vite build, published theme verification and debug
+app packaging passed against the same 29-file application snapshot. Independent
+static review accepted the three changed application files. The packaged executable
+has SHA-256 `d0eb2a17955ddad5107108d2ef0f725692a21a2b9f4a2666fb65a3439b96203d`.
+
+The packaged app was exercised with an isolated synthetic runtime:
+
+- A GitHub refresh began before Pause and was held outside the fixture lock.
+  Pause applied revision 11. Releasing the older invalid response afterwards left
+  the applied Pause notice and blocked gate intact, with only one mutation logged.
+- Automatic invalid responses displayed a bounded error. Returning the fixture to
+  valid responses cleared that error on the next successful automatic poll without
+  clicking Refresh, while retaining the paused gate and applied notice.
+- Keyboard focus on local Refresh survived repeated automatic polls. Moving focus
+  to another button during a two-second refresh retained the newer focus after the
+  response arrived.
+
+Relevant running screens were shared before publication. Fixture errors and
+recoveries do not qualify production native execution or schedule coverage.
+
+The added macOS CI job installs locked frontend dependencies, runs frontend tests,
+theme verification and the TypeScript/Vite build, then tests the locked Rust bridge
+and builds it with embedded frontend assets. Node and Rust versions and action
+revisions are pinned. Existing kernel and hygiene jobs, credentials handling and
+scanner controls are unchanged. Independent workflow review and pinned actionlint
+passed; the new hosted macOS job still needs actual current-head CI evidence.
+
 ## Remaining delivery and operating evidence
 
 - Require current-head GitHub CI and code/security review before protected

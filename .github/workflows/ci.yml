@@ -35,6 +35,43 @@ jobs:
           python3 -c 'import sys; assert sys.version_info >= (3, 11)'
           python3 -m pip install '.[mcp]'
           python3 -m unittest discover -s tests -v
+  mac-app:
+    name: Mac app checks
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/mac
+    env:
+      RUSTUP_TOOLCHAIN: '1.94.1'
+    steps:
+      - name: Check out merge candidate or main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Test frontend behavior and bundled assets
+        run: npm test
+      - name: Verify the published theme mapping
+        run: npm run verify:theme
+      - name: Typecheck and build the frontend
+        run: npm run build
+      - name: Set up the verified Rust toolchain
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustc --version
+          cargo --version
+      - name: Test the Rust bridge with locked dependencies
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build the native app with embedded frontend assets
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol
   hygiene:
     name: Repository hygiene
     runs-on: ubuntu-24.04
