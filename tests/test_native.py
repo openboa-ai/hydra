@@ -473,6 +473,93 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "replan_required")
         self.assertEqual(self.gh.note["correction_attempt"], 3)
 
+    async def test_completed_spec_retry_limit_survives_retirement_restart_and_exact_resolution(self):
+        from hydra_sdlc.native import confirm_native_assignment
+
+        implementation = await self.result(await self.controller.begin(self.url))
+        spec = self.ws.path / "docs/engineering/task/spec.md"
+        spec.write_text(spec.read_text() + "\nChanged acceptance after the final correction.")
+        self.ws.dirty = True
+        self.ws.changed_paths = lambda path, base: ["docs/engineering/task/spec.md", "src/main.py"]
+        self.gh.note["correction_attempt"] = 2
+
+        def confirm_after_readback(step):
+            fresh = self.gh.progress("example/product", 4)
+            self.assertEqual(fresh["wait_reason"], "replan_required")
+            self.assertEqual(fresh["next_action"], "diagnose")
+            self.assertEqual(fresh["correction_attempt"], 3)
+            self.assertEqual(fresh["head"], self.ws.head)
+            self.assertNotIn("native_step", fresh)
+            self.assertIn(step.encode(), self.lock.read_bytes())
+            return confirm_native_assignment(step)
+
+        with patch("hydra_sdlc.native.confirm_native_assignment", side_effect=confirm_after_readback) as retire:
+            result = await self.result(implementation)
+            retire.assert_called_once_with(implementation["step_id"])
+        self.assertEqual(result["reason"], "replan_required")
+        self.assertEqual(result["progress_hint"], {
+            "kind": "human", "next_action": "resolve_replan", "wake_source": "operator_decision"})
+        self.assertEqual(self.lock.read_bytes(), b"")
+        self.assertEqual(self.gh.note["phase"], "checkpoint")
+        self.assertEqual(self.gh.note["checkpoint"], "interrupted_committed")
+        self.assertIsNone(self.gh.note["pending_action"])
+        self.assertFalse(self.ws.dirty)
+
+        attempt = self.gh.note["attempt_id"]
+        self.controller = self.new_controller()
+        self.gh.extra_comments.extend([
+            {"user": {"login": "intruder"}, "body": f"hydra: replan {attempt} ready"},
+            {"user": {"login": "operator"},
+             "body": "hydra: replan 00000000-0000-0000-0000-000000000001 ready"},
+        ])
+        before = copy.deepcopy(self.gh.note), list(self.gh.writes)
+        row = self.controller.status()[0]
+        self.assertEqual(row["wait_reason"], "replan_required")
+        self.assertEqual(row["progress"]["next_action"], "diagnose")
+        self.assertEqual(row["progress_hint"], result["progress_hint"])
+        self.assertNotIn("resume_hint", row)
+        held = await self.controller.begin(self.url)
+        self.assertEqual(held["reason"], "replan_required")
+        self.assertEqual((self.gh.note, self.gh.writes), before)
+
+        self.gh.extra_comments.append({"user": {"login": "operator"},
+                                      "body": f"hydra: replan {attempt} ready"})
+        self.controller = self.new_controller()
+        row = self.controller.status()[0]
+        self.assertEqual(row["wait_reason"], "replan_required")
+        self.assertEqual(row["resume_hint"], "replan_ready")
+        self.assertEqual(row["progress_hint"], {"kind": "actionable", "next_action": "begin", "wake_source": "none"})
+        self.assertEqual((self.gh.note, self.gh.writes), before)
+        resumed = await self.controller.begin(self.url)
+        self.assertEqual(resumed["action"], "native_task")
+        self.assertEqual(resumed["phase"], "spec_review")
+        self.assertNotEqual(resumed["attempt_id"], attempt)
+        self.assertNotEqual(resumed["step_id"], implementation["step_id"])
+        self.assertIsNone(self.gh.note["correction_attempt"])
+        self.assertFalse(any(write[0] in {"push", "pr", "merge", "close"} for write in self.gh.writes))
+        await self.result(resumed, "stopped")
+
+    async def test_completed_spec_retry_limit_keeps_an_unanswered_product_decision(self):
+        implementation = await self.result(await self.controller.begin(self.url))
+        spec = self.ws.path / "docs/engineering/task/spec.md"
+        spec.write_text(spec.read_text() + "\nAcceptance still needs an operator decision.")
+        self.ws.dirty = True
+        self.ws.changed_paths = lambda path, base: ["docs/engineering/task/spec.md", "src/main.py"]
+        self.gh.note["correction_attempt"] = 2
+
+        result = await self.result(implementation, "needs_decision")
+
+        self.assertEqual(result["reason"], "product_decision")
+        self.assertEqual(self.gh.note["wait_reason"], "product_decision")
+        self.assertEqual(self.gh.note["next_action"], "operator_decision")
+        self.assertEqual(self.gh.note["correction_attempt"], 3)
+        self.assertEqual(self.gh.note["resume_phase"], "implementation")
+        self.assertNotIn("native_step", self.gh.note)
+        self.assertEqual(self.lock.read_bytes(), b"")
+        row = self.new_controller().status()[0]
+        self.assertEqual(row["progress_hint"], {
+            "kind": "human", "next_action": "await_operator_decision", "wake_source": "operator_decision"})
+
     async def test_changed_intake_rejects_result_but_explicit_stop_releases_host(self):
         implementation = await self.result(await self.controller.begin(self.url))
         accepted = self.gh.note["spec_revision"]

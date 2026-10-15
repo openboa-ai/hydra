@@ -1,0 +1,14 @@
+{
+  "identifier": "main",
+  "description": "Bundled Hydra window operating controls only.",
+  "windows": ["main"],
+  "platforms": ["macOS"],
+  "permissions": [
+    "allow-status",
+    "allow-control",
+    "allow-open-record",
+    "allow-request-quit",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

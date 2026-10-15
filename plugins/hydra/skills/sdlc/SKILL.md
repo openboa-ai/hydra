@@ -85,8 +85,36 @@ Before ending a turn, state the next action and its real wait condition. If the 
 action is available now, continue it instead of asking for a generic proceed message.
 Do not repeat completed research or create proposals merely to appear active.
 
+Distinguish an unanswered decision, a progressing external check and unknown
+execution from available work. Derived progress hints explain the next required
+observation; they do not grant authority, prove execution ended or provide an event
+subscription. A human or not-delegated hint does not prevent preparation already
+allowed by the goal.
+
+Once that independent preparation is exhausted and only the user's answer remains,
+show the existing question and its owning task with the answer/re-entry route. Do
+not create another question or task, repeatedly scan unrelated repositories or CI,
+or announce the same wait as progress. A real answer received in the owning native
+task re-enters the existing decision protocol and checks current authority and
+ownership before work. Do not promise automatic cross-task wake or resumption.
+
 After real task and recovery qualification, use one native 30-minute heartbeat in
 the operating chat. Quiet while unchanged; notify completion, meaningful failure or
 needed decision. Native scheduling consumes usage and requires the host/app.
+Pause a goal-specific heartbeat when it solely waits for the user and has no
+remaining delegated action or external execution to monitor. A shared heartbeat
+skips that goal while other responsibilities remain. Retire an unnecessary schedule
+when its responsibility ends; do not retain it to repeat completed work.
+
+Change only an existing schedule whose exact identity, scope and ownership are
+known and delegated. Inspect its current settings and preserve its prompt, target,
+recurrence and notification preferences when only pausing it. Apply changes through
+the native scheduling tool and read back the result; reconcile an uncertain response
+before retrying. Changing a schedule neither interrupts the current turn nor
+releases an assignment ticket. Admission Start/Resume does not resume a schedule.
+After an actual answer or authorized re-entry, re-evaluate the need and authority
+for recurring operation; do not override an explicit operator pause or stop.
+Source skill changes alone do not establish installed or scheduled behavior.
+
 Use included usage or existing credits when Codex permits; never buy credits,
 auto-recharge or switch to API billing. Goal creation requires explicit user request.

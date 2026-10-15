@@ -1,0 +1,14 @@
+{
+  "assets": [
+    {
+      "file": "MartianGrotesk-wdth-wght.ttf",
+      "sha256": "f81807163c34ff754e6d915b0b59f76cca88332b67c45cfc7453ace5751ae912",
+      "license": "LICENSE-MartianGrotesk-OFL.txt"
+    },
+    {
+      "file": "PretendardVariable.woff2",
+      "sha256": "9599f12fd42fc0bce1cd50b47a0c022e108d7aa64dd0d1bb0ed44f3282d900b4",
+      "license": "LICENSE-Pretendard-OFL.txt"
+    }
+  ]
+}

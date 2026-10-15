@@ -5,22 +5,16 @@ import argparse
 import importlib
 import os
 from pathlib import Path
-import re
-import tomllib
+from .runtime_identity import capture_runtime_identity
 
 
 def controller_from_file(path):
     from .github import GitHub
     from .native import NativeController
     from .workspace import Workspace
+    from .control import load_host_config, control_from_config
 
-    with Path(path).expanduser().open("rb") as source:
-        cfg = tomllib.load(source)
-    allowed = {"repos", "host_alias", "workspace_root", "lock_path", "lifecycle_provider", "storage_provider", "knowledge_repo", "runtime_python"}
-    if set(cfg) - allowed or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", cfg.get("host_alias", "")):
-        raise ValueError("Invalid installed host settings")
-    if not isinstance(cfg.get("repos"), list) or not cfg["repos"]:
-        raise ValueError("Installed repository allowlist missing")
+    cfg = load_host_config(path)
     def provider(key):
         value = cfg.get(key)
         if not value:
@@ -35,19 +29,31 @@ def controller_from_file(path):
         if repo:
             return github.ref(repo, github.repository(repo)["default_branch"])
         return None
-    return NativeController(github, workspace, repos=cfg["repos"], host_alias=cfg["host_alias"],
+    operations = control_from_config(cfg)
+    controller = NativeController(github, workspace, repos=cfg["repos"], host_alias=cfg["host_alias"],
         lock_path=Path(cfg.get("lock_path", "~/.local/share/hydra/host.lock")).expanduser(),
-        knowledge_revision=knowledge_revision)
+        knowledge_revision=knowledge_revision, operations=operations)
+    controller.runtime_identity = capture_runtime_identity(cfg, operations)
+    return controller
 
 
 def create_server(controller):
     from mcp.server import MCPServer
     server = MCPServer("Hydra", log_level="WARNING")
+    runtime = dict(getattr(controller, "runtime_identity", None) or capture_runtime_identity())
 
     @server.tool()
     def hydra_status() -> dict:
         """Read registered GitHub work and waiting reasons without claiming it."""
-        return {"projects": controller.status()}
+        result = {"projects": controller.status(), "runtime": dict(runtime)}
+        operations = getattr(getattr(controller, "runner", None), "operations", None)
+        if operations is not None:
+            from .operations import OperationDenied
+            try:
+                result["controls"] = operations.snapshot()
+            except OperationDenied as exc:
+                result["controls"] = {"reason": exc.reason, "gate_status": "unknown"}
+        return result
 
     @server.tool()
     async def hydra_begin(issue_url: str) -> dict:

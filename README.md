@@ -30,6 +30,19 @@ before resuming its exact attempt. Chat answers do not replace protected GitHub
 reviews. Enable a native heartbeat after actual task, delivery and recovery
 qualification; source installation alone does not establish unattended operation.
 
+When only an unanswered decision remains, pause that goal's recurring wake after
+independent preparation and external monitoring are exhausted. Keep the original
+question and task; a real answer re-enters its authority and ownership checks.
+The [operating continuity contract](docs/engineering/operating-continuity/spec.md)
+separates this wait from progressing CI and unconfirmed native assignments.
+
+The [macOS operations app](apps/mac) shows host/project admission separately from
+execution. Start/Resume permit eligible new work; Pause/Stop block it. Individual
+project restrictions survive global Resume, and unknown execution or schedule
+coverage can prevent Quit. Inspect the selected installation with
+`hydra identity --config /absolute/host.toml`; version and source/configuration
+digests are observations, not proof of native control or unattended operation.
+
 ## Standalone CLI
 
 Install Python 3.11+ with the optional pinned Codex SDK into an isolated environment:
@@ -52,6 +65,10 @@ The host supplies owned workspace and storage prerequisites. Managed workspaces
 require their registered lifecycle and storage providers; Hydra refuses an internal
 disk fallback. Foreground and login-service execution use the same `serve` command.
 Enable a login service only after actual delivery and recovery qualification.
+New host admission is stopped by default. After configuring the same host lock
+and repository allowlist for the CLI and native tools, use
+`hydra control start --config /absolute/host.toml --all` to permit eligible work.
+This does not start native tasks or activate external schedules.
 
 ## Workflow and recovery
 
