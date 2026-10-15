@@ -68,7 +68,39 @@ jobs:
           fi
           mkdir -p candidate/.git/info
           printf '%s\n' '* diff whitespace=blank-at-eol,blank-at-eof,space-before-tab' > candidate/.git/info/attributes
-          git -C candidate diff --check --no-ext-diff --no-textconv "$BASE_SHA" "$CHECKED_SHA" --
+          # Classify only reviewed original binary assets; candidate attributes and
+          # manifests cannot add exceptions. Check both sides, including deletions.
+          while read -r asset_path expected_sha256; do
+            present=false
+            for revision in "$BASE_SHA" "$CHECKED_SHA"; do
+              entry="$(git -C candidate ls-tree "$revision" -- "$asset_path")"
+              if test -z "$entry"; then
+                continue
+              fi
+              present=true
+              IFS=$'\t' read -r metadata object_path <<< "$entry"
+              read -r mode object_type object_id extra <<< "$metadata"
+              if test "$mode" != 100644 || test "$object_type" != blob ||
+                 test "$object_path" != "$asset_path" || test -n "$extra" ||
+                 test "${entry#*$'\n'}" != "$entry"; then
+                printf 'Unexpected asset object: %s\n' "$asset_path" >&2
+                exit 1
+              fi
+              actual_sha256="$(git -C candidate cat-file blob "$object_id" | sha256sum)"
+              if test "${actual_sha256%% *}" != "$expected_sha256"; then
+                printf 'Unreviewed asset bytes: %s\n' "$asset_path" >&2
+                exit 1
+              fi
+            done
+            if test "$present" = true; then
+              printf '%s -diff\n' "$asset_path" >> candidate/.git/info/attributes
+            fi
+          done <<'VERIFIED_ASSETS'
+          apps/mac/public/fonts/MartianGrotesk-wdth-wght.ttf f81807163c34ff754e6d915b0b59f76cca88332b67c45cfc7453ace5751ae912
+          apps/mac/public/fonts/PretendardVariable.woff2 9599f12fd42fc0bce1cd50b47a0c022e108d7aa64dd0d1bb0ed44f3282d900b4
+          apps/mac/src-tauri/icons/icon.png 005be38b40da8a96037bc632b6f2c3ff48028d007b9e959dc9ed2a6543c3580c
+          VERIFIED_ASSETS
+          git -C candidate diff --check --no-renames --no-ext-diff --no-textconv "$BASE_SHA" "$CHECKED_SHA" --
       - name: Install pinned workflow linter
         run: bash controls/.github/scripts/install-actionlint.sh
       - name: Validate workflows as data

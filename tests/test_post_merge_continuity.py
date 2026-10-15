@@ -201,4 +201,3 @@ class PostMergeContinuityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["action"], "completed")
         self.assertEqual(len(self.calls), before[0])
         self.assertEqual([x[0] for x in self.effects()[len(before[1]):]], ["close"])
-

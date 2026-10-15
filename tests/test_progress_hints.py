@@ -130,4 +130,3 @@ class NativeProgressTests(unittest.IsolatedAsyncioTestCase):
         stopped = await self.result(assignment, "stopped")
         self.assertIn("progress_hint", stopped)
         self.assertEqual(self.lock.read_bytes(), b"")
-
