@@ -1,10 +1,12 @@
 import asyncio
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 import json
+import signal
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 from pathlib import Path
+from types import SimpleNamespace
 
 from hydra_sdlc.cli import operate, parser
 from hydra_sdlc.coordinator import HostBusy, coordinator_lock, residual_workers
@@ -138,6 +140,7 @@ class CliTests(unittest.TestCase):
                         patch('hydra_sdlc.cli.residual_workers', return_value=[]):
                     runner.return_value.stop_requested.return_value = True
                     runner.return_value.host_hold_reason = None
+                    runner.return_value.drain_completed = AsyncMock(return_value=[])
                     result = asyncio.run(operate(args, github=object(), workspace=object(), operations=operations))
                     self.assertEqual(result, {'action': 'stopped', 'reason': 'signal_or_deadline',
                         'progress_hint': {'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'}})
@@ -248,6 +251,7 @@ class CliTests(unittest.TestCase):
                             patch('hydra_sdlc.cli.residual_workers', return_value=[]):
                         runner.return_value.stop_requested.side_effect = stop_requested
                         runner.return_value.host_hold_reason = 'host_cleanup_unconfirmed'
+                        runner.return_value.drain_completed = AsyncMock(return_value=[])
                         result = asyncio.run(operate(args, github=object(), workspace=object(),
                                                      operations=controls, emit=emitted.append))
                         runner.return_value.step.assert_not_called()
@@ -270,6 +274,7 @@ class CliTests(unittest.TestCase):
         controls.interruption_reason.side_effect = lambda: None if mode == 'operation_state_busy' else mode
         controls.guard.return_value = nullcontext()
         runtime = Mock(host_hold_reason=None)
+        runtime.drain_completed = AsyncMock(return_value=[])
 
         async def cycle(_repos):
             nonlocal mode
@@ -297,6 +302,102 @@ class CliTests(unittest.TestCase):
             'progress_hint': {'kind': 'human', 'next_action': 'await_control_change',
                               'wake_source': 'control_change'}})
         self.assertEqual(json.loads(emitted[-1]), result)
+
+    def _observe_cleanup_exit(self, command, trigger, checkpoint_status):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            controls = OperatingControl(root / 'host.lock', ['example/product'])
+            controls.set_mode('start')
+            target = (['--issue', 'https://github.com/example/product/issues/1']
+                      if command == 'run' else ['--repos', 'example/product'])
+            args = parser().parse_args([command, *target, '--workspace-root', str(root),
+                '--host-alias', 'host-a', '--lock-path', str(root / 'host.lock'), '--timeout', '1'])
+            clock, handlers, emitted = [0.0], {}, []
+            observed = {'steps': 0, 'drains': [], 'owned': False, 'pending_proof': False}
+            cleanup = {'repository': 'example/product', 'issue': 1,
+                       'action': 'continue' if checkpoint_status == 'recorded' else 'waiting',
+                       'checkpoint_status': checkpoint_status}
+            if checkpoint_status != 'recorded':
+                cleanup['reason'] = {'pending': 'operation_state_busy',
+                    'unconfirmed': 'checkpoint_recording_unconfirmed',
+                    'superseded': 'checkpoint_state_changed'}[checkpoint_status]
+
+            @contextmanager
+            def ownership(_path):
+                observed['owned'] = True
+                try:
+                    yield
+                finally:
+                    observed['owned'] = False
+
+            class FakeRunner:
+                host_hold_reason = None
+
+                def __init__(self, *_args, stop_requested, **_kwargs):
+                    self.stop_requested = stop_requested
+
+                async def step(self, *_args):
+                    observed['steps'] += 1
+                    observed['pending_proof'] = True
+                    if trigger in {'pause', 'stop'}:
+                        controls.set_mode(trigger)
+                    elif trigger == 'signal':
+                        handlers[signal.SIGTERM](signal.SIGTERM, None)
+                    elif trigger == 'deadline':
+                        clock[0] = 2.0
+                    if trigger == 'return':
+                        return {'repository': 'example/product', 'issue': 1, 'action': 'waiting',
+                                'reason': 'operation_state_busy', 'checkpoint_status': 'pending'}
+                    return {'action': 'continue'}
+
+                async def cycle(self, *_args):
+                    return [await self.step()]
+
+                async def drain_completed(self, repository=None, number=None):
+                    if not observed['owned'] or not observed['pending_proof']:
+                        raise AssertionError('Cleanup lost the owning runner or coordinator')
+                    observed['drains'].append((repository, number))
+                    if checkpoint_status in {'recorded', 'superseded'}:
+                        observed['pending_proof'] = False
+                    return [dict(cleanup)]
+
+            with patch('hydra_sdlc.runner.Runner', FakeRunner), \
+                    patch('hydra_sdlc.cli.coordinator_lock', ownership), \
+                    patch('hydra_sdlc.cli.residual_workers', return_value=[]), \
+                    patch('hydra_sdlc.cli.asyncio.get_running_loop', return_value=SimpleNamespace(time=lambda: clock[0])), \
+                    patch('hydra_sdlc.cli.signal.signal', side_effect=lambda sig, callback: handlers.update({sig: callback})):
+                result = asyncio.run(operate(args, github=object(), workspace=object(),
+                                             operations=controls, emit=emitted.append))
+            self.assertEqual(observed['steps'], 1, 'Cleanup must not dispatch another workflow step')
+            self.assertFalse(observed['owned'])
+            self.assertEqual(json.loads(emitted[-1]), result)
+            self.assertEqual(result['cleanup_results'], [cleanup])
+            self.assertEqual(result['checkpoint_status'], 'recorded' if checkpoint_status == 'recorded' else 'pending')
+            if checkpoint_status == 'recorded':
+                self.assertFalse(observed['pending_proof'])
+                self.assertNotIn('execution_state', result)
+            else:
+                self.assertEqual(observed['pending_proof'], checkpoint_status != 'superseded')
+                self.assertEqual(result['execution_state'], 'unknown')
+                self.assertEqual(result['execution_reason'], cleanup['reason'])
+            return result, observed
+
+    def test_run_drains_completed_checkpoint_before_returning_wait(self):
+        for status in ('recorded', 'pending', 'unconfirmed', 'superseded'):
+            with self.subTest(status=status):
+                result, observed = self._observe_cleanup_exit('run', 'return', status)
+                self.assertEqual(observed['drains'], [('example/product', 1)])
+                self.assertEqual((result['action'], result['reason']), ('waiting', 'operation_state_busy'))
+
+    def test_run_and_serve_drain_completed_checkpoint_before_control_signal_or_deadline_exit(self):
+        for command in ('run', 'serve'):
+            for trigger in ('pause', 'stop', 'signal', 'deadline'):
+                for status in ('recorded', 'pending'):
+                    with self.subTest(command=command, trigger=trigger, status=status):
+                        result, observed = self._observe_cleanup_exit(command, trigger, status)
+                        self.assertEqual(observed['drains'], [(None, None)])
+                        reason = {'pause': 'host_paused', 'stop': 'host_stopped'}.get(trigger, 'signal_or_deadline')
+                        self.assertEqual((result['action'], result['reason']), ('stopped', reason))
 
     def test_control_requires_an_explicit_mutation_target_before_config_read(self):
         from hydra_sdlc.cli import operate_control

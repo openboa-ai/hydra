@@ -210,6 +210,8 @@ class WaitCadenceTests(unittest.IsolatedAsyncioTestCase):
                 return copy.deepcopy(result)
             async def cycle(self, *args):
                 return [await self.step()]
+            async def drain_completed(self, *args, **kwargs):
+                return []
         handlers = {}
         def handler(sig, callback):
             handlers[sig] = callback

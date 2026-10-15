@@ -199,6 +199,48 @@ revisions are pinned. Existing kernel and hygiene jobs, credentials handling and
 scanner controls are unchanged. Independent workflow review and pinned actionlint
 passed; the new hosted macOS job still needs actual current-head CI evidence.
 
+## Completed-execution checkpoint recovery (2026-10-15)
+
+Head `64526d71e03f315744cd96842ffc8671bec3631e` passed all
+[four CI jobs](https://github.com/openboa-ai/hydra/actions/runs/38741154779).
+Python 3.11 and 3.14.2 each ran 840 tests with eight skips. The macOS job passed
+30 frontend tests, theme verification, TypeScript/Vite build, 15 locked Rust tests
+and the embedded-frontend Rust build. Repository hygiene and trusted history/source
+secret scans passed. Both provider reviews completed; Code Review identified a
+remaining race when control-lock contention interrupted a completed model's
+checkpoint.
+
+The correction retains exact completion evidence inside its existing Runner.
+Checkpoint admission retries asynchronously, at most six attempts with 0.775
+seconds of total retry delay. Longer contention or cancellation retains the
+matching repository, Issue, attempt and contract identity for cleanup re-entry.
+Re-entry only settles that existing checkpoint; it does not repeat model work or
+publication. Changed durable identity or remote intent is preserved.
+
+Once a checkpoint effect starts, an uncertain response permits read-back only.
+The exact attempted record is retained before writing and compared with observed
+progress; no uncertain effect is retransmitted. Intermediate specification records
+retain the completion proof until settlement or reconciliation. Confirmed durable
+progress can then follow the normal guarded lifecycle.
+
+CLI run and foreground shutdown drain retained completions while coordinator
+ownership remains held. The drain shares a 0.8-second retry-delay budget; admitted
+checkpoint and API calls retain their existing bounds. Server cycles drain before
+filtering paused projects and exclude those targets from normal work in that cycle.
+An exhausted or unconfirmed exit drain reports pending cleanup and unknown state.
+The proof is process-local: it creates no database or recovery file and grants no
+restart or handover authority.
+
+Independent static review accepted the five changed Python/test files. An isolated
+Python 3.14.2 full suite ran 852 tests successfully with 20 skips in 260.437 seconds.
+The added cases cover real exclusive-lock contention, cancellation, prolonged
+contention, unrelated and concurrent targets, changed identity or remote intent,
+uncertain checkpoint writes, intermediate specification writes, paused cycles and
+CLI run/serve exit paths. All 143 source, validation and saved-snapshot files matched
+before and after the run. Application and workflow files are unchanged from the
+head above. The correction still requires its own current-head CI and provider
+reviews before protected delivery.
+
 ## Remaining delivery and operating evidence
 
 - Require current-head GitHub CI and code/security review before protected

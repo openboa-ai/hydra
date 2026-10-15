@@ -3,9 +3,11 @@
 import asyncio
 import copy
 import json
+import os
 import tempfile
 import threading
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -83,6 +85,278 @@ class OperationIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def runner(self, **kwargs):
         return Runner(self.gh, self.ws, host_alias="test", execute=self.execute,
                       capabilities=self.capabilities, operations=self.control, **kwargs)
+
+    @asynccontextmanager
+    async def completed_during_control_update(self, *, action="resume", outcome="candidate_ready"):
+        """Return a real completed model while a separate writer owns LOCK_EX."""
+        self.control.set_mode("resume")
+        self.gh = CheckpointGitHub()
+        self.ws = OwnedWorkspace(self.root, self.gh)
+        self.calls = []
+        runner = self.runner()
+        execute, checkpoint = runner.execute, self.ws.checkpoint
+        published, release = threading.Event(), threading.Event()
+        cleanup_attempted = asyncio.Event()
+        replace = os.replace
+        writers = []
+        checkpoints = []
+
+        def pending_replace(*args, **kwargs):
+            replace(*args, **kwargs)
+            published.set()
+            if not release.wait(10):
+                raise RuntimeError("fixture writer was not released")
+
+        async def completed(assignment, **kwargs):
+            result = await execute(assignment, **kwargs)
+            if assignment["mode"] == "workspace_write":
+                result["detail"]["result"]["outcome"] = outcome
+                writers.append(asyncio.create_task(asyncio.to_thread(self.control.set_mode, action)))
+                self.assertTrue(await asyncio.to_thread(published.wait, 5))
+            return result
+
+        def count_checkpoint(*args):
+            checkpoints.append(args)
+            return checkpoint(*args)
+
+        original_cleanup = runner._checkpoint_ended_once
+        def cleanup(*args):
+            cleanup_attempted.set()
+            return original_cleanup(*args)
+
+        runner.execute, runner._checkpoint_ended_once = completed, cleanup
+        self.ws.checkpoint = count_checkpoint
+        with patch("hydra_sdlc.operations.os.replace", side_effect=pending_replace):
+            task = asyncio.create_task(runner.step(REPO, 4))
+            try:
+                await asyncio.wait_for(cleanup_attempted.wait(), 5)
+                yield runner, task, release, writers, checkpoints
+            finally:
+                release.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, *writers, return_exceptions=True)
+
+    async def test_completed_model_waits_for_real_busy_lock_then_checkpoints_under_pause(self):
+        for outcome in ("candidate_ready", "needs_decision"):
+            with self.subTest(outcome=outcome):
+                async with self.completed_during_control_update(action="pause", outcome=outcome) as (
+                        runner, task, release, writers, checkpoints):
+                    self.assertFalse(task.done())
+                    self.assertEqual(len(runner._pending_ended), 1)
+                    # A timer can run while the writer remains exclusive.
+                    await asyncio.sleep(0.04)
+                    self.assertEqual(checkpoints, [])
+                    release.set()
+                    result = await asyncio.wait_for(task, 3)
+                    await asyncio.gather(*writers)
+                    self.assertEqual(result["reason"], "host_paused")
+                    self.assertEqual(len(checkpoints), 1)
+                    self.assertEqual(len(self.gh.cleanup_records), 1)
+                    self.assertEqual(self.calls.count("implementation"), 1)
+                    self.assertEqual(self.gh.note["phase"], "checkpoint")
+                    self.assertIsNone(self.gh.note["pending_action"])
+                    self.assertFalse(self.ws.dirty)
+                    self.assertEqual(runner._pending_ended, {})
+                    self.assertEqual(runner._unconfirmed_checkpoints, {})
+                    if outcome == "needs_decision":
+                        self.assertEqual(self.gh.note["wait_reason"], "product_decision")
+                    self.assertFalse(any(write[0] in {"push", "pr", "merge", "close"} for write in self.gh.writes))
+
+    async def test_prolonged_busy_retains_exact_end_for_cleanup_only_reentry(self):
+        async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+            result = await asyncio.wait_for(task, 3)
+            self.assertEqual(result["reason"], "operation_state_busy")
+            self.assertEqual(result["checkpoint_status"], "pending")
+            self.assertEqual(len(runner._pending_ended), 1)
+            self.assertEqual(checkpoints, [])
+            self.assertEqual(self.gh.note["phase"], "executing")
+            self.assertTrue(self.ws.dirty)
+            calls = list(self.calls)
+            held = await asyncio.wait_for(runner.drain_completed(REPO, 4), 2)
+            self.assertEqual((held[0]["action"], held[0]["checkpoint_status"]), ("waiting", "pending"))
+            self.assertEqual(held[0]["reason"], "operation_state_busy")
+            self.assertEqual(checkpoints, [])
+            self.assertEqual(self.calls, calls)
+            release.set()
+            await asyncio.gather(*writers)
+            # The proof is intentionally not restart authority.
+            self.assertEqual((await self.runner().step(REPO, 4))["reason"], "confirm_previous_stopped")
+            result = await runner.step(REPO, 4)
+            self.assertEqual((result["action"], result["checkpoint_status"]), ("continue", "recorded"))
+            self.assertEqual(self.calls, calls)
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(len(self.gh.cleanup_records), 1)
+            self.assertEqual(runner._pending_ended, {})
+            self.assertFalse(any(write[0] in {"push", "pr", "merge", "close"} for write in self.gh.writes))
+
+    async def test_cancelled_cleanup_retains_proof_and_unrelated_steps_do_not_clear_it(self):
+        async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(len(runner._pending_ended), 1)
+            self.assertEqual(runner._settling_ended, set())
+            proof = dict(runner._pending_ended)
+            release.set()
+            await asyncio.gather(*writers)
+            async def unrelated(repo, number):
+                self.assertIsNone(runner._ended_execution.get())
+                return {"repository": repo, "issue": number, "action": "continue"}
+            with patch.object(runner, "_step", side_effect=unrelated):
+                for target in ((OTHER, 4), (REPO, 5)):
+                    self.assertEqual((await runner.step(*target))["action"], "continue")
+                    self.assertEqual(runner._pending_ended, proof)
+                self.assertEqual((await runner.step(REPO, 4))["checkpoint_status"], "recorded")
+            self.assertEqual(self.calls.count("implementation"), 1)
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(runner._pending_ended, {})
+
+    async def test_concurrent_same_target_cannot_consume_pending_proof_twice(self):
+        async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+            other = await asyncio.wait_for(runner.step(REPO, 4), 1)
+            self.assertEqual((other["reason"], other["checkpoint_status"]), ("operation_state_busy", "pending"))
+            self.assertEqual(len(runner._pending_ended), 1)
+            release.set()
+            await asyncio.wait_for(task, 3)
+            await asyncio.gather(*writers)
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(self.calls.count("implementation"), 1)
+            self.assertEqual(runner._pending_ended, {})
+
+    async def test_deferred_end_never_overwrites_changed_identity_or_remote_intent(self):
+        changes = (
+            {"attempt_id": "22222222-2222-4222-8222-222222222222"},
+            {"contract_revision": "d" * 40}, {"host_alias": "another-host"},
+            {"branch": "hydra/issue-5"}, {"head": "d" * 40},
+            {"expected_head": "d" * 40}, {"intake_digest": "d" * 64},
+            {"spec_revision": "d" * 40}, {"phase": "publishing", "pending_action": "publish"},
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                    self.gh.note.update(change)
+                    expected = copy.deepcopy(self.gh.note)
+                    release.set()
+                    await asyncio.gather(*writers)
+                    result = await runner.step(REPO, 4)
+                    self.assertEqual((result["reason"], result["checkpoint_status"]),
+                                     ("checkpoint_state_changed", "superseded"))
+                    self.assertEqual(self.gh.note, expected)
+                    self.assertEqual(checkpoints, [])
+                    self.assertEqual(self.gh.cleanup_records, [])
+                    self.assertEqual(self.calls.count("implementation"), 1)
+                    self.assertEqual(runner._pending_ended, {})
+
+    async def test_unknown_checkpoint_result_is_observed_without_effect_replay(self):
+        for applied in (False, True):
+            with self.subTest(applied=applied):
+                async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                    release.set()
+                    await asyncio.gather(*writers)
+                    write = self.gh.record_checkpoint
+                    attempts = []
+                    def uncertain(*args):
+                        attempts.append(args)
+                        if applied:
+                            write(*args)
+                        raise OperationDenied("operation_state_busy")
+                    self.gh.record_checkpoint = uncertain
+                    result = await runner.step(REPO, 4)
+                    self.assertEqual(result["action"], "waiting")
+                    self.assertEqual(result["reason"], "checkpoint_recording_unconfirmed")
+                    again = await runner.step(REPO, 4)
+                    self.assertEqual(len(attempts), 1)
+                    self.assertEqual(len(checkpoints), 1)
+                    self.assertEqual(self.calls.count("implementation"), 1)
+                    if applied:
+                        self.assertEqual(again["checkpoint_status"], "recorded")
+                        self.assertEqual(runner._pending_ended, {})
+                    else:
+                        self.assertEqual(again["reason"], "checkpoint_recording_unconfirmed")
+                        self.assertEqual(len(runner._pending_ended), 1)
+                    self.assertFalse(any(row[0] in {"push", "pr", "merge", "close"} for row in self.gh.writes))
+
+    async def test_exact_readback_rejects_changed_checkpoint_after_lost_response(self):
+        async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            release.set()
+            await asyncio.gather(*writers)
+            original = self.gh.record_checkpoint
+            attempts = []
+            def uncertain(*args):
+                attempts.append(args)
+                original(*args)
+                raise RuntimeError("synthetic response lost")
+            self.gh.record_checkpoint = uncertain
+            self.assertEqual((await runner.drain_completed())[0]["reason"], "checkpoint_recording_unconfirmed")
+            self.gh.note["next_action"] = "operator_decision"
+            observed = copy.deepcopy(self.gh.note)
+            result = await runner.drain_completed()
+            self.assertEqual(result[0]["checkpoint_status"], "superseded")
+            self.assertEqual(self.gh.note, observed)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(self.calls.count("implementation"), 1)
+
+    async def test_spec_checkpoint_intermediate_write_keeps_final_readback_proof(self):
+        async with self.completed_during_control_update() as (runner, task, release, writers, checkpoints):
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            release.set()
+            await asyncio.gather(*writers)
+            original = self.gh.record_checkpoint
+            attempts = []
+            def final_response_lost(*args):
+                attempts.append(copy.deepcopy(args[2]))
+                original(*args)
+                if len(attempts) == 2:
+                    raise RuntimeError("synthetic final response lost")
+            self.gh.record_checkpoint = final_response_lost
+            with patch.object(runner, "_spec_changed", return_value=True):
+                result = await runner.drain_completed()
+            self.assertEqual(result[0]["reason"], "checkpoint_recording_unconfirmed")
+            self.assertEqual(len(runner._pending_ended), 1)
+            self.assertEqual([row["phase"] for row in attempts], ["design_done", "checkpoint"])
+            self.assertEqual((await runner.drain_completed())[0]["checkpoint_status"], "recorded")
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(self.calls.count("implementation"), 1)
+            self.assertEqual(runner._pending_ended, {})
+            self.assertEqual(runner._unconfirmed_checkpoints, {})
+
+    async def test_cycle_drains_completed_proof_even_when_project_is_paused(self):
+        async with self.completed_during_control_update(action="pause") as (runner, task, release, writers, checkpoints):
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            release.set()
+            await asyncio.gather(*writers)
+            calls = list(self.calls)
+            result = await runner.cycle([REPO])
+            self.assertEqual(result[0]["checkpoint_status"], "recorded")
+            self.assertEqual(result[1]["reason"], "host_paused")
+            self.assertEqual(self.calls, calls)
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(runner._pending_ended, {})
+            self.assertFalse(any(row[0] in {"push", "pr", "merge", "close"} for row in self.gh.writes))
+
+    async def test_normal_completion_does_not_schedule_cleanup_reentry(self):
+        runner = self.runner()
+        self.assertEqual((await runner.step(REPO, 4))["action"], "continue")
+        self.assertEqual(self.gh.note["phase"], "implementation_done")
+        self.assertEqual(runner._pending_ended, {})
+        self.assertEqual(await runner.drain_completed(), [])
+        self.assertEqual(self.gh.cleanup_records, [])
 
     async def checkpoint(self, controller, assignment, outcome="candidate_ready", **changes):
         values = dict(url=URL, attempt_id=assignment["attempt_id"], step_id=assignment["step_id"],

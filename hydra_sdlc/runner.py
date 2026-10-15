@@ -101,6 +101,11 @@ class Runner:
         self.operations = operations
         self._cleanup_scope = ContextVar("hydra_cleanup_scope", default=None)
         self._ended_execution = ContextVar("hydra_ended_execution", default=None)
+        # Exact completion evidence is process-local. Keep an unsettled proof
+        # across bounded step calls, never across restart or host handover.
+        self._pending_ended = {}
+        self._unconfirmed_checkpoints = {}
+        self._settling_ended = set()
 
     def _operation_reason(self, repo=None):
         return self.operations.reason(repo) if self.operations is not None else None
@@ -211,16 +216,21 @@ class Runner:
             writer = getattr(self.github, "record_checkpoint", None)
             if not callable(writer):
                 raise OperationDenied("checkpoint_recording_unavailable")
+        ended = self._ended_execution.get()
+        settling = ended is not None and self._ended_key(ended) in self._settling_ended
+        if cleanup and settling:
+            # Retain the exact attempted values before the effect. A lost
+            # response permits read-back only, never retransmission.
+            self._unconfirmed_checkpoints[self._ended_key(ended)] = dict(record)
         self._effect(repo, writer, repo, number, record, cleanup=cleanup)
         if cleanup and self.operations is not None:
             observed = self.github.progress(repo, number)
             if not observed or any(observed.get(key) != value for key, value in record.items()):
                 raise RuntimeError("Stopped checkpoint read-back is unconfirmed")
-        ended = self._ended_execution.get()
-        if (ended is not None and ended[:2] == (repo, number)
+        if (ended is not None and not settling and ended[:2] == (repo, number)
                 and ended[3].get("attempt_id") == record.get("attempt_id")
                 and record.get("phase") != "executing" and record.get("pending_action") is None):
-            self._ended_execution.set(None)
+            self._forget_ended(ended)
         return record
 
     def _completion_callback(self):
@@ -772,38 +782,144 @@ class Runner:
                                   wait_reason=None, next_action="remote_review")
         return record, None
 
-    def _checkpoint_ended_on_hold(self, repo, number, reason):
+    @staticmethod
+    def _ended_key(ended):
+        repo, number, _, prior, _, phase, _, _ = ended
+        return (repo.casefold(), number, phase, *(prior.get(key) for key in (
+            "attempt_id", "contract_revision", "host_alias", "branch", "head", "expected_head", "intake_digest", "spec_revision")))
+
+    def _forget_ended(self, ended):
+        key = self._ended_key(ended)
+        stored = self._pending_ended.get(key)
+        if stored is None or stored is ended:
+            self._pending_ended.pop(key, None)
+            self._unconfirmed_checkpoints.pop(key, None)
+        if self._ended_execution.get() is ended:
+            self._ended_execution.set(None)
+
+    def _checkpoint_ended_once(self, repo, number, reason):
         ended = self._ended_execution.get()
         if ended is None or ended[0].casefold() != repo.casefold() or ended[1] != number:
-            return
+            return None
         repo, _, config, prior, path, phase, spec_record, needs_decision = ended
-        current = self.github.progress(repo, number)
-        if (not current or current.get("phase") != "executing" or current.get("pending_action") != phase
-                or any(current.get(key) != prior.get(key)
-                       for key in ("attempt_id", "contract_revision", "host_alias"))):
-            # In particular never overwrite a pending publish, merge, review,
-            # close or other request whose remote result may still be uncertain.
-            return
-        with self._confirmed_cleanup(repo, number, current):
-            head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint completed Issue {number} after hold")
-            from .workspace import WorkspaceWait
+        key = self._ended_key(ended)
+        # Contention happens before any effect. Once admitted, retain this short
+        # barrier through checkpoint/read-back; do not replay a partial cleanup.
+        with self._guard(repo, cleanup=True):
+            current = self.github.progress(repo, number)
+            expected = self._unconfirmed_checkpoints.get(key)
+            if expected is not None and current is not None and {
+                    k: v for k, v in current.items() if k not in {"version", "repository_id", "issue_number"}
+            } == expected:
+                self._forget_ended(ended)
+                return "recorded"
+            if current is None:
+                return "unconfirmed"
+            if (prior.get("host_alias") != self.host or current.get("phase") != "executing"
+                    or current.get("pending_action") != phase
+                    or any(current.get(field) != prior.get(field) for field in (
+                        "attempt_id", "contract_revision", "host_alias", "branch", "head", "expected_head", "intake_digest", "spec_revision"))):
+                # Changed durable intent is authoritative, including uncertain
+                # publish/merge/review/close. This proof cannot overwrite it.
+                self._forget_ended(ended)
+                return "superseded"
+            if key in self._unconfirmed_checkpoints:
+                return "unconfirmed"
+            with self._confirmed_cleanup(repo, number, current):
+                self._unconfirmed_checkpoints[key] = None
+                head = self._workspace_effect(repo, "checkpoint", path, f"Checkpoint completed Issue {number} after hold")
+                from .workspace import WorkspaceWait
+                try:
+                    current, _, wait = self._spec_checkpoint(repo, number, config, current, path, head,
+                                                            previous=spec_record, preserve_decision=needs_decision)
+                except WorkspaceWait as exc:
+                    if exc.reason != "intake_changed":
+                        raise
+                    current = {**current, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
+                    wait = {"reason": "replan_required"}
+                self._record(repo, number, current, head=head, phase="checkpoint", pending_action=None,
+                             checkpoint="interrupted_committed", resume_phase=current.get("resume_phase") or phase,
+                             wait_reason="product_decision" if needs_decision else wait["reason"] if wait else reason,
+                             next_action="operator_decision" if needs_decision else "diagnose" if wait else "reconcile")
+                self._forget_ended(ended)
+                return "recorded"
+
+    async def _checkpoint_ended_on_hold(self, repo, number, reason, *, deadline=None):
+        # At most six nonblocking attempts and 0.775 seconds of async delay.
+        # Cancellation propagates; step's finally retains the exact proof.
+        ended = self._ended_execution.get()
+        if ended is None:
+            return None, None
+        key = self._ended_key(ended)
+        self._pending_ended.setdefault(key, ended)
+        if key in self._settling_ended:
+            return "pending", "operation_state_busy"
+        self._settling_ended.add(key)
+        try:
+            for delay in (0, 0.025, 0.05, 0.1, 0.2, 0.4):
+                if deadline is not None and asyncio.get_running_loop().time() + delay >= deadline:
+                    break
+                if delay:
+                    await asyncio.sleep(delay)
+                try:
+                    state = self._checkpoint_ended_once(repo, number, reason)
+                    return state, "checkpoint_recording_unconfirmed" if state == "unconfirmed" else None
+                except OperationDenied as exc:
+                    if key in self._unconfirmed_checkpoints:
+                        return "pending", "checkpoint_recording_unconfirmed"
+                    if exc.reason != "operation_state_busy":
+                        return "pending", exc.reason
+                except (RuntimeError, OSError, ValueError):
+                    return "pending", "checkpoint_recording_unconfirmed"
+            return "pending", "operation_state_busy"
+        finally:
+            self._settling_ended.discard(key)
+
+    @staticmethod
+    def _cleanup_result(repo, number, state, error):
+        result = {"repository": repo, "issue": number, "action": "continue", "checkpoint_status": state}
+        if error or state == "superseded":
+            result.update(action="waiting", reason=error or "checkpoint_state_changed")
+        return with_progress_hint(result)
+
+    async def drain_completed(self, repository=None, number=None):
+        """Settle only retained completions, with one shared 0.8s delay budget.
+
+        Callers may drain before exit while ownership is still held. This never
+        starts normal work; an unresolved result remains process-local evidence,
+        not a durable confirmation usable after restart.
+        """
+        deadline = asyncio.get_running_loop().time() + 0.8
+        pending = list(self._pending_ended.items())
+        results = []
+        for key, ended in pending:
+            repo, issue = ended[:2]
+            if ((repository is not None and repo.casefold() != repository.casefold())
+                    or (number is not None and issue != number) or self._pending_ended.get(key) is not ended):
+                continue
+            token = self._ended_execution.set(ended)
             try:
-                current, _, wait = self._spec_checkpoint(repo, number, config, current, path, head,
-                                                        previous=spec_record, preserve_decision=needs_decision)
-            except WorkspaceWait as exc:
-                if exc.reason != "intake_changed":
-                    raise
-                current = {**current, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
-                wait = {"reason": "replan_required"}
-            self._record(repo, number, current, head=head, phase="checkpoint", pending_action=None,
-                         checkpoint="interrupted_committed", resume_phase=current.get("resume_phase") or phase,
-                         wait_reason="product_decision" if needs_decision else wait["reason"] if wait else reason,
-                         next_action="operator_decision" if needs_decision else "diagnose" if wait else "reconcile")
+                with operation_scope(self.operations, repo):
+                    state, error = await self._checkpoint_ended_on_hold(
+                        repo, issue, "operation_state_busy", deadline=deadline)
+                    results.append(self._cleanup_result(repo, issue, state, error))
+            finally:
+                self._ended_execution.reset(token)
+        return results
 
     async def step(self, repo, number):
         with operation_scope(self.operations, repo):
-            token = self._ended_execution.set(None)
+            pending = [ended for key, ended in self._pending_ended.items() if key[:2] == (repo.casefold(), number)]
+            if len(pending) > 1:
+                return with_progress_hint({"repository": repo, "issue": number, "action": "waiting",
+                                           "reason": "checkpoint_identity_conflict", "checkpoint_status": "pending"})
+            token = self._ended_execution.set(pending[0] if pending else None)
             try:
+                if pending:
+                    state, error = await self._checkpoint_ended_on_hold(repo, number, "operation_state_busy")
+                    # Cleanup re-entry never calls the model or publishes. A
+                    # later step may follow the durable checkpoint normally.
+                    return self._cleanup_result(repo, number, state, error)
                 reason = self._operation_reason(repo)
                 if reason:
                     return with_progress_hint({"repository": repo, "issue": number, "action": "waiting", "reason": reason})
@@ -811,12 +927,28 @@ class Runner:
                     result = await self._step(repo, number)
                     blocked = self._operation_reason(repo)
                     if blocked:
-                        self._checkpoint_ended_on_hold(repo, number, blocked)
+                        state, error = await self._checkpoint_ended_on_hold(repo, number, blocked)
+                        if error:
+                            return with_progress_hint({"repository": repo, "issue": number, "action": "waiting",
+                                                       "reason": error, "checkpoint_status": state})
+                    else:
+                        # An ordinary completed transition already handled its
+                        # result. Only interrupted settlement needs re-entry.
+                        ended = self._ended_execution.get()
+                        if ended is not None:
+                            self._forget_ended(ended)
                     return with_progress_hint(result)
                 except OperationDenied as exc:
-                    self._checkpoint_ended_on_hold(repo, number, exc.reason)
-                    return with_progress_hint({"repository": repo, "issue": number, "action": "waiting", "reason": exc.reason})
+                    state, error = await self._checkpoint_ended_on_hold(repo, number, exc.reason)
+                    result = {"repository": repo, "issue": number, "action": "waiting",
+                              "reason": error or self._operation_reason(repo) or exc.reason}
+                    if error:
+                        result["checkpoint_status"] = state
+                    return with_progress_hint(result)
             finally:
+                ended = self._ended_execution.get()
+                if ended is not None:
+                    self._pending_ended.setdefault(self._ended_key(ended), ended)
                 self._ended_execution.reset(token)
 
     async def _step(self, repo, number):
@@ -1658,10 +1790,11 @@ class Runner:
         return [with_progress_hint(item) for item in result]
 
     async def cycle(self, repos):
+        results = await self.drain_completed()
+        drained = {(row["repository"].casefold(), row["issue"]) for row in results}
         if self.host_hold_reason:
-            return [with_progress_hint({"action": "waiting", "reason": self.host_hold_reason})]
+            return results + [with_progress_hint({"action": "waiting", "reason": self.host_hold_reason})]
         ready = []
-        results = []
         dependents = {}
         seen = set()
         for repo in repos:
@@ -1680,7 +1813,7 @@ class Runner:
             if resource_wait:
                 results.append({"repository": repo, "action": "waiting", "reason": resource_wait})
             for issue in issues:
-                if "pull_request" in issue:
+                if "pull_request" in issue or (repo.casefold(), issue["number"]) in drained:
                     continue
                 target = repo
                 try:

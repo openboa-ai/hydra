@@ -125,6 +125,21 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
                     capabilities=capabilities or inspect_capabilities,
                     stop_requested=lambda: stopped or loop.time() >= deadline or bool(operations.interruption_reason()),
                     knowledge_revision=knowledge_revision, operations=operations)
+
+    async def drain_completed(result, repository=None, number=None):
+        # Keep coordinator ownership for one bounded, cleanup-only opportunity.
+        # A deadline or blocking mode forbids new work, not an exact ended
+        # execution's checkpoint. Unknown settlement must remain visible.
+        cleanup = await runner.drain_completed(repository, number)
+        if not cleanup:
+            return result
+        result = {**result, "cleanup_results": cleanup, "checkpoint_status": "recorded"}
+        pending = [row for row in cleanup if row.get("checkpoint_status") != "recorded"]
+        if pending:
+            result.update(checkpoint_status="pending", execution_state="unknown",
+                          execution_reason=pending[0].get("reason") or "checkpoint_recording_unconfirmed")
+        return result
+
     last = None
     try:
         with ExitStack() as ownership:
@@ -140,13 +155,16 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
                     result = await runner.step(repo, number)
                 else:
                     result = await runner.cycle(args.repos)
+                external_wait = args.command == "run" and result.get("reason") in {
+                    "remote_delivery_gates", "post_merge_checks", "delivery_facts_changed"}
+                returning = args.command == "run" and result.get("action") != "continue" and not external_wait
+                if returning:
+                    result = await drain_completed(result, repo, number)
                 encoded = json.dumps(result, sort_keys=True, ensure_ascii=False)
                 if encoded != last:
                     emit(encoded)
                     last = encoded
-                external_wait = args.command == "run" and result.get("reason") in {
-                    "remote_delivery_gates", "post_merge_checks", "delivery_facts_changed"}
-                if args.command == "run" and result.get("action") != "continue" and not external_wait:
+                if returning:
                     return result
                 if external_wait:
                     until = min(loop.time() + 60, deadline)
@@ -167,6 +185,7 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
                 # This foreground loop has ended; uncertain owned cleanup is
                 # still a hold, not evidence that execution has terminated.
                 result.update(execution_state="unknown", execution_reason=runner.host_hold_reason)
+            result = await drain_completed(result)
             result = with_progress_hint(result)
             emit(json.dumps(result, ensure_ascii=False))
             return result
