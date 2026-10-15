@@ -1,6 +1,6 @@
 # Verified binary asset classification for repository hygiene
 
-Revision: 2
+Revision: 3
 
 ## Problem and scope
 
@@ -62,5 +62,6 @@ workflow delta before publication. Re-run current-head CI and distinguish its
 whitespace, workflow-lint, kernel, and trusted secret-scan results. Local checks do
 not establish remote success. Because `.github/` changes, merge still requires the
 configured human code-owner approval; agent review or green candidate CI cannot
-substitute for it. Keep the existing PR a draft until its other acceptance and
-delivery gates are satisfied.
+substitute for it. Keep the PR draft until its pre-review acceptance gaps are
+resolved. Marking it ready opens the required provider and human review stage;
+it does not establish approval or delivery.

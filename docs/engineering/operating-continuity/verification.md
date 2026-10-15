@@ -7,9 +7,9 @@ separate evidence.
 
 ## Python behavior
 
-An isolated source snapshot was tested with Python 3.14.2, MCP 2.3.0 and Codex
-0.162.0, without model calls. Full discovery ran 814 tests. Twenty tests were
-skipped: 18 require Linux process semantics and two require non-UTF8 filenames
+On 2026-10-14, an isolated source snapshot was tested with Python 3.14.2, MCP
+2.3.0 and Codex 0.162.0, without model calls. Full discovery ran 814 tests.
+Twenty tests were skipped: 18 require Linux process semantics and two require non-UTF8 filenames
 unsupported by the validation filesystem.
 
 The initial run exposed 11 failure records in seven existing test methods: exact
@@ -18,8 +18,18 @@ the old polling reason, or an in-progress fixture retained a success conclusion.
 Six test files were corrected to the reviewed contract. All 67 tests in those
 affected files then passed. Production source did not change after the full run;
 the final source and validation manifests matched for all 101 Python, test and
-supporting files. This is a full run plus a focused correction run, not a second
-full-suite run.
+supporting files. That local evidence is a full run plus a focused correction
+run, not a second local full-suite run.
+
+On 2026-10-15, [Repository CI run 38690740192](https://github.com/openboa-ai/hydra/actions/runs/38690740192)
+passed for source head `52f2319ef5a74721ca0049146803cf70113b90ea`.
+The Linux Python 3.11 and 3.14.2 jobs each ran 827 tests with eight skipped.
+Repository hygiene, workflow linting, and trusted history/source secret scans
+passed; both secret-scan stages reported zero findings under unchanged rules.
+All 13 local asset-hygiene regression tests also passed without skips, and the
+actual whitespace check and workflow linter passed on the complete 143-file
+publishable candidate. This resolves the earlier candidate's binary whitespace
+blocker; it does not certify later revisions or replace protected approval.
 
 Coverage includes read-only repeated hints; exact decision resumption; legacy and
 new native pending ownership; trusted latest push CI states; first and second
@@ -27,10 +37,14 @@ post-merge observation failures; preserved close intents during provider outages
 and unchanged admission-denial behavior. Identity checks cover source bounds and
 races, unsafe filesystem entries, startup capture, configuration isolation, and
 CLI/MCP/control agreement. Control tests bind links to their own Issue and PR.
+Explicit CLI `run`/`serve` Pause tests and a real SDK server using `NativeController`
+cover admission denial after a control update. The latter retains the same server
+across the update and checks exact stopped cleanup; its GitHub/workspace dependencies
+are fixtures, not a production installation.
 
 ## Mac application
 
-The final application snapshot passed 23 frontend tests, TypeScript/Vite build,
+The 2026-10-14 application snapshot passed 23 frontend tests, TypeScript/Vite build,
 the theme mapping checks, and 15 locked Rust tests. A debug macOS application
 bundle was built from that snapshot.
 
@@ -43,6 +57,33 @@ applied host Stop and visibly held termination because execution/coverage was
 unconfirmed. Running-screen evidence was shared before publication; the owned
 fixture app was then stopped by the validation harness. That teardown is not a
 successful product Quit or native-turn interruption.
+
+On 2026-10-15, packaged keyboard inspection found and corrected local Refresh
+focus loss during automatic polling. A later user interaction cancels the saved
+focus restoration. Independent static review accepted the scoped frontend fix.
+All 29 app source files matched the rebuilt snapshot; its 23 frontend tests,
+TypeScript/Vite build, theme check and debug app packaging passed. Rust source did
+not change, so the earlier 15-test result remains the bridge evidence.
+
+The rebuilt app, with a disposable synthetic runtime, passed traversal of all 22
+available keyboard targets, reverse traversal, Space refresh and Return Pause.
+Actual observations confirmed focus recovery after automatic polling and retention
+of a later user focus during a two-second delayed response. Unsupported protocol
+output cleared cached controls, and malformed output exposed only a generic error.
+An applied Pause with malformed output produced one mutation followed by a status
+readback, an uncertainty warning and a reconciled blocked gate; it was not replayed.
+The [Mac control verification](../mac-control/verification.md) records the exact
+packaged executable and evidence limits. Screens were shared before publication;
+these synthetic observations do not establish production runtime operation.
+
+## Decision-only schedule observation
+
+On 2026-10-14, one known goal-specific heartbeat waiting only for a user answer
+was actually changed to `PAUSED`. Read-back confirmed that state and preservation
+of its existing configuration fields and question/task references. This is evidence
+of that bounded schedule transition, not interruption of its current turn,
+installation of the source skill's wake policy, automatic cross-task wake support,
+or qualification of all schedules.
 
 ## Independent review
 
@@ -60,7 +101,8 @@ policy. Unknown ownership or coverage still holds Quit. Admission Resume does no
 activate a paused schedule. Runtime digests are observation metadata, not an
 attestation of loaded code or execution ownership.
 
-The existing Draft PR's protected hygiene check has a separate binary-font
-whitespace classification blocker. Its trusted secret-scan stage did not run on
-that earlier head. This change does not weaken the workflow or claim CI, merge,
-installation or unattended execution success from local checks.
+The successful CI run above applies only to its recorded source head. Any later
+revision still requires current-head CI and code/security review. Protected merge
+also requires the configured human code-owner approval; green CI and agent reviews
+cannot substitute for it. Merge, production installation, signing/notarization and
+unattended operation are not established by these checks.

@@ -18,6 +18,8 @@ let notice = '';
 let error = '';
 let theme: 'system' | 'light' | 'dark' = 'system';
 let runtimeDetailsOpen = false;
+let focusIntent = 0;
+let renderingFocus = false;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -44,6 +46,12 @@ function restoreFocus(label: string | null): void {
   Array.from(app.querySelectorAll<HTMLElement>('button[aria-label], summary[aria-label]')).find(node => node.getAttribute('aria-label') === label && !(node instanceof HTMLButtonElement && node.disabled))?.focus({ preventScroll: true });
 }
 function restorePendingFocus(label: string | null): void { if (document.activeElement === document.body) restoreFocus(label); }
+// A later interaction owns focus even if its target is removed by another render.
+function supersedePendingFocus(): void { focusIntent += 1; }
+document.addEventListener('keydown', supersedePendingFocus, true);
+document.addEventListener('pointerdown', supersedePendingFocus, true);
+document.addEventListener('focusin', () => { if (!renderingFocus) supersedePendingFocus(); });
+window.addEventListener('blur', supersedePendingFocus);
 
 const messages: Record<string, string> = {
   launch_configuration_invalid: 'Launch Hydra with an installed runtime and host configuration. No operation has been enabled.',
@@ -95,13 +103,19 @@ function receive(value: unknown, ticket: ObservationTicket): Snapshot | null {
 
 async function refresh(remote = false, manual = false): Promise<void> {
   if (quitting || (remote ? remoteBusy : localBusy)) return;
-  const focus = manual ? document.activeElement?.getAttribute('aria-label') ?? null : null;
+  const label = remote ? 'Refresh GitHub' : 'Refresh local status';
+  // Automatic polling can temporarily disable the focused refresh button too.
+  const focus = document.activeElement?.getAttribute('aria-label') === label ? { label, intent: focusIntent } : null;
   const ticket = observations.begin();
   if (remote) remoteBusy = true; else localBusy = true;
   render();
   try { const accepted = receive(await invoke('status', { refresh: remote }), ticket); if (accepted && manual && !pending) error = ''; }
   catch (value) { receiveFailure(value, ticket); }
-  finally { if (remote) remoteBusy = false; else localBusy = false; render(); restorePendingFocus(focus); }
+  finally {
+    if (remote) remoteBusy = false; else localBusy = false;
+    render();
+    if (focus?.intent === focusIntent) restorePendingFocus(focus.label);
+  }
 }
 
 async function control(action: Action, target: Target): Promise<void> {
@@ -274,8 +288,9 @@ function render(): void {
   const localRefresh = button(localBusy ? 'Reading…' : 'Refresh', () => { void refresh(false, true); }, 'quiet'); localRefresh.disabled = localBusy || quitting; localRefresh.setAttribute('aria-label', 'Refresh local status');
   const quit = button(quitting ? 'Stopping…' : 'Stop & Quit', () => { void requestQuit(); }, 'quiet'); quit.disabled = quitting || !!pending; quit.setAttribute('aria-label', 'Stop and quit Hydra'); quit.title = snapshot?.quit_reason ? title(snapshot.quit_reason) : 'Request global Stop and quit only after owned execution termination is confirmed.';
   footerActions.append(localRefresh, quit); footer.append(health, footerActions); fragment.append(footer);
-  app.replaceChildren(fragment);
-  restoreFocus(focused ?? null);
+  renderingFocus = true;
+  try { app.replaceChildren(fragment); restoreFocus(focused ?? null); }
+  finally { renderingFocus = false; }
 }
 
 render();
