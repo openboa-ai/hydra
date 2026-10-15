@@ -353,6 +353,17 @@ class OperatingControl:
         except OperationDenied as exc:
             return exc.reason
 
+    def interruption_reason(self, repo=None):
+        """Observe whether admitted work must stop, without treating a writer
+        holding the control lock as a completed mode change.
+
+        Contention is retried by the existing supervision poll. All other
+        invalid or unavailable states still interrupt. New admission and every
+        effect must continue to use ``reason`` and ``guard``, which deny busy.
+        """
+        reason = self.reason(repo)
+        return None if reason == "operation_state_busy" else reason
+
     @contextmanager
     def guard(self, repo=None, *, cleanup=False):
         """Gate one bounded effect; async lock contention denies without waiting.

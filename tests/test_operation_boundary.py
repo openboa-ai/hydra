@@ -61,6 +61,8 @@ def delayed_spawn(*args, **kwargs):
 b.subprocess.Popen = delayed_spawn
 if sys.platform != "linux":
     b._enable_subreaper = lambda: None
+# Reproduce a startup slower than the parent's short post-handshake deadline.
+time.sleep(.2)
 raise SystemExit(b._supervisor_main(int(sys.argv[2]), float(sys.argv[3]), json.loads(sys.argv[4])))
 '''
 
@@ -162,6 +164,13 @@ class OperatingBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def delayed_helper_race(self, synchronous):
         marker, release = self.root / "helper.jsonl", self.root / "release-helper"
         command = [sys.executable, "-I", "-c", "import time; time.sleep(60)"]
+        termination_sent = threading.Event()
+        pause_entered = threading.Event()
+        loop = asyncio.get_running_loop()
+        native_socketpair = boundary.socket.socketpair
+        native_sendall = loop.sock_sendall
+        launch_frame = boundary._supervision_frame("launch")
+        terminate_frame = boundary._supervision_frame("terminate")
 
         def helper_command(argv, fd, deadline):
             return [sys.executable, "-I", "-c", DELAYED_HELPER,
@@ -171,44 +180,85 @@ class OperatingBoundaryTests(unittest.IsolatedAsyncioTestCase):
         def observations():
             return [json.loads(line) for line in marker.read_text().splitlines()] if marker.exists() else []
 
-        async def wait_helper(task):
-            while not any(row["name"] == "past_stop_check" for row in observations()):
-                if task.done():
+        def at_native_spawn():
+            return any(row["name"] == "past_stop_check" for row in observations())
+
+        async def wait_helper(task=None):
+            while not at_native_spawn():
+                if task is not None and task.done():
                     self.fail("Helper ended before the delayed native Popen")
                 await asyncio.sleep(.005)
 
+        async def send_with_handshake(sock, data):
+            await native_sendall(sock, data)
+            if data == launch_frame:
+                # Both admission timers begin after the launch write returns.
+                # Wait for the actual race point, excluding interpreter startup.
+                await asyncio.wait_for(wait_helper(), 5)
+            elif data == terminate_frame:
+                termination_sent.set()
+
+        class HandshakeSocket:
+            def __init__(self, sock):
+                self.sock = sock
+
+            def __getattr__(self, name):
+                return getattr(self.sock, name)
+
+            def sendall(self, data):
+                self.sock.sendall(data)
+                if data == launch_frame:
+                    until = time.monotonic() + 5
+                    while not at_native_spawn():
+                        if time.monotonic() >= until:
+                            raise TimeoutError("Helper did not reach native Popen")
+                        time.sleep(.005)
+                elif data == terminate_frame:
+                    termination_sent.set()
+
+        def socketpair_with_handshake(*args, **kwargs):
+            parent, peer = native_socketpair(*args, **kwargs)
+            return HandshakeSocket(parent), peer
+
         def pause():
+            pause_entered.set()
             self.control.set_mode("pause")
             return time.monotonic()
 
         process = boundary.OwnedProcess(command)
         process.linux = True
+        sync_worker = None
 
         async def invoke():
+            nonlocal sync_worker
             if synchronous:
                 def run():
                     # Exercise the real Linux helper protocol on each POSIX
                     # host; the child skips only unavailable prctl on macOS.
                     with patch.object(boundary.sys, "platform", "linux"):
                         return boundary.run_owned_sync(command, cwd=self.root, env=None,
-                            timeout=4, max_output_bytes=1024)
-                return await asyncio.to_thread(run)
+                            timeout=10, max_output_bytes=1024)
+                sync_worker = asyncio.create_task(asyncio.to_thread(run))
+                return await asyncio.shield(sync_worker)
             try:
-                await process.start(asyncio.get_running_loop().time() + 4)
+                await process.start(loop.time() + 10)
             finally:
                 self.assertTrue(await process.cleanup())
 
+        handshake = (patch.object(boundary.socket, "socketpair", side_effect=socketpair_with_handshake)
+                     if synchronous else patch.object(loop, "sock_sendall", send_with_handshake))
         with coordinator.operation_scope(self.control, REPO), \
                 patch.object(boundary, "DISPATCH_SECONDS", .1), \
-                patch.object(boundary, "_helper_command", side_effect=helper_command):
+                patch.object(boundary, "_helper_command", side_effect=helper_command), handshake:
             task = asyncio.create_task(invoke())
             paused = None
             try:
-                await asyncio.wait_for(wait_helper(task), 3)
+                await asyncio.wait_for(wait_helper(task), 5)
                 paused = asyncio.create_task(asyncio.to_thread(pause))
-                # Pass the parent's admission deadline while the actual helper
-                # is still between its final stop check and native Popen.
-                await asyncio.sleep(.2)
+                self.assertTrue(await asyncio.to_thread(pause_entered.wait, 3))
+                # Observe timeout cleanup, not an assumed elapsed startup time.
+                self.assertTrue(await asyncio.to_thread(termination_sent.wait, 3),
+                                "Admission timeout did not send terminate")
                 premature_ack = paused.done()
                 release.touch()
                 result = (await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 4))[0]
@@ -216,6 +266,7 @@ class OperatingBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(premature_ack, "Pause released a timed-out helper grant before collection")
                 if synchronous:
                     self.assertNotIsInstance(result, BaseException)
+                    self.assertEqual(result.returncode, -boundary.signal.SIGKILL)
                 else:
                     self.assertIsInstance(result, TimeoutError)
                 created = [row for row in observations() if row["name"] == "child_created"]
@@ -226,6 +277,11 @@ class OperatingBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 if not task.done():
                     task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+                if sync_worker is not None:
+                    # Cancelling an asyncio waiter cannot stop its native thread.
+                    # Keep fixture patches and paths until that owner finishes.
+                    await asyncio.wait_for(asyncio.shield(asyncio.gather(
+                        sync_worker, return_exceptions=True)), 10 + boundary.CLEANUP_SECONDS + 1)
                 if paused is not None:
                     await asyncio.wait_for(paused, 3)
 

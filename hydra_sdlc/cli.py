@@ -14,6 +14,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from .coordinator import coordinator_lock, residual_workers
+from .progress import with_progress_hint
 from .runtime_identity import capture_runtime_identity
 
 
@@ -96,7 +97,7 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
     operations = operations if operations is not None else OperatingControl(args.lock_path, targets)
     reason = operations.reason()
     if reason:
-        result = {"action": "waiting", "reason": reason}
+        result = with_progress_hint({"action": "waiting", "reason": reason})
         emit(json.dumps(result))
         return result
     workspace = workspace or Workspace(args.workspace_root, lifecycle_provider=_provider(args.lifecycle_provider),
@@ -122,7 +123,7 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
 
     runner = Runner(github, workspace, host_alias=args.host_alias, execute=execute or execute_codex,
                     capabilities=capabilities or inspect_capabilities,
-                    stop_requested=lambda: stopped or loop.time() >= deadline or bool(operations.reason()),
+                    stop_requested=lambda: stopped or loop.time() >= deadline or bool(operations.interruption_reason()),
                     knowledge_revision=knowledge_revision, operations=operations)
     last = None
     try:
@@ -166,10 +167,11 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
                 # This foreground loop has ended; uncertain owned cleanup is
                 # still a hold, not evidence that execution has terminated.
                 result.update(execution_state="unknown", execution_reason=runner.host_hold_reason)
+            result = with_progress_hint(result)
             emit(json.dumps(result, ensure_ascii=False))
             return result
     except OperationDenied as exc:
-        result = {"action": "waiting", "reason": exc.reason}
+        result = with_progress_hint({"action": "waiting", "reason": exc.reason})
         emit(json.dumps(result))
         return result
     finally:

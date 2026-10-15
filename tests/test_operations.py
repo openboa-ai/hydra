@@ -7,7 +7,9 @@ import select
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +20,7 @@ from hydra_sdlc.operations import (
 
 REPOS = ("example/alpha", "example/beta")
 DRIVER = """
+import os
 import sys
 from hydra_sdlc.operations import OperatingControl, OperationDenied
 control = OperatingControl(sys.argv[1], ('example/alpha', 'example/beta'))
@@ -37,6 +40,15 @@ elif action == 'project':
     print(control.set_mode('pause', sys.argv[3])['revision'], flush=True)
 elif action == 'reason':
     print(control.reason('example/alpha'), flush=True)
+elif action == 'held-update':
+    from unittest.mock import patch
+    replace = os.replace
+    def pending_replace(*args, **kwargs):
+        replace(*args, **kwargs)
+        print('locked', flush=True)
+        sys.stdin.readline()
+    with patch('hydra_sdlc.operations.os.replace', side_effect=pending_replace):
+        control.set_mode('pause', 'example/beta')
 """
 
 
@@ -362,6 +374,156 @@ class OperatingControlTests(unittest.TestCase):
 
 
 class AsyncOperatingControlTests(unittest.IsolatedAsyncioTestCase):
+    def running_control(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        control = OperatingControl(Path(temporary.name).resolve() / "host.lock", REPOS)
+        control.set_mode("start")
+        return control
+
+    @asynccontextmanager
+    async def pending_update(self, control, action, repository=None):
+        # Hold a real exclusive writer after atomic replacement and before its
+        # read-back/acknowledgment. The event loop must remain free to supervise.
+        published, release = threading.Event(), threading.Event()
+        replace = os.replace
+
+        def pending_replace(*args, **kwargs):
+            replace(*args, **kwargs)
+            published.set()
+            if not release.wait(5):
+                raise RuntimeError("fixture writer was not released")
+
+        with patch("hydra_sdlc.operations.os.replace", side_effect=pending_replace):
+            writer = asyncio.create_task(asyncio.to_thread(control.set_mode, action, repository))
+            try:
+                self.assertTrue(await asyncio.to_thread(published.wait, 5), "writer did not acquire its lock")
+                yield
+            finally:
+                release.set()
+                await asyncio.wait_for(writer, timeout=5)
+
+    def assert_contention_holds_admission_without_interrupting(self, control, runner):
+        self.assertEqual(control.reason(REPOS[0]), "operation_state_busy")
+        self.assertEqual(control.reason(), "operation_state_busy")
+        self.assertIsNone(control.interruption_reason(REPOS[0]))
+        self.assertIsNone(control.interruption_reason())
+        self.assertFalse(runner._stopping(REPOS[0]))
+        with self.assertRaises(OperationDenied) as raised:
+            control.snapshot()
+        self.assertEqual(raised.exception.reason, "operation_state_busy")
+        with self.assertRaises(OperationDenied) as raised:
+            with control.guard(REPOS[0]):
+                self.fail("A new effect was admitted during a pending control update")
+        self.assertEqual(raised.exception.reason, "operation_state_busy")
+
+    async def test_external_control_writer_does_not_cancel_another_project(self):
+        from hydra_sdlc.runner import Runner
+
+        control = self.running_control()
+        runner = Runner(None, None, host_alias="fixture", execute=None,
+                        capabilities=None, operations=control)
+        lock = control.settings_path.with_name("host.lock")
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", DRIVER, str(lock), "held-update",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            self.assertEqual(await asyncio.wait_for(process.stdout.readline(), 5), b"locked\n")
+            self.assert_contention_holds_admission_without_interrupting(control, runner)
+        finally:
+            if process.returncode is None:
+                try:
+                    process.stdin.write(b"release\n")
+                    await process.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            try:
+                _, error = await asyncio.wait_for(process.communicate(), 5)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.communicate()
+                raise
+        self.assertEqual(process.returncode, 0, error.decode())
+        self.assertFalse(runner._stopping(REPOS[0]))
+        self.assertIsNone(control.interruption_reason())
+        self.assertEqual(control.interruption_reason(REPOS[1]), "project_paused")
+
+    async def test_unrelated_and_enabling_updates_do_not_interrupt_admitted_work(self):
+        from hydra_sdlc.runner import Runner
+
+        for action, repository in (("pause", REPOS[1]), ("stop", REPOS[1]),
+                                   ("start", None), ("resume", None)):
+            with self.subTest(action=action, repository=repository):
+                control = self.running_control()
+                runner = Runner(None, None, host_alias="fixture", execute=None,
+                                capabilities=None, operations=control)
+                async with self.pending_update(control, action, repository):
+                    self.assert_contention_holds_admission_without_interrupting(control, runner)
+                self.assertIsNone(control.interruption_reason(REPOS[0]))
+                self.assertIsNone(control.interruption_reason())
+                self.assertFalse(runner._stopping(REPOS[0]))
+                with control.guard(REPOS[0]):
+                    pass
+                if repository is not None:
+                    self.assertEqual(control.interruption_reason(repository),
+                                     "project_" + {"pause": "paused", "stop": "stopped"}[action])
+
+    async def test_target_pause_and_stop_interrupt_after_pending_writer_finishes(self):
+        from hydra_sdlc.runner import Runner
+
+        for action in ("pause", "stop"):
+            for repository in (None, REPOS[0]):
+                with self.subTest(action=action, repository=repository):
+                    control = self.running_control()
+                    runner = Runner(None, None, host_alias="fixture", execute=None,
+                                    capabilities=None, operations=control)
+                    async with self.pending_update(control, action, repository):
+                        self.assert_contention_holds_admission_without_interrupting(control, runner)
+                    reason = ("host_" if repository is None else "project_") + {
+                        "pause": "paused", "stop": "stopped",
+                    }[action]
+                    self.assertEqual(control.interruption_reason(REPOS[0]), reason)
+                    self.assertTrue(runner._stopping(REPOS[0]))
+                    with self.assertRaises(OperationDenied) as raised:
+                        with control.guard(REPOS[0]):
+                            self.fail("A completed Pause/Stop admitted a new effect")
+                    self.assertEqual(raised.exception.reason, reason)
+                    if repository is not None:
+                        self.assertIsNone(control.interruption_reason())
+                        self.assertFalse(runner._stopping(REPOS[1]))
+
+    async def test_invalid_or_unsafe_state_still_interrupts_admitted_work(self):
+        from hydra_sdlc.runner import Runner
+
+        control = self.running_control()
+        runner = Runner(None, None, host_alias="fixture", execute=None,
+                        capabilities=None, operations=control)
+        original = control.settings_path.read_bytes()
+        control.settings_path.write_bytes(b"{}")
+        self.assertEqual(control.interruption_reason(REPOS[0]), "operation_state_invalid")
+        self.assertTrue(runner._stopping(REPOS[0]))
+        control.settings_path.write_bytes(original)
+        control.settings_path.chmod(0o644)
+        self.assertEqual(control.interruption_reason(REPOS[0]), "operation_state_unsafe")
+        self.assertTrue(runner._stopping(REPOS[0]))
+        control.settings_path.chmod(0o600)
+        with patch.object(control, "snapshot", side_effect=OperationDenied("operation_state_unavailable")):
+            self.assertEqual(control.interruption_reason(REPOS[0]), "operation_state_unavailable")
+            self.assertTrue(runner._stopping(REPOS[0]))
+        self.assertEqual(control.interruption_reason("example/unregistered"),
+                         "operation_state_repository_unregistered")
+
+    async def test_external_stop_still_interrupts_during_control_contention(self):
+        from hydra_sdlc.runner import Runner
+
+        control = self.running_control()
+        runner = Runner(None, None, host_alias="fixture", execute=None, capabilities=None,
+                        operations=control, stop_requested=lambda: True)
+        async with self.pending_update(control, "resume"):
+            self.assertTrue(runner._stopping(REPOS[0]))
+
     async def test_inherited_context_cannot_upgrade_or_reuse_other_tasks_lock(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

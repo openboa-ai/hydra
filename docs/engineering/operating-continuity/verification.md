@@ -76,6 +76,27 @@ The [Mac control verification](../mac-control/verification.md) records the exact
 packaged executable and evidence limits. Screens were shared before publication;
 these synthetic observations do not establish production runtime operation.
 
+## Provider review corrections (2026-10-15)
+
+The next reviewed head, `e3358b6537c5fe3a9ae5a4312a007c3c8c84a0b5`, passed
+[all three CI jobs](https://github.com/openboa-ai/hydra/actions/runs/38732616915).
+Its completed Code Review identified four issues. The corrections synchronize
+race tests with real helper readiness, defer transient lock contention only for
+active-work interruption, recapture local facts after remote refresh, and apply
+the shared progress classifier to all CLI-generated waits/stops/denials. New work
+and side-effect guards remain fail-closed; native execution and coverage can still
+be unknown.
+
+The corrected Python source was exercised in an isolated full run of 840 tests
+with 20 skips. Two run/serve subtests had stale exact-result expectations for the
+new progress hint. That test-only expectation was corrected, and all ten tests in
+the affected file passed. Production source remained unchanged between these runs;
+the final 143-file source and validation manifests matched. This is full discovery
+plus a focused correction, not a second successful local full run. The added
+regressions passed, and independent static review accepted the nine code/test files.
+The [Mac control verification](../mac-control/verification.md) records their scope.
+Fresh-head CI and provider reviews are still required after publication.
+
 ## Decision-only schedule observation
 
 On 2026-10-14, one known goal-specific heartbeat waiting only for a user answer

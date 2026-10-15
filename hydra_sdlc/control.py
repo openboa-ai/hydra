@@ -124,19 +124,18 @@ def _public_code(value):
     return value if isinstance(value, str) and _CODE.fullmatch(value) else None
 
 
-def _native_binding(repo, number, record, ownership, host):
-    if (ownership.get("state") != "native" or record.get("host_alias") != host
-            or record.get("execution_mode") != "native" or not record.get("native_step")
-            or record.get("native_step") != ownership.get("nonce")):
-        return False
+def _native_scope(repo, number, record, host):
+    if (record.get("host_alias") != host or record.get("execution_mode") != "native"
+            or not record.get("native_step")):
+        return None
     values = [repo, number, record.get("attempt_id"), record.get("head"), record.get("contract_revision")]
     if any(value is None for value in values):
-        return False
+        return None
     scope = hashlib.sha256(json.dumps(values, separators=(",", ":")).encode()).hexdigest()
-    return scope == ownership.get("scope_digest")
+    return record["native_step"], scope
 
 
-def _remote_observations(cfg, ownership):
+def _remote_observations(cfg):
     # Import only for an explicit remote refresh. GitHub.progress authenticates
     # the service author and validates repository/Issue metadata and fields.
     from .github import GitHub
@@ -145,7 +144,7 @@ def _remote_observations(cfg, ownership):
     retained = 0
     for repo in cfg["repos"]:
         row = {"work": [], "complete": False,
-               "bound_native": False, "unresolved": False}
+               "native_scopes": [], "unresolved": False}
         observations[repo] = row
         try:
             issues = github.issues(repo)
@@ -171,10 +170,11 @@ def _remote_observations(cfg, ownership):
                                   if type(pr) is int and 1 <= pr <= MAX_REVISION else None}}
                 row["work"].append(work)
                 retained += 1
-                bound = _native_binding(repo, number, record, ownership, cfg["host_alias"])
-                row["bound_native"] |= bound
+                scope = _native_scope(repo, number, record, cfg["host_alias"])
+                if scope is not None:
+                    row["native_scopes"].append(scope)
                 if record.get("host_alias") == cfg["host_alias"]:
-                    row["unresolved"] |= bool(bound or (record.get("native_step") and not record.get("native_outcome"))
+                    row["unresolved"] |= bool((record.get("native_step") and not record.get("native_outcome"))
                                                or record.get("phase") == "executing")
             row["complete"] = True
         except (ValueError, RuntimeError, OSError, KeyError, TypeError):
@@ -240,6 +240,17 @@ def control_result(cfg, action="status", repository=None, refresh=False):
         except OperationDenied as exc:
             request.update(status="unknown" if exc.reason in {"operation_state_unavailable", "operation_state_changed"}
                            else "held", reason=exc.reason)
+    remote = _remote_observations(cfg) if action == "status" and refresh else {}
+    # Remote reads may be slow. Date the local observation before its probes,
+    # then read admission last so intervening Pause/Stop remains visible.
+    observed_at = _now()
+    try:
+        found = residual_workers()
+        workers = len(found) if isinstance(found, list) else None
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
+        workers = None
+    ownership = observe_coordinator(cfg["lock_path"])
+    coverage = _coverage_observation()
     error = None
     try:
         snapshot = control.snapshot()
@@ -248,20 +259,15 @@ def control_result(cfg, action="status", repository=None, refresh=False):
         error = exc.reason
     mode = snapshot["global_mode"]
     gate_reason = error or (None if mode == "running" else "host_" + mode)
-    ownership = observe_coordinator(cfg["lock_path"])
-    try:
-        found = residual_workers()
-        workers = len(found) if isinstance(found, list) else None
-    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
-        workers = None
-    coverage = _coverage_observation()
-    remote = _remote_observations(cfg, ownership) if action == "status" and refresh else {}
+    for row in remote.values():
+        row["bound_native"] = ownership.get("state") == "native" and (
+            ownership.get("nonce"), ownership.get("scope_digest")) in row.pop("native_scopes")
+        row["unresolved"] |= row["bound_native"]
     complete = bool(remote) and all(row["complete"] for row in remote.values())
     unresolved = any(row["unresolved"] for row in remote.values())
     execution = _execution(mode, ownership, workers, unresolved, coverage=coverage, remote_complete=complete)
     if error:
         execution = {"state": "unknown", "active_count": None, "reason": error}
-    observed_at = _now()
     result = {"schema_version": 2, "runtime": capture_runtime_identity(cfg, control),
               "observed_at": observed_at, "host_alias": cfg["host_alias"],
               "revision": snapshot["revision"], "global_mode": mode,

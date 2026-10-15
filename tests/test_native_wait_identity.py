@@ -253,4 +253,5 @@ class WaitCadenceTests(unittest.IsolatedAsyncioTestCase):
                         {'action': 'waiting', 'reason': 'delivery_facts_changed'}, **options)
                     self.assertEqual(observed, [0.0])
                     self.assertEqual(duration, elapsed)
-                    self.assertEqual(outcome, {'action': 'stopped', 'reason': 'signal_or_deadline'})
+                    self.assertEqual(outcome, {'action': 'stopped', 'reason': 'signal_or_deadline',
+                        'progress_hint': {'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'}})

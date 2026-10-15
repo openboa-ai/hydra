@@ -106,7 +106,9 @@ class Runner:
         return self.operations.reason(repo) if self.operations is not None else None
 
     def _stopping(self, repo):
-        return self.stop_requested() or bool(self._operation_reason(repo))
+        return self.stop_requested() or bool(
+            self.operations.interruption_reason(repo) if self.operations is not None else None
+        )
 
     def _guard(self, repo, *, cleanup=False):
         return self.operations.guard(repo, cleanup=cleanup) if self.operations is not None else nullcontext()

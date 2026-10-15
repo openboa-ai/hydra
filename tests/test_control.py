@@ -263,6 +263,138 @@ class ControlResultTests(unittest.TestCase):
         self.assertNotIn("credential", json.dumps(status))
         self.assertNotIn("<script>", json.dumps(status))
 
+    def test_remote_refresh_reports_admission_changes_during_the_last_remote_read(self):
+        control = control_from_config(self.cfg)
+        identity = control_result(self.cfg)["runtime"]
+        for action, repository in (("pause", None), ("stop", None),
+                                   ("pause", REPOS[0]), ("stop", REPOS[0])):
+            for unavailable in (False, True):
+                with self.subTest(action=action, repository=repository, unavailable=unavailable):
+                    control.set_mode("start")
+                    for repo in REPOS:
+                        control.set_mode("resume", repo)
+                    github = FakeGitHub({REPOS[0]: {7: {"phase": "verification", "pr_number": 9}}},
+                                        unavailable=[REPOS[1]] if unavailable else [])
+                    original = github.issues
+                    applied = {}
+                    def issues(repo):
+                        if repo == REPOS[-1]:
+                            applied.update(control.set_mode(action, repository))
+                        return original(repo)
+                    with patch.object(github, "issues", side_effect=issues), \
+                            patch("hydra_sdlc.github.GitHub", return_value=github):
+                        result = control_result(self.cfg, refresh=True)
+                    mode = "paused" if action == "pause" else "stopped"
+                    self.assertEqual(result["revision"], applied["revision"])
+                    self.assertEqual(result["global_mode"], "running" if repository else mode)
+                    self.assertEqual(result["gate_status"], "allowed" if repository else "blocked")
+                    self.assertEqual(result["projects"][0]["effective_mode"], mode)
+                    self.assertEqual(result["projects"][0]["gate_status"], "blocked")
+                    self.assertEqual(result["projects"][1]["gate_status"], "allowed" if repository else "blocked")
+                    self.assertEqual(result["projects"][0]["work"][0]["issue"], 7)
+                    self.assertEqual(result["remote"]["state"], "unavailable" if unavailable else "fresh")
+                    self.assertEqual(result["runtime"], identity)
+                    self.assertEqual(result["coverage"]["state"], "unverified")
+                    self.assertIsNone(result["request"])
+                    self.assertIsNone(result["execution"]["active_count"])
+                    self.assertFalse(result["can_quit"])
+
+    def test_settings_corrupted_during_remote_refresh_cannot_remain_allowed(self):
+        control = control_from_config(self.cfg)
+        control.set_mode("start")
+        github = FakeGitHub()
+        original = github.issues
+        def issues(repo):
+            if repo == REPOS[-1]:
+                control.settings_path.write_text("{broken}")
+            return original(repo)
+        with patch.object(github, "issues", side_effect=issues), \
+                patch("hydra_sdlc.github.GitHub", return_value=github):
+            result = control_result(self.cfg, refresh=True)
+        self.assertEqual(result["remote"]["state"], "fresh")
+        self.assertIsNone(result["revision"])
+        self.assertEqual(result["global_mode"], "unknown")
+        self.assertEqual(result["gate_reason"], "operation_state_invalid")
+        self.assertTrue(all(project["gate_status"] == "unknown" for project in result["projects"]))
+        self.assertIsNone(result["execution"]["active_count"])
+        self.assertFalse(result["can_quit"])
+
+    def test_local_probes_follow_remote_reads_and_admission_is_read_last(self):
+        control = control_from_config(self.cfg)
+        control.set_mode("start")
+        github = FakeGitHub()
+        original = github.issues
+        clock = {"now": "2026-10-15T00:00:00.000000Z", "remote_done": False}
+        observed = "2026-10-15T00:01:00.000000Z"
+        def issues(repo):
+            if repo == REPOS[-1]:
+                clock.update(now=observed, remote_done=True)
+            return original(repo)
+        def workers():
+            self.assertTrue(clock["remote_done"])
+            clock["now"] = "2026-10-15T00:02:00.000000Z"
+            control.set_mode("pause")
+            return ["1234"]
+        self.workers.side_effect = workers
+        with patch.object(github, "issues", side_effect=issues), \
+                patch("hydra_sdlc.github.GitHub", return_value=github), \
+                patch("hydra_sdlc.control._now", side_effect=lambda: clock["now"]):
+            result = control_result(self.cfg, refresh=True)
+        self.assertEqual(result["observed_at"], observed)
+        self.assertEqual(result["remote"]["observed_at"], observed)
+        self.assertEqual(result["global_mode"], "paused")
+        self.assertEqual(result["revision"], control.snapshot()["revision"])
+        self.assertEqual(result["execution"]["state"], "pausing")
+        self.assertEqual(result["execution"]["reason"], "residual_workers_unresolved")
+        self.assertIsNone(result["execution"]["active_count"])
+        self.assertFalse(result["can_quit"])
+        self.assertNotIn("1234", json.dumps(result))
+
+    def test_remote_refresh_cannot_reuse_an_earlier_successful_worker_observation(self):
+        github = FakeGitHub()
+        original = github.issues
+        def issues(repo):
+            if repo == REPOS[-1]:
+                self.workers.side_effect = subprocess.TimeoutExpired("ps", 5)
+            return original(repo)
+        with patch.object(github, "issues", side_effect=issues), \
+                patch("hydra_sdlc.github.GitHub", return_value=github):
+            result = control_result(self.cfg, refresh=True)
+        self.assertEqual(result["execution"]["reason"], "worker_observation_unavailable")
+        self.assertIsNone(result["execution"]["active_count"])
+        self.assertFalse(result["can_quit"])
+
+    def test_remote_native_records_bind_only_to_current_ownership(self):
+        first = {"host_alias": "test", "execution_mode": "native", "native_step": STEP,
+                 "attempt_id": ATTEMPT, "head": HEAD, "contract_revision": POLICY,
+                 "phase": "verification", "native_outcome": "completed"}
+        second = {**first, "native_step": THREAD}
+        def owner(repo, issue, step):
+            digest = hashlib.sha256(json.dumps([repo, issue, ATTEMPT, HEAD, POLICY], separators=(",", ":")).encode()).hexdigest()
+            return {"state": "native", "nonce": step, "scope_digest": digest}
+        for current in (owner(REPOS[1], 8, THREAD), {"state": "free", "ticket": None},
+                        {"state": "unknown", "reason": "ownership_observation_unavailable"}):
+            with self.subTest(current=current["state"]):
+                self.ownership.return_value = owner(REPOS[0], 7, STEP)
+                github = FakeGitHub({REPOS[0]: {7: first}, REPOS[1]: {8: second}})
+                original = github.progress
+                def progress(repo, issue):
+                    if repo == REPOS[-1]:
+                        self.ownership.return_value = current
+                    return original(repo, issue)
+                with patch.object(github, "progress", side_effect=progress), \
+                        patch("hydra_sdlc.github.GitHub", return_value=github):
+                    result = control_result(self.cfg, refresh=True)
+                self.assertEqual(result["projects"][0]["execution"]["state"], "unknown")
+                self.assertEqual(result["projects"][1]["execution"]["state"],
+                                 "stopping" if current["state"] == "native" else "unknown")
+                self.assertEqual(result["execution"]["reason"], {
+                    "native": "native_turn_control_unsupported", "free": "schedule_coverage_unverified",
+                    "unknown": "ownership_observation_unavailable"}[current["state"]])
+                self.assertIsNone(result["execution"]["active_count"])
+                self.assertFalse(result["can_quit"])
+                self.assertNotIn("native_scopes", json.dumps(result))
+
     def test_each_issue_retains_its_own_links_when_other_records_change(self):
         github = FakeGitHub({REPOS[0]: {
             7: {"phase": "verification", "pr_number": 9},

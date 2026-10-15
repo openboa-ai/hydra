@@ -121,6 +121,41 @@ schedule coverage or external record destinations. Harness teardown is not produ
 Quit evidence. Private fixture paths, raw logs and local host configuration are not
 part of the public candidate.
 
+## Provider review corrections (2026-10-15)
+
+Both provider reviews completed for head
+`e3358b6537c5fe3a9ae5a4312a007c3c8c84a0b5`; its
+[three CI jobs passed](https://github.com/openboa-ai/hydra/actions/runs/38732616915).
+Code Review identified four corrections, implemented within the existing contract:
+
+- Race tests now synchronize with the helper's actual native-spawn boundary before
+  starting the short admission deadline. They inject startup delay and observe
+  the real termination request. The child-before-Pause-acknowledgement assertion
+  remains, and failed tests wait for owned worker cleanup.
+- An active-work interruption probe defers only transient control-lock contention.
+  Admission and side-effect guards still reject busy state. Actual target or host
+  Pause/Stop, invalid state, signals and deadlines still interrupt work.
+- A remote refresh collects local workers, current coordinator ownership and
+  settings after remote reads. Settings are read last; the local observation uses
+  its start time, so a slow probe cannot make earlier evidence appear newer.
+  Native records bind only to the current exact owner; private candidates are not
+  returned in the public response.
+- CLI-generated admission waits, final stopped results and operation denials use
+  the shared progress classifier while preserving unknown execution metadata.
+
+An isolated Python 3.14.2 full run collected 840 tests with 20 skips. Two subtests
+failed because an existing CLI result expectation omitted the new additive hint.
+Only that expectation was corrected; all ten tests in its file then passed.
+Production source did not change after the full run, and all 143 source/validation
+files matched after the focused correction. This is a full run plus a focused
+expectation correction, not a second successful local full-suite run. The new
+race, real thread/process lock-contention, refresh-ordering and CLI regression
+tests passed in the full run. Independent static review accepted all nine code/test
+files. The subsequent PR head still requires fresh CI and provider review.
+
+Application source and the packaged-UI evidence above are unchanged. These Python
+checks do not replace an installed runtime or qualify production operation.
+
 ## Remaining delivery and operating evidence
 
 - Require current-head GitHub CI and code/security review before protected
