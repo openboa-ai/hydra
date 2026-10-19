@@ -150,3 +150,38 @@ P01 및 후속 source 호환 변경은 이 후보에 포함하지 않았다.
 
 이 단계는 내부 handler와 저장 경계의 source 검증이다. 후속 transport 인증, 실제 원격
 Codex 조작, 설치·운영 수용은 포함하지 않는다. 원격 CI·보호 병합·main 확인도 아직 남아 있다.
+
+
+## 현재 main 코드와의 통합 재검증 — 2026-10-20
+
+위 931개 결과는 원래 P02 source 후보의 역사적 증거다. 이번 검증은 main 코드
+`c198a49b537fbcca5598377d3a5e33f7a64c2c7e`와 승인된 설계 문서 기준을 합친
+`a240bc1a86a969b7247b4df2f33ee1641512be35`(tree
+`da00be72c05caefcd91f864b878235b8a0d0c544`)에 위 최종 artifact의 네 source/test 파일만
+적용한 별도 격리 snapshot을 대상으로 했다. 네 파일의 bytes는 원래 검토 판본
+`29db133018dc69f60e97808d2652db8280ab380c`와 동일하다. 기존 931개 결과를 이 통합 판본의
+실행 증거로 대신하지 않았다.
+
+P02 revision 4와 CP revision 7은 수용 판본과 bytes가 같다. 현재 main의 `native.py`,
+`test_operation_integration.py`, CI workflow는 overlay에서 제외하고 원래 hash를 유지했다.
+따라서 native writable/review/stale-review retirement와 실제 concurrent Pause의 순서,
+Pause 이후 retirement 거절, ACK/read-back 유실 뒤 exact stopped recovery를 포함한 기존
+main의 경계를 함께 검사했다. P01/P03/P05와 후속 MCP source는 이 패킷에 포함하지 않았다.
+
+| 실제 통합 검증 | 결과 |
+| --- | --- |
+| focused admission·운영 경계·native·checkpoint 회귀 8개 selector | 177개 PASS, skip 0, failure/error 0, 32.292초 |
+| 같은 snapshot 전체 `python -m unittest discover -s tests -v` | 947개 수집·실행, **922 PASS, 25 skip, failure/error 0**, 253.734초, exit 0 |
+| 실행 환경 | Python 3.12.7, `mcp==2.3.0`, `mcp-types==2.3.0` |
+| 보존 검증 | snapshot 187개 파일, 네 overlay 파일, 제품 checkout 파일과 HEAD의 실행 전후 hash/identity 동일 |
+
+25개 skip은 직전 main native retirement 검증의 skip 항목 집합과 동일하며 PASS로 세지 않는다.
+focused selector는 `test_admission_cas.py`, `test_control_commands.py`, `test_operations.py`,
+`test_operation_boundary.py`, `test_operation_integration.py`, `test_native.py`,
+`test_native_wait_identity.py`, `test_checkpoint_continuation.py`다. focused 통과 뒤 전체 suite를
+한 번 실행했으며 그 후 source/test 변경은 없다. 이 문단은 관측한 결과만 추가한 검증 문서다.
+
+이 결과는 현재 main 코드와의 source 호환·격리 fixture 검증이다. 실제 배포 시 remote base와
+최종 head를 다시 대조하고, 해당 head의 필수 review/CI와 보호 병합 및 실제 merge SHA의 main
+검사를 각각 확인해야 한다. transport 인증·원격 Codex 조작·설치 runtime qualification은
+이 결과로 통과 처리하지 않는다.
