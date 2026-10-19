@@ -11,9 +11,11 @@ import uuid
 from pathlib import Path
 
 from .coordinator import (confirm_native_assignment, coordinator_lock,
-                          native_assignment_matches, register_native_assignment, residual_workers)
+                          native_assignment_matches, register_native_assignment, residual_workers, operation_scope)
 from .runner import Runner, intake_digest, issue_url
 from .project import load_project
+from .operations import OperationDenied
+from .progress import with_progress_hint
 
 NATIVE_FIELDS = {"native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest",
                  "native_origin_phase", "native_resume_phase", "native_correction"}
@@ -55,7 +57,7 @@ class NativeRunner(Runner):
                 and record.get("phase") == "checkpoint" and record.get("checkpoint") == "interrupted_committed"
                 and self.github.ref(repo, record["branch"]) != record.get("expected_head")):
             # Local shutdown grants no authority to adopt a changed/deleted ref.
-            return {"repository": repo, "issue": number, "action": "waiting", "reason": "remote_head_changed"}
+            return with_progress_hint({"repository": repo, "issue": number, "action": "waiting", "reason": "remote_head_changed"})
         return await super().step(repo, number)
 
     async def _model(self, repo, number, config, record, path, phase, task, *, correction=None, spec_record=None):
@@ -71,16 +73,18 @@ class NativeRunner(Runner):
                   if self.workspace.valid_spec(path, config["_scoped_spec"], require_tracked=False) else None)
         step = record.get("native_step")
         evidence_key = (repo, number, record["head"], config["blob_sha"])
-        if step and phase == "change_review" and record.get("native_outcome") and self.review_steps.get(step) != evidence_key:
+        if (step and phase == "change_review" and record.get("native_outcome") not in {None, "needs_decision"}
+                and self.review_steps.get(step) != evidence_key):
             # A restarted service has lost the run examined by this reviewer.
             # Retire its finished judgment and dispatch a new review of the fresh run.
-            self.consumed.add(step)
             clean = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
-            self._record(repo, number, clean, pending_action=None, wait_reason=None)
-            observed = self.github.progress(repo, number)
-            if observed.get("native_step") or observed.get("head") != record["head"]:
-                raise RuntimeError("Stale verification review retirement is unconfirmed")
-            confirm_native_assignment(step)
+            with self._guard(repo):
+                self._record(repo, number, clean, pending_action=None, wait_reason=None)
+                observed = self.github.progress(repo, number)
+                if observed.get("native_step") or observed.get("head") != record["head"]:
+                    raise RuntimeError("Stale verification review retirement is unconfirmed")
+                self._effect(repo, confirm_native_assignment, step)
+                self.consumed.add(step)
             self.summaries.pop(step, None)
             self.review_steps.pop(step, None)
             record, step = clean, None
@@ -88,19 +92,22 @@ class NativeRunner(Runner):
             if record.get("native_phase") != phase:
                 return None, {"action": "waiting", "reason": "native_phase_changed"}
             if not record.get("native_outcome"):
-                return None, {"action": "waiting", "reason": "native_task_active", "step_id": step}
+                return None, {"action": "waiting", "reason": "native_assignment_pending", "step_id": step}
             outcome = record["native_outcome"]
-            self.consumed.add(step)
             clean = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
-            self._record(repo, number, clean, pending_action=None, wait_reason=None)
-            result = self._candidate_result(repo, number, config, clean, path, phase,
-                {"detail": {"result": {"outcome": outcome, "summary": self.summaries.pop(step, "")}}},
-                correction=correction, spec_record=spec_record)
-            observed = self.github.progress(repo, number)
-            if (observed.get("native_step") or observed.get("attempt_id") != record["attempt_id"]
-                    or observed.get("head") != record["head"]):
-                raise RuntimeError("Native review retirement is unconfirmed")
-            confirm_native_assignment(step)
+            with self._guard(repo):
+                self._record(repo, number, clean, pending_action=None,
+                             wait_reason="product_decision" if outcome == "needs_decision" else None,
+                             **({"next_action": "operator_decision"} if outcome == "needs_decision" else {}))
+                result = self._candidate_result(repo, number, config, clean, path, phase,
+                    {"detail": {"result": {"outcome": outcome, "summary": self.summaries.pop(step, "")}}},
+                    correction=correction, spec_record=spec_record)
+                observed = self.github.progress(repo, number)
+                if (observed.get("native_step") or observed.get("attempt_id") != record["attempt_id"]
+                        or observed.get("head") != record["head"]):
+                    raise RuntimeError("Native review retirement is unconfirmed")
+                self._effect(repo, confirm_native_assignment, step)
+                self.consumed.add(step)
             self.review_steps.pop(step, None)
             if phase == "change_review":
                 self.pending_verifications.pop(evidence_key, None)
@@ -118,45 +125,49 @@ class NativeRunner(Runner):
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
         scope = assignment_scope(repo, number, record["attempt_id"], state["head"], record["contract_revision"])
-        try:
-            register_native_assignment(step, scope)
-        except (RuntimeError, ValueError, OSError):
+        with self._guard(repo):
             try:
-                held = native_assignment_matches(step, scope)
+                self._effect(repo, register_native_assignment, step, scope)
+            except OperationDenied:
+                raise
             except (RuntimeError, ValueError, OSError):
-                held = False
-            return None, {**recovery, "action": "waiting",
-                          "reason": "assignment_ticket_unconfirmed" if held else "assignment_ticket_unknown"}
-        try:
-            record = self._intent(repo, number, config, record, None,
-            execution_mode="native", native_step=step, native_phase=phase,
-            native_head=state["head"], native_spec_digest=digest, native_outcome=None,
-            native_origin_phase=record["phase"], native_resume_phase=origin_resume,
-            native_correction=correction[0] if correction else None,
-            wait_reason="native_task_active", next_action=phase, expected_head=remote,
-            **({"resume_phase": record.get("resume_phase") or phase}
-               if phase in {"implementation", "correction"} else {}),
-            **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
-        except (RuntimeError, ValueError, OSError):
-            return None, {**recovery, "action": "waiting", "reason": "assignment_record_unknown"}
-        if record is None:
-            return None, {**recovery, "action": "waiting", "reason": "assignment_record_unconfirmed"}
-        if phase == "change_review":
-            self.review_steps[step] = evidence_key
-        return None, {"repository": repo, "issue": number, "action": "native_task",
-            "attempt_id": record["attempt_id"], "step_id": step, "phase": phase,
-            "head": state["head"], "contract_revision": record["contract_revision"],
-            "spec_revision": record.get("spec_revision"), "cwd": str(path),
-            "mode": "read_only" if "review" in phase else "workspace_write", "prompt": task}
+                try:
+                    held = native_assignment_matches(step, scope)
+                except (RuntimeError, ValueError, OSError):
+                    held = False
+                return None, {**recovery, "action": "waiting",
+                              "reason": "assignment_ticket_unconfirmed" if held else "assignment_ticket_unknown"}
+            try:
+                record = self._intent(repo, number, config, record, None,
+                execution_mode="native", native_step=step, native_phase=phase,
+                native_head=state["head"], native_spec_digest=digest, native_outcome=None,
+                native_origin_phase=record["phase"], native_resume_phase=origin_resume,
+                native_correction=correction[0] if correction else None,
+                wait_reason="native_assignment_pending", next_action=phase, expected_head=remote,
+                **({"resume_phase": record.get("resume_phase") or phase}
+                   if phase in {"implementation", "correction"} else {}),
+                **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
+            except (RuntimeError, ValueError, OSError):
+                return None, {**recovery, "action": "waiting", "reason": "assignment_record_unknown"}
+            if record is None:
+                return None, {**recovery, "action": "waiting", "reason": "assignment_record_unconfirmed"}
+            if phase == "change_review":
+                self.review_steps[step] = evidence_key
+            return None, {"repository": repo, "issue": number, "action": "native_task",
+                "attempt_id": record["attempt_id"], "step_id": step, "phase": phase,
+                "head": state["head"], "contract_revision": record["contract_revision"],
+                "spec_revision": record.get("spec_revision"), "cwd": str(path),
+                "mode": "read_only" if "review" in phase else "workspace_write", "prompt": task}
 
 
 class NativeController:
-    def __init__(self, github, workspace, *, repos, host_alias, lock_path, knowledge_revision=lambda: None):
+    def __init__(self, github, workspace, *, repos, host_alias, lock_path, knowledge_revision=lambda: None, operations=None):
         if not repos or any(not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r) for r in repos):
             raise ValueError("A host repository allowlist is required")
         self.repos = tuple({r.casefold(): r for r in repos}.values())
         self.lock_path = Path(lock_path)
-        self.runner = NativeRunner(github, workspace, host_alias=host_alias, knowledge_revision=knowledge_revision)
+        self.runner = NativeRunner(github, workspace, host_alias=host_alias, knowledge_revision=knowledge_revision,
+                                   operations=operations)
 
     def _issue(self, url):
         repo, n = issue_url(url)
@@ -167,7 +178,29 @@ class NativeController:
     def status(self):
         return self.runner.status(self.repos)
 
+    async def _entry(self, url, callback, *args, cleanup=False):
+        repo, n = self._issue(url)
+        with operation_scope(self.runner.operations, repo):
+            if not cleanup:
+                reason = self.runner._operation_reason(repo)
+                if reason:
+                    return with_progress_hint({"repository": repo, "issue": n, "action": "waiting", "reason": reason})
+            try:
+                return with_progress_hint(await callback(url, *args))
+            except OperationDenied as exc:
+                return with_progress_hint({"repository": repo, "issue": n, "action": "waiting", "reason": exc.reason})
+
     async def begin(self, url):
+        return await self._entry(url, self._begin)
+
+    async def checkpoint(self, url, attempt_id, step_id, head, contract_revision, outcome, summary=""):
+        return await self._entry(url, self._checkpoint, attempt_id, step_id, head,
+                                 contract_revision, outcome, summary, cleanup=outcome == "stopped")
+
+    async def advance(self, url, attempt_id, head, contract_revision):
+        return await self._entry(url, self._advance, attempt_id, head, contract_revision)
+
+    async def _begin(self, url):
         repo, n = self._issue(url)
         with coordinator_lock(self.lock_path):
             if residual_workers():
@@ -215,7 +248,7 @@ class NativeController:
         return {**result, "repository": repo, "issue": n, "attempt_id": current["attempt_id"],
                 "head": current["head"], "contract_revision": current["contract_revision"]}
 
-    async def checkpoint(self, url, attempt_id, step_id, head, contract_revision, outcome, summary=""):
+    async def _checkpoint(self, url, attempt_id, step_id, head, contract_revision, outcome, summary=""):
         repo, n = self._issue(url)
         if outcome not in {"candidate_ready", "failed", "needs_decision", "stopped"} or len(summary) > 24000:
             raise ValueError("Invalid native candidate result")
@@ -224,7 +257,8 @@ class NativeController:
             record, config = self._bound(repo, n, attempt_id, head, contract_revision, step_id,
                                          stopping=outcome == "stopped")
             if record is None:
-                confirm_native_assignment(step_id)
+                with self.runner._guard(repo, cleanup=True):
+                    confirm_native_assignment(step_id)
                 return {"action": "waiting", "reason": "stop_requested"}
             repo = config["repository"]
             if outcome != "stopped" and record.get("native_outcome") not in {None, outcome}:
@@ -236,7 +270,12 @@ class NativeController:
                 return {"action": "waiting", "reason": reason}
             observed_remote = (self.runner.github.ref(repo, record["branch"]) if outcome == "stopped"
                                else record.get("expected_head"))
-            path = self.runner.workspace.prepare(repo, n, record["branch"], observed_remote, recover_dirty=True)
+            if outcome == "stopped" and self.runner.operations is not None:
+                # Do not invoke a lifecycle provider or allocate on the cleanup path.
+                path = self.runner.workspace.existing(repo, n, record["branch"])
+            else:
+                path = self.runner._workspace_effect(repo, "prepare", repo, n, record["branch"],
+                                                     observed_remote, recover_dirty=True)
             state = self.runner.workspace.inspect(path)
             phase = record["native_phase"]
             checkpointed = (record.get("native_outcome") == outcome and record.get("phase") == "checkpoint"
@@ -244,39 +283,46 @@ class NativeController:
             if outcome != "stopped" and ((state["head"] != head and not checkpointed) or ("review" in phase and state["dirty"])):
                 return {"action": "waiting", "reason": "head_changed_during_native_task"}
             if outcome == "stopped":
-                current_head = self.runner.workspace.checkpoint(path, f"Checkpoint stopped Issue {n}")
-                from .workspace import WorkspaceWait
-                try:
-                    record, _, spec_wait = self.runner._spec_checkpoint(repo, n, config, record, path,
-                        current_head, previous=record)
-                except WorkspaceWait as exc:
-                    if str(exc) != "intake_changed":
-                        raise
-                    # Shutdown does not adopt an edited goal. Preserve the accepted
-                    # anchor and edits, require diagnosis, and release only the
-                    # explicitly stopped assignment after confirmed public recording.
-                    record = {**record, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
-                    spec_wait = {"reason": "replan_required"}
-                self.runner._record(repo, n, record,
-                    head=current_head, resume_phase=record.get("resume_phase") or phase,
-                    pending_action=None, phase="checkpoint", checkpoint="interrupted_committed",
-                    wait_reason=spec_wait["reason"] if spec_wait else
-                        "remote_head_changed" if observed_remote != record.get("expected_head") else "stop_requested",
-                    next_action="diagnose" if spec_wait else "reconcile", native_outcome="stopped")
-                fresh = self.runner.github.progress(repo, n)
-                if fresh.get("native_outcome") != "stopped" or fresh.get("head") != current_head:
-                    raise RuntimeError("Stopped checkpoint is unconfirmed")
-                confirm_native_assignment(step_id)
-                self.runner.consumed.add(step_id)
-                self.runner._record(repo, n, fresh)
-                self.runner.summaries.pop(step_id, None)
-                key = self.runner.review_steps.pop(step_id, None)
-                if key is not None:
-                    self.runner.pending_verifications.pop(key, None)
-                return self._continuation(repo, n, record, {"action": "waiting", "reason": fresh["wait_reason"]})
+                needs_decision = (record.get("native_outcome") == "needs_decision"
+                                  or record.get("wait_reason") == "product_decision")
+                with self.runner._confirmed_cleanup(repo, n, record):
+                    current_head = self.runner._workspace_effect(repo, "checkpoint", path, f"Checkpoint stopped Issue {n}")
+                    from .workspace import WorkspaceWait
+                    try:
+                        record, _, spec_wait = self.runner._spec_checkpoint(repo, n, config, record, path,
+                            current_head, previous=record, preserve_decision=needs_decision)
+                    except WorkspaceWait as exc:
+                        if str(exc) != "intake_changed":
+                            raise
+                        # Shutdown does not adopt an edited goal. Preserve the accepted
+                        # anchor and edits, require diagnosis, and release only the
+                        # explicitly stopped assignment after confirmed public recording.
+                        record = {**record, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
+                        spec_wait = {"reason": "replan_required"}
+                    self.runner._record(repo, n, record,
+                        head=current_head, resume_phase=record.get("resume_phase") or phase,
+                        pending_action=None, phase="checkpoint", checkpoint="interrupted_committed",
+                        wait_reason="product_decision" if needs_decision else spec_wait["reason"] if spec_wait else
+                            "remote_head_changed" if observed_remote != record.get("expected_head") else "stop_requested",
+                        next_action="operator_decision" if needs_decision else "diagnose" if spec_wait else "reconcile",
+                        native_outcome="stopped")
+                    fresh = self.runner.github.progress(repo, n)
+                    if fresh.get("native_outcome") != "stopped" or fresh.get("head") != current_head:
+                        raise RuntimeError("Stopped checkpoint is unconfirmed")
+                    self.runner._effect(repo, confirm_native_assignment, step_id, cleanup=True)
+                    self.runner.consumed.add(step_id)
+                    self.runner._record(repo, n, fresh)
+                    self.runner.summaries.pop(step_id, None)
+                    key = self.runner.review_steps.pop(step_id, None)
+                    if key is not None:
+                        self.runner.pending_verifications.pop(key, None)
+                    return self._continuation(repo, n, record, {"action": "waiting", "reason": fresh["wait_reason"]})
             # Persist only the bounded outcome; raw summaries remain private and
             # cannot authorize delivery. Interrupted read-back keeps ownership.
-            self.runner._record(repo, n, record, native_outcome=outcome)
+            decision = outcome == "needs_decision"
+            self.runner._record(repo, n, record, native_outcome=outcome,
+                **({"wait_reason": "product_decision", "next_action": "operator_decision"}
+                   if decision and phase in {"design", "implementation", "correction"} else {}))
             fresh = self.runner.github.progress(repo, n)
             if fresh.get("native_outcome") != outcome or fresh.get("native_step") != step_id:
                 raise RuntimeError("Candidate result write is unconfirmed")
@@ -296,23 +342,28 @@ class NativeController:
                 # retiring admission. Callback failure must never strand dirty
                 # edits without an ownership/recovery identity.
                 scoped = {**config, "_scoped_spec": self.runner._scoped_spec(repo, n, config, record)}
-                current_head = self.runner.workspace.checkpoint(path, f"Checkpoint native Issue {n}")
+                current_head = self.runner._workspace_effect(repo, "checkpoint", path, f"Checkpoint native Issue {n}")
                 fresh, _, spec_wait = self.runner._spec_checkpoint(repo, n, scoped, fresh, path,
-                    current_head, previous=fresh)
+                    current_head, previous=fresh, preserve_decision=decision)
                 recovery = self.runner._record(repo, n, fresh, head=current_head, phase="checkpoint",
                     checkpoint="interrupted_committed", pending_action=None,
-                    resume_phase=record.get("native_resume_phase") or phase, next_action="reconcile")
+                    resume_phase=record.get("native_resume_phase") or phase,
+                    wait_reason="product_decision" if decision else spec_wait["reason"] if spec_wait else fresh.get("wait_reason"),
+                    next_action="operator_decision" if decision else "diagnose" if spec_wait else "reconcile")
                 observed = self.runner.github.progress(repo, n)
                 if any(observed.get(k) != v for k, v in recovery.items()):
                     raise RuntimeError("Native recovery checkpoint is unconfirmed")
-                self.runner.consumed.add(step_id)
                 fresh = recovery
                 clean = {k: v for k, v in fresh.items() if k not in NATIVE_FIELDS}
-                self.runner._record(repo, n, clean)
-                observed = self.runner.github.progress(repo, n)
-                if observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items()):
-                    raise RuntimeError("Native retirement is unconfirmed")
-                confirm_native_assignment(step_id)
+                # Keep public retirement and its exact ticket release in one
+                # bounded admission barrier. Later callbacks admit separately.
+                with self.runner._guard(repo):
+                    self.runner._record(repo, n, clean)
+                    observed = self.runner.github.progress(repo, n)
+                    if observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items()):
+                        raise RuntimeError("Native retirement is unconfirmed")
+                    self.runner._effect(repo, confirm_native_assignment, step_id)
+                    self.runner.consumed.add(step_id)
                 if spec_wait:
                     return self._continuation(repo, n, record, spec_wait)
                 if outcome == "needs_decision":
@@ -340,7 +391,7 @@ class NativeController:
                 return self._continuation(repo, n, record, result)
             return await self.runner.step(repo, n)
 
-    async def advance(self, url, attempt_id, head, contract_revision):
+    async def _advance(self, url, attempt_id, head, contract_revision):
         repo, n = self._issue(url)
         with coordinator_lock(self.lock_path):
             if residual_workers():

@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPOSITORY))
 
 from hydra_sdlc import coordinator, execution_boundary as boundary
 from hydra_sdlc.cli import operate, parser
+from hydra_sdlc.operations import OperatingControl
 
 
 BOOT = "11111111-1111-4111-8111-111111111111"
@@ -27,12 +28,15 @@ NEXT_BOOT = "22222222-2222-4222-8222-222222222222"
 
 
 async def _assert_cli_held(lock, command="run"):
+    lock = lock.resolve()
     target = (["--issue", "https://github.com/example/product/issues/1"]
               if command == "run" else ["--repos", "example/product"])
     args = parser().parse_args([
         command, *target, "--workspace-root", str(lock.parent / "workspaces"),
         "--host-alias", "test-host", "--lock-path", str(lock),
     ])
+    operations = OperatingControl(lock, ["example/product"])
+    operations.set_mode("start")
     capabilities, execute = AsyncMock(), AsyncMock()
 
     async def dispatch(*args, **kwargs):
@@ -49,7 +53,8 @@ async def _assert_cli_held(lock, command="run"):
             patch("hydra_sdlc.cli.residual_workers", return_value=[]) as residual:
         try:
             await operate(args, github=object(), workspace=object(),
-                          capabilities=capabilities, execute=execute, emit=lambda _: None)
+                          capabilities=capabilities, execute=execute,
+                          operations=operations, emit=lambda _: None)
         except coordinator.HostBusy:
             pass
         else:

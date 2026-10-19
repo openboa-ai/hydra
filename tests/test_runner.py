@@ -681,17 +681,22 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_single_issue_command_keeps_waiting_for_ci_until_deadline(self):
         from hydra_sdlc.cli import operate, parser
+        from hydra_sdlc.operations import OperatingControl
         self.github.remote_pending = True
         runner = await self.publish()
         await runner.step('example/product', 4)
         args = parser().parse_args(['run', '--issue', 'https://github.com/example/product/issues/4',
                                   '--workspace-root', self.directory.name, '--host-alias', 'host-a',
-                                  '--lock-path', str(Path(self.directory.name) / 'host.lock'), '--timeout', '0.03'])
+                                  '--lock-path', str(Path(self.directory.name).resolve() / 'host.lock'), '--timeout', '0.03'])
+        operations = OperatingControl(args.lock_path, ['example/product'])
+        operations.set_mode('start')
         before = len(self.calls)
         with patch('hydra_sdlc.cli.residual_workers', return_value=[]):
             result = await operate(args, github=self.github, workspace=self.workspace,
-                                   execute=self.execute, capabilities=self.capabilities, emit=lambda _: None)
+                                   execute=self.execute, capabilities=self.capabilities,
+                                   operations=operations, emit=lambda _: None)
         self.assertEqual(result['action'], 'stopped')
+        self.assertEqual(result['reason'], 'signal_or_deadline')
         self.assertEqual(len(self.calls), before)
 
     async def test_successful_code_retry_leaves_security_request_its_own_budget(self):
@@ -1168,7 +1173,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         actual = self.github.observe_commit
         def pending(repo, sha):
             value = actual(repo, sha)
-            value['runs'][0]['status'] = 'in_progress'
+            value['runs'][0].update(status='in_progress', conclusion=None)
             return value
         self.github.observe_commit = pending
         before = len(self.calls)

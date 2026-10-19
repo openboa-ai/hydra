@@ -79,7 +79,8 @@ class StatusIsolationTests(unittest.TestCase):
                 self.config_calls.clear()
                 result = self.runner.status([FIRST, BROKEN, 'EXAMPLE/BROKEN', LAST])
                 self.assertEqual([row['repository'] for row in result], [FIRST, BROKEN, LAST])
-                self.assertEqual(result[1], {'repository': BROKEN, 'wait_reason': 'project_contract_unavailable'})
+                self.assertEqual(result[1], {'repository': BROKEN, 'wait_reason': 'project_contract_unavailable',
+                    'progress_hint': {'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'}})
                 self.assertEqual([result[index]['issue'] for index in (0, 2)], [1, 4])
                 self.assertTrue(all(result[index]['wait_reason'] == 'remote_delivery_gates' for index in (0, 2)))
                 self.assertEqual(self.github.discovery_calls, [FIRST, BROKEN, LAST])
@@ -94,7 +95,8 @@ class StatusIsolationTests(unittest.TestCase):
                 result = self.runner.status([FIRST, BROKEN, LAST])
                 self.assertEqual([row['issue'] for row in result], [1, 2, 3, 4])
                 self.assertEqual(result[1], {'repository': BROKEN, 'issue': 2, 'state': 'open',
-                                             'progress': None, 'wait_reason': 'intake_unavailable'})
+                    'progress': None, 'wait_reason': 'intake_unavailable',
+                    'progress_hint': {'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'}})
                 for index in (0, 2, 3):
                     self.assertEqual(result[index]['wait_reason'], 'remote_delivery_gates')
                     self.assertIsNotNone(result[index]['progress'])

@@ -1,12 +1,16 @@
 import asyncio
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager, nullcontext
+import json
+import signal
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 from pathlib import Path
+from types import SimpleNamespace
 
 from hydra_sdlc.cli import operate, parser
 from hydra_sdlc.coordinator import HostBusy, coordinator_lock, residual_workers
+from hydra_sdlc.operations import OperatingControl, OperationDenied
 
 
 class CliTests(unittest.TestCase):
@@ -17,6 +21,84 @@ class CliTests(unittest.TestCase):
         self.assertFalse(hasattr(args, 'state'))
         self.assertEqual(args.command, 'run')
         self.assertEqual(p.parse_args(['status', '--repos', 'example/product']).command, 'status')
+
+    def test_identity_without_config_is_read_only_and_has_explicit_unknown_binding(self):
+        args = parser().parse_args(['identity'])
+        emitted = []
+        with ExitStack() as stack:
+            effects = [stack.enter_context(patch(name)) for name in (
+                'hydra_sdlc.github.GitHub', 'hydra_sdlc.workspace.Workspace',
+                'hydra_sdlc.runner.Runner', 'hydra_sdlc.cli._provider',
+                'hydra_sdlc.cli.coordinator_lock', 'hydra_sdlc.cli.residual_workers',
+                'hydra_sdlc.codex.execute', 'hydra_sdlc.codex.capabilities',
+                'hydra_sdlc.control.load_host_config', 'hydra_sdlc.control.control_from_config',
+                'hydra_sdlc.operations.OperatingControl.set_mode',
+                'hydra_sdlc.operations.os.mkdir', 'hydra_sdlc.operations.os.write')]
+            result = asyncio.run(operate(args, emit=emitted.append))
+            for effect in effects:
+                effect.assert_not_called()
+        self.assertEqual(set(result), {'identity_schema', 'package', 'version', 'code_digest',
+            'code_digest_scope', 'config_digest', 'control_binding_digest', 'identity_reason'})
+        self.assertEqual(result['identity_schema'], 1)
+        self.assertEqual(result['package'], 'openboa-hydra-sdlc')
+        self.assertEqual(result['code_digest_scope'], 'package_sources_at_startup')
+        self.assertIsNone(result['config_digest'])
+        self.assertIsNone(result['control_binding_digest'])
+        self.assertEqual([json.loads(value) for value in emitted], [result])
+
+    def test_configured_identity_matches_local_control_without_runtime_or_write_effects(self):
+        from hydra_sdlc.control import control_result, load_host_config
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / 'host.toml'
+            source = ('repos=["example/product"]\nhost_alias="host-a"\nworkspace_root="work"\n'
+                      'lock_path="locks/host.lock"\nlifecycle_provider="nonexistent.lifecycle:create"\n'
+                      'storage_provider="nonexistent.storage:create"\n')
+            path.write_text(source)
+            path.chmod(0o600)
+            args = parser().parse_args(['identity', '--config', str(path)])
+            emitted = []
+            with ExitStack() as stack:
+                effects = [stack.enter_context(patch(name)) for name in (
+                    'hydra_sdlc.github.GitHub', 'hydra_sdlc.workspace.Workspace',
+                    'hydra_sdlc.runner.Runner', 'hydra_sdlc.cli._provider',
+                    'hydra_sdlc.cli.coordinator_lock', 'hydra_sdlc.cli.residual_workers',
+                    'hydra_sdlc.codex.execute', 'hydra_sdlc.codex.capabilities',
+                    'hydra_sdlc.operations.OperatingControl.set_mode',
+                    'hydra_sdlc.operations.os.mkdir', 'hydra_sdlc.operations.os.write')]
+                stack.enter_context(patch('hydra_sdlc.control.observe_coordinator', return_value={'state': 'absent'}))
+                stack.enter_context(patch('hydra_sdlc.control.residual_workers', return_value=[]))
+                stack.enter_context(patch('importlib.import_module', side_effect=AssertionError('provider loaded')))
+                result = asyncio.run(operate(args, emit=emitted.append))
+                status = control_result(load_host_config(path))
+                for effect in effects:
+                    effect.assert_not_called()
+            self.assertEqual(result, status['runtime'])
+            for key in ('config_digest', 'control_binding_digest'):
+                self.assertRegex(result[key], r'\A[0-9a-f]{64}\Z')
+            self.assertEqual([json.loads(value) for value in emitted], [result])
+            self.assertEqual(list(root.iterdir()), [path])
+            self.assertEqual(path.read_text(), source)
+            self.assertNotIn(str(root), json.dumps(result))
+            self.assertNotIn('nonexistent', json.dumps(result))
+
+    def test_status_keeps_existing_list_shape_without_runtime_envelope(self):
+        args = parser().parse_args(['status', '--repos', 'example/product'])
+        rows = [{'repository': 'example/product', 'wait_reason': 'human_decision'}]
+        emitted = []
+        with patch('hydra_sdlc.runner.Runner') as runner, \
+                patch('hydra_sdlc.cli.capture_runtime_identity') as identity, \
+                patch('hydra_sdlc.workspace.Workspace') as workspace, \
+                patch('hydra_sdlc.cli._provider') as provider:
+            runner.return_value.status.return_value = rows
+            result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+            runner.return_value.status.assert_called_once_with(['example/product'])
+            identity.assert_not_called()
+            workspace.assert_not_called()
+            provider.assert_not_called()
+        self.assertEqual(result, rows)
+        self.assertIsInstance(result, list)
+        self.assertEqual([json.loads(value) for value in emitted], [rows])
 
     def test_same_host_duplicate_launch_is_refused_without_state_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -46,19 +128,386 @@ class CliTests(unittest.TestCase):
 
     def test_positive_finite_timeout_and_untimed_serve_reach_runtime(self):
         for command, timeout in (('run', '1.5'), ('serve', '1.5'), ('serve', None)):
-            with self.subTest(command=command, timeout=timeout):
+            with self.subTest(command=command, timeout=timeout), tempfile.TemporaryDirectory() as directory:
                 target = ['--issue', 'https://github.com/example/product/issues/1'] if command == 'run' else ['--repos', 'example/product']
                 values = [command, *target, '--workspace-root', '/owned/workspaces', '--host-alias', 'host-a']
                 if timeout is not None:
                     values.append('--timeout=' + timeout)
                 args = parser().parse_args(values)
+                operations = OperatingControl(Path(directory) / 'host.lock', ['example/product'])
+                operations.set_mode('start')
                 with patch('hydra_sdlc.runner.Runner') as runner, patch('hydra_sdlc.cli.coordinator_lock') as lock, \
                         patch('hydra_sdlc.cli.residual_workers', return_value=[]):
                     runner.return_value.stop_requested.return_value = True
-                    result = asyncio.run(operate(args, github=object(), workspace=object()))
-                    self.assertEqual(result, {'action': 'stopped', 'reason': 'signal_or_deadline'})
+                    runner.return_value.host_hold_reason = None
+                    runner.return_value.drain_completed = AsyncMock(return_value=[])
+                    result = asyncio.run(operate(args, github=object(), workspace=object(), operations=operations))
+                    self.assertEqual(result, {'action': 'stopped', 'reason': 'signal_or_deadline',
+                        'progress_hint': {'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'}})
                     runner.assert_called_once()
                     lock.assert_called_once_with(args.lock_path)
+
+    def test_missing_controls_block_foreground_before_provider_or_admission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / 'host.lock'
+            args = parser().parse_args(['serve', '--repos', 'example/product',
+                '--workspace-root', directory, '--host-alias', 'host-a', '--lock-path', str(lock_path)])
+            emitted = []
+            with patch('hydra_sdlc.cli._provider') as provider, \
+                    patch('hydra_sdlc.cli.coordinator_lock') as acquire:
+                result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+                self.assertEqual(result, {'action': 'waiting', 'reason': 'host_stopped',
+                    'progress_hint': {'kind': 'human', 'next_action': 'await_control_change',
+                                      'wake_source': 'control_change'}})
+                self.assertEqual([json.loads(value) for value in emitted], [result])
+                provider.assert_not_called()
+                acquire.assert_not_called()
+            self.assertFalse(lock_path.exists())
+
+    def test_explicit_host_pause_blocks_run_and_serve_before_provider_or_admission(self):
+        for command in ('run', 'serve'):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                lock_path = root / 'host.lock'
+                controls = OperatingControl(lock_path, ['example/product'])
+                controls.set_mode('start')
+                controls.set_mode('pause')
+                paused = controls.snapshot()
+                target = (['--issue', 'https://github.com/example/product/issues/1']
+                          if command == 'run' else ['--repos', 'example/product'])
+                args = parser().parse_args([command, *target, '--workspace-root', str(root),
+                    '--host-alias', 'host-a', '--lock-path', str(lock_path)])
+                emitted = []
+                with ExitStack() as stack:
+                    effects = [stack.enter_context(patch(name)) for name in (
+                        'hydra_sdlc.cli._provider', 'hydra_sdlc.workspace.Workspace',
+                        'hydra_sdlc.runner.Runner', 'hydra_sdlc.cli.coordinator_lock',
+                        'hydra_sdlc.cli.residual_workers', 'hydra_sdlc.codex.execute',
+                        'hydra_sdlc.codex.capabilities')]
+                    # The CLI constructs its own control reader from the same
+                    # trusted host path, rather than receiving the writer above.
+                    result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+                    self.assertEqual(result, {'action': 'waiting', 'reason': 'host_paused',
+                        'progress_hint': {'kind': 'human', 'next_action': 'await_control_change',
+                                          'wake_source': 'control_change'}})
+                    self.assertEqual([json.loads(value) for value in emitted], [result])
+                    for effect in effects:
+                        effect.assert_not_called()
+                self.assertEqual(controls.snapshot(), paused)
+                self.assertFalse(lock_path.exists())
+
+    def test_admission_denial_emits_control_wait_or_unknown_without_runtime_effects(self):
+        for command in ('run', 'serve'):
+            for reason in ('host_paused', 'host_stopped', 'operation_state_invalid'):
+                with self.subTest(command=command, reason=reason), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    controls = OperatingControl(root / 'host.lock', ['example/product'])
+                    controls.set_mode('start')
+                    before = controls.snapshot()
+                    target = (['--issue', 'https://github.com/example/product/issues/1']
+                              if command == 'run' else ['--repos', 'example/product'])
+                    args = parser().parse_args([command, *target, '--workspace-root', str(root),
+                        '--host-alias', 'host-a', '--lock-path', str(root / 'host.lock')])
+                    emitted = []
+                    with patch.object(controls, 'guard', side_effect=OperationDenied(reason)), \
+                            patch('hydra_sdlc.cli.coordinator_lock') as acquire, \
+                            patch('hydra_sdlc.cli.residual_workers') as residual, \
+                            patch('hydra_sdlc.runner.Runner') as runner:
+                        result = asyncio.run(operate(args, github=object(), workspace=object(),
+                                                     operations=controls, emit=emitted.append))
+                        acquire.assert_not_called()
+                        residual.assert_not_called()
+                        runner.return_value.step.assert_not_called()
+                        runner.return_value.cycle.assert_not_called()
+                    expected = ({'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'}
+                                if reason == 'operation_state_invalid' else
+                                {'kind': 'human', 'next_action': 'await_control_change',
+                                 'wake_source': 'control_change'})
+                    self.assertEqual(result, {'action': 'waiting', 'reason': reason, 'progress_hint': expected})
+                    self.assertEqual([json.loads(value) for value in emitted], [result])
+                    self.assertEqual(controls.snapshot(), before)
+                    self.assertFalse((root / 'host.lock').exists())
+
+    def test_project_pause_or_stop_blocks_run_before_missing_providers_or_host_admission(self):
+        for action, reason in (('pause', 'project_paused'), ('stop', 'project_stopped')):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                lock_path = root / 'host.lock'
+                controls = OperatingControl(lock_path, ['example/product'])
+                controls.set_mode('start')
+                controls.set_mode(action, 'example/product')
+                before = controls.snapshot()
+                args = parser().parse_args(['run', '--issue', 'https://github.com/Example/Product/issues/1',
+                    '--workspace-root', str(root), '--host-alias', 'host-a', '--lock-path', str(lock_path),
+                    '--lifecycle-provider', 'nonexistent.lifecycle:create',
+                    '--storage-provider', 'nonexistent.storage:create'])
+                emitted = []
+                with ExitStack() as stack:
+                    effects = [stack.enter_context(patch(name)) for name in (
+                        'hydra_sdlc.cli._provider', 'hydra_sdlc.workspace.Workspace',
+                        'hydra_sdlc.runner.Runner', 'hydra_sdlc.cli.coordinator_lock',
+                        'hydra_sdlc.cli.residual_workers', 'hydra_sdlc.codex.execute',
+                        'hydra_sdlc.codex.capabilities')]
+                    result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+                    for effect in effects:
+                        effect.assert_not_called()
+                self.assertEqual(result, {'action': 'waiting', 'reason': reason,
+                    'progress_hint': {'kind': 'human', 'next_action': 'await_control_change',
+                                      'wake_source': 'control_change'}})
+                self.assertEqual([json.loads(value) for value in emitted], [result])
+                self.assertEqual(controls.snapshot(), before)
+                self.assertFalse(lock_path.exists())
+
+    def test_project_override_changed_after_preflight_blocks_host_admission(self):
+        for action, reason in (('pause', 'project_paused'), ('stop', 'project_stopped')):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                lock_path = root / 'host.lock'
+                controls = OperatingControl(lock_path, ['example/product'])
+                controls.set_mode('start')
+                args = parser().parse_args(['run', '--issue', 'https://github.com/example/product/issues/1',
+                    '--workspace-root', str(root), '--host-alias', 'host-a', '--lock-path', str(lock_path)])
+                emitted = []
+
+                def changed_workspace(*_args, **_kwargs):
+                    controls.set_mode(action, 'example/product')
+                    return object()
+
+                with patch('hydra_sdlc.workspace.Workspace', side_effect=changed_workspace) as workspace, \
+                        patch('hydra_sdlc.cli.coordinator_lock') as acquire, \
+                        patch('hydra_sdlc.cli.residual_workers') as residual, \
+                        patch('hydra_sdlc.runner.Runner') as runner:
+                    result = asyncio.run(operate(args, github=object(), emit=emitted.append))
+                    workspace.assert_called_once()
+                    acquire.assert_not_called()
+                    residual.assert_not_called()
+                    runner.return_value.step.assert_not_called()
+                    runner.return_value.cycle.assert_not_called()
+                self.assertEqual(result['reason'], reason)
+                self.assertEqual(result['progress_hint']['wake_source'], 'control_change')
+                self.assertEqual([json.loads(value) for value in emitted], [result])
+                self.assertFalse(lock_path.exists())
+
+    def test_serve_keeps_global_admission_when_one_project_is_paused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repos = ['example/product', 'example/another']
+            controls = OperatingControl(root / 'host.lock', repos)
+            controls.set_mode('start')
+            controls.set_mode('pause', repos[0])
+            args = parser().parse_args(['serve', '--repos', *repos, '--workspace-root', str(root),
+                '--host-alias', 'host-a', '--lock-path', str(root / 'host.lock')])
+            runtime = Mock(host_hold_reason=None, drain_completed=AsyncMock(return_value=[]))
+
+            async def cycle(_repos):
+                controls.set_mode('stop')
+                return [{'repository': repos[0], 'action': 'waiting', 'reason': 'project_paused'}]
+
+            runtime.cycle = AsyncMock(side_effect=cycle)
+
+            def make_runner(*_args, **kwargs):
+                runtime.stop_requested = kwargs['stop_requested']
+                return runtime
+
+            with patch('hydra_sdlc.runner.Runner', side_effect=make_runner), \
+                    patch.object(controls, 'guard', wraps=controls.guard) as guard, \
+                    patch('hydra_sdlc.cli.coordinator_lock') as acquire, \
+                    patch('hydra_sdlc.cli.residual_workers', return_value=[]):
+                asyncio.run(operate(args, github=object(), workspace=object(),
+                                    operations=controls, emit=lambda _: None))
+                guard.assert_called_once_with(None)
+                acquire.assert_called_once_with(args.lock_path)
+            runtime.cycle.assert_awaited_once_with(repos)
+            runtime.step.assert_not_called()
+
+    def test_stopped_result_retains_unconfirmed_execution_and_derived_wake(self):
+        for command in ('run', 'serve'):
+            for change in (None, 'pause', 'stop'):
+                with self.subTest(command=command, change=change), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    controls = OperatingControl(root / 'host.lock', ['example/product'])
+                    controls.set_mode('start')
+                    target = (['--issue', 'https://github.com/example/product/issues/1']
+                              if command == 'run' else ['--repos', 'example/product'])
+                    args = parser().parse_args([command, *target, '--workspace-root', str(root),
+                        '--host-alias', 'host-a', '--lock-path', str(root / 'host.lock')])
+                    emitted = []
+
+                    def stop_requested():
+                        if change:
+                            controls.set_mode(change)
+                        return True
+
+                    with patch('hydra_sdlc.runner.Runner') as runner, \
+                            patch('hydra_sdlc.cli.coordinator_lock'), \
+                            patch('hydra_sdlc.cli.residual_workers', return_value=[]):
+                        runner.return_value.stop_requested.side_effect = stop_requested
+                        runner.return_value.host_hold_reason = 'host_cleanup_unconfirmed'
+                        runner.return_value.drain_completed = AsyncMock(return_value=[])
+                        result = asyncio.run(operate(args, github=object(), workspace=object(),
+                                                     operations=controls, emit=emitted.append))
+                        runner.return_value.step.assert_not_called()
+                        runner.return_value.cycle.assert_not_called()
+                    hint = ({'kind': 'human', 'next_action': 'await_control_change',
+                             'wake_source': 'control_change'} if change else
+                            {'kind': 'unknown', 'next_action': 'reconcile', 'wake_source': 'none'})
+                    reason = {'pause': 'host_paused', 'stop': 'host_stopped'}.get(change, 'signal_or_deadline')
+                    self.assertEqual(result, {'action': 'stopped', 'reason': reason,
+                        'execution_state': 'unknown', 'execution_reason': 'host_cleanup_unconfirmed',
+                        'progress_hint': hint})
+                    self.assertEqual([json.loads(value) for value in emitted], [result])
+
+    def test_serve_defers_transient_control_contention_but_stops_on_observed_pause(self):
+        args = parser().parse_args(['serve', '--repos', 'example/product',
+            '--workspace-root', '/owned/workspaces', '--host-alias', 'host-a'])
+        mode = None
+        controls = Mock()
+        controls.reason.side_effect = lambda repo=None: mode
+        controls.interruption_reason.side_effect = lambda: None if mode == 'operation_state_busy' else mode
+        controls.guard.return_value = nullcontext()
+        runtime = Mock(host_hold_reason=None)
+        runtime.drain_completed = AsyncMock(return_value=[])
+
+        async def cycle(_repos):
+            nonlocal mode
+            if mode is None:
+                mode = 'operation_state_busy'
+                return [{'action': 'continue'}]
+            mode = 'host_paused'
+            return [{'action': 'waiting', 'reason': mode}]
+
+        runtime.cycle = AsyncMock(side_effect=cycle)
+
+        def make_runner(*_args, **kwargs):
+            runtime.stop_requested = kwargs['stop_requested']
+            return runtime
+
+        emitted = []
+        with patch('hydra_sdlc.runner.Runner', side_effect=make_runner), \
+                patch('hydra_sdlc.cli.coordinator_lock'), \
+                patch('hydra_sdlc.cli.residual_workers', return_value=[]):
+            result = asyncio.run(operate(args, github=object(), workspace=object(),
+                                         operations=controls, emit=emitted.append))
+        self.assertEqual(runtime.cycle.await_count, 2)
+        self.assertGreaterEqual(controls.interruption_reason.call_count, 3)
+        self.assertEqual(result, {'action': 'stopped', 'reason': 'host_paused',
+            'progress_hint': {'kind': 'human', 'next_action': 'await_control_change',
+                              'wake_source': 'control_change'}})
+        self.assertEqual(json.loads(emitted[-1]), result)
+
+    def _observe_cleanup_exit(self, command, trigger, checkpoint_status):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            controls = OperatingControl(root / 'host.lock', ['example/product'])
+            controls.set_mode('start')
+            target = (['--issue', 'https://github.com/example/product/issues/1']
+                      if command == 'run' else ['--repos', 'example/product'])
+            args = parser().parse_args([command, *target, '--workspace-root', str(root),
+                '--host-alias', 'host-a', '--lock-path', str(root / 'host.lock'), '--timeout', '1'])
+            clock, handlers, emitted = [0.0], {}, []
+            observed = {'steps': 0, 'drains': [], 'owned': False, 'pending_proof': False}
+            cleanup = {'repository': 'example/product', 'issue': 1,
+                       'action': 'continue' if checkpoint_status == 'recorded' else 'waiting',
+                       'checkpoint_status': checkpoint_status}
+            if checkpoint_status != 'recorded':
+                cleanup['reason'] = {'pending': 'operation_state_busy',
+                    'unconfirmed': 'checkpoint_recording_unconfirmed',
+                    'superseded': 'checkpoint_state_changed'}[checkpoint_status]
+
+            @contextmanager
+            def ownership(_path):
+                observed['owned'] = True
+                try:
+                    yield
+                finally:
+                    observed['owned'] = False
+
+            class FakeRunner:
+                host_hold_reason = None
+
+                def __init__(self, *_args, stop_requested, **_kwargs):
+                    self.stop_requested = stop_requested
+
+                async def step(self, *_args):
+                    observed['steps'] += 1
+                    observed['pending_proof'] = True
+                    if trigger in {'pause', 'stop'}:
+                        controls.set_mode(trigger)
+                    elif trigger == 'signal':
+                        handlers[signal.SIGTERM](signal.SIGTERM, None)
+                    elif trigger == 'deadline':
+                        clock[0] = 2.0
+                    if trigger == 'return':
+                        return {'repository': 'example/product', 'issue': 1, 'action': 'waiting',
+                                'reason': 'operation_state_busy', 'checkpoint_status': 'pending'}
+                    return {'action': 'continue'}
+
+                async def cycle(self, *_args):
+                    return [await self.step()]
+
+                async def drain_completed(self, repository=None, number=None):
+                    if not observed['owned'] or not observed['pending_proof']:
+                        raise AssertionError('Cleanup lost the owning runner or coordinator')
+                    observed['drains'].append((repository, number))
+                    if checkpoint_status in {'recorded', 'superseded'}:
+                        observed['pending_proof'] = False
+                    return [dict(cleanup)]
+
+            with patch('hydra_sdlc.runner.Runner', FakeRunner), \
+                    patch('hydra_sdlc.cli.coordinator_lock', ownership), \
+                    patch('hydra_sdlc.cli.residual_workers', return_value=[]), \
+                    patch('hydra_sdlc.cli.asyncio.get_running_loop', return_value=SimpleNamespace(time=lambda: clock[0])), \
+                    patch('hydra_sdlc.cli.signal.signal', side_effect=lambda sig, callback: handlers.update({sig: callback})):
+                result = asyncio.run(operate(args, github=object(), workspace=object(),
+                                             operations=controls, emit=emitted.append))
+            self.assertEqual(observed['steps'], 1, 'Cleanup must not dispatch another workflow step')
+            self.assertFalse(observed['owned'])
+            self.assertEqual(json.loads(emitted[-1]), result)
+            self.assertEqual(result['cleanup_results'], [cleanup])
+            self.assertEqual(result['checkpoint_status'], 'recorded' if checkpoint_status == 'recorded' else 'pending')
+            if checkpoint_status == 'recorded':
+                self.assertFalse(observed['pending_proof'])
+                self.assertNotIn('execution_state', result)
+            else:
+                self.assertEqual(observed['pending_proof'], checkpoint_status != 'superseded')
+                self.assertEqual(result['execution_state'], 'unknown')
+                self.assertEqual(result['execution_reason'], cleanup['reason'])
+            return result, observed
+
+    def test_run_drains_completed_checkpoint_before_returning_wait(self):
+        for status in ('recorded', 'pending', 'unconfirmed', 'superseded'):
+            with self.subTest(status=status):
+                result, observed = self._observe_cleanup_exit('run', 'return', status)
+                self.assertEqual(observed['drains'], [('example/product', 1)])
+                self.assertEqual((result['action'], result['reason']), ('waiting', 'operation_state_busy'))
+
+    def test_run_and_serve_drain_completed_checkpoint_before_control_signal_or_deadline_exit(self):
+        for command in ('run', 'serve'):
+            for trigger in ('pause', 'stop', 'signal', 'deadline'):
+                for status in ('recorded', 'pending'):
+                    with self.subTest(command=command, trigger=trigger, status=status):
+                        result, observed = self._observe_cleanup_exit(command, trigger, status)
+                        self.assertEqual(observed['drains'], [(None, None)])
+                        reason = {'pause': 'host_paused', 'stop': 'host_stopped'}.get(trigger, 'signal_or_deadline')
+                        self.assertEqual((result['action'], result['reason']), ('stopped', reason))
+
+    def test_control_requires_an_explicit_mutation_target_before_config_read(self):
+        from hydra_sdlc.cli import operate_control
+        args = parser().parse_args(['control', 'stop', '--config', '/not-read/host.toml'])
+        with patch('hydra_sdlc.control.load_host_config') as read:
+            with self.assertRaises(ValueError):
+                operate_control(args)
+            read.assert_not_called()
+
+    def test_control_never_loads_runtime_or_provider_factories(self):
+        from hydra_sdlc.cli import operate_control
+        args = parser().parse_args(['control', 'pause', '--config', '/installed/host.toml', '--all'])
+        with patch('hydra_sdlc.control.load_host_config', return_value={'fixture': True}), \
+                patch('hydra_sdlc.control.control_result', return_value={'request': 'applied'}) as control, \
+                patch('hydra_sdlc.cli._provider') as provider:
+            self.assertEqual(operate_control(args), {'request': 'applied'})
+            control.assert_called_once_with({'fixture': True}, action='pause', repository=None, refresh=False)
+            provider.assert_not_called()
 
     def test_residual_capability_and_execution_workers_both_hold_startup(self):
         with patch('hydra_sdlc.coordinator.subprocess.run') as run:

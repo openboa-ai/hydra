@@ -382,7 +382,9 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
                     value['checks'][0].update(status=status, conclusion=conclusion)
                     return value
                 self.github.observe_commit = post_merge
-                self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+                result = await self.step()
+                self.assertEqual(result['reason'], 'post_merge_checks' if status == 'in_progress' else 'post_merge_failed')
+                self.assertEqual(result['progress_hint']['kind'], 'external' if status == 'in_progress' else 'actionable')
                 self.assertEqual(self.github.work['state'], 'open')
         self.assertEqual(len(self.calls), calls)
         self.assertFalse(any(x[0] != 'record' for x in self.github.writes[writes:]))
@@ -547,8 +549,15 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.github.observe_commit = post_merge
         calls, writes = len(self.calls), len(self.github.writes)
         attempt = self.github.note['attempt_id']
+        # Operating-continuity R5: terminal failures diagnose; wrong identity is unknown.
+        expected_reason, expected_next = {
+            'cancelled': ('post_merge_failed', 'diagnose_post_merge'),
+            'failure': ('post_merge_failed', 'diagnose_post_merge'),
+            'unknown': ('post_merge_evidence_unknown', 'reconcile_post_merge_evidence'),
+        }[state]
         for _ in range(2):
-            self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+            self.assertEqual((await self.step())['reason'], expected_reason)
+            self.assertEqual(self.github.note['next_action'], expected_next)
             self.assertEqual(self.github.work['state'], 'open')
             self.assertEqual(len(self.calls), calls)
             self.assertEqual(self.github.note['attempt_id'], attempt)
@@ -562,7 +571,8 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
         newest_a['checks'].extend(copy.deepcopy(observed_a['checks']))
         observed_a = copy.deepcopy(newest_a)
         observed_a['checks'][0]['app']['id'] = 999
-        self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+        self.assertEqual((await self.step())['reason'], 'post_merge_evidence_unknown')
+        self.assertEqual(self.github.note['next_action'], 'reconcile_post_merge_evidence')
         self.assertEqual(self.github.work['state'], 'open')
         self.assertEqual(len(self.calls), calls)
         self.assertEqual([x for x in self.github.writes[writes:] if x[0] != 'record'], [])
@@ -602,7 +612,8 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.github.observe_commit = foreign_payload
         calls, writes = len(self.calls), len(self.github.writes)
         for _ in range(2):
-            self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+            self.assertEqual((await self.step())['reason'], 'post_merge_evidence_unknown')
+            self.assertEqual(self.github.note['next_action'], 'reconcile_post_merge_evidence')
             self.assertEqual(self.github.work['state'], 'open')
             self.assertEqual(len(self.calls), calls)
             self.assertEqual([x for x in self.github.writes[writes:] if x[0] != 'record'], [])

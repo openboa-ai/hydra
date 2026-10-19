@@ -16,12 +16,14 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 
 MAX_FRAME_BYTES = 1024 * 1024
 PROTOCOL_VERSION = 1
 SUPERVISION_LIMIT = 4096
 CLEANUP_SECONDS = 2.0
+DISPATCH_SECONDS = 15.0
 _REJECTED_LAUNCH_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EACCES, errno.ENOEXEC})
 _NATIVE_EXECUTE_CHILD = getattr(subprocess.Popen._execute_child, "__code__", None)
 PUBLISHING_TOKEN_VARIABLES = frozenset({
@@ -40,6 +42,22 @@ def _ownership_coordinator():
     # A standalone file import has no CLI lock of its own. Reuse the canonical
     # module if the CLI loaded it; never create another ContextVar owner copy.
     return sys.modules.get("hydra_sdlc.coordinator")
+
+
+def _operation_guard():
+    coordinator = _ownership_coordinator()
+    return coordinator.operation_guard() if coordinator is not None else nullcontext()
+
+
+def _operation_scope_active():
+    coordinator = _ownership_coordinator()
+    return coordinator is not None and getattr(coordinator, "operation_scope_active", lambda: False)()
+
+
+def _operation_denied(exc):
+    module = sys.modules.get("hydra_sdlc.operations")
+    denied = getattr(module, "OperationDenied", None)
+    return denied is not None and isinstance(exc, denied)
 
 
 def worker_environment():
@@ -187,10 +205,13 @@ class OwnedProcess:
         self.linux = sys.platform.startswith("linux")
         self.process = self.control = self._peer = self._launch = self._receipt_task = None
         self._ready_task = None
+        self._readiness_task = None
+        self._closing_admission = False
         self._launch_sent = False
         self._admission_closed = False
         self._launch_command = None
         self._rejected_launch = None
+        self._denied_launch = None
         self._rejection = None
         self._cancelled_launch = None
         self._ownership_ticket = None
@@ -224,13 +245,27 @@ class OwnedProcess:
                 self._peer = None
 
     async def _spawn(self, command, options):
+        admitted = False
         try:
-            return await asyncio.create_subprocess_exec(*command, **options)
-        except OSError as exc:
-            # A readiness waiter can consume failure before done callbacks run.
-            # Capture native provenance inside the launch task before exposing it.
-            if _native_launch_rejected(exc, self._launch_command, options["cwd"]):
-                self._rejected_launch = asyncio.current_task()
+            # The shielded launch owner, not its cancellable waiter, owns this
+            # permit. Cancellation of start() must not acknowledge Pause while
+            # create_subprocess_exec can still create the admitted process.
+            with _operation_guard():
+                admitted = True
+                coordinator = _ownership_coordinator()
+                self._ownership_ticket = (None if coordinator is None
+                                          else coordinator.register_owned_process())
+                try:
+                    return await asyncio.create_subprocess_exec(*command, **options)
+                except OSError as exc:
+                    # Preserve native rejection provenance before a host guard
+                    # sanitizes filesystem errors at its public boundary.
+                    if _native_launch_rejected(exc, self._launch_command, options["cwd"]):
+                        self._rejected_launch = asyncio.current_task()
+                    raise
+        except Exception as exc:
+            if not admitted and _operation_denied(exc):
+                self._denied_launch = asyncio.current_task()
             raise
 
     async def start(self, deadline):
@@ -244,8 +279,6 @@ class OwnedProcess:
             options["pass_fds"] = (self._peer.fileno(),)
         # These hooks run only in the parent-side supervisor. The
         # isolated helper entry point needs no package import or lock descriptor.
-        coordinator = _ownership_coordinator()
-        self._ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
         self._launch_command = tuple(command)
         self._launch = asyncio.create_task(self._spawn(command, options))
         self._launch.add_done_callback(self._registered)
@@ -271,18 +304,63 @@ class OwnedProcess:
     async def _read_ready(self, deadline):
         self.process = await asyncio.shield(self._launch)
         loop = asyncio.get_running_loop()
+        admitted = False
         # This is the only initial writer. Expiry closes admission but leaves
         # the reader alive for the helper's no-child receipt during cleanup.
         if loop.time() < deadline:
             initial = "terminate" if self._admission_closed else "launch"
             try:
-                await loop.sock_sendall(self.control, _supervision_frame(initial))
+                if initial == "launch":
+                    barrier = _operation_guard()
+                    try:
+                        barrier.__enter__()
+                    except Exception as exc:
+                        if not _operation_denied(exc):
+                            raise
+                        self._admission_closed = True
+                        initial = "terminate"
+                        await loop.sock_sendall(self.control, _supervision_frame(initial))
+                    else:
+                        try:
+                            # A failed send may already have delivered launch.
+                            # Retain its reader and cleanup obligation first.
+                            self._launch_sent = True
+                            self._readiness_task = asyncio.create_task(self._accept_readiness())
+                            await loop.sock_sendall(self.control, _supervision_frame(initial))
+                            # A socket write only grants launch. Keep the short
+                            # permit until the helper reports actual creation (or
+                            # an explicit no-child receipt), never for its run.
+                            wait = deadline - loop.time()
+                            if _operation_scope_active():
+                                wait = min(DISPATCH_SECONDS, wait)
+                            # A separate sole reader can still accept a late
+                            # child identity/receipt while this guard owner waits
+                            # for bounded cleanup after admission times out.
+                            await asyncio.wait_for(asyncio.shield(self._readiness_task), max(.001, wait))
+                            admitted = True
+                        except BaseException:
+                            if _operation_scope_active():
+                                self._closing_admission = True
+                                await self.cleanup()
+                            raise
+                        finally:
+                            barrier.__exit__(None, None, None)
+                else:
+                    await loop.sock_sendall(self.control, _supervision_frame(initial))
             except OSError:
+                if self._readiness_task is not None:
+                    raise
                 # The helper may already have closed after confirming no child.
                 # Only its validated receipt, zero exit and EOF can prove clean.
                 pass
             else:
                 self._launch_sent = initial == "launch"
+        if not admitted:
+            if self._readiness_task is None:
+                self._readiness_task = asyncio.create_task(self._accept_readiness())
+            await asyncio.shield(self._readiness_task)
+
+    async def _accept_readiness(self):
         ready = await self._read_control()
         if ready.get("kind") == "launch_cancelled":
             self._cancelled_launch = _validate_launch_cancelled(ready)
@@ -355,7 +433,7 @@ class OwnedProcess:
                     self.process = await asyncio.wait_for(asyncio.shield(self._launch),
                                                          max(0.001, deadline - loop.time()))
                 except (Exception, asyncio.CancelledError):
-                    if (self._launch is self._rejected_launch and self._launch.done()
+                    if (self._launch in (self._rejected_launch, self._denied_launch) and self._launch.done()
                             and not self._launch.cancelled()):
                         return True
                     self._launch.cancel()
@@ -433,10 +511,15 @@ class OwnedProcess:
             return False
         finally:
             if self._ready_task is not None:
-                if not self._ready_task.done():
+                if not self._ready_task.done() and not self._closing_admission:
                     self._ready_task.cancel()
-                elif not self._ready_task.cancelled():
+                elif self._ready_task.done() and not self._ready_task.cancelled():
                     self._ready_task.exception()
+            if self._readiness_task is not None:
+                if not self._readiness_task.done():
+                    self._readiness_task.cancel()
+                elif not self._readiness_task.cancelled():
+                    self._readiness_task.exception()
             if self._receipt_task is not None:
                 if not self._receipt_task.done():
                     self._receipt_task.cancel()
@@ -530,7 +613,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             except OSError:
                 fail("cleanup_unknown")
 
-    with selectors.DefaultSelector() as selector:
+    with selectors.DefaultSelector() as selector, ExitStack() as admission_stack:
         def close_control():
             nonlocal control_closed
             if control is not None and not control_closed:
@@ -603,12 +686,13 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 command = _helper_command(command, peer.fileno(), deadline)
                 options["pass_fds"] = (peer.fileno(),)
             coordinator = _ownership_coordinator()
-            ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
-            try:
-                process = subprocess.Popen(command, **options)
-            except OSError as exc:
-                native_rejected = _native_launch_rejected(exc, command, cwd)
-                raise
+            with _operation_guard():
+                ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
+                try:
+                    process = subprocess.Popen(command, **options)
+                except OSError as exc:
+                    native_rejected = _native_launch_rejected(exc, command, cwd)
+                    raise
             if peer is not None:
                 peer.close()
                 peer = None
@@ -619,7 +703,34 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 if time.monotonic() < deadline:
                     initial = "terminate" if stopped() else "launch"
                     try:
-                        control.sendall(_supervision_frame(initial))
+                        if initial == "launch":
+                            try:
+                                admission_stack.enter_context(_operation_guard())
+                                launch_sent = True
+                                control.sendall(_supervision_frame(initial))
+                                if _operation_scope_active():
+                                    admission_deadline = min(deadline, time.monotonic() + DISPATCH_SECONDS)
+                                    while pid is None and rejection is None and cancellation is None:
+                                        if control_failed or stopped():
+                                            break
+                                        remaining = admission_deadline - time.monotonic()
+                                        if remaining <= 0:
+                                            fail("timeout")
+                                            break
+                                        receive(remaining)
+                                if (not _operation_scope_active() or pid is not None
+                                        or rejection is not None or cancellation is not None):
+                                    admission_stack.close()
+                                # Otherwise keep this permit until bounded
+                                # collection below closes the timed-out grant.
+                            except Exception as exc:
+                                if not _operation_denied(exc):
+                                    raise
+                                fail("stopped")
+                                initial = "terminate"
+                                control.sendall(_supervision_frame(initial))
+                        else:
+                            control.sendall(_supervision_frame(initial))
                     except OSError:
                         pass  # Still require the exact receipt, zero exit and EOF.
                     else:
@@ -639,7 +750,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 if (linux and receipt is not None) or (not linux and process.poll() is not None):
                     break
         except BaseException as exc:
-            fail("stopped" if isinstance(exc, KeyboardInterrupt) else
+            fail("stopped" if isinstance(exc, KeyboardInterrupt) or _operation_denied(exc) else
                  "cleanup_unknown" if process is not None else "unavailable")
         finally:
             if peer is not None:
@@ -930,64 +1041,104 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         process.stdin.write(initial)
         await process.stdin.drain()
         expected = 1
-        while True:
-            frame = _decode(await process.stdout.readline())
-            if type(frame.get("seq")) is not int or frame["seq"] != expected:
-                raise ProtocolError("Unexpected sequence")
-            kind, data = frame.get("kind"), frame.get("data")
-            if not isinstance(data, dict):
-                raise ProtocolError("Invalid frame data")
-            answer = {}
-            if kind == "identity":
-                if len(data) != 1 or next(iter(data)) not in accepted:
-                    raise ProtocolError("Invalid identity fields")
-                key, value = next(iter(data.items()))
-                if not isinstance(value, str) or not value:
-                    raise ProtocolError("Invalid identity")
-                observed[key] = value
-                if accepted[key] not in (None, value):
-                    raise ProtocolError("Conflicting identity")
-                on_identity(**data)
-                accepted[key] = value
-            elif kind == "event":
-                if set(data) != {"event_id", "payload"} or not isinstance(data["event_id"], str) or not isinstance(data["payload"], dict):
-                    raise ProtocolError("Invalid event")
-                on_event(data["event_id"], data["payload"])
-                payload = data["payload"]
-                params = payload.get("params", {})
-                if payload.get("method") == "turn/completed" and isinstance(params, dict):
-                    candidate = params.get("turn", {})
-                    if (isinstance(candidate, dict) and params.get("threadId") == accepted["thread_id"]
-                            and candidate.get("id") == accepted["turn_id"]
-                            and accepted["thread_id"] is not None and accepted["turn_id"] is not None
-                            and candidate.get("status") in {"completed", "failed", "interrupted"}):
-                        terminal = candidate
-            elif kind == "poll":
-                if data:
-                    raise ProtocolError("Invalid stop poll")
-                answer = {"stop": stopped or stop_requested() or loop.time() >= deadline}
-            elif kind == "dispatch":
-                operation = data.get("operation")
-                if set(data) != {"operation"} or operation not in {"thread/start", "thread/resume", "turn/start"}:
-                    raise ProtocolError("Invalid dispatch operation")
-                allow = not (stopped or stop_requested() or loop.time() >= deadline)
-                if allow:
-                    if operation == "turn/start" and accepted["thread_id"] is None:
-                        raise ProtocolError("Turn before durable thread identity")
-                    audit("hydra/dispatchIntent", {"operation": operation, "sequence": expected})
-                    # Even a failed/uncertain pipe write may have delivered this grant.
-                    grants.append(operation)
-                answer = {"allow": allow}
-            elif kind == "result":
-                outcome = data
-                outcome_at = loop.time()
-                await process.wait()
-                return
-            else:
-                raise ProtocolError("Unexpected frame kind")
-            process.stdin.write(_encode(_frame("ack", expected, answer)))
-            await process.stdin.drain()
-            expected += 1
+        dispatch_barrier = None
+        dispatch_deadline = None
+        dispatch_identity = None
+        try:
+            while True:
+                if dispatch_deadline is None:
+                    raw = await process.stdout.readline()
+                else:
+                    if loop.time() >= dispatch_deadline:
+                        raise TimeoutError("Dispatch admission deadline expired")
+                    raw = await asyncio.wait_for(process.stdout.readline(),
+                        max(0.001, dispatch_deadline - loop.time()))
+                frame = _decode(raw)
+                if type(frame.get("seq")) is not int or frame["seq"] != expected:
+                    raise ProtocolError("Unexpected sequence")
+                kind, data = frame.get("kind"), frame.get("data")
+                if not isinstance(data, dict):
+                    raise ProtocolError("Invalid frame data")
+                answer = {}
+                if kind == "identity":
+                    if len(data) != 1 or next(iter(data)) not in accepted:
+                        raise ProtocolError("Invalid identity fields")
+                    key, value = next(iter(data.items()))
+                    if not isinstance(value, str) or not value:
+                        raise ProtocolError("Invalid identity")
+                    observed[key] = value
+                    if accepted[key] not in (None, value):
+                        raise ProtocolError("Conflicting identity")
+                    on_identity(**data)
+                    accepted[key] = value
+                    if dispatch_barrier is not None and key == dispatch_identity:
+                        dispatch_barrier.__exit__(None, None, None)
+                        dispatch_barrier = dispatch_deadline = dispatch_identity = None
+                elif kind == "event":
+                    if set(data) != {"event_id", "payload"} or not isinstance(data["event_id"], str) or not isinstance(data["payload"], dict):
+                        raise ProtocolError("Invalid event")
+                    on_event(data["event_id"], data["payload"])
+                    payload = data["payload"]
+                    params = payload.get("params", {})
+                    if payload.get("method") == "turn/completed" and isinstance(params, dict):
+                        candidate = params.get("turn", {})
+                        if (isinstance(candidate, dict) and params.get("threadId") == accepted["thread_id"]
+                                and candidate.get("id") == accepted["turn_id"]
+                                and accepted["thread_id"] is not None and accepted["turn_id"] is not None
+                                and candidate.get("status") in {"completed", "failed", "interrupted"}):
+                            terminal = candidate
+                elif kind == "poll":
+                    if data:
+                        raise ProtocolError("Invalid stop poll")
+                    answer = {"stop": stopped or stop_requested() or loop.time() >= deadline}
+                elif kind == "dispatch":
+                    operation = data.get("operation")
+                    if set(data) != {"operation"} or operation not in {"thread/start", "thread/resume", "turn/start"}:
+                        raise ProtocolError("Invalid dispatch operation")
+                    allow = not (stopped or stop_requested() or loop.time() >= deadline)
+                    if allow:
+                        if dispatch_barrier is not None:
+                            raise ProtocolError("Overlapping dispatch admission")
+                        barrier = _operation_guard()
+                        try:
+                            barrier.__enter__()
+                        except Exception as exc:
+                            if not _operation_denied(exc):
+                                raise
+                            allow = False
+                        else:
+                            dispatch_barrier = barrier
+                            dispatch_identity = "turn_id" if operation == "turn/start" else "thread_id"
+                            dispatch_deadline = (min(deadline, loop.time() + DISPATCH_SECONDS)
+                                                 if _operation_scope_active() else None)
+                    if allow:
+                        if operation == "turn/start" and accepted["thread_id"] is None:
+                            raise ProtocolError("Turn before durable thread identity")
+                        audit("hydra/dispatchIntent", {"operation": operation, "sequence": expected})
+                        # Even a failed/uncertain pipe write may have delivered this grant.
+                        grants.append(operation)
+                    answer = {"allow": allow}
+                elif kind == "result":
+                    outcome = data
+                    outcome_at = loop.time()
+                    await process.wait()
+                    return
+                else:
+                    raise ProtocolError("Unexpected frame kind")
+                process.stdin.write(_encode(_frame("ack", expected, answer)))
+                await process.stdin.drain()
+                expected += 1
+        finally:
+            if dispatch_barrier is not None:
+                try:
+                    if _operation_scope_active():
+                        # Cancellation must close an already granted dispatch
+                        # before its short admission is released. Failed bounded
+                        # cleanup retains the ownership ticket and is reported
+                        # as uncertainty; it never establishes stopped execution.
+                        await process.cleanup()
+                finally:
+                    dispatch_barrier.__exit__(None, None, None)
 
     task = None
     clean = False
@@ -1027,7 +1178,8 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
             task.cancel()
             # No SDK execution runs before assignment. OwnedProcess retains an
             # in-flight launch so cleanup can still collect its actual owner.
-            done, _ = await asyncio.wait({task}, timeout=1.0)
+            done, _ = await asyncio.wait({task}, timeout=(CLEANUP_SECONDS + .5
+                if _operation_scope_active() else 1.0))
             if not done:
                 failure = "supervisor_cleanup_unknown"
         if task is not None and task.done() and not task.cancelled():

@@ -104,7 +104,9 @@ class ReviewRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 value['runs'][0]['conclusion'] = 'failure'
             return value
         self.github.observe_commit = observe_commit
-        self.assertEqual((await self.step())['reason'], 'post_merge_checks')
+        result = await self.step()
+        self.assertEqual(result['reason'], 'post_merge_failed')
+        self.assertEqual(result['progress_hint']['next_action'], 'diagnose_post_merge')
         self.assertEqual(self.github.work['state'], 'open')
         passing = True
         self.assertEqual((await self.step())['action'], 'completed')

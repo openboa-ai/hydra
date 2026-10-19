@@ -1,0 +1,19 @@
+[package]
+name = "hydra-operations"
+version = "0.2.1"
+edition = "2021"
+description = "Local operating controls for Hydra"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", features = [] }
+
+[dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+libc = "=0.2.190"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+tauri = { version = "=2.12.3", features = ["tray-icon"] }
+tokio = { version = "=1.53.2", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

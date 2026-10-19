@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
+import time
 import uuid
 from urllib.parse import quote, urlencode
 
@@ -20,6 +23,16 @@ class GitHubError(RuntimeError):
         super().__init__(reason)
         self.status = status
         self.uncertain = uncertain
+
+
+class _ReadBudget:
+    def __init__(self, deadline, requests):
+        self.deadline = deadline
+        self.remaining_requests = requests
+
+    @property
+    def remaining_seconds(self):
+        return max(0.0, self.deadline - time.monotonic())
 
 
 def _repo(value):
@@ -92,12 +105,48 @@ class GitHub:
         self.user = user
         self.transport = transport or self._gh
         self._authenticated_fingerprint = None
+        self._read_budgets = []
+
+    @contextmanager
+    def read_budget(self, *, seconds, requests):
+        """Bound one synchronous observation and its nested reads, without caching.
+
+        The caller owns this client for the scope. Budgets are transient limits,
+        not authority to call an API or to retry an uncertain effect.
+        """
+        if (type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds < 0
+                or type(requests) is not int or requests < 0):
+            raise GitHubError("Invalid GitHub read budget")
+        deadline = min([time.monotonic() + seconds] + [b.deadline for b in self._read_budgets])
+        budget = _ReadBudget(deadline, requests)
+        self._read_budgets.append(budget)
+        try:
+            yield budget
+        finally:
+            self._read_budgets.pop()
+
+    def _request_timeout(self, default, *, uncertain=False):
+        # A reserved final request may have consumed the last count. Only time
+        # constrains its auth/identity/API subprocesses after that reservation.
+        if not self._read_budgets:
+            return default
+        remaining = min(b.deadline for b in self._read_budgets) - time.monotonic()
+        if remaining <= 0:
+            raise GitHubError("GitHub read budget exhausted", uncertain=uncertain)
+        return min(default, remaining)
+
+    def _reserve_request(self):
+        self._request_timeout(45)
+        if any(b.remaining_requests <= 0 for b in self._read_budgets):
+            raise GitHubError("GitHub read budget exhausted")
+        for budget in self._read_budgets:
+            budget.remaining_requests -= 1
 
     def _gh(self, method, path, payload):
         try:
             token = subprocess.run(
                 ["gh", "auth", "token", "--hostname", "github.com", "--user", self.user],
-                capture_output=True, text=True, timeout=15, check=True,
+                capture_output=True, text=True, timeout=self._request_timeout(15), check=True,
             ).stdout.strip()
             if not token:
                 raise GitHubError("GitHub authentication unavailable")
@@ -106,10 +155,12 @@ class GitHub:
             # Select credentials each call, but avoid doubling every polling API
             # request with the same credential's immutable account identity.
             if self._authenticated_fingerprint != fingerprint:
+                self._reserve_request()
                 identity = subprocess.run(
                     ["gh", "api", "--hostname", "github.com", "user"],
-                    env=env, capture_output=True, text=True, timeout=30, check=True,
+                    env=env, capture_output=True, text=True, timeout=self._request_timeout(30), check=True,
                 )
+                self._request_timeout(30)
                 if json.loads(identity.stdout).get("login") != self.user:
                     raise GitHubError("GitHub identity mismatch")
                 self._authenticated_fingerprint = fingerprint
@@ -118,7 +169,7 @@ class GitHub:
             if payload is not None:
                 argv += ["--input", "-"]
             result = subprocess.run(argv, input=json.dumps(payload) if payload is not None else None,
-                                    env=env, capture_output=True, text=True, timeout=45)
+                                    env=env, capture_output=True, text=True, timeout=self._request_timeout(45))
             if result.returncode:
                 match = re.search(r"HTTP (\d{3})", result.stderr)
                 raise GitHubError("GitHub request failed", status=int(match[1]) if match else None,
@@ -134,7 +185,10 @@ class GitHub:
     def api(self, method, path, payload=None):
         if method not in {"GET", "POST", "PATCH", "PUT", "DELETE"} or not isinstance(path, str) or not path.startswith("/") or ".." in path or "://" in path:
             raise GitHubError("Invalid GitHub API request")
-        return self.transport(method, path, payload)
+        self._reserve_request()
+        result = self.transport(method, path, payload)
+        self._request_timeout(45, uncertain=method != "GET")
+        return result
 
     def _pages(self, path, key=None):
         result = []
@@ -313,7 +367,7 @@ class GitHub:
             elif not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,119}", value):
                 raise GitHubError("Progress requires public codes, not raw text")
 
-    def record(self, repo, n, record):
+    def record(self, repo, n, record, *, cleanup=False):
         self._validate_record(record)
         metadata = {**record, "version": 1, "repository_id": self.repository(repo)["id"], "issue_number": _number(n)}
         if metadata.get("branch") not in {None, f"hydra/issue-{n}"}:
@@ -341,10 +395,10 @@ class GitHub:
                                          + json.dumps(context, separators=(",", ":")) + " -->")
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
                      and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
-        if not completed:
+        if not completed and not cleanup:
             self._active(repo, n, True)
         if previous and old == metadata:
-            if completed:
+            if completed and not cleanup:
                 self._active(repo, n, False)
             return previous
         human = ["## Hydra progress", ""]
@@ -357,9 +411,13 @@ class GitHub:
             result = self.api("PATCH", f"/repos/{_repo(repo)}/issues/comments/{_number(previous['id'])}", {"body": body})
         else:
             result = self.api("POST", f"/repos/{_repo(repo)}/issues/{n}/comments", {"body": body})
-        if completed:
+        if completed and not cleanup:
             self._active(repo, n, False)
         return result
+
+    def record_checkpoint(self, repo, n, record):
+        """Only a caller-confirmed stopped checkpoint; leave discovery labels alone."""
+        return self.record(repo, n, record, cleanup=True)
 
     def ref(self, repo, branch):
         try:
