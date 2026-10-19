@@ -1,6 +1,6 @@
 # Mac operations and shared execution controls
 
-Status: implementation candidate, revision 5. Base: b59616b3e6210661aa62b30496efc6bed97c6826.
+Status: implementation candidate, revision 6. Base: b59616b3e6210661aa62b30496efc6bed97c6826.
 Work record: https://github.com/openboa-ai/hydra/issues/3.
 
 ## Outcome and authority
@@ -135,6 +135,23 @@ Use a separate read-only refresh operation/flag when remote results would delay
 an urgent Pause request. Rust-owned child output/time are bounded; loss of a mutation
 response means reconcile by status, never optimistic success or blind retry.
 
+Remote refresh has one transient monotonic 45-second / 4096-API-request budget.
+Each repository receives at most the remaining budget divided by the remaining
+repository count, so an early backlog cannot consume a later repository's share.
+Nested budgets cover pagination, progress authentication and the transport's own
+identity API calls. Every auth, identity and API subprocess timeout is capped by
+the remaining deadline; injected transports consume the same logical API budget.
+Expired responses are not fresh evidence. Exhaustion preserves authenticated
+work already observed, marks that repository incomplete and continues with the
+next repository's reserved share. The separate display limits remain 128
+authenticated records per repository and 512 overall; ordinary Issues do not
+consume them. Budgets end with the refresh and introduce no saved workflow state.
+The 60-second Rust deadline remains the outer safety limit: remote reads leave
+five seconds for the bounded residual-worker probe and ten seconds of margin for
+startup, local observations and response serialization. Local observations still
+follow remote reads, with admission read last. Budget exhaustion never proves zero
+owned executions or permits Quit.
+
 R9. Window: host mode and connection freshness; global controls; repository cards
 with distinct mode/work phase, current Issue/PR, wait reason, next action and scoped
 controls. Preserve explicit project pauses after global Resume. Detail links open
@@ -188,6 +205,12 @@ malformed command output. Verify that a hostile cwd/PYTHONPATH cannot substitute
 the installed Python package.
 Capture the running app before final PR publication. Fixture control is reported
 separately from production-native control.
+Verify cumulative request/deadline limits through the actual GitHub client,
+including auth and internal identity subprocess timeout values, nested budget
+restoration and a real subprocess timeout. Delayed or request-heavy early
+repositories must preserve authenticated prefixes while later repositories remain
+observable. Keep the positive case with 150 ordinary Issues and one authenticated
+work record, and verify normal multi-repository refresh and final local probes.
 A6/R10: verify each used token's CSS value against its canonical alias chain
 and final resolved value, in addition to the source content digest;
 verify bundled fonts/theme, inspect light/dark state readability and keyboard labels.

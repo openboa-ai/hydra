@@ -30,6 +30,8 @@ _PROVIDER = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z", re.ASC
 _MAX_CONFIG_BYTES = 65536
 _MAX_WORK_PER_PROJECT = 128
 _MAX_TOTAL_WORK = 512
+_REMOTE_READ_SECONDS = 45.0
+_REMOTE_READ_REQUESTS = 4096
 
 
 def _now():
@@ -187,45 +189,53 @@ def _remote_observations(cfg):
     github = GitHub(user="openboa")
     observations = {}
     retained = 0
-    for repo in cfg["repos"]:
-        row = {"work": [], "complete": False,
-               "native_scopes": [], "unresolved": False}
-        observations[repo] = row
-        try:
-            issues = github.issues(repo)
-            if not isinstance(issues, list) or len(issues) > _MAX_WORK_PER_PROJECT:
-                continue
-            seen = set()
-            for issue in issues:
-                number = issue.get("number") if isinstance(issue, dict) else None
-                if type(number) is not int or not 1 <= number <= MAX_REVISION or number in seen or "pull_request" in issue:
-                    raise ValueError("Incomplete Issue observation")
-                seen.add(number)
-                record = github.progress(repo, number)
-                if record is None:
-                    continue
-                if retained >= _MAX_TOTAL_WORK:
-                    raise ValueError("Work observation bound reached")
-                pr = record.get("pr_number")
-                work = {"issue": number, "phase": _public_code(record.get("phase")),
-                        "wait_reason": _public_code(record.get("wait_reason")),
-                        "next_action": _public_code(record.get("next_action")),
-                        "links": {"issue": f"https://github.com/{repo}/issues/{number}",
-                                  "pr": f"https://github.com/{repo}/pull/{pr}"
-                                  if type(pr) is int and 1 <= pr <= MAX_REVISION else None}}
-                row["work"].append(work)
-                retained += 1
-                scope = _native_scope(repo, number, record, cfg["host_alias"])
-                if scope is not None:
-                    row["native_scopes"].append(scope)
-                if record.get("host_alias") == cfg["host_alias"]:
-                    row["unresolved"] |= bool((record.get("native_step") and not record.get("native_outcome"))
-                                               or record.get("phase") == "executing")
-            row["complete"] = True
-        except (ValueError, RuntimeError, OSError, KeyError, TypeError):
-            # Preserve already observed records, but never call a partial list a
-            # complete inventory or expose raw transport/provider diagnostics.
-            pass
+    with github.read_budget(seconds=_REMOTE_READ_SECONDS, requests=_REMOTE_READ_REQUESTS) as total:
+        for index, repo in enumerate(cfg["repos"]):
+            row = {"work": [], "complete": False,
+                   "native_scopes": [], "unresolved": False}
+            observations[repo] = row
+            remaining_repos = len(cfg["repos"]) - index
+            try:
+                with github.read_budget(seconds=total.remaining_seconds / remaining_repos,
+                                        requests=total.remaining_requests // remaining_repos) as budget:
+                    issues = github.issues(repo)
+                    if not isinstance(issues, list):
+                        continue
+                    seen = set()
+                    for issue in issues:
+                        number = issue.get("number") if isinstance(issue, dict) else None
+                        if type(number) is not int or not 1 <= number <= MAX_REVISION or number in seen or "pull_request" in issue:
+                            raise ValueError("Incomplete Issue observation")
+                        seen.add(number)
+                        record = github.progress(repo, number)
+                        if record is None:
+                            continue
+                        # Discovery includes ordinary Issues. Only authenticated
+                        # work consumes the independent display budget.
+                        if len(row["work"]) >= _MAX_WORK_PER_PROJECT or retained >= _MAX_TOTAL_WORK:
+                            raise ValueError("Work observation bound reached")
+                        pr = record.get("pr_number")
+                        work = {"issue": number, "phase": _public_code(record.get("phase")),
+                                "wait_reason": _public_code(record.get("wait_reason")),
+                                "next_action": _public_code(record.get("next_action")),
+                                "links": {"issue": f"https://github.com/{repo}/issues/{number}",
+                                          "pr": f"https://github.com/{repo}/pull/{pr}"
+                                          if type(pr) is int and 1 <= pr <= MAX_REVISION else None}}
+                        row["work"].append(work)
+                        retained += 1
+                        scope = _native_scope(repo, number, record, cfg["host_alias"])
+                        if scope is not None:
+                            row["native_scopes"].append(scope)
+                        if record.get("host_alias") == cfg["host_alias"]:
+                            row["unresolved"] |= bool((record.get("native_step") and not record.get("native_outcome"))
+                                                       or record.get("phase") == "executing")
+                    if budget.remaining_seconds <= 0:
+                        raise ValueError("Work observation time bound reached")
+                    row["complete"] = True
+            except (ValueError, RuntimeError, OSError, KeyError, TypeError):
+                # Keep authenticated prefixes; later repositories retain their
+                # own share. Neither partial rows nor raw errors certify idle.
+                pass
     return observations
 
 

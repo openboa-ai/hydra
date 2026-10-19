@@ -23,7 +23,7 @@ def progress_hint(result):
     def hint(kind, action, source="none"):
         return {"kind": kind, "next_action": action, "wake_source": source}
 
-    if reason in {"host_paused", "host_stopped", "project_paused", "project_stopped", "stop_requested"}:
+    if reason in {"host_paused", "host_stopped", "project_paused", "project_stopped"}:
         return hint("human", "await_control_change", "control_change")
     if reason in {"product_decision", "replan_required"} and result.get("resume_hint") == {
             "product_decision": "decision_resolved", "replan_required": "replan_ready"}[reason]:
@@ -53,7 +53,19 @@ def progress_hint(result):
     if reason == "completion_reconciliation":
         return hint("actionable", "reconcile_completion")
     if reason is not None:
+        # A generic stop request can come from a deadline or signal without any
+        # change to operating controls. Reconcile its cause before choosing a wake.
         return unknown
+    resource_reason = result.get("resource_wait_reason")
+    if resource_reason == "resource_completion_unconfirmed":
+        return hint("unknown", "reconcile_completion")
+    if resource_reason == "resource_cleanup_pending":
+        return hint("actionable", "reconcile_completion")
+    if resource_reason is not None:
+        return unknown
+    if progress.get("phase") == "completed" and progress.get("next_action") == "resource_cleanup":
+        # Delivery can be complete while the owned resource still needs recovery.
+        return hint("actionable", "reconcile_completion")
     if result.get("action") == "completed" or (
             progress.get("phase") == "completed" and not progress.get("pending_action")):
         return hint("complete", "none")

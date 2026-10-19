@@ -334,6 +334,31 @@ does not qualify product Quit or production control.
 These corrections still require their own current-head CI and provider reviews
 before protected delivery. No production settings, schedules or runtime changed.
 
+## Cumulative remote observation budgets (2026-10-19)
+
+Specification revision 6 adds transient cumulative time/request limits and fair
+repository shares within the existing read-only refresh boundary. Its SHA-256 is
+`c167e8b3ab9e87b3e4b658a2a1843a4b0f225bcec4fd6af66e494675aafc1974`.
+Before implementation, the new budget suite had nine errors for the absent budget
+API and one passing compatibility case. The control suite reproduced an actual
+failure: a two-request limit still allowed 40 reads before local probes.
+
+After implementation, local Python 3.12 checks passed:
+
+| Check | Result |
+| --- | --- |
+| `test_github_read_budget.py` | 10 passed, including a real sleeping child terminated by a 50 ms budget and auth/identity/API timeout values of 10/9/8 seconds under an advancing clock |
+| `test_control.py` | 42 passed, including time/request exhaustion preserving authenticated prefixes, a reserved later repository, 150 ordinary Issues plus authenticated work, delayed successful multi-repository reads and latest admission after exhaustion |
+| `test_github*.py` | 47 passed, including the 10 budget tests; existing auth and write uncertainty behavior preserved |
+| Complete Python discovery | 941 tests collected, successful with 25 skipped, 251.527 seconds |
+
+The complete suite ran in a development checkout containing other pending
+changes. This is development regression evidence, not isolated final-PR evidence
+or current-head CI. The budget tests used fixture transports/subprocesses without
+GitHub network effects. No packaged-app, installed runtime or production-control
+qualification is claimed by this correction. Final isolated candidate checks,
+running-screen evidence, provider reviews and protected delivery remain required.
+
 ## Remaining delivery and operating evidence
 
 - Require current-head GitHub CI and code/security review before protected
@@ -346,3 +371,33 @@ before protected delivery. No production settings, schedules or runtime changed.
 - No product schedule was resumed, active MCP process replaced, production runtime
   installed, protected policy changed, or signing/notarization completed by these
   checks.
+
+
+## Isolated PR8 correction candidate — 2026-10-19
+
+The published parent was `0c82a34a23eedff4d6ea540af74218357ae3c1bc`. An isolated
+candidate contained only the three outstanding progress/control corrections,
+the cumulative remote-read budget, their tests and this contract/evidence update.
+It excluded the separate v1 design and typed admission candidates.
+
+- The exact isolated candidate passed 106 tests selected by `test_control.py`,
+  `test_progress_hints.py` and `test_github*.py`, with no skips or failures.
+- Its unchanged app sources passed all 39 frontend tests, theme verification,
+  TypeScript/Vite build and debug macOS app packaging.
+- A separate installed fixture used the actual control core and packaged app,
+  with simulated GitHub transport and a deliberately reduced 14-request budget.
+  After Refresh GitHub, the first repository exhausted its share, but its
+  authenticated work prefix and the second repository's work both remained
+  visible. Local polling retained both work entries and the first project's
+  explicit Pause. The screen showed unavailable remote evidence, unknown active
+  execution and unverified schedule coverage; `can_quit` remained false.
+- The running screen was shared before publication. The exact fixture process
+  was then terminated by the test harness. This is not successful product Quit,
+  live GitHub observation, native-turn control or production installation evidence.
+- Independent scoped code/security review found no remaining material defect in
+  the read-budget repair. These observations do not close the separate typed
+  admission work or replace final-head CI, human code-owner review, protected
+  merge and post-merge checks.
+
+The 941-test mixed-checkout run above remains separate evidence; it is not
+reported as this isolated candidate's full-suite result.

@@ -14,6 +14,7 @@ from hydra_sdlc.control import (
     _execution, control_from_config, control_result, load_host_config,
 )
 from hydra_sdlc.operations import OperationDenied
+from hydra_sdlc.github import GitHub as GitHubClient
 
 
 REPOS = ["example/alpha", "example/beta"]
@@ -242,8 +243,9 @@ class HostConfigTests(unittest.TestCase):
             self.assertNotIn(str(self.root), str(raised.exception))
 
 
-class FakeGitHub:
+class FakeGitHub(GitHubClient):
     def __init__(self, records=None, unavailable=()):
+        super().__init__()
         self.records = records or {}
         self.unavailable = set(unavailable)
         self.calls = []
@@ -398,6 +400,227 @@ class ControlResultTests(unittest.TestCase):
         self.assertFalse(status["can_quit"])
         self.assertNotIn("credential", json.dumps(status))
         self.assertNotIn("<script>", json.dumps(status))
+
+    def test_many_ordinary_issues_do_not_hide_authenticated_native_work(self):
+        repo, number = REPOS[0], 151
+        cfg = {**self.cfg, "repos": [repo]}
+        record = {"version": 1, "repository_id": 123, "issue_number": number,
+                  "host_alias": "test", "execution_mode": "native", "native_step": STEP,
+                  "attempt_id": ATTEMPT, "head": HEAD, "contract_revision": POLICY,
+                  "phase": "executing", "native_outcome": None, "pr_number": 9}
+        scope = hashlib.sha256(json.dumps([repo, number, ATTEMPT, HEAD, POLICY], separators=(",", ":")).encode()).hexdigest()
+        self.ownership.return_value = {"state": "native", "nonce": STEP, "scope_digest": scope}
+        calls = []
+        def transport(method, path, payload):
+            calls.append((method, path))
+            self.assertEqual(method, "GET")
+            self.assertIsNone(payload)
+            if path == "/user":
+                return {"login": "openboa", "id": 11}
+            if path == f"/repos/{repo}":
+                return {"id": 123, "full_name": repo, "default_branch": "main"}
+            if path.startswith(f"/repos/{repo}/issues?state=open&"):
+                page = int(path.rsplit("page=", 1)[1])
+                return [{"number": n, "state": "open"} for n in
+                        range((page - 1) * 100 + 1, min(page * 100, number) + 1)]
+            if path.startswith(f"/repos/{repo}/issues?state=closed&"):
+                return []
+            if "/comments?" in path:
+                issue = int(path.split("/")[5])
+                if issue not in {1, number}:
+                    return []
+                # A forged service login must not spend the retained-work budget.
+                author = {"login": "openboa", "id": 11 if issue == number else 99}
+                return [{"user": author, "body": "<!-- hydra-progress:v1 " +
+                         json.dumps({**record, "issue_number": issue}) + " -->"}]
+            self.fail("Unexpected observation route")
+        client = GitHubClient(transport=transport)
+        with patch("hydra_sdlc.github.GitHub", return_value=client):
+            status = control_result(cfg, refresh=True)
+        self.assertEqual(status["remote"]["state"], "fresh")
+        project = status["projects"][0]
+        self.assertEqual([row["issue"] for row in project["work"]], [number])
+        self.assertEqual(project["work"][0]["links"]["pr"], f"https://github.com/{repo}/pull/9")
+        self.assertEqual(project["execution"]["state"], "stopping")
+        self.assertEqual(project["execution"]["reason"], "native_turn_control_unsupported")
+        self.assertEqual(sum("/comments?" in path for _, path in calls), number)
+        self.assertIsNone(status["execution"]["active_count"])
+        self.assertFalse(status["can_quit"])
+
+    def budget_client(self, clock, *, delay=0, first_backlog=16):
+        calls = []
+        def transport(method, path, payload):
+            self.assertEqual(method, "GET")
+            self.assertIsNone(payload)
+            calls.append(path)
+            clock[0] += delay
+            if path == "/user":
+                return {"login": "openboa", "id": 11}
+            for repo in REPOS:
+                if path == f"/repos/{repo}":
+                    return {"id": 123, "full_name": repo, "default_branch": "main"}
+                if path.startswith(f"/repos/{repo}/issues?state=open&"):
+                    count = first_backlog if repo == REPOS[0] else 1
+                    return [{"number": n, "state": "open"} for n in range(1, count + 1)]
+                if path.startswith(f"/repos/{repo}/issues?state=closed&"):
+                    return []
+                if path.startswith(f"/repos/{repo}/issues/") and "/comments?" in path:
+                    number = int(path.split("/")[5])
+                    if number != 1:
+                        return []
+                    record = {"version": 1, "repository_id": 123, "issue_number": 1,
+                              "host_alias": "test", "execution_mode": "native", "native_step": STEP,
+                              "attempt_id": ATTEMPT, "head": HEAD, "contract_revision": POLICY,
+                              "phase": "executing", "native_outcome": None}
+                    return [{"user": {"login": "openboa", "id": 11},
+                             "body": "<!-- hydra-progress:v1 " + json.dumps(record) + " -->"}]
+            self.fail("Unexpected observation route")
+        return GitHubClient(transport=transport), calls
+
+    def test_remote_budget_preserves_prefix_and_reserves_later_repository(self):
+        for delay, seconds, requests in [(0.125, 2, 4096), (0, 45, 14)]:
+            with self.subTest(delay=delay):
+                clock = [0.0]
+                client, calls = self.budget_client(clock, delay=delay)
+                with patch("hydra_sdlc.github.GitHub", return_value=client), \
+                        patch("hydra_sdlc.github.time.monotonic", side_effect=lambda: clock[0]), \
+                        patch("hydra_sdlc.control._REMOTE_READ_SECONDS", seconds, create=True), \
+                        patch("hydra_sdlc.control._REMOTE_READ_REQUESTS", requests, create=True):
+                    status = control_result(self.cfg, refresh=True)
+                self.assertEqual(status["remote"]["state"], "unavailable")
+                self.assertEqual([[work["issue"] for work in project["work"]]
+                                  for project in status["projects"]], [[1], [1]])
+                self.assertIn(f"/repos/{REPOS[1]}", calls)
+                self.assertNotIn(f"/repos/{REPOS[0]}/issues/16/comments?per_page=100&page=1", calls)
+                self.assertIsNone(status["execution"]["active_count"])
+                self.assertFalse(status["can_quit"])
+                self.assertLess(clock[0], seconds)
+                self.assertLessEqual(len(calls), requests)
+
+    def test_normal_delayed_multi_repository_refresh_is_complete(self):
+        clock = [0.0]
+        client, calls = self.budget_client(clock, delay=0.125, first_backlog=1)
+        with patch("hydra_sdlc.github.GitHub", return_value=client), \
+                patch("hydra_sdlc.github.time.monotonic", side_effect=lambda: clock[0]):
+            status = control_result(self.cfg, refresh=True)
+        self.assertEqual(status["remote"]["state"], "fresh")
+        self.assertEqual([len(project["work"]) for project in status["projects"]], [1, 1])
+        self.assertEqual(len(calls), 10)
+
+    def test_exhausted_total_budget_still_observes_workers_and_latest_admission(self):
+        clock = [0.0]
+        client, calls = self.budget_client(clock)
+        control = control_from_config(self.cfg)
+        control.set_mode("start")
+        def workers():
+            self.assertEqual(len(calls), 2)
+            control.set_mode("pause")
+            return []
+        self.workers.side_effect = workers
+        with patch("hydra_sdlc.github.GitHub", return_value=client), \
+                patch("hydra_sdlc.control._REMOTE_READ_REQUESTS", 2, create=True):
+            status = control_result(self.cfg, refresh=True)
+        self.assertEqual(status["remote"]["state"], "unavailable")
+        self.assertEqual(status["global_mode"], "paused")
+        self.assertEqual(status["revision"], control.snapshot()["revision"])
+        self.ownership.assert_called_once()
+        self.assertIsNone(status["execution"]["active_count"])
+        self.assertFalse(status["can_quit"])
+
+    def test_per_project_bound_counts_authenticated_work_and_preserves_native_prefix(self):
+        repo = REPOS[0]
+        cfg = {**self.cfg, "repos": [repo]}
+        native = {"host_alias": "test", "execution_mode": "native", "native_step": STEP,
+                  "attempt_id": ATTEMPT, "head": HEAD, "contract_revision": POLICY,
+                  "phase": "executing", "native_outcome": None}
+        scope = hashlib.sha256(json.dumps([repo, 1, ATTEMPT, HEAD, POLICY], separators=(",", ":")).encode()).hexdigest()
+        self.ownership.return_value = {"state": "native", "nonce": STEP, "scope_digest": scope}
+        for overflow in (False, True):
+            with self.subTest(overflow=overflow):
+                records = {n: {"phase": "verification"} for n in range(1, 129 + int(overflow))}
+                records[1] = native
+                records.update({n: None for n in range(1000, 1150)})
+                github = FakeGitHub({repo: records})
+                with patch("hydra_sdlc.github.GitHub", return_value=github):
+                    status = control_result(cfg, refresh=True)
+                self.assertEqual(status["remote"]["state"], "unavailable" if overflow else "fresh")
+                self.assertEqual([row["issue"] for row in status["projects"][0]["work"]], list(range(1, 129)))
+                self.assertEqual(status["projects"][0]["execution"]["state"], "stopping")
+                self.assertEqual(status["projects"][0]["execution"]["reason"], "native_turn_control_unsupported")
+                self.assertEqual(sum(call[0] == "progress" for call in github.calls), 129 if overflow else len(records))
+                self.assertIsNone(status["execution"]["active_count"])
+                self.assertFalse(status["can_quit"])
+
+    def test_global_work_bound_preserves_partial_projects_and_checks_ordinary_tail(self):
+        repos = [f"example/project-{n}" for n in range(6)]
+        cfg = {**self.cfg, "repos": repos, "project_threads": {}}
+        for overflow in (False, True):
+            with self.subTest(overflow=overflow):
+                records = {repo: {n: {"phase": "verification"} for n in range(1, 129)} for repo in repos[:4]}
+                records[repos[4]] = {n: None for n in range(1, 151)}
+                if overflow:
+                    records[repos[4]][151] = {"phase": "verification"}
+                github = FakeGitHub(records)
+                with patch("hydra_sdlc.github.GitHub", return_value=github), \
+                        patch("hydra_sdlc.control._coverage_observation", return_value={"state": "confirmed", "reason": None}):
+                    status = control_result(cfg, refresh=True)
+                self.assertEqual(status["remote"]["state"], "unavailable" if overflow else "fresh")
+                self.assertEqual([len(project["work"]) for project in status["projects"]], [128, 128, 128, 128, 0, 0])
+                self.assertIn(("progress", repos[4], 150), github.calls)
+                self.assertIn(("issues", repos[5]), github.calls)
+                if overflow:
+                    self.assertEqual(status["projects"][4]["execution"]["reason"], "remote_observation_incomplete")
+                    self.assertEqual(status["execution"]["state"], "unknown")
+                    self.assertIsNone(status["execution"]["active_count"])
+                    self.assertFalse(status["can_quit"])
+                else:
+                    self.assertEqual(status["execution"]["active_count"], 0)
+                    self.assertTrue(status["can_quit"])
+
+    def test_malformed_issue_tail_keeps_authenticated_prefix_incomplete(self):
+        repo = REPOS[0]
+        cfg = {**self.cfg, "repos": [repo]}
+        for malformed in (None, {"number": True}, {"number": 0}, {"number": 7},
+                          {"number": 8, "pull_request": {}}):
+            with self.subTest(malformed=malformed):
+                github = FakeGitHub({repo: {7: {"phase": "verification"}}})
+                with patch.object(github, "issues", return_value=[{"number": 7}, malformed]), \
+                        patch("hydra_sdlc.github.GitHub", return_value=github), \
+                        patch("hydra_sdlc.control._coverage_observation", return_value={"state": "confirmed", "reason": None}):
+                    status = control_result(cfg, refresh=True)
+                self.assertEqual(status["remote"]["state"], "unavailable")
+                self.assertEqual([row["issue"] for row in status["projects"][0]["work"]], [7])
+                self.assertEqual(status["execution"]["reason"], "remote_observation_incomplete")
+                self.assertIsNone(status["execution"]["active_count"])
+                self.assertFalse(status["can_quit"])
+
+    def test_authenticated_record_identity_failure_preserves_known_prefix(self):
+        repo = REPOS[0]
+        cfg = {**self.cfg, "repos": [repo]}
+        def transport(method, path, payload):
+            self.assertEqual(method, "GET")
+            if path == "/user":
+                return {"login": "openboa", "id": 11}
+            if path == f"/repos/{repo}":
+                return {"id": 123, "full_name": repo, "default_branch": "main"}
+            if "/comments?" in path:
+                number = int(path.split("/")[5])
+                record = {"version": 1, "repository_id": 123, "issue_number": 7,
+                          "phase": "verification", "head": HEAD}
+                self.assertIn(number, (7, 8))
+                return [{"user": {"login": "openboa", "id": 11},
+                         "body": "<!-- hydra-progress:v1 " + json.dumps(record) + " -->"}]
+            self.fail("Unexpected observation route")
+        client = GitHubClient(transport=transport)
+        with patch.object(client, "issues", return_value=[{"number": 7}, {"number": 8}]), \
+                patch("hydra_sdlc.github.GitHub", return_value=client), \
+                patch("hydra_sdlc.control._coverage_observation", return_value={"state": "confirmed", "reason": None}):
+            status = control_result(cfg, refresh=True)
+        self.assertEqual(status["remote"]["state"], "unavailable")
+        self.assertEqual([row["issue"] for row in status["projects"][0]["work"]], [7])
+        self.assertEqual(status["execution"]["reason"], "remote_observation_incomplete")
+        self.assertIsNone(status["execution"]["active_count"])
+        self.assertFalse(status["can_quit"])
 
     def test_remote_refresh_reports_admission_changes_during_the_last_remote_read(self):
         control = control_from_config(self.cfg)
