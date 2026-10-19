@@ -401,3 +401,55 @@ It excluded the separate v1 design and typed admission candidates.
 
 The 941-test mixed-checkout run above remains separate evidence; it is not
 reported as this isolated candidate's full-suite result.
+
+## Native retirement control barrier — 2026-10-19
+
+Review of `169a1067ccc165f3716451f49ee2a1307da58492` identified a control race:
+Pause could apply after the public progress record removed a native step but before
+its separate ticket-confirmation effect. The committed recovery checkpoint and
+matching ticket remained recoverable through explicit stopped reconciliation,
+but ordinary continuation could not proceed.
+
+The correction keeps each existing retirement write, readback and exact ticket
+confirmation within one bounded shared admission guard. It covers writable
+checkpoints, ordinary review consumption and stale verification-review retirement.
+The process-local consumed marker is added only after confirmation. Subsequent
+execution, verification and assignment selection remain outside that barrier;
+uncertain writes or readback still preserve the exact stopped recovery boundary.
+
+For mac-control A2–A4 and native-codex R4–R6, the regression cases use real
+OperatingControl locks with an independent thread making a nonblocking Pause
+request during clean-record readback. They require contention at all three
+retirement paths, confirmed ticket release, and a successful Pause after the
+guard exits. Separate cases cover Pause before retirement admission, lost write
+acknowledgement and mismatched readback, including unchanged stopped cleanup.
+These replace a same-owner synchronous Pause injection that cannot represent an
+external control mutation while the shared guard is held.
+
+The isolated candidate preserves current main `fb981631bd6d9de1501db437c2199e1c2437f385`
+and its independently delivered CI run isolation. The new integration cases against
+the original native source reproduced six assertion failures with no loader/import
+errors. With the correction, all 36 operation-integration tests passed. Native,
+native-wait identity and checkpoint-continuation regressions added 63 passes with
+no skips, for 99 relevant passes.
+
+The first combined full run collected 906 tests and failed four newly merged T13
+assertions that still expected the old generic post-merge polling reason. The
+maintained operating-continuity R5 instead requires terminal failure diagnosis and
+unknown-evidence reconciliation. Only those T13 expectations were corrected:
+cancelled/failed A requires `post_merge_failed`; untrusted A or foreign B requires
+`post_merge_evidence_unknown`. Exact A queries, distinct run/suite/check identities,
+no model/delivery effects, and eventual trusted A success with one closure remain
+required. Independent contract review confirmed the correction against R5/A3.
+All 27 squash-completion tests then passed without skips.
+
+Final exact isolated Python 3.12.7 run: 906 collected, 881 passed, 25 skipped,
+no failures/errors; 260.802 seconds, exit 0. Skips were 18 Linux process cases,
+five optional pinned Codex SDK shape cases and two filesystem filename cases;
+none is counted as PASS. The pinned MCP packages were installed at 2.3.0.
+All candidate source bytes remained unchanged during the final run. Independent
+code and security review found no remaining material findings in the guarded
+source and its integration tests. The only subsequent change records this evidence.
+
+Final-head hosted CI and protected delivery remain separate evidence. No installed
+runtime or native-turn-control qualification is claimed.

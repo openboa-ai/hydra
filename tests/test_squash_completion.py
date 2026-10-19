@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from hydra_sdlc.github import GitHub, GitHubError
-from hydra_sdlc.project import (ProjectError, _bound_runs, gate_completed_delivery, gate_squash_result,
+from hydra_sdlc.project import (ProjectError, _bound_runs, gate_checks, gate_completed_delivery, gate_squash_result,
                                 squash_message, squash_message_matches)
 from hydra_sdlc.runner import Runner
 from test_github import REPO, REPOSITORY, IDENTITY, owned_pr
@@ -506,6 +506,119 @@ class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.step())['action'], 'completed')
         self.assertEqual(self.github.note['checkpoint'], 'squash_' + MERGE)
         self.assertEqual(len([x for x in self.github.writes if x[0] == 'close']), 1)
+
+
+    def adjacent_main_observation(self, observe, sha, *, run_id, run_number, suite_id, check_id):
+        value = observe(REPO, sha)
+        run, check = value['runs'][0], value['checks'][0]
+        run.update(id=run_id, run_number=run_number, run_attempt=1, check_suite_id=suite_id)
+        run['jobs'][0].update(id=check_id,
+            check_run_url=f'https://api.github.com/repos/{REPO}/check-runs/{check_id}')
+        check.update(id=check_id, check_suite={'id': suite_id})
+        return value
+
+    async def assert_adjacent_main_success_preserves_merge_duty(self, state):
+        """P14-T13: a newer success on B cannot close the merged work for A."""
+        await self.merged_with_empty_association()
+        original = self.github.observe_commit
+        earlier_a = self.adjacent_main_observation(original, MERGE, run_id=150,
+            run_number=10, suite_id=180, check_id=190)
+        later_b = self.adjacent_main_observation(original, LATER, run_id=151,
+            run_number=11, suite_id=181, check_id=191)
+        self.assertNotEqual(MERGE, LATER)
+        self.assertEqual(gate_checks(self.github.cfg, earlier_a, MERGE, events=['push']), [])
+        self.assertEqual(gate_checks(self.github.cfg, later_b, LATER, events=['push']), [])
+        if state == 'unknown':
+            earlier_a['checks'][0]['app']['id'] = 999
+        else:
+            earlier_a['runs'][0]['conclusion'] = state
+            earlier_a['runs'][0]['jobs'][0]['conclusion'] = state
+            earlier_a['checks'][0]['conclusion'] = state
+        observed_a = copy.deepcopy(earlier_a)
+        # Distinct IDs keep malformed/duplicate evidence from masking SHA isolation.
+        observed_a['runs'].extend(copy.deepcopy(later_b['runs']))
+        observed_a['checks'].extend(copy.deepcopy(later_b['checks']))
+        self.assertTrue(gate_checks(self.github.cfg, observed_a, MERGE, events=['push']))
+        queried = []
+
+        def post_merge(repo, sha):
+            queried.append((repo, sha))
+            self.assertEqual((repo, sha), (REPO, MERGE))
+            return copy.deepcopy(observed_a)
+
+        self.github.observe_commit = post_merge
+        calls, writes = len(self.calls), len(self.github.writes)
+        attempt = self.github.note['attempt_id']
+        # Operating-continuity R5: terminal failures diagnose; wrong identity is unknown.
+        expected_reason, expected_next = {
+            'cancelled': ('post_merge_failed', 'diagnose_post_merge'),
+            'failure': ('post_merge_failed', 'diagnose_post_merge'),
+            'unknown': ('post_merge_evidence_unknown', 'reconcile_post_merge_evidence'),
+        }[state]
+        for _ in range(2):
+            self.assertEqual((await self.step())['reason'], expected_reason)
+            self.assertEqual(self.github.note['next_action'], expected_next)
+            self.assertEqual(self.github.work['state'], 'open')
+            self.assertEqual(len(self.calls), calls)
+            self.assertEqual(self.github.note['attempt_id'], attempt)
+            self.assertEqual([x for x in self.github.writes[writes:] if x[0] != 'record'], [])
+        self.assertEqual(queried, [(REPO, MERGE)] * 2)
+
+        newest_a = self.adjacent_main_observation(original, MERGE, run_id=152,
+            run_number=12, suite_id=182, check_id=192)
+        self.assertEqual(gate_checks(self.github.cfg, newest_a, MERGE, events=['push']), [])
+        newest_a['runs'].extend(copy.deepcopy(observed_a['runs']))
+        newest_a['checks'].extend(copy.deepcopy(observed_a['checks']))
+        observed_a = copy.deepcopy(newest_a)
+        observed_a['checks'][0]['app']['id'] = 999
+        self.assertEqual((await self.step())['reason'], 'post_merge_evidence_unknown')
+        self.assertEqual(self.github.note['next_action'], 'reconcile_post_merge_evidence')
+        self.assertEqual(self.github.work['state'], 'open')
+        self.assertEqual(len(self.calls), calls)
+        self.assertEqual([x for x in self.github.writes[writes:] if x[0] != 'record'], [])
+
+        observed_a = newest_a
+        self.assertEqual(gate_checks(self.github.cfg, observed_a, MERGE, events=['push']), [])
+        self.assertEqual((await self.step())['action'], 'completed')
+        self.assertEqual(queried, [(REPO, MERGE)] * 5)
+        self.assertEqual((await self.step())['action'], 'completed')
+        self.assertEqual(queried, [(REPO, MERGE)] * 7)
+        self.assertEqual(self.github.work['state'], 'closed')
+        self.assertEqual(len(self.calls), calls)
+        self.assertEqual([x for x in self.github.writes[writes:] if x[0] != 'record'], [('close', 4)])
+        self.assertEqual(self.github.note['checkpoint'], 'squash_' + MERGE)
+
+    async def test_adjacent_main_success_cannot_replace_cancelled_merge_checks(self):
+        await self.assert_adjacent_main_success_preserves_merge_duty('cancelled')
+
+    async def test_adjacent_main_success_cannot_replace_failed_merge_checks(self):
+        await self.assert_adjacent_main_success_preserves_merge_duty('failure')
+
+    async def test_adjacent_main_success_cannot_replace_unknown_merge_checks(self):
+        await self.assert_adjacent_main_success_preserves_merge_duty('unknown')
+
+    async def test_adjacent_main_payload_cannot_impersonate_requested_merge_sha(self):
+        await self.merged_with_empty_association()
+        later_b = self.adjacent_main_observation(self.github.observe_commit, LATER,
+            run_id=151, run_number=11, suite_id=181, check_id=191)
+        self.assertEqual(gate_checks(self.github.cfg, later_b, LATER, events=['push']), [])
+        self.assertTrue(gate_checks(self.github.cfg, later_b, MERGE, events=['push']))
+        queried = []
+
+        def foreign_payload(repo, sha):
+            queried.append((repo, sha))
+            return copy.deepcopy(later_b)
+
+        self.github.observe_commit = foreign_payload
+        calls, writes = len(self.calls), len(self.github.writes)
+        for _ in range(2):
+            self.assertEqual((await self.step())['reason'], 'post_merge_evidence_unknown')
+            self.assertEqual(self.github.note['next_action'], 'reconcile_post_merge_evidence')
+            self.assertEqual(self.github.work['state'], 'open')
+            self.assertEqual(len(self.calls), calls)
+            self.assertEqual([x for x in self.github.writes[writes:] if x[0] != 'record'], [])
+        self.assertEqual(queried, [(REPO, MERGE)] * 2)
+
 
 
 if __name__ == '__main__':

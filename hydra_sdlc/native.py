@@ -77,13 +77,14 @@ class NativeRunner(Runner):
                 and self.review_steps.get(step) != evidence_key):
             # A restarted service has lost the run examined by this reviewer.
             # Retire its finished judgment and dispatch a new review of the fresh run.
-            self.consumed.add(step)
             clean = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
-            self._record(repo, number, clean, pending_action=None, wait_reason=None)
-            observed = self.github.progress(repo, number)
-            if observed.get("native_step") or observed.get("head") != record["head"]:
-                raise RuntimeError("Stale verification review retirement is unconfirmed")
-            self._effect(repo, confirm_native_assignment, step)
+            with self._guard(repo):
+                self._record(repo, number, clean, pending_action=None, wait_reason=None)
+                observed = self.github.progress(repo, number)
+                if observed.get("native_step") or observed.get("head") != record["head"]:
+                    raise RuntimeError("Stale verification review retirement is unconfirmed")
+                self._effect(repo, confirm_native_assignment, step)
+                self.consumed.add(step)
             self.summaries.pop(step, None)
             self.review_steps.pop(step, None)
             record, step = clean, None
@@ -93,19 +94,20 @@ class NativeRunner(Runner):
             if not record.get("native_outcome"):
                 return None, {"action": "waiting", "reason": "native_assignment_pending", "step_id": step}
             outcome = record["native_outcome"]
-            self.consumed.add(step)
             clean = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
-            self._record(repo, number, clean, pending_action=None,
-                         wait_reason="product_decision" if outcome == "needs_decision" else None,
-                         **({"next_action": "operator_decision"} if outcome == "needs_decision" else {}))
-            result = self._candidate_result(repo, number, config, clean, path, phase,
-                {"detail": {"result": {"outcome": outcome, "summary": self.summaries.pop(step, "")}}},
-                correction=correction, spec_record=spec_record)
-            observed = self.github.progress(repo, number)
-            if (observed.get("native_step") or observed.get("attempt_id") != record["attempt_id"]
-                    or observed.get("head") != record["head"]):
-                raise RuntimeError("Native review retirement is unconfirmed")
-            self._effect(repo, confirm_native_assignment, step)
+            with self._guard(repo):
+                self._record(repo, number, clean, pending_action=None,
+                             wait_reason="product_decision" if outcome == "needs_decision" else None,
+                             **({"next_action": "operator_decision"} if outcome == "needs_decision" else {}))
+                result = self._candidate_result(repo, number, config, clean, path, phase,
+                    {"detail": {"result": {"outcome": outcome, "summary": self.summaries.pop(step, "")}}},
+                    correction=correction, spec_record=spec_record)
+                observed = self.github.progress(repo, number)
+                if (observed.get("native_step") or observed.get("attempt_id") != record["attempt_id"]
+                        or observed.get("head") != record["head"]):
+                    raise RuntimeError("Native review retirement is unconfirmed")
+                self._effect(repo, confirm_native_assignment, step)
+                self.consumed.add(step)
             self.review_steps.pop(step, None)
             if phase == "change_review":
                 self.pending_verifications.pop(evidence_key, None)
@@ -351,14 +353,17 @@ class NativeController:
                 observed = self.runner.github.progress(repo, n)
                 if any(observed.get(k) != v for k, v in recovery.items()):
                     raise RuntimeError("Native recovery checkpoint is unconfirmed")
-                self.runner.consumed.add(step_id)
                 fresh = recovery
                 clean = {k: v for k, v in fresh.items() if k not in NATIVE_FIELDS}
-                self.runner._record(repo, n, clean)
-                observed = self.runner.github.progress(repo, n)
-                if observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items()):
-                    raise RuntimeError("Native retirement is unconfirmed")
-                self.runner._effect(repo, confirm_native_assignment, step_id)
+                # Keep public retirement and its exact ticket release in one
+                # bounded admission barrier. Later callbacks admit separately.
+                with self.runner._guard(repo):
+                    self.runner._record(repo, n, clean)
+                    observed = self.runner.github.progress(repo, n)
+                    if observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items()):
+                        raise RuntimeError("Native retirement is unconfirmed")
+                    self.runner._effect(repo, confirm_native_assignment, step_id)
+                    self.runner.consumed.add(step_id)
                 if spec_wait:
                     return self._continuation(repo, n, record, spec_wait)
                 if outcome == "needs_decision":
