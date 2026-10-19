@@ -62,8 +62,9 @@ available while another process owns the lock. Existing CLI refuses native-owned
 work; native calls refuse unresolved SDK execution. Never infer shutdown from time.
 This is trusted-host coordination, not credential isolation or distributed locking.
 
-R6. A needs_decision result checkpoints write edits and records the originating
-phase before Codex asks the user. An authorized exact-attempt Issue resolution
+R6. When an active assignment must wait on a human decision, a needs_decision result
+checkpoints write edits and records the originating phase before Codex asks the user.
+Preparatory and independent nonblocking questions do not create an attempt or checkpoint. An authorized exact-attempt Issue resolution
 continues that phase with a new attempt/step; a chat answer is not CODEOWNER approval.
 Paused, cancelled, changed intake/policy/head and foreign-host work reject old
 results. No tool self-certifies that an unknown external native process is stopped;
@@ -83,9 +84,27 @@ Preserve unrelated work, use storage-wrapped checks and retain unknown/busy reso
 Register Ouroboros and Coffee Chat with their existing CI/ownership rules and a
 bounded initial documentation/verification-foundation scope. Product planning is
 pending. Resolve actual external merge effects before enabling automatic delivery.
-Activate one 30-minute native heartbeat only after real delivery and restart evidence;
-quiet on unchanged state. Native availability and existing credits may be used;
+Use an explicitly requested native Goal for supported idle continuation. Preserve
+its budget and active mode constraints; never create a Goal from a generic task request.
+Use a delegated native schedule only for future/external waits after real qualification,
+with a specific target and stopping condition rather than a universal 30-minute interval.
+Keep unchanged waits quiet and retire schedules whose responsibility ends.
+Native availability and existing credits may be used;
 never purchase credits, auto-recharge or switch to API billing.
+
+## Codex interaction amendment — 2026-10-19
+
+The approved remote interaction improvement uses Codex as the required remote
+human surface. Native questions support requirements, user-held facts, preferences,
+meaningful choices with free-text elaboration, and corrections. Preserve answers'
+meaning when updating accepted requirements and checks; clarify only unresolved
+ambiguity. Resolved/expired prompts or automatic defaults are not human answers.
+Native Plan is optional for complex choices and does not replace repository specs.
+MCP elicitation serves tool-specific missing input, not a second questionnaire.
+The app remains an auxiliary view/control surface. New commands still require
+their scoped reviewed contract, source qualification and effect guard; the existing
+five tools cannot stand in for a narrower requested effect. This amendment does not
+claim installation, remote control, native answer-reader or interrupt acceptance.
 
 ## Requirement-linked acceptance
 
