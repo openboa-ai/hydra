@@ -256,3 +256,48 @@ requirements remain a conservative compatibility restriction.
 Actual product delivery, another-host resumption, host lifecycle integration and
 login-service activation remain unobserved. Fixtures, local tests and successful
 installation do not establish those outcomes.
+
+
+## Main CI execution preservation — independent candidate
+
+2026-10-19. This candidate is based on main commit
+`b59616b3e6210661aa62b30496efc6bed97c6826` and implements the scoped execution-preservation
+correction in [the existing specification](spec.md#review-correction-preserve-each-main-ci-execution).
+The historical evidence above retains its original scope and revision. The local
+results below belong to this main-based candidate; no earlier test totals transfer.
+
+Only the two workflow concurrency fields, their standard-library contract/fixture
+tests, the existing squash-completion regression tests and these existing documents
+change. Runtime delivery, admission, transport and loopback guards are unchanged.
+The independent candidate retains the current main runner's `post_merge_checks`
+classification and does not require another runtime implementation.
+
+| Evidence | Oracle | Status |
+| --- | --- | --- |
+| P14-T12 RED | The same main-group test reads the original workflow in a separate fixture root; three distinct merge SHAs collide in one group. | Expected assertion failure `1 != 3`, one failure and no errors |
+| P14-T12 GREEN | Seven tests read the new expression contract and model PR/run/workflow-name partitions, with three independent main runs and preserved same-PR cancellation. | 7 passed, no skips |
+| P14-T13 | Four new cases in `SquashRunnerTests`: A cancelled/failed/untrusted + B success, and a complete foreign-SHA response. Every observation targets A; restart keeps A open without new model or delivery effects. | 4 passed within the 27-test squash-completion module |
+| Trusted recovery | A/B observations pass separately before the negative mutation. Newer untrusted A still holds; newer trusted A permits exactly one close, including a second completed reconciliation. Original A/B evidence remains present. | Passed in the T13 cases |
+| Existing regression and lint | Entire squash-completion module plus the seven concurrency tests; CI-pinned actionlint with an explicit empty trusted config and the CI's disabled shellcheck/pyflakes options. | 34 passed, no skips/errors/failures; actionlint 1.7.12 exit 0 |
+| Independent code/security review | Review this exact main-based candidate, its tests and specification. | NOT RUN |
+| Remote CI, protected merge and main | Read actual final-head reviews/checks and the actual merge SHA's results. | NOT RUN |
+| O05 consecutive pushes | Observe each real SHA/run/workflow/producer outcome within the authorized scope. Fixture or lint success is not this operational evidence. | NOT RUN |
+| UI | No screen or user-interaction change. | N/A |
+
+The event fixture recognizes two reviewed policies; it does not execute GitHub
+Actions. The A/B tests execute the current real Runner and completion gates against
+provider fixtures. Their results qualify only the behavior and revision actually
+run. Preserve the remaining real-delivery and consecutive-push observation duties.
+
+The checks used an immutable archive of the exact base plus these five explicit
+files, under Python 3.12.7. Candidate files were byte-identical before and after
+execution. The archive has no `test_ci_whitespace.py`; that discovery returned zero
+cases and is not passing regression evidence. Git whitespace validation belongs to
+the actual candidate diff. Only this verification record changed after these tests.
+
+Executed focused commands in the designated isolated environment:
+
+```sh
+python -m unittest discover -s tests -p test_ci_concurrency.py -v
+python -m unittest discover -s tests -p test_squash_completion.py -v
+```

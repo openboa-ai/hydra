@@ -857,3 +857,33 @@ present foreign/malformed app metadata, and missing/foreign/non-Bot authors.
 The API/authentication basis is GitHub's public documentation for
 [review comments](https://docs.github.com/en/rest/pulls/comments) and
 [Bot accounts and token identity](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/differences-between-github-apps-and-oauth-apps#token-based-identification).
+
+
+### Review correction: preserve each main CI execution
+
+The actual merge-SHA push checks required above must remain observable when main
+advances. In Repository CI, group pull-request runs by workflow name and PR number
+and cancel obsolete candidates in that group. Give each push run its own workflow
+name and run-ID group, with cancellation disabled. Disabling cancellation on one
+shared main group is insufficient because pending runs can still replace each other.
+Use separate PR/run prefixes so equal numeric identifiers cannot collide.
+
+This corrects CI execution preservation within the existing exact-merge completion
+contract. It changes no required-check binding, producer, event trigger, job,
+permission, protected approval or runtime completion classification. The existing
+runner keeps its current `post_merge_checks` wait for unavailable or unsuccessful
+exact-merge evidence. Do not import a different runtime or diagnostic transition to
+make this configuration correction independent.
+
+Acceptance P14-T12 reads the real workflow expressions and separately models same-PR
+replacement eligibility, different PR/workflow-name isolation and three independent
+main run groups. The explicit fixture is not an Actions expression engine or scheduler.
+P14-T13 uses the current Runner: A cancelled/failed/untrusted evidence plus newer B
+success must keep A open across restarts with no extra model or delivery effect. A
+newer trusted success for A alone permits one closure; restarting cannot close twice.
+Use independently valid A/B controls and distinct run/job/check/suite identities.
+
+Verify the exact candidate through normal code/security review, CI, protected merge
+and checks on its actual merge SHA. Actual consecutive-push preservation (O05) still
+requires observing each SHA/run/workflow/producer result in an authorized run; local
+models, lint and a single PR's green checks do not satisfy that observation.
