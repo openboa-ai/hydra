@@ -683,3 +683,34 @@ that run does not qualify this later correction.
 P13 Rev4/VF Rev11 and native/full-v1 exclusions are unchanged. Final-head CI and
 actual artifacts, independent code/security review, the existing scoped CODEOWNER
 approval, protected merge and main checks remain required.
+
+
+## Interruption survives selector return and fork bootstrap -- 2026-10-21
+
+Review found that a termination arriving as execute_selector returned, before
+shutdown was marked, became a generic invalid_input failure. The fresh-exec path
+also attempted to write JSON through the packet channel already closed by the
+selector. A related signal in an after-fork callback was ignored by Python, then
+cleared when the child installed its handler, allowing an interrupted run to pass.
+
+Fork and fresh-exec selector boundaries now return a conventional cancellation
+status on KeyboardInterrupt. The inherited child handler preserves a terminal
+signal before child setup instead of raising an ignored callback exception. This
+uses only the immediate live fork relation, never persisted PID/native authority.
+The supervisor retains ownership of public classification and publication.
+
+Two regression methods reproduce six assertion failures on unchanged 2c2687c:
+SIGTERM and SIGINT at selector return in fork/fresh-exec, and both signals during
+fork bootstrap. The identical assertions now require public interrupted/nonzero,
+no later control effect and no reusable PASS artifact. Nine focused methods pass
+with zero failures/errors/skips on Python 3.14.2 in 14.957 seconds, including
+normal three-second shutdown, private atexit output, caught termination, preflight
+and validation interruption, and publication before/after its commit point.
+
+P13 Rev4/VF Rev11, the original 600-second deadline, reviewed-test boundary and
+native/full-v1 exclusions are unchanged. No full local kernel was repeated.
+All four jobs on the prior head passed in
+[run 39513810054](https://github.com/openboa-ai/hydra/actions/runs/39513810054);
+that result does not qualify this later correction. Final-head CI/artifacts,
+independent code/security review, the existing scoped CODEOWNER approval,
+protected merge and main checks remain required.

@@ -443,13 +443,15 @@ def install_termination_handler(publication=None):
     global _TERMINATION_REQUESTED, _SELECTOR_SHUTDOWN_STARTED
     _TERMINATION_REQUESTED = False
     _SELECTOR_SHUTDOWN_STARTED = False
-    exit_child = os._exit
+    exit_child, getpid = os._exit, os.getpid
+    handler_pid = getpid()
     def interrupted(signum, *_):
         global _TERMINATION_REQUESTED
         _TERMINATION_REQUESTED = True
-        if publication is None and _SELECTOR_SHUTDOWN_STARTED:
-            # Python ignores exceptions from atexit. Preserve a terminal signal
-            # as a nonzero child status, which the pristine supervisor checks.
+        if publication is None and (_SELECTOR_SHUTDOWN_STARTED or getpid() != handler_pid):
+            # Python ignores exceptions from atexit and after-fork callbacks.
+            # Preserve termination even before the forked child installs its
+            # own handler. This pid is a live fork relation, not native authority.
             exit_child(128 + signum)
         if publication is None or publication["result"] is None:
             raise KeyboardInterrupt()
@@ -752,6 +754,8 @@ def _fork_selector_main(root, selector, write_fd, compiled):
             sys.meta_path.insert(0, _CompiledFinder(compiled))
         _emit_selector(root, selector, result_fd)
         return 0
+    except KeyboardInterrupt:
+        return 128 + signal.SIGINT
     except BaseException:
         return 2
 
@@ -800,6 +804,7 @@ def _worker_main():
     result_fd = quiet()
     install_termination_handler()
     sys.dont_write_bytecode = True
+    selector = None
     try:
         request = decode_json(sys.stdin.buffer.read(_WORKER_INPUT_LIMIT + 1), limit=_WORKER_INPUT_LIMIT)
         require(type(request) is dict and set(request) == {"root", "pins", "selector"})
@@ -816,6 +821,10 @@ def _worker_main():
     except _SelectorExit as ended:
         return ended.code
     except KeyboardInterrupt:
+        if selector is not None:
+            # _emit_selector closes its packet channel on every exit. Return a
+            # cancellation status instead of writing JSON through that closed fd.
+            return 128 + signal.SIGINT
         report = {"worker_interrupted": True}
     except BaseException:
         os.close(result_fd)

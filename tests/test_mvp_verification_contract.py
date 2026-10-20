@@ -421,6 +421,44 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_signal_at_selector_return_keeps_interruption_classification(self):
+        for fresh_exec in (False, True):
+            for signum in ('SIGTERM', 'SIGINT'):
+                with self.subTest(fresh_exec=fresh_exec, signal=signum):
+                    fixture = self.fixture(extra='import signal', body=
+                        "with Path('effect').open('a') as f: f.write('once')\n"
+                        "def cancel_return(frame,event,value):\n"
+                        " if event == 'return' and frame.f_code.co_name == 'execute_selector':\n"
+                        "  sys.setprofile(None)\n"
+                        "  os.kill(os.getpid(),signal." + signum + ")\n"
+                        "sys.setprofile(cancel_return)")
+                    if fresh_exec:
+                        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() +
+                                      '\ndef _fork_available(): return False\n')
+                    self.add_control(fixture)
+                    result = fixture.run()
+                    self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'interrupted'})
+                    self.assertFalse((fixture.root / 'control_effect').exists())
+                    self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
+    @unittest.skipUnless(sys.platform in {'darwin', 'linux'} and hasattr(os, 'register_at_fork'),
+                         'Requires the supported selector fork profile')
+    def test_signal_during_fork_bootstrap_cannot_be_cleared(self):
+        for signum in ('SIGTERM', 'SIGINT'):
+            with self.subTest(signal=signum):
+                fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+                fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() +
+                    '\nos.register_at_fork(after_in_child=lambda:os.kill(os.getpid(),signal.' + signum + '))\n')
+                self.add_control(fixture)
+                result = fixture.run()
+                self.assertEqual(result.returncode, 2, 'An inherited termination was cleared during child setup')
+                self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'interrupted'})
+                self.assertFalse((fixture.root / 'effect').exists())
+                self.assertFalse((fixture.root / 'control_effect').exists())
+                self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
     def test_normal_shutdown_uses_remaining_worker_deadline(self):
         for fresh_exec in (False, True):
             with self.subTest(fresh_exec=fresh_exec):
