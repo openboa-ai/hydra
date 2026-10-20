@@ -108,3 +108,16 @@ Git HEAD/index·별도 skill 변경은 실행 전후 불변이다. 이 문단은
 기존 source bytes의 독립 검토를 재사용하며 현재 PR의 exact-head hosted code/security review와
 전체 CI는 별도 전달 조건이다. 이 실행은 local SDK/stdio 통합이며 설치 후보의 실제 원격
 Codex read, caller 인증, 질문/답변·Pause/Resume·재시작 수용을 완료 처리하지 않는다.
+
+
+## Actual installed native read — 2026-10-20
+
+검토·merge·네 main CI를 통과한 `822d86c3197a5b6278d3496f4b5cf69ed41c8d67`의
+비편집 설치본을 실제 native Codex 연결에서 읽었다. `hydra_status`의 package code 지문과
+현재 설정/control binding 지문이 독립 설치 관측과 일치했다. 원본 경로·host 값·native ID는
+공개 기록에 포함하지 않는다.
+
+관측된 protocol은 `2025-06-18`, request channel은 available, form elicitation은 declared,
+SDK InputRequired는 present다. client InputRequired와 caller task binding은 unverified다.
+P01의 최소 실제 설치 read를 검증한 것이며 새 command 권한·답변 origin/귀속·native 실행 종료·
+질문→Pause→답변→재시작→명시적 Resume 전체 흐름의 성공 증거로 확장하지 않는다.

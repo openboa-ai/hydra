@@ -37,12 +37,81 @@ def controller_from_file(path):
     return controller
 
 
-def create_server(controller):
+def create_server(controller, *, command_config_path=None, command_context_provider=None,
+                  command_ended_provider=None, subscriptions=None):
+    """Create the SDK server; command providers are trusted internal dependencies.
+
+    No installed native grant/termination adapter is supplied by this module.
+    The versioned endpoint is inactive by default, regardless of request metadata.
+    """
     from mcp.server import MCPServer
+    from mcp.server.mcpserver.tools import Tool
+    from mcp.server.mcpserver.exceptions import ToolError
+    from mcp.types import CallToolResult, CallToolRequestParams, TextContent
+    from pydantic import WithJsonSchema
+    from typing import Annotated, Any
+    from .control_commands import (AdmissionCallContext, InvalidAdmissionCommand, bounded_command, command_input_schema,
+                                   execute_command_v1, parse_command_v1)
     from .native_context import load_sdk_profile, probe_context
-    server = MCPServer("Hydra", log_level="WARNING")
     runtime = dict(getattr(controller, "runtime_identity", None) or capture_runtime_identity())
     profile = load_sdk_profile()
+
+    async def command_result(command, ctx=None):
+        # Both providers receive the actual SDK Context, never model-supplied
+        # context/authority fields. The core re-reads the provider at each gate.
+        def grant():
+            value = command_context_provider(ctx) if ctx is not None and command_context_provider else None
+            # MCP is the native surface; a bridge grant cannot cross into it.
+            return value if type(value) is AdmissionCallContext and value.surface == 'native' else None
+        ended = (lambda: command_ended_provider(ctx)) if ctx is not None and command_ended_provider else None
+        try:
+            return await execute_command_v1(command_config_path, command,
+                context_provider=grant, github=getattr(getattr(controller, 'runner', None), 'github', None),
+                controller=controller, ended_provider=ended, unavailable_runtime=runtime)
+        except InvalidAdmissionCommand:
+            raise ToolError('invalid_command') from None
+        except Exception:
+            # The command cores preserve unknown effects in their typed replies.
+            # An unexpected boundary failure must not disclose provider text.
+            raise ToolError('command_unavailable') from None
+
+    if profile.supported:
+        async def hydra_command_v1(command, ctx=None) -> dict:
+            """Apply a guarded project admission or checkpoint-only command. No default write grant."""
+            return await command_result(command, ctx)
+        hydra_command_v1.__annotations__['ctx'] = profile.context_type
+    else:
+        async def hydra_command_v1(command) -> dict:
+            """Apply a guarded command; unsupported caller context leaves writes inactive."""
+            return await command_result(command)
+    hydra_command_v1.__annotations__['command'] = Annotated[Any, WithJsonSchema(command_input_schema())]
+    command_tool = Tool.from_function(hydra_command_v1)
+    command_tool.parameters['additionalProperties'] = False
+    server = MCPServer("Hydra", log_level="WARNING", tools=[command_tool], subscriptions=subscriptions)
+
+    async def command_boundary(ctx, call_next):
+        params = ctx.params
+        if (ctx.method != 'tools/call' or type(params) is not dict
+                or params.get('name') != 'hydra_command_v1'):
+            return await call_next(ctx)
+        try:
+            bounded_command(params)
+            if (not {'name', 'arguments'} <= set(params) or not set(params) <= {'name', 'arguments', '_meta'}
+                    or type(params['arguments']) is not dict or set(params['arguments']) != {'command'}):
+                raise InvalidAdmissionCommand()
+            parse_command_v1(params['arguments']['command'])
+            # Validate protocol fields here, before SDK errors can echo values.
+            CallToolRequestParams.model_validate(params)
+        except Exception:
+            return CallToolResult(content=[TextContent(type='text', text='invalid_command')], is_error=True)
+        try:
+            return await call_next(ctx)
+        except Exception:
+            return CallToolResult(content=[TextContent(type='text', text='command_unavailable')], is_error=True)
+
+    # Public SDK middleware API. Put this before SDK request-state processing,
+    # while leaving every legacy tool and other protocol method unchanged.
+    server.middleware.insert(0, command_boundary)
 
     def status_result(ctx=None):
         result = {"projects": controller.status(), "runtime": dict(runtime)}
@@ -102,7 +171,12 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     # Protocol output belongs exclusively to the official SDK.
-    create_server(controller_from_file(args.config)).run(transport="stdio")
+    from mcp.server.subscriptions import InMemorySubscriptionBus
+    from .mcp_stdio import run_stdio
+    subscriptions = InMemorySubscriptionBus()
+    server = create_server(controller_from_file(args.config), command_config_path=args.config,
+                           subscriptions=subscriptions)
+    run_stdio(server, subscriptions)
 
 
 if __name__ == "__main__":

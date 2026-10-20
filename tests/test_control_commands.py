@@ -78,6 +78,54 @@ class RepositoryReader:
 
 
 class AdmissionCommandTests(unittest.TestCase):
+    def test_dispatcher_accepts_maximum_unicode_and_escaped_checkpoint_summary(self):
+        from hydra_sdlc.control_commands import parse_command_v1
+        command = self.command()
+        assignment = {'attempt_id': EPOCH, 'step_id': REQUEST, 'head': 'a' * 40,
+                      'contract_revision': 'b' * 40, 'spec_revision': None}
+        command.update(action='workflow_step', target={'repository_id': 101, 'issue_number': 4},
+            effect_key=f'checkpoint:{EPOCH}:{REQUEST}')
+        command['expected']['assignment'] = assignment
+        for character in ('a', '한', '😀', '\x00'):
+            command['parameters'] = {'operation': 'checkpoint_only', 'outcome': 'candidate_ready',
+                                     'summary': character * 24000}
+            with self.subTest(character=repr(character)):
+                self.assertEqual(parse_command_v1(command), command)
+            command['parameters']['summary'] += character
+            with self.assertRaises(InvalidAdmissionCommand):
+                parse_command_v1(command)
+
+
+    def test_dispatcher_bounds_non_json_recursive_and_large_input_before_authority(self):
+        from hydra_sdlc.control_commands import execute_command_v1, MAX_COMMAND_BYTES
+        from unittest.mock import Mock
+        cycle = []; cycle.append(cycle)
+        invalid = [cycle, b'private', {'private': float('nan')}, {'private': 2 ** 100},
+                   {'private': '\ud800'}, {'private': 'x' * (MAX_COMMAND_BYTES + 1)}, {'private': [0] * 2049}]
+        provider = Mock(side_effect=AssertionError('input precedes authority'))
+        for command in invalid:
+            with self.subTest(kind=type(command).__name__), self.assertRaises(InvalidAdmissionCommand):
+                asyncio.run(execute_command_v1(self.config_path, command, context_provider=provider,
+                    github=self.github, controller=None))
+        provider.assert_not_called()
+
+
+    def test_dispatcher_preserves_valid_unsupported_binding_and_cancellation(self):
+        from hydra_sdlc.control_commands import execute_command_v1
+        command = self.command(); command['command_schema'] = 2
+        reply = asyncio.run(execute_command_v1(self.config_path, command,
+            context_provider=lambda: self.context, github=self.github, controller=None))
+        self.assertEqual(reply['binding_epoch'], EPOCH)
+        self.assertEqual(reply['request']['reason'], 'unsupported_operation')
+        before = self.payload()
+        def cancelled():
+            raise asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(execute_command_v1(self.config_path, self.command(),
+                context_provider=cancelled, github=self.github, controller=None))
+        self.assertEqual(self.payload(), before)
+
+
     def test_future_body_containers_are_opaque_before_repository_lookup(self):
         for version, action, expected, parameters in (
                 (2, 'admission_set', None, None),

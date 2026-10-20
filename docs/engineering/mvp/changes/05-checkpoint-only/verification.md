@@ -162,3 +162,41 @@ checkpoint-only 실제 수집은 44개이며 기존 정상 design 완료, future
 격리 source bytes와 기존 checkout·HEAD·index·별도 skill 변경을 보존했다. 이 문단만 검증 뒤
 추가했다. 새 head의 hosted CI·code/security review와 protected merge/main 확인은 별도 조건이다.
 실제 원격 질문/답변·Pause/Resume 및 설치 native 권한 수용을 완료로 세지 않는다.
+
+
+## Bounded MCP command transport — 2026-10-20
+
+P05 revision 2 / CP revision 7 / EX revision 7의 후속 MCP 통합이다. 첫 내부 core의
+protected main `9ade2282c7ebe031db2e5ee9808f194b765529dd`와 네 main CI 성공을 시작 기준으로 사용한다.
+현재 parser·intake 재검증·terminal unsupported 분류와 P03 실행/정책 감독은 유지한다.
+
+- `hydra_command_v1`을 여섯 번째 도구로 등록하고 기존 admission/checkpoint-only core로
+  연결한다. 모델 입력에서 Context·권한·종료 proof를 만들지 않는다. 기본 native grant와
+  종료 증거 adapter는 제공하지 않는다. 기존 다섯 도구의 schema·호출 의미는 유지한다.
+- 전용 POSIX stdio entry는 raw UTF-8/JSON 중복 key·depth·크기를 손실 변환 전에 검사한다.
+  decoded command는 192 KiB, RPC overhead는 16 KiB로 제한하며 wire 한도는 JSON escape의
+  여섯 배와 CRLF를 포함한다. 거절 입력은 고정된 오류 경로로 보내고 유효 후속 frame은 처리한다.
+- SDK의 JSON-RPC·Context·middleware·request-state·subscription 처리를 재사용한다.
+  새 protocol 구현이나 private SDK API를 추가하지 않는다. stdin 소유와 stdout 전환을
+  명시적으로 관리하며 획득/복원 실패에 무보호 fallback을 하지 않는다.
+- 준비한 source를 재사용했고 테스트의 import 경로만 현재 저장소 root로 고정했다.
+  별도 source-base 환경변수나 private overlay를 이용하는 테스트 경로는 포함하지 않는다.
+
+검증은 Python 3.12.7 / mcp 2.3.0 / mcp-types 2.3.0의 격리된 정확한 후보에서 수행했다.
+**158 PASS, failure/error/skip 0**, 55.830초, exit 0이다.
+실제 SDK/stdio 10개, command 왕복 14개, raw stdio 12개, command core 45개,
+checkpoint-only 44개, admission CAS 13개, native capability 10개, runtime identity 10개다.
+원본 source 준비 단계에서는 legacy stdio의 duplicate-key 입력이 trusted provider 17회와
+임시 Git commit 1회를 발생시키는 RED를 확인했고, 이 통합에서는 거절 입력의 효과 0을 검증했다.
+
+최대 Unicode/escape 입력이 실제 임시 CAS·Git에 도달하고 exact receipt를 반환한다.
+legacy/modern 초기화·schema/result·discovery/cursor·유효 EOF/분할 frame·descriptor failure,
+실제 async cancel 이후 정상 호출, subscription filter/unsubscribe 종료 barrier를 검사했다.
+SDK InputRequired 왕복은 별도 synthetic fixture 증거이며 제품 command의 재진입은 거절한다.
+이는 실제 Codex client의 InputRequired 지원이나 실행 종료 proof가 아니다.
+
+실행 전후 후보 source bytes와 기존 checkout·HEAD·index·별도 skill 변경은 유지했다.
+검증 뒤 테스트 파일 EOF의 빈 줄 하나만 정리했고 AST가 동일함을 확인했다. Production source는 같다.
+전체 후보 검사는
+hosted CI에서 수행하고 exact-head code/security review, protected merge와 main 확인을 구분한다.
+새 실제 native 권한·질문/답변 적용·원격 Pause/Resume·두 프로젝트 운영을 완료로 세지 않는다.
