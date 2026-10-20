@@ -1,0 +1,16 @@
+{
+  "input": {
+    "protocol": "2026-07-28",
+    "channel": false,
+    "capabilities": "form"
+  },
+  "expected": {
+    "schema_version": 1,
+    "protocol_version": "2026-07-28",
+    "request_channel": "unavailable",
+    "form_elicitation": "declared",
+    "input_required_sdk": "present",
+    "input_required_client": "unverified",
+    "caller_task_binding": "unverified"
+  }
+}
