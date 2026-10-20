@@ -26,6 +26,7 @@ import re
 import secrets
 import selectors
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -105,8 +106,13 @@ def decode_json(data, *, limit=_INPUT_LIMIT):
 
 
 def read_json(path, *, limit=_INPUT_LIMIT):
-    require(path.stat().st_size <= limit)
-    return decode_json(path.read_text(encoding="utf-8"), limit=limit)
+    # O_NONBLOCK makes FIFO/device rejection immediate; inspect the opened inode,
+    # not a path stat followed by a potentially different blocking open.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_size <= limit)
+        return decode_json(stream.read(limit + 1).decode("utf-8"), limit=limit)
 
 
 def section_anchors(text):
@@ -205,8 +211,18 @@ def load_manifest(root):
         require(isinstance(case["fixture"], str) and re.fullmatch(
             r"tests/fixtures/mvp/verification/[a-z0-9_-]+\.json", case["fixture"]))
         fixture = read_json(regular(root, case["fixture"]))
-        require(type(fixture) is dict and fixture.get("case_id") == case["case_id"])
-        require(all(key in fixture for key in ("preconditions", "events", "expected", "forbidden_effects", "oracle")))
+        require(type(fixture) is dict and set(fixture) == {"case_id", "kind", "scenarios",
+            "preconditions", "events", "expected", "forbidden_effects", "oracle", "scope"})
+        require(fixture["case_id"] == case["case_id"] and fixture["kind"] == "D")
+        scenarios = fixture["scenarios"]
+        require(type(scenarios) is list and 0 < len(scenarios) <= 30)
+        require(all(isinstance(item, str) and re.fullmatch(r"S(?:0[1-9]|[12][0-9]|30)", item)
+                    for item in scenarios) and len(set(scenarios)) == len(scenarios))
+        for field in ("preconditions", "events", "expected", "forbidden_effects"):
+            require(type(fixture[field]) is list and fixture[field])
+            require(all(isinstance(item, str) and item.strip() for item in fixture[field]))
+        for field in ("oracle", "scope"):
+            require(isinstance(fixture[field], str) and fixture[field].strip())
     return value
 
 
@@ -432,47 +448,61 @@ def collect(root, selector):
     return suite
 
 
-def execute(root, manifest, pins):
+def execute_selector(root, selector):
+    """One selected import/run in a fresh interpreter, with no earlier test heap."""
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "tests"))
+    result, collected, reasons = Result(), 0, []
+    try:
+        suite = collect(root, selector)
+        collected = 1
+        suite.run(result)
+    except KeyboardInterrupt:
+        reasons = ["interrupted"]
+    except (SystemExit, Exception):
+        reasons = ["collection_invalid"] if not collected else ["test_error"]
+    reasons += result.reasons
+    if _TERMINATION_REQUESTED:
+        reasons.append("interrupted")
+    if not reasons and (result.testsRun != 1 or result.completed != 1):
+        reasons = ["not_executed"]
+    return {"selector": selector, "collected": collected, "executed": result.testsRun,
+            "completed": result.completed, "subtests": result.subtests,
+            "reasons": sorted(set(reasons)) or ["passed"]}
+
+
+def execution_environment():
+    return {"python": ".".join(map(str, sys.version_info[:3])), "execution": "local_subprocess"}
+
+
+def execute(root, manifest, pins):
+    # This orchestrator never imports selected modules. Each selector gets its
+    # own interpreter and private pipe; prior class/helper/stdlib patches cannot
+    # replace later committed implementations without changing checked files.
     entries, interrupted = [], False
     run_alias = "verification-" + secrets.token_hex(16)
     for case in manifest["cases"]:
         started, outcomes = now(), []
         for selector in case["selectors"]:
             verify_snapshot(root, pins['source_revision'])
-            result, collected, reasons = Result(), 0, []
             if interrupted:
-                reasons = ["not_executed"]
+                outcome = {"selector": selector, "collected": 0, "executed": 0,
+                           "completed": 0, "subtests": 0, "reasons": ["not_executed"]}
             else:
-                try:
-                    suite = collect(root, selector)
-                    collected = 1
-                    suite.run(result)
-                except KeyboardInterrupt:
-                    interrupted = True
-                    reasons = ["interrupted"]
-                except SystemExit:
-                    reasons = ["collection_invalid"] if not collected else ["test_error"]
-                except Exception:
-                    reasons = ["collection_invalid"] if not collected else ["test_error"]
-                reasons += result.reasons
-                if _TERMINATION_REQUESTED:
-                    interrupted = True
-                    reasons.append("interrupted")
-                if not reasons and (result.testsRun != 1 or result.completed != 1):
-                    reasons = ["not_executed"]
+                selected = isolated_worker(root, pins, selector=selector)
+                require(type(selected) is dict and set(selected) == {"outcome", "environment"})
+                require(selected["environment"] == execution_environment())
+                outcome = selected["outcome"]
+                interrupted = "interrupted" in outcome["reasons"]
             verify_snapshot(root, pins['source_revision'])
-            outcomes.append({"selector": selector, "collected": collected, "executed": result.testsRun,
-                             "completed": result.completed, "subtests": result.subtests,
-                             "reasons": sorted(set(reasons)) or ["passed"]})
+            outcomes.append(outcome)
         passed = all(row["reasons"] == ["passed"] for row in outcomes)
         status = "PASS" if passed else ("NOT RUN" if all(row["executed"] == 0 for row in outcomes) else "FAIL")
         entries.append({"case_id": case["case_id"], "status": status, "kind": "D",
             "candidate_head": pins["candidate_head"], "base_sha": pins["base_sha"],
             "spec_revision": case["requirements"], "policy_revision": pins["policy_revision"],
             "fixture_revision": sha256(regular(root, case["fixture"]).read_bytes()),
-            "environment": {"python": ".".join(map(str, sys.version_info[:3])), "execution": "local_subprocess"},
+            "environment": execution_environment(),
             "command_or_runbook": {"runner": SCRIPT, "selectors": case["selectors"]},
             "started_at": started, "finished_at": now(), "observed": outcomes,
             "evidence_refs": [{"kind": "same_run", "case_id": case["case_id"], "run_alias": run_alias}],
@@ -488,11 +518,16 @@ def _worker_main():
     sys.dont_write_bytecode = True
     try:
         request = decode_json(sys.stdin.buffer.read(_INPUT_LIMIT + 1))
-        require(type(request) is dict and set(request) == {"root", "pins"})
+        require(type(request) is dict and set(request) == {"root", "pins", "selector"})
         root = Path(request["root"]).resolve()
         require(Path(__file__).resolve() == regular(root, SCRIPT))
-        manifest = load_manifest(root)
-        report = execute(root, manifest, request["pins"])
+        selector = request["selector"]
+        if selector is None:
+            manifest = load_manifest(root)
+            report = execute(root, manifest, request["pins"])
+        else:
+            require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
+            report = {"outcome": execute_selector(root, selector), "environment": execution_environment()}
     except KeyboardInterrupt:
         report = {"worker_interrupted": True}
     except BaseException:
@@ -503,7 +538,7 @@ def _worker_main():
     return 0
 
 
-def isolated_execute(root, manifest, pins):
+def isolated_worker(root, pins, *, selector=None):
     """Bounded private transport; selected imports never inherit public handles.
 
     This is output/process separation, not a sandbox for same-user code. Only the
@@ -511,14 +546,14 @@ def isolated_execute(root, manifest, pins):
     stdout descriptor is closed in the fresh child along with other inherited fds.
     """
     bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
-    request = json.dumps({"root": str(root), "pins": pins}, ensure_ascii=True).encode("ascii")
+    request = json.dumps({"root": str(root), "pins": pins, "selector": selector}, ensure_ascii=True).encode("ascii")
     require(len(request) <= _INPUT_LIMIT)
     with tempfile.TemporaryFile() as channel:
         channel.write(request)
         channel.seek(0)
         child = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(root / SCRIPT)],
             stdin=channel, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            close_fds=True, start_new_session=True)
+            close_fds=True, start_new_session=selector is None)
         try:
             data, deadline = bytearray(), time.monotonic() + 600
             with selectors.DefaultSelector() as poller:
@@ -539,16 +574,10 @@ def isolated_execute(root, manifest, pins):
             report = decode_json(data, limit=_REPORT_LIMIT)
             if report == {"worker_interrupted": True}:
                 raise KeyboardInterrupt()
-            # Validate counts and source references in the parent, never trust a
-            # status string or forward malformed/private child output.
-            validate(report, root, manifest, pins)
-            expected_environment = {"python": ".".join(map(str, sys.version_info[:3])),
-                                    "execution": "local_subprocess"}
-            require(all(row["environment"] == expected_environment for row in report["results"]))
             return report
         finally:
             try:
-                os.killpg(child.pid, signal.SIGTERM)
+                os.killpg(child.pid, signal.SIGTERM) if selector is None else child.terminate()
             except ProcessLookupError:
                 pass
             try:
@@ -556,11 +585,19 @@ def isolated_execute(root, manifest, pins):
             except subprocess.TimeoutExpired:
                 pass
             try:
-                os.killpg(child.pid, signal.SIGKILL)
+                os.killpg(child.pid, signal.SIGKILL) if selector is None else child.kill()
             except ProcessLookupError:
                 pass
             child.wait(timeout=2)
             child.stdout.close()
+
+
+def isolated_execute(root, manifest, pins):
+    # Validate in the supervisor, independently of every selected import/run.
+    report = isolated_worker(root, pins)
+    validate(report, root, manifest, pins)
+    require(all(row["environment"] == execution_environment() for row in report["results"]))
+    return report
 
 
 def validate(report, root, manifest, pins):

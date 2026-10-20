@@ -449,3 +449,43 @@ regressions pass **96 tests with zero failures/errors/skips** (43 collector and
 workflow policy, authority and native exclusions are unchanged. New final-head
 CI/reviews/artifacts, scoped human approval, protected merge and actual-main
 checks remain required. P13-R8 and full-v1 operation remain incomplete.
+
+
+## Selector isolation, independent fixture definitions and regular report inputs -- 2026-10-21
+
+Parent `9a8995f7d452c182ddb36bb40f3040148acf6869` passed all four
+[CI jobs](https://github.com/openboa-ai/hydra/actions/runs/39480409559).
+Each Python suite collected 1,230 tests (1,222 passed/eight skips), and both actual
+hosted reports passed read-only source/checked/base/digest validation. Independent
+code review then found three additional defects. This historical green does not
+qualify the corrected head.
+
+The orchestration worker no longer imports selected tests. Every selector runs in
+its own isolated interpreter with a private bounded pipe; prior class or dependency
+patches cannot replace a later committed method. Termination, interpreter identity,
+source checks, safe aggregate publication and the existing total worker budget are
+preserved. Child selectors remain in the supervised process group. This is process
+and output separation for reviewed tests, not a same-user sandbox.
+
+Versioned oracle definitions now require the exact nine fields, D classification,
+nonempty typed preconditions/events/positive/forbidden-effect oracles and scope,
+and unique S01--S30 scenario links. These definitions do not replace the actual
+assertions/effects. Report reads open without following the final link, reject
+non-regular inodes through fstat before reading, and consume bounded UTF-8 bytes.
+FIFO/directory/UTF-16/UTF-32 inputs return the safe failure protocol without replay.
+
+Three behavioral methods reproduced 19 actual assertion failures on unchanged
+parent source, with no setup errors/skips. The intermediate descriptor reader's
+encoding regression was independently reproduced and fixed before publication.
+The first 99-test correction run retained one 64x32 stress-fixture timeout; the
+method/effect/count oracles remain unchanged and its explicit fixture wait is now
+240 seconds, inside the unchanged 600-second product-worker and ten-minute CI
+budgets. That failed trial is not reported as PASS.
+
+The final correction passes 99 focused/impact tests: 46 collector methods plus
+53 project/repository-identity/CI-policy regressions, zero failures/errors/skips.
+Both 32x32 and 64x32 matrices execute every method once and validate the same
+export without repeating effects. No full local kernel suite was repeated.
+Accepted P13/VF pins, workflow policy, native exclusions and authority are unchanged.
+New final-head CI/reviews/artifacts, scoped CODEOWNER approval, protected merge
+and actual-main checks remain required. P13-R8/full-v1 operation are incomplete.

@@ -60,3 +60,11 @@ legacy bytecode and extension modules in the execution roots. Run prior local
 checks with `python3 -B -m unittest discover -s tests -v` in a clean checkout.
 The kernel CI job disables bytecode caches and has a bounded ten-minute budget;
 other required checks, permissions and trusted scanning are unchanged.
+
+
+Each selector executes in a fresh isolated interpreter, preserving ordinary
+unittest setup/teardown while excluding earlier selected methods' module patches.
+The orchestrator never imports test modules. Versioned oracle definitions require
+D kind, nonempty typed oracle/scope fields and unique S01--S30 scenario links;
+unknown fields are rejected. The read-only artifact consumer accepts only bounded
+regular UTF-8 files and rejects FIFOs, directories and final symlinks before reading.

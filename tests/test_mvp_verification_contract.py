@@ -46,7 +46,8 @@ class Fixture:
             "fixture": "tests/fixtures/mvp/verification/probe.json"}
         self.manifest = {"schema_version": 1, "scope": "selected_source_d", "excluded": EXCLUSIONS,
                          "cases": [self.case]}
-        self.json(self.case["fixture"], {"case_id": self.case["case_id"], "preconditions": ["synthetic"],
+        self.json(self.case["fixture"], {"case_id": self.case["case_id"], "kind": "D", "scenarios": ["S01"],
+             "scope": "Synthetic selected source evidence contract.", "preconditions": ["synthetic"],
              "events": ["execute"], "expected": ["actual required evidence"],
              "forbidden_effects": ["incomplete evidence accepted"], "oracle": "independent subprocess exit"})
         self.save()
@@ -404,6 +405,75 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_each_selector_uses_committed_code_after_prior_memory_patches(self):
+        for target in ("same_module", "imported_dependency"):
+            with self.subTest(target=target):
+                fixture = self.fixture(body=(
+                    "Probe.test_later = lambda self: None" if target == "same_module" else
+                    "import test_dependency\ntest_dependency.required = lambda: True") +
+                    "\nwith Path('first_effect').open('a') as stream: stream.write('once\\n')")
+                path = fixture.root / 'tests/test_probe.py'
+                path.write_text(path.read_text() +
+                    " def test_later(self):\n"
+                    "  with Path('later_effect').open('a') as stream: stream.write('original\\n')\n" +
+                    ("  self.fail('committed required failure')\n" if target == 'same_module' else
+                     "  import test_dependency\n  self.assertTrue(test_dependency.required())\n"))
+                fixture.write('tests/test_dependency.py', 'def required(): return False\n')
+                fixture.case['selectors'].append('test_probe.Probe.test_later')
+                fixture.save()
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'A prior heap patch concealed required failure')
+                outcomes = fixture.report()['results'][0]['observed']
+                self.assertEqual(outcomes[0]['reasons'], ['passed'])
+                self.assertEqual(outcomes[1]['reasons'], ['test_failure'])
+                self.assertEqual((fixture.root / 'first_effect').read_text().splitlines(), ['once'])
+                self.assertEqual((fixture.root / 'later_effect').read_text().splitlines(), ['original'])
+
+    def test_oracle_fixture_is_typed_nonempty_d_and_linked_before_execution(self):
+        valid = self.fixture(body="Path('effect').write_text('once')")
+        self.assertEqual(valid.run().returncode, 0)
+        self.assertEqual(valid.run(validate=True).returncode, 0)
+        changes = [
+            {'kind': 'O'}, {'kind': None}, {'scenarios': []}, {'scenarios': ['S99']},
+            {'scenarios': ['S01', 'S01']}, {'scenarios': [True]},
+            {'preconditions': []}, {'events': [' ']}, {'expected': []},
+            {'expected': [True]}, {'forbidden_effects': []}, {'oracle': ''},
+            {'oracle': []}, {'scope': ' '}, {'command': 'must not be interpreted'},
+            {'kind': 'O', 'scenarios': [], 'expected': [], 'forbidden_effects': [], 'oracle': ''},
+        ]
+        for changed in changes:
+            with self.subTest(changed=changed):
+                fixture = self.fixture(body="Path('forbidden_effect').write_text('executed')")
+                path = fixture.root / fixture.case['fixture']
+                fixture.json(fixture.case['fixture'], {**json.loads(path.read_text()), **changed})
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'Incomplete oracle supplied D PASS')
+                self.assertFalse((fixture.root / 'forbidden_effect').exists())
+                self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
+    def test_report_validation_rejects_non_regular_inputs_without_waiting(self):
+        fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once\\n')")
+        self.assertEqual(fixture.run(output='valid.json').returncode, 0)
+        self.assertEqual(fixture.run(validate=True, output='valid.json').returncode, 0)
+        artifacts = fixture.root / 'artifacts/mvp-verification'
+        for kind in ('fifo', 'directory', 'utf-16', 'utf-32'):
+            with self.subTest(kind=kind):
+                path = artifacts / (kind + '.json')
+                if kind == 'fifo':
+                    os.mkfifo(path)
+                elif kind == 'directory':
+                    path.mkdir()
+                else:
+                    path.write_bytes((artifacts / 'valid.json').read_text().encode(kind))
+                try:
+                    result = fixture.run(validate=True, output=path.name, timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.fail('Read-only report validation waited for a non-regular input')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'invalid_input'})
+                self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+        self.assertEqual(fixture.run(validate=True, output='valid.json').returncode, 0)
+
     @staticmethod
     def driver(hook):
         return ("import runpy,sys,json,os\nfrom pathlib import Path\n"
@@ -487,7 +557,7 @@ class VerificationProcessBoundaryTests(unittest.TestCase):
                 fixture.write('tests/test_probe.py', source)
                 fixture.save()
                 self.assertLessEqual((fixture.root / MANIFEST).stat().st_size, 262_144)
-                result = fixture.run(timeout=120)
+                result = fixture.run(timeout=240)
                 self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 report = fixture.report()
