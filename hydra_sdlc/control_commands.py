@@ -7,6 +7,7 @@ authentication. No public endpoint or default authority is provided here.
 import copy
 from dataclasses import dataclass
 import json
+import math
 import re
 import uuid
 from pathlib import Path
@@ -21,6 +22,9 @@ _COMMAND_KEYS = {'command_schema', 'request_id', 'binding_epoch', 'action', 'tar
 _EXPECTED_KEYS = {'runtime_key', 'admission_revision', 'source_checks', 'assignment'}
 _ACTIONS = {'admission_set', 'work_create', 'workflow_step', 'native_control', 'cleanup', 'open_record'}
 _IDENTITY_KEYS = ('version', 'code_digest', 'config_digest', 'control_binding_digest')
+# A valid 24,000-code-point summary can use 144,000 JSON bytes when escaped.
+# Leave bounded room for the exact envelope and SDK request metadata.
+MAX_COMMAND_BYTES = 192 * 1024
 _DIGEST = re.compile(r'[0-9a-f]{64}\Z')
 _STORE_REASONS = frozenset({
     'stale_revision', 'precondition_required', 'invalid_command', 'host_paused', 'host_stopped',
@@ -62,6 +66,104 @@ class CheckpointStoppedEvidence:
 class InvalidAdmissionCommand(ValueError):
     def __init__(self):
         super().__init__('invalid_command')
+
+
+def bounded_command(value):
+    """Reject non-JSON, recursive or excessive input before dependencies run.
+
+    These are server limits, never request-selected effect or authority limits.
+    The iterative walk bounds work before serialization or recursive parsing.
+    """
+    pending, count, size = [(value, 0)], 0, 0
+    while pending:
+        item, depth = pending.pop()
+        count += 1
+        if count > 2048 or depth > 12:
+            raise InvalidAdmissionCommand()
+        kind = type(item)
+        if kind is dict:
+            if len(item) > 2048:
+                raise InvalidAdmissionCommand()
+            for key, child in item.items():
+                if type(key) is not str:
+                    raise InvalidAdmissionCommand()
+                pending.extend(((key, depth + 1), (child, depth + 1)))
+        elif kind is list:
+            if len(item) > 2048:
+                raise InvalidAdmissionCommand()
+            pending.extend((child, depth + 1) for child in item)
+        elif kind is str:
+            if len(item) > MAX_COMMAND_BYTES:
+                raise InvalidAdmissionCommand()
+            try:
+                size += len(item.encode('utf-8'))
+            except UnicodeError:
+                raise InvalidAdmissionCommand() from None
+        elif kind is int:
+            if item.bit_length() > 64:
+                raise InvalidAdmissionCommand()
+        elif kind is float:
+            if not math.isfinite(item):
+                raise InvalidAdmissionCommand()
+        elif item is not None and kind is not bool:
+            raise InvalidAdmissionCommand()
+        if size > MAX_COMMAND_BYTES:
+            raise InvalidAdmissionCommand()
+    try:
+        if len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')) > MAX_COMMAND_BYTES:
+            raise InvalidAdmissionCommand()
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        raise InvalidAdmissionCommand() from None
+    return value
+
+
+def parse_command_v1(command):
+    """Validate the closed supported profiles, retaining unsupported identities."""
+    bounded_command(command)
+    return _parse(command, checkpoint=type(command) is dict and command.get('action') == 'workflow_step')
+
+
+async def execute_command_v1(config_path, command, *, context_provider, github, controller,
+                             ended_provider=None, unavailable_runtime=None):
+    """Thin transport-independent dispatch to existing guarded command cores."""
+    parsed = parse_command_v1(command)
+    if config_path is None:
+        context, reason = _context(context_provider, parsed)
+        return _reply(parsed, unavailable_runtime or capture_runtime_identity(),
+                      context.binding_epoch if context else None, 'rejected', reason or 'host_config_unavailable')
+    if parsed['action'] == 'workflow_step':
+        return await execute_checkpoint_command(config_path, command, context_provider=context_provider,
+            github=github, controller=controller, ended_provider=ended_provider)
+    return execute_admission_command(config_path, command, context_provider=context_provider, github=github)
+
+
+def command_input_schema():
+    """Closed schemas for the two implemented profiles; not capability grants."""
+    def obj(properties):
+        return {'type': 'object', 'properties': properties, 'required': list(properties),
+                'additionalProperties': False}
+    integer = {'type': 'integer', 'minimum': 0, 'maximum': MAX_REVISION}
+    positive = {**integer, 'minimum': 1}
+    uid = {'type': 'string', 'pattern': '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
+    sha = {'type': 'string', 'pattern': '^[0-9a-f]{40}$'}
+    nullable = lambda schema: {'anyOf': [schema, {'type': 'null'}]}
+    assignment = obj({'attempt_id': uid, 'step_id': uid, 'head': sha,
+                      'contract_revision': sha, 'spec_revision': nullable(sha)})
+    common = {'command_schema': {'const': 1}, 'request_id': uid, 'binding_epoch': nullable(uid)}
+    expected = {'runtime_key': nullable({'type': 'string', 'minLength': 1, 'maxLength': 1024}),
+                'admission_revision': nullable(integer), 'source_checks': {'type': 'array', 'maxItems': 0}}
+    admission = obj({**common, 'action': {'const': 'admission_set'},
+        'target': obj({'kind': {'const': 'repository'}, 'repository_id': positive}),
+        'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
+        'parameters': obj({'mode': {'enum': ['running', 'paused']}})})
+    checkpoint = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': obj({'repository_id': positive, 'issue_number': positive}),
+        'expected': obj({**expected, 'assignment': assignment}),
+        'effect_key': {'type': 'string', 'pattern': '^checkpoint:[0-9a-f-]{36}:[0-9a-f-]{36}$'},
+        'parameters': obj({'operation': {'const': 'checkpoint_only'},
+            'outcome': {'enum': ['candidate_ready', 'needs_decision', 'stopped']},
+            'summary': {'type': 'string', 'maxLength': 24000}})})
+    return {'oneOf': [admission, checkpoint]}
 
 
 def _uuid(value):

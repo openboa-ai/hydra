@@ -380,7 +380,7 @@ def ci_script(text):
 
 def assert_ci_contract(text):
     """Bounded regression tripwire, backed by actionlint and independent CI review."""
-    required = ["permissions:\n  contents: read\n", "timeout-minutes: 5", "python: ['3.11', '3.14.2']",
+    required = ["permissions:\n  contents: read\n", "timeout-minutes: 10", "PYTHONDONTWRITEBYTECODE: '1'", "python: ['3.11', '3.14.2']",
         "python3 -m pip install '.[mcp]'", "python3 -m unittest discover -s tests -v",
         "uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
         "path: artifacts/mvp-verification/result.json", "if-no-files-found: error",
@@ -422,7 +422,8 @@ class VerificationCIContractTests(unittest.TestCase):
                      text.replace("contents: read", "contents: write"),
                      text.replace('--config "$GITLEAKS_TRUSTED_CONFIG"', '--config candidate/.gitleaks.toml'),
                      text.replace("if-no-files-found: error", "if-no-files-found: ignore"),
-                     text.replace("python3 -I scripts/run_mvp_verification.py", "true #")]
+                     text.replace("python3 -I scripts/run_mvp_verification.py", "true #"),
+                     text.replace("PYTHONDONTWRITEBYTECODE: '1'", "PYTHONDONTWRITEBYTECODE: '0'")]
         for changed in mutations:
             with self.subTest(changed=changed != text):
                 self.assertTrue(changed != text, "Defect injection must alter the workflow")
@@ -447,6 +448,9 @@ class VerificationEvidenceReferenceTests(unittest.TestCase):
             ("## Acceptance\n## Acceptance\n", "acceptance-1", True),
             ("Acceptance\n==========\n", "acceptance", True),
             ("## **Acceptance**\n", "acceptance", True),
+            ("## foo_bar_baz\n", "foobarbaz", False),
+            ("## _ Acceptance _\n", "acceptance", False),
+            ("## _Acceptance_\n", "acceptance", True),
             ("## `Acceptance` ###\n", "acceptance", True),
         ]
         for document, section, valid in cases:
@@ -485,6 +489,133 @@ class VerificationEvidenceReferenceTests(unittest.TestCase):
         self.assertEqual(expected, ["S25"])
         fixture = json.loads((ROOT / "tests/fixtures/mvp/verification/repository_identity.json").read_text())
         self.assertEqual(fixture["scenarios"], expected)
+
+
+class VerificationRuntimeBoundaryTests(unittest.TestCase):
+    fixture = VerificationCollectorTests.fixture
+
+    def test_selected_source_is_read_only_while_effect_workspace_stays_writable(self):
+        fixture = self.fixture(body="source = Path(__file__)\n"
+            "original = source.read_bytes()\n"
+            "with self.assertRaises(PermissionError):\n source.write_bytes(original)\n"
+            "Path('effect').write_text('snapshot-used')")
+        original = (fixture.root / "tests/test_probe.py").read_bytes()
+        fixture.freeze()
+        # Packaging output is not part of the frozen import root.
+        fixture.write('build/lib/unrelated.py', "raise RuntimeError('untracked build output must not run')\n")
+        self.assertEqual(fixture.run(freeze=False).returncode, 0)
+        self.assertEqual((fixture.root / "effect").read_text(), "snapshot-used")
+        self.assertEqual((fixture.root / "tests/test_probe.py").read_bytes(), original)
+
+    def test_late_background_source_write_cannot_export_pass(self):
+        import time
+        body = ("import time\noriginal_read = Path.read_bytes\n"
+            "def observed_read(path):\n"
+            " data = original_read(path)\n"
+            " if path == Path.cwd() / 'zz_binding_tail.txt':\n"
+            "  Path('race_go').write_text('go')\n"
+            "  deadline = time.monotonic() + 6\n"
+            "  while not Path('race_done').exists():\n"
+            "   if time.monotonic() >= deadline: raise RuntimeError('writer timeout')\n"
+            "   time.sleep(.01)\n"
+            " return data\nPath.read_bytes = observed_read")
+        writer_code = ("from pathlib import Path\nimport sys,time\n"
+            "root=Path(sys.argv[1]); deadline=time.monotonic()+10\n"
+            "while not (root/'race_go').exists():\n"
+            " if time.monotonic()>=deadline: raise SystemExit(2)\n"
+            " time.sleep(.01)\n"
+            "if sys.argv[2]=='mutate': (root/'docs/contract.md').write_text('# Rewritten\\n')\n"
+            "(root/'race_done').write_text('done')\n")
+        for mutate in (False, True):
+            with self.subTest(mutate=mutate):
+                fixture = self.fixture(body=body)
+                fixture.write("zz_binding_tail.txt", "late tracked input\n")
+                fixture.git("add", "zz_binding_tail.txt")
+                fixture.freeze()
+                child = subprocess.Popen([sys.executable, '-I', '-c', writer_code,
+                    str(fixture.root), 'mutate' if mutate else 'observe'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                try:
+                    result = fixture.run(freeze=False)
+                    self.assertEqual(child.wait(timeout=12), 0)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait(timeout=3)
+                self.assertEqual(result.returncode == 0, not mutate)
+                self.assertEqual((fixture.root / 'race_done').read_text(), 'done')
+                if mutate:
+                    self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
+    def test_sigterm_during_preflight_and_read_only_validation_is_structured(self):
+        import signal
+        import time
+        for validate in (False, True):
+            with self.subTest(validate=validate):
+                fixture = self.fixture()
+                if validate:
+                    self.assertEqual(fixture.run().returncode, 0)
+                with tempfile.TemporaryDirectory() as temp:
+                    tools = Path(temp)
+                    ready = tools / 'ready'
+                    helper = tools / 'git'
+                    helper.write_text('#!' + sys.executable + '\nimport pathlib,time\n'
+                        + 'pathlib.Path(' + repr(str(ready)) + ').write_text("ready")\n'
+                        + 'time.sleep(30)\n')
+                    helper.chmod(0o700)
+                    environment = {**fixture.env, 'PATH': str(tools) + os.pathsep + fixture.env['PATH']}
+                    child = subprocess.Popen([sys.executable, '-I', SCRIPT,
+                        '--validate-report' if validate else '--output',
+                        'artifacts/mvp-verification/report.json', '--checked-sha', fixture.head],
+                        cwd=fixture.root, env=environment, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, start_new_session=True)
+                    try:
+                        deadline = time.monotonic() + 8
+                        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                            time.sleep(.01)
+                        self.assertTrue(ready.exists(), 'collector never entered preflight')
+                        child.send_signal(signal.SIGTERM)
+                        output, errors = child.communicate(timeout=5)
+                        self.assertEqual(child.returncode, 2)
+                        self.assertEqual(json.loads(output), {'status': 'FAIL', 'reason': 'interrupted'})
+                        self.assertEqual(errors, b'')
+                    finally:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        child.wait(timeout=3)
+
+    def test_untracked_bytecode_and_extension_shadow_rejected_before_effects(self):
+        import importlib.machinery
+        import py_compile
+        for kind in ('bytecode', 'extension'):
+            with self.subTest(kind=kind):
+                body = ('from hydra_sdlc import rogue\nself.assertTrue(rogue.loaded)' if kind == 'bytecode'
+                    else "import importlib.util, importlib.machinery\n"
+                    "self.assertIsInstance(importlib.util.find_spec('hydra_sdlc.project').loader, "
+                    "importlib.machinery.ExtensionFileLoader)\nPath('effect').write_text('forbidden')")
+                fixture = self.fixture(body=body)
+                fixture.write('hydra_sdlc/__init__.py', '')
+                fixture.write('hydra_sdlc/project.py', 'verified_source = True\n')
+                fixture.freeze()
+                if kind == 'bytecode':
+                    with tempfile.TemporaryDirectory() as temp:
+                        module = Path(temp) / 'source.py'
+                        module.write_text("from pathlib import Path\nPath('effect').write_text('forbidden')\nloaded=True\n")
+                        py_compile.compile(str(module), cfile=str(fixture.root / 'hydra_sdlc/rogue.pyc'), doraise=True)
+                else:
+                    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+                    (fixture.root / ('hydra_sdlc/project' + suffix)).write_bytes(b'synthetic extension placeholder')
+                self.assertNotEqual(fixture.run(freeze=False).returncode, 0)
+                self.assertFalse((fixture.root / 'effect').exists())
+
+    def test_kernel_budget_covers_documented_suite_plus_evidence_overhead(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        kernel = workflow.split('  kernel:\n', 1)[1].split('  mac-app:\n', 1)[0]
+        minutes = int(re.search(r'^    timeout-minutes: (\d+)$', kernel, re.MULTILINE)[1])
+        self.assertGreater(minutes * 60, 284.417 + 60)
+        self.assertLessEqual(minutes, 10)
 
 
 if __name__ == "__main__":

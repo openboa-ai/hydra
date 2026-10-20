@@ -226,3 +226,50 @@ Accepted P13/VF specifications, existing CI controls and native authority are
 unchanged. Final-head CI, independent reviews, scoped human workflow approval,
 protected merge and exact-main checks remain required. P13-R8 and live L/O remain
 outside this stage's completion.
+
+
+## Frozen-input, cancellation and CI-budget correction -- 2026-10-20
+
+Further PR #16 review identified insufficient kernel budget, a live-file post-scan
+race, missing early SIGTERM handling and untracked compiled-module shadowing.
+The collector now materializes pinned Git objects as a read-only import root.
+Selected tests retain their registered effects working directory; imports do not
+use live source or generated packaging outputs. Git replacement refs are disabled,
+snapshot paths/links are contained, and owned snapshot directories are released.
+This is a source-input boundary, not a sandbox for hostile Python or a certificate
+of live worktree cleanliness. The original source checks also finish with a Git
+consistency check; no claim of an atomic transaction across live writers is made.
+
+Preflight covers CPython source, bytecode and extension suffixes in the execution
+roots. A real sourceless module and extension-loader precedence cases reject
+before effects. Bytecode writes are disabled before collection and in the kernel
+CI environment. The CLI still uses isolated Python. The kernel job budget is ten
+minutes, with other jobs, required checks, permissions and trusted hygiene intact.
+The budget is based on the documented 284.417-second full-suite observation plus
+setup/evidence overhead; no prior successful CI is relabelled as a timeout.
+
+SIGTERM handling now starts immediately after output suppression for both execute
+and read-only validation paths. Actual cancellation during blocked Git preflight
+returns the fixed interrupted result and exit 2 with owned children released.
+
+Behavioral evidence: six original assertions reproduced immutable-input, early
+cancellation, binary-shadow and budget defects. The first background-writer test
+had an untracked barrier file and was not counted. After tracking that fixture
+input, one actual owned background-writer assertion reproduced PASS after a
+previously scanned source was changed; its unchanged-writer control passed.
+Independent literal-heading tests also reproduced two false anchors from plain
+underscores; true underscore emphasis remains a normal-progress control.
+
+The 31-test collector run passed all 29 behavior tests; its two CI tripwires still
+expected the former timeout literal. Updating those assertions for the intentional
+bounded budget/cache policy, and adding the normal packaging-output control,
+passed the focused three-test CI/compatibility run. Production source was unchanged
+between those runs. The earlier adjacent 53 project/identity/whitespace results are
+separate impact evidence; full final-candidate checks belong to hosted CI.
+
+This integrates the first-stage files onto verified protected main
+`d1ac65a98f93f8a2e2ade423aaf621287c96df42`, whose four actual-main checks passed.
+The P05 MCP source and P01 installed-read record are preserved. Accepted P13/VF
+specification bytes are unchanged. Final-head independent reviews, CI, scoped
+human workflow approval, protected merge and exact-main checks remain required.
+P13-R8, live model/native operation and the full remote v1 sequence remain incomplete.

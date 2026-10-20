@@ -51,3 +51,12 @@ authority and must not receive production credentials.
 not mean all v1 requirements passed, a live L evaluation ran, native operation was
 qualified, `verify_only` was enabled, or GitHub authenticated the result. The
 collector's own contract tests are run by the unchanged full kernel suite.
+
+
+Execution inputs are copied from the pinned Git objects into a read-only snapshot;
+the registered working directory remains the effects workspace. This is not a
+sandbox or a live-cleanliness attestation. Preflight rejects untracked source,
+legacy bytecode and extension modules in the execution roots. Run prior local
+checks with `python3 -B -m unittest discover -s tests -v` in a clean checkout.
+The kernel CI job disables bytecode caches and has a bounded ten-minute budget;
+other required checks, permissions and trusted scanning are unchanged.

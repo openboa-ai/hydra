@@ -14,9 +14,11 @@ if __name__ == "__main__" and not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import importlib
+import importlib.machinery
 import json
 import os
 from pathlib import Path
@@ -24,6 +26,7 @@ import re
 import secrets
 import signal
 import subprocess
+import tempfile
 import unittest
 
 
@@ -62,7 +65,7 @@ def now():
 
 
 def git(root, *args):
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=15)
+    result = subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args], capture_output=True, timeout=15)
     require(result.returncode == 0)
     return result.stdout
 
@@ -142,7 +145,8 @@ def section_anchors(text):
         paragraph = []
         heading = re.sub(r"!?\[([^\[\]]*)\]\([^()]*\)", r"\1", heading)
         heading = re.sub(r"(`+)([^`]*?)\1", r"\2", heading)
-        heading = re.sub(r"(\*\*?|__?|~~)(.+?)\1", r"\2", heading)
+        heading = re.sub(r"(\*\*?|~~)(.+?)\1", r"\2", heading)
+        heading = re.sub(r"(?<!\w)(__?)(?!\s)(.+?)(?<!\s)\1(?!\w)", r"\2", heading)
         if re.search(r"[\\<>&\[\]`*~]", heading):
             continue
         slug = re.sub(r"[^\w -]", "", heading.strip().lower()).replace(" ", "-")
@@ -205,9 +209,7 @@ def binding(root, manifest, checked, base, source):
         tree[path.decode("utf-8")] = (mode, object_id)
     paths, tracked = set(tree), set(tree)
     paths.update({SCRIPT, MANIFEST, POLICY})
-    paths.update(path.relative_to(root).as_posix() for path in root.glob("*.py"))
-    for folder in ("hydra_sdlc", "tests", "scripts"):
-        paths.update(path.relative_to(root).as_posix() for path in (root / folder).rglob("*.py"))
+    paths.update(importable_paths(root))
     for case in manifest["cases"]:
         paths.add(case["fixture"])
         paths.update(ref["path"] for ref in case["requirements"])
@@ -232,10 +234,67 @@ def binding(root, manifest, checked, base, source):
         require(actual_blob == expected_blob)
         digest.update(mode.encode("ascii") + b"\0" + data)
         digest.update(b"\0")
+    # Catch ordinary background writes to an already-scanned path. Actual test
+    # imports also use a separate read-only Git snapshot, never these live files.
+    git(root, "diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--")
+    require(importable_paths(root) <= tracked)
     return {"candidate_head": head, "source_head": source or head, "base_sha": base,
             "base_reason": None if base else "not_supplied", "source_revision": "sha256:" + digest.hexdigest(),
             "manifest_revision": sha256(regular(root, MANIFEST).read_bytes()),
             "policy_revision": sha256(regular(root, POLICY).read_bytes())}
+
+
+def importable_paths(root):
+    suffixes = tuple(importlib.machinery.all_suffixes())
+    paths = {path.relative_to(root).as_posix() for path in root.iterdir()
+             if (path.is_file() or path.is_symlink()) and path.name.endswith(suffixes)}
+    # Preserve the registered source roots. Packaging outputs are not imports:
+    # execution below uses only the Git snapshot, with no live-root sys.path.
+    for name in ("hydra_sdlc", "tests", "scripts"):
+        for folder, directories, files in os.walk(root / name, followlinks=False):
+            for filename in files:
+                if filename.endswith(suffixes):
+                    paths.add((Path(folder) / filename).relative_to(root).as_posix())
+    return paths
+
+
+@contextmanager
+def source_snapshot(root, head):
+    """Materialize immutable Git objects as read-only test inputs, not a sandbox."""
+    with tempfile.TemporaryDirectory(prefix="hydra-source-") as temp:
+        snapshot, directories, links = Path(temp), set(), []
+        directories.add(snapshot)
+        try:
+            for entry in git(root, "ls-tree", "-r", "-z", head).split(b"\0"):
+                if not entry:
+                    continue
+                metadata, raw_name = entry.split(b"\t", 1)
+                mode, kind, object_id = metadata.decode("ascii").split()
+                name = Path(raw_name.decode("utf-8"))
+                require(not name.is_absolute() and not any(part in {"..", ".git"} for part in name.parts))
+                require(kind == "blob" and mode in {"100644", "100755", "120000"})
+                target = snapshot / name
+                for parent in reversed(target.parents):
+                    if parent == snapshot or snapshot in parent.parents:
+                        require(not parent.is_symlink())
+                        parent.mkdir(exist_ok=True)
+                        directories.add(parent)
+                data = git(root, "cat-file", "blob", object_id)
+                require(not target.exists() and not target.is_symlink())
+                if mode == "120000":
+                    target.symlink_to(data.decode("utf-8"))
+                    links.append(target)
+                else:
+                    target.write_bytes(data)
+                    target.chmod(0o555 if mode == "100755" else 0o444)
+            require(all(path.resolve().is_relative_to(snapshot) for path in links))
+            for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
+                directory.chmod(0o555)
+            yield snapshot
+        finally:
+            for directory in sorted(directories, key=lambda path: len(path.parts)):
+                if not directory.is_symlink():
+                    directory.chmod(0o700)
 
 
 def quiet():
@@ -443,6 +502,8 @@ def main():
     result_fd = quiet()
     reason, code = "invalid_input", 2
     try:
+        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        sys.dont_write_bytecode = True
         parser = Parser(description=__doc__)
         parser.add_argument("--manifest", default=MANIFEST, choices=[MANIFEST])
         parser.add_argument("--output")
@@ -461,8 +522,8 @@ def main():
         else:
             # Fail malformed output paths before tests; filesystem failures after execution never rerun tests.
             artifact_path(root, args.output, create=True)
-            signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-            report = execute(root, manifest, pins)
+            with source_snapshot(root, pins["candidate_head"]) as snapshot:
+                report = execute(snapshot, manifest, pins)
             require(binding(root, load_manifest(root), args.checked_sha, args.base_sha, args.source_head) == pins)
             passed = validate(report, root, manifest, pins)
             reason = "export_failed"
