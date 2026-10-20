@@ -32,6 +32,7 @@ class WorkInputTests(unittest.TestCase):
         self.assertIsNotNone(importlib.util.find_spec('hydra_sdlc.work_inputs'),
                              'P09 exact reference-input read boundary is not implemented')
         from hydra_sdlc.work_inputs import input_conditions
+        kwargs.setdefault('spec_directory', 'docs')
         return input_conditions(selected, **kwargs)
 
     def reason(self, expected, selected, **kwargs):
@@ -162,6 +163,33 @@ class WorkInputTests(unittest.TestCase):
         self.assertEqual(one.document, two.document)
         self.assertEqual(one.digest, two.digest)
         self.assertEqual(two.value, PAYLOAD)
+
+    def test_reference_interpretation_keeps_the_contracted_64k_byte_boundary(self):
+        original = document()
+        exact = original + ' ' * (65_536 - len(original.encode()))
+        self.assertEqual(self.resolve(reference(), content=exact).digest, PAYLOAD_DIGEST)
+        self.reason('reference_limit', reference(), content=exact + ' ')
+
+    def test_directly_constructed_bindings_cannot_skip_full_v2_validation(self):
+        for change in [{'source_digest': 'bad'}, {'kind': 'implementation'}, {'outcome': ''},
+                       {'spec': {'path': 'elsewhere/spec.md', 'revision': '1' * 40}},
+                       {'create_key': 'not-a-uuid'}, {'requirements': [REF, REF]}]:
+            value = reference().value
+            value.update(change)
+            with self.subTest(change=change):
+                self.reason('invalid_schema', Binding(json.dumps(value)), content=document())
+
+    def test_quoted_and_list_examples_are_not_standalone_input_conditions(self):
+        examples = ['> {"clauses": []}\n',
+                    '> ```json\n> {"clauses": []}\n> ```\n',
+                    '- {"clauses": []}\n',
+                    '- Example\n\n  ```json\n  {"clauses": []}\n  ```\n']
+        for example in examples:
+            with self.subTest(example=example):
+                self.reason('accepted_meaning_unavailable', reference(),
+                            content='## R-INPUT\n\n' + example)
+                actual = '## R-INPUT\n\n' + example + '\n```json\n' + json.dumps(PAYLOAD) + '\n```\n'
+                self.assertEqual(self.resolve(reference(), content=actual).digest, PAYLOAD_DIGEST)
 
 
 if __name__ == '__main__':

@@ -6,11 +6,11 @@ a design nor interprets prose, evaluates dependencies, persists data or dispatch
 from dataclasses import dataclass
 import hashlib
 
-from .work_records import (Binding, WorkRecordError, _BINDING_KEYS, _canonical,
-                           _input_contract, _issue_ref, _json_object, _object, _require)
+from .work_records import (WorkRecordError, _canonical, _input_contract,
+                           _json_object, _object, _require, validate_binding)
 
 
-MAX_REFERENCE_BYTES = 1_048_576
+MAX_REFERENCE_BYTES = 65_536
 
 
 @dataclass(frozen=True)
@@ -26,20 +26,16 @@ class InputConditions:
         return hashlib.sha256(self.document.encode('utf-8')).hexdigest()
 
 
-def _contract(binding):
-    _require(type(binding) is Binding and type(binding.document) is str)
-    value = _json_object(binding.document)
-    _object(value, _BINDING_KEYS)
+def _contract(binding, spec_directory):
+    value = validate_binding(binding, spec_directory=spec_directory).value
     issue = {key: value[key] for key in ('repository_id', 'issue_number')}
-    _issue_ref(issue)
-    _input_contract(value['input_contract'], issue)
     _require(value['input_contract'] is not None, 'accepted_meaning_unavailable')
     return value['input_contract'], issue
 
 
-def input_reference(binding):
+def input_reference(binding, *, spec_directory):
     """Return the explicit validated reference, or None for adopted conditions."""
-    contract, _ = _contract(binding)
+    contract, _ = _contract(binding, spec_directory)
     return contract['ref'] if contract['kind'] == 'reference' else None
 
 
@@ -76,6 +72,8 @@ def _reference_payload(content, selector):
     for i in range(start + 3, end):
         token = tokens[i]
         if token.type == 'fence':
+            if token.level != 0:
+                continue
             language = token.info.split(maxsplit=1)[:1]
             if language and language[0].lower() not in {'json', 'application/json'}:
                 if token.content.lstrip().startswith('{'):
@@ -83,7 +81,9 @@ def _reference_payload(content, selector):
                 continue
             if language or token.content.lstrip().startswith('{'):
                 candidates.append(token.content)
-        elif token.type == 'code_block' or (token.type == 'inline' and tokens[i - 1].type == 'paragraph_open'):
+        elif (token.type == 'code_block' and token.level == 0) or (
+                token.type == 'inline' and tokens[i - 1].type == 'paragraph_open'
+                and tokens[i - 1].level == 0):
             if token.content.lstrip().startswith('{'):
                 candidates.append(token.content)
     _require(bool(candidates), 'accepted_meaning_unavailable')
@@ -92,7 +92,7 @@ def _reference_payload(content, selector):
     return _json_object(candidates[0])
 
 
-def input_conditions(binding, *, content=None):
+def input_conditions(binding, *, spec_directory, content=None):
     """Resolve one fixed input payload; supplied content must be the exact read.
 
     Supported reference sections use a unique top-level CommonMark heading's
@@ -100,7 +100,7 @@ def input_conditions(binding, *, content=None):
     Unsupported/missing meaning stays unavailable; adopted prose is never inferred.
     The returned canonical payload does not establish acceptance or delegation.
     """
-    contract, issue = _contract(binding)
+    contract, issue = _contract(binding, spec_directory)
     if contract['kind'] == 'adopted':
         payload = {'clauses': contract['clauses']}
     else:

@@ -238,7 +238,7 @@ class GitHub:
 
     def repository(self, repo):
         data = self.api("GET", f"/repos/{_repo(repo)}")
-        if not isinstance(data, dict) or type(data.get("id")) is not int or data["id"] < 1 or data.get("full_name", "").lower() != repo.lower() or not data.get("default_branch"):
+        if not isinstance(data, dict) or type(data.get("id")) is not int or data["id"] < 1 or not isinstance(data.get("full_name"), str) or data["full_name"].lower() != repo.lower() or not data.get("default_branch"):
             raise GitHubError("Incomplete repository identity")
         return data
 
@@ -377,7 +377,7 @@ class GitHub:
             return select_binding(rows, selected_comment_id=selected_comment_id,
                                   selected_digest=selected_digest, **arguments)
 
-    def work_input_source(self, repo, binding):
+    def work_input_source(self, repo, binding, *, spec_directory):
         """Read explicit input conditions without granting acceptance or execution.
 
         The caller supplies an allowed source repository. A reference must match
@@ -388,9 +388,9 @@ class GitHub:
         from .work_inputs import MAX_REFERENCE_BYTES, input_conditions, input_reference
         from .work_records import WorkRecordError, _hex, _require
 
-        ref = input_reference(binding)
+        ref = input_reference(binding, spec_directory=spec_directory)
         if ref is None:
-            return input_conditions(binding)
+            return input_conditions(binding, spec_directory=spec_directory)
         try:
             with self.read_budget(seconds=15, requests=32):
                 repository = self.repository(repo)
@@ -401,17 +401,22 @@ class GitHub:
                          and type(commit.get('tree')) is dict
                          and _hex(commit['tree'].get('sha'), 40), 'unknown')
                 tree_sha = commit['tree']['sha']
+                tree = self.api('GET', root + '/trees/' + tree_sha + '?recursive=1')
+                _require(type(tree) is dict and tree.get('sha') == tree_sha
+                         and tree.get('truncated') is False and type(tree.get('tree')) is list
+                         and all(type(row) is dict and type(row.get('path')) is str
+                                 for row in tree['tree']), 'unknown')
+                # One complete view covers every valid path depth within the same
+                # request bound. Partial trees never prove absence or completeness.
+                entries = {}
+                for row in tree['tree']:
+                    _require(row['path'] not in entries, 'conflict')
+                    entries[row['path']] = row
                 parts = ref['path'].split('/')
                 for index, part in enumerate(parts):
-                    tree = self.api('GET', root + '/trees/' + tree_sha)
-                    _require(type(tree) is dict and tree.get('sha') == tree_sha
-                             and tree.get('truncated') is False and type(tree.get('tree')) is list
-                             and all(type(row) is dict and type(row.get('path')) is str
-                                     for row in tree['tree']), 'unknown')
-                    rows = [row for row in tree['tree'] if row['path'] == part]
-                    _require(bool(rows), 'accepted_meaning_unavailable')
-                    _require(len(rows) == 1, 'conflict')
-                    entry = rows[0]
+                    path = '/'.join(parts[:index + 1])
+                    _require(path in entries, 'accepted_meaning_unavailable')
+                    entry = entries[path]
                     leaf = index == len(parts) - 1
                     _require((type(entry.get('mode')) is str and entry['mode'] in {'100644', '100755'}
                               and entry.get('type') == 'blob')
@@ -437,7 +442,7 @@ class GitHub:
                 _require(len(data) == declared and hashlib.sha1(
                     b'blob ' + str(len(data)).encode('ascii') + b'\0' + data,
                     usedforsecurity=False).hexdigest() == tree_sha, 'invalid_reference')
-                return input_conditions(binding, content=content)
+                return input_conditions(binding, spec_directory=spec_directory, content=content)
         except GitHubError as exc:
             raise WorkRecordError('unknown') from exc
 

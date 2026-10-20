@@ -79,43 +79,54 @@ and reviews are not treated as final-head evidence for this correction.
 
 ## Exact reference input conditions -- 2026-10-21
 
-This follow-up to verified main `7e0b570` implements P09-R01/R05/R06 and the
-WR-D53/D55 read boundary. It keeps the accepted P09 Rev1 / WR Rev5 contracts.
-Adopted and reference inputs normalize to one immutable canonical clauses payload
-and digest. Missing input meaning does not become an empty dependency list.
+This follow-up to verified main `7e0b570` implements P09-R01/R05/R06 and
+WR-D53/D55. Accepted P09 Rev1 / WR Rev5 remain unchanged. Adopted and reference
+inputs normalize to one immutable canonical clauses payload/digest. Missing
+meaning never becomes an empty dependency list.
 
-Reference reading verifies the supplied source repository's numeric identity,
-the exact commit and every non-recursive Git tree segment, allowing only regular
-file modes at the leaf. It never uses a Contents response that may follow a
-symlink. Blob identity, size, base64 and UTF-8 must match before parsing; the
-existing nested read budget limits reads to 15 seconds / 32 requests. Documents
-are bounded to 1 MiB for this reader; larger input stays explicitly limited.
+Every normalization first reuses the complete WorkBinding-v2 validator with the
+caller's explicit spec-directory scope. An unchecked Binding constructor is only
+a value, not validation evidence. Unknown/invalid source digests, kind, outcome,
+requirements, spec and other fields are rejected before any provider read.
 
-Pinned CommonMark syntax tokens select one top-level heading's exact literal
-title or leading requirement ID. Setext headings, fenced code, HTML comments and
-nested section endings are structural rather than flat text searches. Exactly
-one standalone JSON object must satisfy the same closed RequiredInput schema and
-canonical ordering as adopted inputs. Ambiguous sections/objects are invalid;
-missing or unsupported meaning is unavailable. Provider-generated heading slugs
-and prose are not guessed. Explicit adopted conditions remain available for an
-existing design in another format. No document rendering or executable extension
-is involved, and the returned value contains conditions rather than raw prose.
+Reference reading verifies numeric repository identity, exact commit and a single
+complete recursive Git tree view. Each parent prefix must be a tree, and the leaf
+must be a regular file. This covers valid deep paths without one request per
+segment, preserves the 15-second / 32-request budget and never follows Contents
+symlinks. Partial trees stay unknown; duplicate entries conflict. Blob identity,
+size, base64 and UTF-8 must match. The contracted interpretation bound is
+65,536 UTF-8 bytes, checked before blob fetch and by the parser. Oversized input
+is an incomplete/limited observation, never valid empty conditions. Malformed
+repository names remain inside the static source-error boundary.
 
-Two acceptance-interface assertions failed on unchanged main because these read
-interfaces were absent. The first implementation passed **169 new/affected
-regressions**, without skips/errors/failures. Self-review then reproduced one
-actual assertion failure for a non-string provider file mode escaping the typed
-source-error boundary. A second assertion failure reproduced an additional JSON
-object hidden in an unsupported code fence being ignored as ambiguity. The
-corrections passed the final **28 new input/read
-tests**, without skips/errors/failures; the unaffected 143 passing regressions
-are retained. Fixed digest vectors, adopted/reference equivalence, fresh reads,
-symlink/submodule rejection, edited provider shapes, duplicate/partial paths,
-resource budgets and invalid JSON/schema/content are covered. Local dependency
-installation left existing tooling and the installed service unchanged.
+Pinned CommonMark syntax tokens select one exact top-level heading's literal
+title or leading requirement ID. Only standalone section-level JSON participates;
+quoted/list examples cannot become conditions. Multiple candidate objects,
+including a second object in an unsupported top-level code fence, are ambiguous.
+The one payload must satisfy the same closed RequiredInput schema and canonical
+ordering as adopted inputs. Missing/unsupported meaning stays unavailable;
+provider-generated heading slugs and prose are not guessed. An explicitly chosen
+adopted form still reuses a design in another format. Nothing is rendered or run,
+and the output contains normalized conditions rather than raw source prose.
 
-Actual provider-file observation, final-head CI, independent code/security
-reviews, protected merge and actual-main verification remain separate evidence.
-This parser/read adapter does not grant design acceptance, delegation, project
-registration, dependency satisfaction, native assignment or dispatch. P10/P11
-and actual v1 operation remain incomplete; the reader stores no durable copy.
+Initial candidate `752a337` passed all four
+[CI jobs](https://github.com/openboa-ai/hydra/actions/runs/39470894561), each Python
+suite collecting 1,180 tests (1,172 passed, eight explicit skips). Its initial
+169-case impact run and final 28 new cases passed, and two actual fresh provider
+fixture reads returned the same payload/digest with no writes. Those are
+historical observations, not proof of the subsequent correction.
+
+Code review identified five boundary defects: the initial oversized-input limit,
+depth-dependent request exhaustion, unchecked Binding fields, malformed provider
+names and nested Markdown examples. Seven behavioral regression methods reproduced
+**15 actual assertion failures** on unchanged published `752a337`, with zero
+setup errors/skips. After the coherent correction, **178 new/affected regressions
+pass with zero failures/errors/skips**, including the exact 64-KiB boundary, a
+complete 30-segment path, forged bindings before any GET, malformed metadata and
+quoted/list controls. Legacy schema/digest/project/GitHub behavior is retained.
+
+New final-head provider observation, CI, independent code/security reviews,
+protected merge and actual-main checks remain separate. This stage grants no
+design acceptance, delegation, registration, dependency satisfaction or native
+assignment/dispatch. It changes no installed runtime or authority. P10/P11 and
+actual v1 operation remain incomplete, and no durable source copy is created.

@@ -181,6 +181,21 @@ class BindingSource:
 
 def parse_binding(body, *, spec_directory):
     value = _decode_marker(body, 'hydra-work', 'v2', 32768)
+    return _binding_value(value, spec_directory)
+
+
+def validate_binding(binding, *, spec_directory):
+    """Revalidate all fields and scope; an unchecked Binding is only a value."""
+    _require(type(binding) is Binding and type(binding.document) is str)
+    try:
+        size = len(binding.document.encode('utf-8')) + len('<!-- hydra-work:v2  -->')
+    except UnicodeError as exc:
+        raise WorkRecordError('invalid_schema') from exc
+    _require(size <= 32768, 'marker_limit')
+    return _binding_value(_json_object(binding.document), spec_directory)
+
+
+def _binding_value(value, spec_directory):
     _object(value, _BINDING_KEYS)
     issue = {key: value[key] for key in ('repository_id', 'issue_number')}
     _issue_ref(issue)
