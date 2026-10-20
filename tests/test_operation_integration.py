@@ -645,7 +645,7 @@ class OperationIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.runner().step(REPO, 4))["reason"], "product_decision")
                 self.assertEqual(self.calls, before)
 
-    async def test_spec_checkpoint_and_decision_hold_share_one_pause_barrier(self):
+    async def test_spec_checkpoint_preserves_decision_across_competing_pause(self):
         runner = self.runner()
         execute = runner.execute
         threads = []
@@ -789,6 +789,123 @@ class OperationIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_native_review_retirement_excludes_a_real_concurrent_pause(self):
         await self.assert_native_retirement_barrier("stale_review")
 
+    async def assert_retirement_policy_read_outside_admission(self, kind):
+        import hydra_sdlc.runner as runner_module
+
+        protected_read = runner_module.load_project
+        probes = []
+        def read(*args, **kwargs):
+            expected_phase = {"write": "implementation", "review": "spec_review",
+                              "stale_review": "change_review"}[kind]
+            expected_outcome = "candidate_ready" if kind == "stale_review" else "needs_decision"
+            note = self.gh.note or {}
+            if (note.get("native_phase"), note.get("native_outcome")) != (expected_phase, expected_outcome):
+                return protected_read(*args, **kwargs)
+            def probe():
+                try:
+                    # An independent owner takes the real exclusive lock. The
+                    # already-running host mode makes this a no-write probe.
+                    OperatingControl(self.lock, [REPO, OTHER]).set_mode_if_current(
+                        "resume", expected_revision=1, blocking=False)
+                    probes.append("acquired")
+                except OperationDenied as exc:
+                    probes.append(exc.reason)
+            thread = threading.Thread(target=probe)
+            thread.start()
+            thread.join(5)
+            self.assertFalse(thread.is_alive(), "Policy lock probe did not finish")
+            self.assertNotEqual(probes[-1], "operation_state_busy",
+                                "Protected policy was read inside the admission lock")
+            return protected_read(*args, **kwargs)
+
+        with patch.object(runner_module, "load_project", side_effect=read):
+            await self.assert_native_retirement_barrier(kind)
+        self.assertTrue(probes, "No current protected policy was observed")
+
+    async def test_write_retirement_reads_policy_outside_admission(self):
+        await self.assert_retirement_policy_read_outside_admission("write")
+
+    async def test_review_retirement_reads_policy_outside_admission(self):
+        await self.assert_retirement_policy_read_outside_admission("review")
+
+    async def test_stale_review_retirement_reads_policy_outside_admission(self):
+        await self.assert_retirement_policy_read_outside_admission("stale_review")
+
+    async def test_pause_after_retirement_policy_preflight_keeps_exact_owner(self):
+        controller = self.controller()
+        assignment = await self.checkpoint(controller, await controller.begin(URL))
+        self.ws.dirty = True
+        require = controller.runner._require_policy
+        pauses = []
+        def pause_after_preflight(repo):
+            require(repo)
+            note = self.gh.note or {}
+            if (not pauses and note.get("native_step") == assignment["step_id"]
+                    and note.get("checkpoint") == "interrupted_committed"):
+                pauses.append(self.control.set_mode("pause", REPO))
+        with patch.object(controller.runner, "_require_policy", side_effect=pause_after_preflight):
+            result = await self.checkpoint(controller, assignment, "needs_decision")
+        self.assertEqual(result["reason"], "project_paused")
+        self.assertEqual(len(pauses), 1)
+        self.assertEqual(self.gh.note["native_step"], assignment["step_id"])
+        self.assertIn(assignment["step_id"].encode(), self.lock.read_bytes())
+        self.assertNotIn(assignment["step_id"], controller.runner.consumed)
+        self.assertFalse(self.ws.dirty)
+        self.assertEqual((await self.checkpoint(controller, assignment, "stopped"))["reason"], "product_decision")
+        self.assertEqual(self.lock.read_bytes(), b"")
+
+    async def test_policy_change_during_retirement_cannot_admit_later_work(self):
+        controller = self.controller()
+        assignment = await self.checkpoint(controller, await controller.begin(URL))
+        self.ws.dirty = True
+        write = self.gh.record
+        changes = []
+        def change_source(repo, number, record):
+            value = write(repo, number, record)
+            if (not changes and record.get("checkpoint") == "interrupted_committed"
+                    and not record.get("native_step")):
+                changes.append(True)
+                self.gh.cfg["blob_sha"] = "f" * 40
+            return value
+        with patch.object(self.gh, "record", side_effect=change_source):
+            result = await self.checkpoint(controller, assignment, "needs_decision")
+        self.assertEqual(result["reason"], "policy_changed")
+        self.assertEqual(changes, [True])
+        self.assertIn(assignment["step_id"], controller.runner.consumed)
+        self.assertEqual(self.lock.read_bytes(), b"")
+        self.assertEqual(self.gh.note["wait_reason"], "product_decision")
+        self.assertFalse(self.ws.dirty)
+        self.assertFalse(any(item[0] in {"push", "pr", "merge", "close"} for item in self.gh.writes))
+
+    async def test_retirement_release_failure_preserves_ticket_and_unconsumed_step(self):
+        controller = self.controller()
+        assignment = await self.checkpoint(controller, await controller.begin(URL))
+        self.ws.dirty = True
+        with patch("hydra_sdlc.native.confirm_native_assignment", side_effect=RuntimeError("release unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "release unavailable"):
+                await self.checkpoint(controller, assignment, "needs_decision")
+        self.assertIn(assignment["step_id"].encode(), self.lock.read_bytes())
+        self.assertNotIn(assignment["step_id"], controller.runner.consumed)
+        preserved = copy.deepcopy(self.gh.note)
+        prepared = len(self.ws.prepared_recovery)
+        await self.checkpoint(controller, assignment, "stopped")
+        self.assertEqual(self.lock.read_bytes(), b"")
+        self.assertEqual(self.gh.note, preserved)
+        self.assertEqual(len(self.ws.prepared_recovery), prepared)
+
+    async def test_retirement_completion_values_cannot_replace_assignment_identity(self):
+        controller = self.controller()
+        assignment = await controller.begin(URL)
+        before, ticket = copy.deepcopy(self.gh.note), self.lock.read_bytes()
+        writes = len(self.gh.writes)
+        for field in ("head", "attempt_id", "contract_revision", "spec_revision", "native_step"):
+            with self.subTest(field=field), self.assertRaises(OperationDenied):
+                controller.runner._retire_assignment(REPO, 4, before, **{field: "foreign"})
+        self.assertEqual(self.gh.note, before)
+        self.assertEqual(self.lock.read_bytes(), ticket)
+        self.assertEqual(len(self.gh.writes), writes)
+        await self.checkpoint(controller, assignment, "stopped")
+
     async def test_pause_before_native_retirement_preserves_identity_and_ticket(self):
         controller = self.controller()
         assignment = await self.checkpoint(controller, await controller.begin(URL))
@@ -884,7 +1001,7 @@ class OperationIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_verification_stop_callback_is_scoped_and_prevents_publication(self):
         runner = self.runner()
         self.assertEqual((await runner.step(REPO, 4))["action"], "continue")
-        def stopped(path, commands, *, stop_requested):
+        def stopped(path, commands, *, stop_requested, before_command=None):
             self.control.set_mode("pause", REPO)
             self.assertTrue(stop_requested())
             self.assertFalse(runner._stopping(OTHER))

@@ -409,6 +409,46 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(WorkspaceWait):
                 self.workspace.verify(self.path, commands)
 
+    def test_policy_change_after_actual_command_denies_next_command_preserving_edits(self):
+        from hydra_sdlc.operations import OperationDenied
+        def preflight():
+            if (self.path / 'first-edit').exists():
+                raise OperationDenied('policy_changed')
+        commands = [{'argv': [sys.executable, '-c', "from pathlib import Path; Path('first-edit').write_text('retained')"]},
+                    {'argv': [sys.executable, '-c', "from pathlib import Path; Path('must-not-run').touch()"]}]
+        with self.assertRaises(WorkspaceWait) as error:
+            self.workspace.verify(self.path, commands, before_command=preflight)
+        self.assertEqual(error.exception.reason, 'policy_changed')
+        self.assertFalse(error.exception.uncertain)
+        self.assertEqual((self.path / 'first-edit').read_text(), 'retained')
+        self.assertFalse((self.path / 'must-not-run').exists())
+
+    def test_policy_preflight_after_storage_wrap_is_outside_admission_lock(self):
+        import fcntl
+        from types import SimpleNamespace
+        from hydra_sdlc.coordinator import operation_scope
+        from hydra_sdlc.operations import OperatingControl, OperationDenied
+        control = OperatingControl(self.root / 'host.lock', ['example/project'])
+        control.set_mode('start')
+        changed, checked = [], []
+        def wrap(path, argv, cwd):
+            changed.append(True)
+            return argv
+        def preflight():
+            with control.control_lock_path.open('rb') as fd:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            checked.append(True)
+            if changed:
+                raise OperationDenied('policy_changed')
+        self.workspace.storage_provider = SimpleNamespace(wrap_command=wrap)
+        with operation_scope(control, 'example/project'), self.assertRaises(WorkspaceWait) as error:
+            self.workspace.verify(self.path, [{'argv': [sys.executable, '-c',
+                "from pathlib import Path; Path('must-not-run').touch()"]}], before_command=preflight)
+        self.assertEqual(error.exception.reason, 'policy_changed')
+        self.assertEqual(changed, [True])
+        self.assertEqual(checked, [True])
+        self.assertFalse((self.path / 'must-not-run').exists())
+
     def test_verification_does_not_receive_publishing_tokens_and_timeout_fails(self):
         with patch.dict(os.environ, {"GH_TOKEN": "not-forwarded", "GITHUB_TOKEN": "not-forwarded"}):
             records = self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",

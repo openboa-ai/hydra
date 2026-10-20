@@ -82,6 +82,22 @@ native ticket/intent 뒤 최종 조회 실패도 exact recovery tuple을 보존�
 기존 worktree만 사용하고, admission 미설치 legacy 경로의 기존 workspace 복구 조건도 유지한다.
 새 worker·source migration·권한 확대는 이 보충에 포함하지 않는다.
 
+### 3.2 native retirement와 현재 정책 확인의 통합
+
+진행 기록의 native 필드 제거·정확한 read-back·배정 티켓 해제·consumed 표시는 하나의
+고정된 동기 retirement로 묶는다. 세 기존 경로(오래된 verification review, 정상 review,
+write checkpoint)의 admission barrier를 유지한다. 현재 보호 정책은 이 고정 연산의 guard
+직전에 잠금 밖에서 확인하며, 연산 내부에는 다른 callback·검증·workspace·새 배정을 넣지 않는다.
+record 정규화와 review 완료 필드의 순수 계산만 공유한다. 일반 효과의 정책 검사를 생략하는
+플래그나 재사용 가능한 grant를 만들지 않는다.
+
+티켓은 변경된 checkpoint head가 아니라 원 배정의 native_head·attempt·step·contract와
+현재 coordinator owner에 묶는다. 완료 필드로 이 identity를 교체할 수 없다. Pause가 preflight
+중 적용되면 guard가 retirement를 보류하고 원 ticket/진행/edits를 보존한다. admission 뒤
+원격 정책이 바뀌더라도 해당 retirement만 끝낼 수 있으며 이후 효과는 정책을 새로 확인한다.
+이것은 원격 정책과 local admission의 원자적 transaction 보장이 아니다. record ACK·read-back·
+해제 실패에서는 confirmed ticket release 이전에 consumed를 표시하지 않는다.
+
 ## 4. 구현 순서
 
 1. 기존 v1 유효/오류 fixture의 결과를 먼저 고정한다. 구버전 reader의 version=2 거절도 fixture로 보존한다.

@@ -53,9 +53,9 @@ class SnapshotWorkspace(Workspace):
             self.events.append(("checkpoint", self.head))
         return self.head
 
-    def verify(self, path, commands, *, stop_requested=lambda: False):
+    def verify(self, path, commands, *, stop_requested=lambda: False, before_command=None):
         self.events.append(("verify", self.head))
-        result = super().verify(path, commands, stop_requested=stop_requested)
+        result = super().verify(path, commands, stop_requested=stop_requested, before_command=before_command)
         effect, self.on_verify = self.on_verify, None
         if effect:
             effect()

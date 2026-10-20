@@ -156,7 +156,7 @@ class RunnerProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await runner.step("example/product", 4))["action"], "continue")
         self.calls.clear()
 
-        def verify(path, commands, *, stop_requested):
+        def verify(path, commands, *, stop_requested, before_command=None):
             self.stop = True
             self.assertTrue(stop_requested())
             raise WorkspaceWait("verification_stopped")

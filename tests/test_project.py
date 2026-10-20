@@ -121,6 +121,86 @@ class ProjectTests(unittest.TestCase):
                 with self.assertRaises(ProjectError):
                     load_project(ConfigGitHub(content), 'example/product')
 
+    def test_v2_legacy_policy_preserves_v1_values_and_intake(self):
+        legacy = load_project(ConfigGitHub(), 'example/product')
+        content = TOML.replace('version = 1', 'version = 2\nwork_source = "legacy_issue"')
+        current = load_project(ConfigGitHub(content), 'example/product')
+        self.assertEqual({k: v for k, v in current.items() if k not in {'work_source', 'planning', 'version'}},
+                         {k: v for k, v in legacy.items() if k != 'version'})
+        self.assertEqual(current['work_source'], 'legacy_issue')
+        self.assertEqual(current['planning'], {'source': 'issue'})
+        self.assertNotIn('work_source', legacy)
+        self.assertNotIn('planning', legacy)
+        issue = {'number': 4, 'state': 'open', 'title': 'Scoped work', 'user': {'login': 'operator'},
+                 'labels': ['hydra:ready'], 'body': '## Goal\nFix input.\n## Scope\nParser.\n'
+                 '## Acceptance\nRegression.\n```hydra\nspec="docs/engineering/task/spec.md"\n'
+                 'priority=7\ndependencies=["https://github.com/example/other/issues/2"]\n```'}
+        expected = {'issue_number': 4, 'spec': 'docs/engineering/task/spec.md', 'spec_revision': None,
+                    'priority': 7, 'dependencies': ['https://github.com/example/other/issues/2']}
+        self.assertEqual(parse_intake(issue, legacy), expected)
+        self.assertEqual(parse_intake(issue, current), expected)
+
+    def test_v1_closed_fields_do_not_adopt_v2_defaults(self):
+        for field in ('work_source="legacy_issue"\n', 'planning={source="issue"}\n'):
+            with self.subTest(field=field), self.assertRaises(ProjectError):
+                load_project(ConfigGitHub(field + TOML), 'example/product')
+
+    def test_v1_intake_digest_remains_exact_utf8_title_and_body(self):
+        from hydra_sdlc.runner import intake_digest
+        # Independent SHA-256 of the literal UTF-8 JSON bytes, not a value
+        # produced by the intake function under test.
+        expected = '5335ed37635c34076e7a637988fadbf33e4f5480c901544d620ed1c05408e733'
+        issue = {'title': '작업', 'body': '본문\nline', 'labels': ['hydra:ready']}
+        self.assertEqual(intake_digest(issue), expected)
+        self.assertEqual(intake_digest({**issue, 'labels': ['other']}), expected)
+        self.assertNotEqual(intake_digest({**issue, 'body': '본문\nline\n'}), expected)
+
+    def test_v2_projects_planning_reads_actual_toml_without_provider_effects(self):
+        content = TOML.replace('version = 1', 'version = 2\nwork_source = "github_native"')
+        content += '\n[planning]\nsource="github_project"\nproject_id="PVT_fixture"\n'
+        content += 'priority_field_id="' + 'x' * 200 + '"\n[planning.option_priorities]\n'
+        content += '\n'.join(f'"option-{i}"={-1000 if i % 2 else 1000}' for i in range(100))
+        github = ConfigGitHub(content)
+        planning = load_project(github, 'example/product')['planning']
+        self.assertEqual(planning['source'], 'github_project')
+        self.assertEqual(planning['priority_field_id'], 'x' * 200)
+        self.assertEqual(len(planning['option_priorities']), 100)
+        self.assertEqual(planning['option_priorities']['option-0'], 1000)
+        self.assertEqual(planning['option_priorities']['option-99'], -1000)
+        self.assertEqual(github.file_calls, [('example/product', '.hydra.toml', BASE)])
+
+    def test_v2_source_and_planning_closed_schema(self):
+        v2 = TOML.replace('version = 1', 'version = 2\nwork_source = "github_native"')
+        base = {'source': 'github_project', 'project_id': 'PVT_fixture',
+                'priority_field_id': 'PVTSSF_fixture', 'option_priorities': {'urgent': 1000, 'low': -1000}}
+        # Exercise parsed TOML values directly while retaining the actual reader,
+        # protected revision lookup, and all existing project validation.
+        from unittest.mock import patch
+        import tomllib
+        value = tomllib.loads(v2)
+        for planning in ({'source': 'issue'}, base):
+            with patch('hydra_sdlc.project.tomllib.loads', return_value={**value, 'planning': planning}):
+                self.assertEqual(load_project(ConfigGitHub(v2), 'example/product')['planning'], planning)
+        bad = [dict(value, version=True), dict(value, version=3), dict(value, work_source=None),
+               dict(value, work_source='native'), dict(value, work_source=True),
+               {k: v for k, v in value.items() if k != 'work_source'},
+               dict(value, work_source='legacy_issue', planning=base),
+               dict(value, planning={'source': 'issue', 'priority': 1}),
+               dict(value, planning={}), dict(value, planning='issue')]
+        for field in ('project_id', 'priority_field_id'):
+            for invalid in ('', 'x' * 201, 'nonascii_한', 'has\ncontrol', 'has\x7fcontrol', True):
+                bad.append(dict(value, planning={**base, field: invalid}))
+        for mapping in ({}, {'x': True}, {'x': 1.0}, {'x': 1001}, {'x': -1001},
+                        {'': 0}, {'x' * 201: 0}, {'\ud800': 0}, {str(i): 0 for i in range(101)}):
+            bad.append(dict(value, planning={**base, 'option_priorities': mapping}))
+        for planning in ({**base, 'extra': True}, {k: v for k, v in base.items() if k != 'project_id'},
+                         {**base, 'source': 'future'}):
+            bad.append(dict(value, planning=planning))
+        for index, config_value in enumerate(bad):
+            with self.subTest(case=index), patch('hydra_sdlc.project.tomllib.loads', return_value=config_value):
+                with self.assertRaises(ProjectError):
+                    load_project(ConfigGitHub(v2), 'example/product')
+
     def test_intake_actor_requires_actual_repository_write_permission(self):
         gh = ConfigGitHub()
         gh.api = lambda method, path: {'user': {'login': path.split('/')[-2]}, 'permission': 'read'}

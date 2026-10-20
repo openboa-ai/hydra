@@ -29,6 +29,19 @@ _NATIVE_EXECUTE_CHILD = getattr(subprocess.Popen._execute_child, "__code__", Non
 PUBLISHING_TOKEN_VARIABLES = frozenset({
     "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
 })
+POLICY_HOLD_REASONS = frozenset({"policy_changed", "work_source_unsupported",
+                                 "project_contract_unavailable", "project_policy_unbound"})
+
+
+def _preflight_reason(callback):
+    """Trusted parent callback only; never copy provider diagnostics to results."""
+    if callback is None:
+        return None
+    try:
+        return None if callback() is None else "project_contract_unavailable"
+    except Exception as exc:
+        reason = getattr(exc, "reason", None) if _operation_denied(exc) else None
+        return reason if reason in POLICY_HOLD_REASONS else "project_contract_unavailable"
 
 
 class ProtocolError(RuntimeError):
@@ -569,12 +582,14 @@ async def _cleanup(process):
     return True if process is None else await process.cleanup()
 
 
-def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_bytes):
+def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_bytes, before_dispatch=None):
     """Run a synchronous check using the same owned helper and receipt contract.
 
     No nested event loop or background thread is needed. The caller retains its
     storage lease and evaluates its stop callback on the original thread.
     """
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise ValueError("Invalid dispatch preflight")
     if os.name != "posix":
         raise OwnedCommandError("unavailable")
     if stop_requested is not None and stop_requested():
@@ -589,6 +604,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
     buffered = b""
     data = bytearray()
     reason = None
+    policy_hold = None
     group_gone = stdout_closed = control_closed = control_failed = False
 
     def fail(value):
@@ -685,6 +701,15 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 control.setblocking(False)
                 command = _helper_command(command, peer.fileno(), deadline)
                 options["pass_fds"] = (peer.fileno(),)
+            policy_hold = _preflight_reason(before_dispatch)
+            if policy_hold:
+                fail("stopped")
+                raise OwnedCommandError("stopped")
+            if stopped():
+                raise OwnedCommandError("stopped")
+            if time.monotonic() >= deadline:
+                fail("timeout")
+                raise TimeoutError("Command dispatch deadline expired")
             coordinator = _ownership_coordinator()
             with _operation_guard():
                 ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
@@ -701,7 +726,12 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             if linux:
                 selector.register(control, selectors.EVENT_READ, "control")
                 if time.monotonic() < deadline:
-                    initial = "terminate" if stopped() else "launch"
+                    policy_hold = _preflight_reason(before_dispatch)
+                    if policy_hold:
+                        fail("stopped")
+                    if time.monotonic() >= deadline:
+                        fail("timeout")
+                    initial = "terminate" if stopped() or reason is not None else "launch"
                     try:
                         if initial == "launch":
                             try:
@@ -817,6 +847,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             clean = False
     if not clean or reason == "cleanup_unknown":
         raise OwnedCommandError("cleanup_unknown")
+    if policy_hold:
+        raise OwnedCommandError(policy_hold)
     if reason in {"stopped", "output_limit", "unavailable"}:
         raise OwnedCommandError(reason)
     code = -signal.SIGKILL if reason == "timeout" else receipt["returncode"] if linux else process.returncode
@@ -1002,8 +1034,10 @@ def _supervisor_main(fd, deadline, command):
 
 
 async def execute_worker(assignment, on_identity, on_event, stop_requested, resume_thread_id,
-                         *, worker_source, timeout, grace, poll):
+                         *, worker_source, timeout, grace, poll, before_dispatch=None):
     """Admit one worker and keep all SDK threads inside its owned process group."""
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise ValueError("Invalid dispatch preflight")
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     process = None
@@ -1016,6 +1050,7 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
     stopped = False
     stop_at = None
     failure = None
+    policy_hold = None
 
     def audit(method, params):
         payload = {"method": method, "params": params}
@@ -1023,7 +1058,7 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         on_event(hashlib.sha256(raw.encode()).hexdigest(), payload)
 
     async def session():
-        nonlocal process, terminal, outcome, outcome_at
+        nonlocal process, terminal, outcome, outcome_at, policy_hold
         initial = _encode(_frame("assignment", 0, {
             "assignment": assignment, "resume_thread_id": resume_thread_id,
         }))
@@ -1095,10 +1130,12 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
                     operation = data.get("operation")
                     if set(data) != {"operation"} or operation not in {"thread/start", "thread/resume", "turn/start"}:
                         raise ProtocolError("Invalid dispatch operation")
-                    allow = not (stopped or stop_requested() or loop.time() >= deadline)
+                    if dispatch_barrier is not None:
+                        raise ProtocolError("Overlapping dispatch admission")
+                    if policy_hold is None and not (stopped or stop_requested() or loop.time() >= deadline):
+                        policy_hold = _preflight_reason(before_dispatch)
+                    allow = not (policy_hold or stopped or stop_requested() or loop.time() >= deadline)
                     if allow:
-                        if dispatch_barrier is not None:
-                            raise ProtocolError("Overlapping dispatch admission")
                         barrier = _operation_guard()
                         try:
                             barrier.__enter__()
@@ -1216,6 +1253,12 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         if isinstance(worker_detail, dict) and worker_detail.get("cleanup") != "unknown" and same_ids:
             if (provider_terminal or before_turn or (not grants and outcome["status"] in {"failed", "interrupted"})
                     or outcome["status"] == "transport_unknown"):
+                # This field belongs to the trusted parent, never worker prose.
+                worker_detail = dict(worker_detail)
+                worker_detail.pop("policy_denial", None)
+                if policy_hold:
+                    worker_detail["policy_denial"] = policy_hold
+                outcome = {**outcome, "detail": worker_detail}
                 worker_detail.setdefault("requested_resume_thread_id", resume_thread_id)
                 return outcome
     if outcome is not None:

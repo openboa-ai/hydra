@@ -149,6 +149,69 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('private-assignment-marker', json.dumps(self.observations()[0]['argv']))
         self.assert_pids_gone()
 
+    async def test_policy_changed_after_thread_identity_denies_turn_and_preserves_clean_identity(self):
+        from hydra_sdlc.operations import OperatingControl, OperationDenied
+        control = OperatingControl(self.root / 'host.lock', ['example/product'])
+        control.set_mode('start')
+        observed = []
+        def preflight():
+            import fcntl
+            with control.control_lock_path.open('rb') as fd:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            observed.append(bool(self.identities))
+            if self.identities:
+                raise OperationDenied('policy_changed')
+        with coordinator.operation_scope(control, 'example/product'):
+            result = await self.run_worker(before_dispatch=preflight)
+        grants = [payload['params']['operation'] for _, payload in self.events
+                  if payload['method'] == 'hydra/dispatchIntent']
+        self.assertEqual(grants, ['thread/start'])
+        self.assertEqual(result['status'], 'interrupted')
+        self.assertEqual(result['thread_id'], 'thread-1')
+        self.assertIsNone(result['turn_id'])
+        self.assertEqual(result['detail']['reason'], 'stopped_before_turn')
+        self.assertEqual(result['detail']['policy_denial'], 'policy_changed')
+        self.assertNotEqual(result['detail'].get('cleanup'), 'unknown')
+        self.assertEqual(observed, [False, True])
+        self.assert_pids_gone()
+
+    async def test_policy_denial_cannot_override_unknown_cleanup(self):
+        from hydra_sdlc.operations import OperationDenied
+        def preflight():
+            if self.identities:
+                raise OperationDenied('policy_changed')
+        cleanup = boundary._cleanup
+        async def unconfirmed(process):
+            await cleanup(process)
+            return False
+        with patch.object(boundary, '_cleanup', side_effect=unconfirmed):
+            result = await self.run_worker(before_dispatch=preflight)
+        self.assertEqual(result['status'], 'transport_unknown')
+        self.assertEqual(result['detail']['cleanup'], 'unknown')
+        self.assert_pids_gone()
+
+    async def test_resume_policy_observation_failure_denies_without_raw_error(self):
+        calls = []
+        def preflight():
+            calls.append(True)
+            raise OSError('private-policy-canary')
+        result = await self.run_worker(resume='thread-1', before_dispatch=preflight)
+        self.assertEqual(result['status'], 'interrupted')
+        self.assertEqual(self.identities, [])
+        self.assertEqual(calls, [True])
+        self.assertEqual(result['detail']['policy_denial'], 'project_contract_unavailable')
+        self.assertNotIn('private-policy-canary', str(result))
+        self.assertFalse(any(p['method'] == 'hydra/dispatchIntent' for _, p in self.events))
+        self.assert_pids_gone()
+
+    async def test_codex_execute_forwards_parent_only_dispatch_callback(self):
+        from hydra_sdlc.codex import execute
+        callback = lambda: None
+        with patch.object(boundary, 'execute_worker', new_callable=AsyncMock) as worker:
+            await execute({}, lambda **_: None, lambda *_: None, lambda: False, before_dispatch=callback)
+        self.assertIs(worker.call_args.kwargs['before_dispatch'], callback)
+        self.assertEqual(worker.call_args.args[0], {})
+
     async def test_worker_does_not_inherit_publishing_tokens(self):
         self.mode = 'environment'
         environment = {name: 'synthetic-token' for name in boundary.PUBLISHING_TOKEN_VARIABLES}

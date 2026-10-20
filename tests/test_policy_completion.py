@@ -50,6 +50,9 @@ class PolicyGitHub(GitHub):
         if self.current == 'renamed_controls':
             return {'content': TOML.replace('hydra:ready', 'work:ready').replace(
                 'hydra:paused', 'work:paused').replace('hydra:decision', 'work:decision'), 'sha': 'f' * 40}
+        if self.current == 'v2_native':
+            return {'content': TOML.replace('version = 1', 'version = 2\nwork_source = "github_native"'),
+                    'sha': 'f' * 40}
         return {'content': 'invalid = [' if self.current == 'invalid' else
                 TOML.replace('job = "Unit tests"', 'job = "New policy check"'), 'sha': 'f' * 40}
 
@@ -76,7 +79,7 @@ class PolicyCompletionTests(unittest.IsolatedAsyncioTestCase):
                       capabilities=forbidden_model, stop_requested=lambda: stop)
 
     async def test_step_finishes_with_original_checks_after_changed_invalid_or_deleted_policy(self):
-        for current in ['changed', 'invalid', 'missing']:
+        for current in ['changed', 'invalid', 'missing', 'v2_native']:
             with self.subTest(current=current):
                 github = PolicyGitHub(current)
                 result = await self.runner(github).step(REPO, 4)
@@ -87,7 +90,7 @@ class PolicyCompletionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([x for x in github.writes if x[0] != 'record'], [('close', 4)])
 
     async def test_serve_and_status_find_pending_completion_without_current_policy(self):
-        for current in ['changed', 'invalid', 'missing']:
+        for current in ['changed', 'invalid', 'missing', 'v2_native']:
             for closed in [False, True]:
                 with self.subTest(current=current, closed=closed):
                     github = PolicyGitHub(current)
@@ -102,7 +105,7 @@ class PolicyCompletionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(effects, [] if closed else [('close', 4)])
 
     async def test_old_policy_cannot_authorize_unmerged_foreign_or_wrong_head_work(self):
-        for current in ['changed', 'invalid', 'missing']:
+        for current in ['changed', 'invalid', 'missing', 'v2_native']:
             for mutation in ['unmerged', 'foreign', 'stale_head', 'foreign_progress', 'multiple']:
                 with self.subTest(current=current, mutation=mutation):
                     github = PolicyGitHub(current)

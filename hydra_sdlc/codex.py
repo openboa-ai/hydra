@@ -502,6 +502,7 @@ async def execute(
     on_event: Callable,
     stop_requested: Callable[[], bool],
     resume_thread_id: str | None = None,
+    *, before_dispatch: Callable[[], None] | None = None,
 ) -> dict:
     """Supervise the optional SDK without owning its threads in this process."""
     from .execution_boundary import execute_worker
@@ -510,6 +511,7 @@ async def execute(
         assignment, on_identity, on_event, stop_requested, resume_thread_id,
         worker_source=str(Path(__file__).resolve()), timeout=QUALIFICATION_TIMEOUT_SECONDS,
         grace=INTERRUPT_GRACE_SECONDS, poll=POLL_SECONDS,
+        before_dispatch=before_dispatch,
     )
 
 

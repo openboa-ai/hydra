@@ -12,11 +12,12 @@ from contextvars import ContextVar
 from pathlib import Path
 
 from .coordinator import operation_scope
+from .execution_boundary import POLICY_HOLD_REASONS
 from .operations import OperationDenied
 from .progress import with_progress_hint
 
 from .project import (_provider, gate_completed_delivery, gate_delivery, gate_squash_result,
-                      load_project, matches, parse_intake, squash_message,
+                      legacy_work_source, load_project, matches, parse_intake, squash_message,
                       squash_message_matches, terminal_required_checks, post_merge_check_state)
 
 
@@ -99,6 +100,7 @@ class Runner:
         self.actions = {}
         self.host_hold_reason = None
         self.operations = operations
+        self._policy_scope = ContextVar("hydra_project_policy_scope", default=None)
         self._cleanup_scope = ContextVar("hydra_cleanup_scope", default=None)
         self._ended_execution = ContextVar("hydra_ended_execution", default=None)
         # Exact completion evidence is process-local. Keep an unsettled proof
@@ -119,8 +121,36 @@ class Runner:
         return self.operations.guard(repo, cleanup=cleanup) if self.operations is not None else nullcontext()
 
     def _effect(self, repo, callback, *args, cleanup=False, **kwargs):
+        if not cleanup:
+            self._require_policy(repo)
         with self._guard(repo, cleanup=cleanup):
             return callback(*args, **kwargs)
+
+    def _policy_reason(self, repo, config):
+        if not legacy_work_source(config):
+            return "work_source_unsupported"
+        if config.get("_completion_only"):
+            # _work_config grants this only for the exact already-merged work.
+            return None
+        try:
+            fresh = load_project(self.github, repo)
+        except (ValueError, RuntimeError, OSError):
+            return "project_contract_unavailable"
+        if (fresh["blob_sha"] != config["blob_sha"] or any(fresh.get(key) != config.get(key)
+                for key in ("version", "work_source", "planning"))):
+            return "policy_changed"
+        return None if legacy_work_source(fresh) else "work_source_unsupported"
+
+    def _bind_policy(self, repo, config):
+        self._policy_scope.set((repo.casefold(), config))
+
+    def _require_policy(self, repo):
+        bound = self._policy_scope.get()
+        if bound is None or bound[0] != repo.casefold():
+            raise OperationDenied("project_policy_unbound")
+        reason = self._policy_reason(repo, bound[1])
+        if reason:
+            raise OperationDenied(reason)
 
     def _workspace_effect(self, repo, method, *args, **kwargs):
         current = self._cleanup_scope.get()
@@ -173,6 +203,9 @@ class Runner:
             return reason
         if include_stop and self.stop_requested():
             return "stop_requested"
+        policy = self._policy_reason(repo, config)
+        if policy:
+            return policy
         issue = self.github.issue(repo, number)
         if config.get("intake_digest") and intake_digest(issue) != config["intake_digest"]:
             return "intake_changed"
@@ -201,15 +234,15 @@ class Runner:
                     return "dependency_open"
         if issue.get("state") != "open":
             return "issue_closed"
-        if not config.get("_completion_only"):
-            fresh = load_project(self.github, repo)
-            if fresh["blob_sha"] != config["blob_sha"]:
-                return "policy_changed"
         return None
 
+    @staticmethod
+    def _record_values(record, **values):
+        return {k: v for k, v in {**record, **values}.items()
+                if k not in {"version", "repository_id", "issue_number"}}
+
     def _record(self, repo, number, record, **values):
-        record = {k: v for k, v in {**record, **values}.items()
-                  if k not in {"version", "repository_id", "issue_number"}}
+        record = self._record_values(record, **values)
         cleanup = self._cleanup_scope.get() == (repo, number, record.get("attempt_id"))
         writer = self.github.record
         if cleanup and self.operations is not None:
@@ -241,8 +274,14 @@ class Runner:
                 if hasattr(type(self.workspace), "completed") or "completed" in getattr(self.workspace, "__dict__", {}) else None)
 
     def _verify_candidate(self, path, config, evidence_key):
+        from .workspace import WorkspaceWait
+        try:
+            self._require_policy(evidence_key[0])
+        except OperationDenied as exc:
+            raise WorkspaceWait(exc.reason) from exc
         return self.workspace.verify(path, config["verification"],
-                                     stop_requested=lambda: self._stopping(evidence_key[0]))
+                                     stop_requested=lambda: self._stopping(evidence_key[0]),
+                                     before_command=lambda: self._require_policy(evidence_key[0]))
 
     def _resource_completion(self, repo, number, config, record, pr_number, merge_sha):
         result = {"repository": repo, "issue": number, "action": "completed", "pr": pr_number}
@@ -290,6 +329,8 @@ class Runner:
         return issues, None
 
     def _intent(self, repo, number, config, record, action, *, stopped_checkpoint=False, **values):
+        if self._policy_scope.get() is None:
+            self._bind_policy(repo, config)
         service_action = action in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}
         head = values.get("head", record.get("head"))
         attempts = (record.get("delivery_attempt", 0) + 1 if service_action and
@@ -325,7 +366,8 @@ class Runner:
         blocked = self._operation_reason(repo)
         if blocked and self._cleanup_scope.get() != (repo, number, record.get("attempt_id")):
             return {"repository": repo, "issue": number, "action": "waiting", "reason": blocked}
-        if reason in {"intake_changed", "intake_unbound"}:
+        if reason in {"intake_changed", "intake_unbound", "policy_changed",
+                      "work_source_unsupported", "project_contract_unavailable"}:
             # Preserve the complete prior decision/execution/effect checkpoint;
             # restoring text must not erase another wait or adopt a live worker.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
@@ -508,6 +550,8 @@ class Runner:
         return None, remote, pulls
 
     async def _model(self, repo, number, config, record, path, phase, task, *, correction=None, spec_record=None):
+        if self._policy_scope.get() is None:
+            self._bind_policy(repo, config)
         self._ended_execution.set(None)
         spec_record = spec_record or record
         if self.host_hold_reason:
@@ -542,6 +586,9 @@ class Runner:
                               **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
         if record is None:
             return None, self._intent_wait(repo, number)
+        # _latest also reads Issue/dependency facts after its policy read.
+        # Reobserve policy immediately before granting this executor call.
+        self._require_policy(repo)
         interrupted = False
         finished = False
 
@@ -562,6 +609,7 @@ class Runner:
                 on_identity=lambda **values: None, on_event=lambda *args: None,
                 stop_requested=lambda: self._stopping(repo) or interrupted,
                 resume_thread_id=None,
+                before_dispatch=lambda: self._require_policy(repo),
             )
         except (Exception, asyncio.CancelledError):
             result = {"status": "transport_unknown", "detail": {"cleanup": "unknown"}}
@@ -570,6 +618,9 @@ class Runner:
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
         status = result.get("status")
+        policy_hold = result.get("detail", {}).get("policy_denial")
+        if policy_hold not in POLICY_HOLD_REASONS:
+            policy_hold = None
         if result.get("detail", {}).get("cleanup") == "unknown":
             self.host_hold_reason = "host_execution_unconfirmed"
         if status != "completed" or result.get("detail", {}).get("cleanup") == "unknown":
@@ -589,10 +640,10 @@ class Runner:
                     if phase == "design" and not self._design_checkpoint_valid(repo, number, config, path, design_paths):
                         return None, self._wait(repo, number, record, "replan_required", phase="checkpoint",
                                                 next_action="diagnose_spec_artifact")
-                    if not self._operation_reason(repo) and not revised and all(matches(p, config["allowed_paths"]) for p in paths):
+                    if not policy_hold and not self._operation_reason(repo) and not revised and all(matches(p, config["allowed_paths"]) for p in paths):
                         self._publish(repo, number, config, record, path, head, checkpoint=True)
                         record = self.github.progress(repo, number)
-                    return None, self._wait(repo, number, record, "stop_requested",
+                    return None, self._wait(repo, number, record, policy_hold or "stop_requested",
                                            phase="uncertain" if record.get("pending_action") == "publish" else "checkpoint",
                                            next_action="publish")
             return None, self._wait(repo, number, record, "execution_unknown" if status == "transport_unknown" or self.host_hold_reason
@@ -611,8 +662,22 @@ class Runner:
         return self._candidate_result(repo, number, config, record, path, phase,
                                       result, correction=correction, spec_record=spec_record)
 
+    @staticmethod
+    def _review_completion(record, phase, outcome):
+        """Pure completion fields shared by CLI and native read-only reviews."""
+        if "review" not in phase or outcome not in {"candidate_ready", "failed", "needs_decision"}:
+            raise ValueError("Invalid review completion")
+        if outcome == "needs_decision":
+            return {"phase": phase + "_done", "pending_action": None,
+                    "resume_phase": record.get("resume_phase") or phase,
+                    "wait_reason": "product_decision", "next_action": "operator_decision"}
+        return {"phase": phase + "_done", "pending_action": None,
+                "resume_phase": None if record.get("resume_phase") == phase else record.get("resume_phase"),
+                "next_action": "reconcile", "wait_reason": None}
+
     def _candidate_result(self, repo, number, config, record, path, phase, result, *,
                           correction=None, spec_record=None):
+        self._require_policy(repo)
         spec_record = spec_record or record
         candidate = result.get("detail", {}).get("result")
         if isinstance(candidate, str):
@@ -622,30 +687,29 @@ class Runner:
                 candidate = None
         if not isinstance(candidate, dict) or candidate.get("outcome") not in {"candidate_ready", "failed", "needs_decision"}:
             return None, self._wait(repo, number, record, "invalid_model_result", phase="uncertain")
+        if "review" in phase:
+            self._record(repo, number, record, **self._review_completion(record, phase, candidate["outcome"]))
+            if candidate["outcome"] == "needs_decision":
+                return None, {"repository": repo, "issue": number, "action": "waiting", "reason": "product_decision"}
+            return candidate, None
         # Model prose/transcripts never flow into comments or PR bodies.
         if candidate["outcome"] == "needs_decision":
-            with self._guard(repo):
-                head = (self._workspace_effect(repo, "checkpoint", path, f"Checkpoint Issue {number} before decision")
-                        if "review" not in phase else record.get("head"))
-                if "review" not in phase:
-                    record, _, wait = self._spec_checkpoint(repo, number, config, record, path, head,
-                                                           previous=spec_record, preserve_decision=True)
-                if phase == "design":
-                    design_base = spec_record["head"] if correction and spec_record.get("spec_revision") else config["revision"]
-                    if any(name != config["_scoped_spec"]
-                           for name in self.workspace.changed_paths(path, design_base)):
-                        record = {**record, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
-                # The decision hold and finished phase are one durable write. A
-                # Pause between them must never turn an unanswered question into
-                # permission to resume implementation.
-                self._record(repo, number, record, head=head, resume_phase=record.get("resume_phase") or phase,
-                             phase=phase + "_done", pending_action=None,
-                             wait_reason="product_decision", next_action="operator_decision")
-                return None, {"repository": repo, "issue": number, "action": "waiting", "reason": "product_decision"}
-        if "review" in phase:
-            self._record(repo, number, record, phase=phase + "_done", pending_action=None,
-                         resume_phase=None if record.get("resume_phase") == phase else record.get("resume_phase"),
-                         next_action="reconcile", wait_reason=None)
+            head = (self._workspace_effect(repo, "checkpoint", path, f"Checkpoint Issue {number} before decision")
+                    if "review" not in phase else record.get("head"))
+            if "review" not in phase:
+                record, _, wait = self._spec_checkpoint(repo, number, config, record, path, head,
+                                                       previous=spec_record, preserve_decision=True)
+            if phase == "design":
+                design_base = spec_record["head"] if correction and spec_record.get("spec_revision") else config["revision"]
+                if any(name != config["_scoped_spec"]
+                       for name in self.workspace.changed_paths(path, design_base)):
+                    record = {**record, "correction_reason": "spec_scope_unknown", "correction_attempt": 3}
+            # One record binds the decision and finished phase. If its separate
+            # effect guard holds, the retained ended proof preserves the decision.
+            self._record(repo, number, record, head=head, resume_phase=record.get("resume_phase") or phase,
+                         phase=phase + "_done", pending_action=None,
+                         wait_reason="product_decision", next_action="operator_decision")
+            return None, {"repository": repo, "issue": number, "action": "waiting", "reason": "product_decision"}
         return candidate, None
 
     def _design_checkpoint_valid(self, repo, number, config, path, paths):
@@ -695,6 +759,8 @@ class Runner:
         return record, True, wait
 
     def _publish(self, repo, number, config, record, path, head, *, checkpoint=False):
+        if self._policy_scope.get() is None:
+            self._bind_policy(repo, config)
         reason = self._latest(repo, number, config, include_stop=not checkpoint)
         if reason:
             return self._wait(repo, number, record, reason,
@@ -914,6 +980,7 @@ class Runner:
                 return with_progress_hint({"repository": repo, "issue": number, "action": "waiting",
                                            "reason": "checkpoint_identity_conflict", "checkpoint_status": "pending"})
             token = self._ended_execution.set(pending[0] if pending else None)
+            policy_token = self._policy_scope.set(None)
             try:
                 if pending:
                     state, error = await self._checkpoint_ended_on_hold(repo, number, "operation_state_busy")
@@ -950,6 +1017,7 @@ class Runner:
                 if ended is not None:
                     self._pending_ended.setdefault(self._ended_key(ended), ended)
                 self._ended_execution.reset(token)
+                self._policy_scope.reset(policy_token)
 
     async def _step(self, repo, number):
         if self.host_hold_reason:
@@ -960,6 +1028,7 @@ class Runner:
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "native_owned"}
         config = self._work_config(repo, number, record)
         repo = config["repository"]
+        self._bind_policy(repo, config)
         previously_owned = record is not None
         branch = f"hydra/issue-{number}"
         if record is None:
@@ -1347,6 +1416,8 @@ class Runner:
                 if revised:
                     if wait:
                         return wait
+                    if verification_error in POLICY_HOLD_REASONS:
+                        return self._wait(repo, number, record, verification_error)
                     if self._stopping(repo) or verification_error == "verification_stopped":
                         return self._wait(repo, number, record, "stop_requested", next_action="spec_review")
                     return {"action": "continue", "repository": repo, "issue": number}
@@ -1357,6 +1428,8 @@ class Runner:
                                          if mutated else {}))
                 if self._stopping(repo) or verification_error == "verification_stopped":
                     return self._wait(repo, number, record, "stop_requested", next_action="verification")
+                if verification_error in POLICY_HOLD_REASONS:
+                    return self._wait(repo, number, record, verification_error)
             if mutated:
                 return await self._correct(repo, number, config, record, path, "verification_mutation",
                     details="Registered verification changed the owned checkout. Inspect and correct those changes and the verifier; "
