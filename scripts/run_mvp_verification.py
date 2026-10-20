@@ -321,13 +321,14 @@ def quiet():
     return result_fd
 
 
-def install_termination_handler():
+def install_termination_handler(publication=None):
     global _TERMINATION_REQUESTED
     _TERMINATION_REQUESTED = False
     def interrupted(*_):
         global _TERMINATION_REQUESTED
         _TERMINATION_REQUESTED = True
-        raise KeyboardInterrupt()
+        if publication is None or publication["result"] is None:
+            raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
 
 
@@ -572,7 +573,7 @@ def artifact_path(root, relative, *, create=False):
     return target
 
 
-def export(root, relative, report):
+def export(root, relative, report, *, publication=None, outcome=None):
     target = artifact_path(root, relative, create=True)
     # Each execution gets a new artifact. Never replace earlier evidence, even on failure.
     require(not target.exists())
@@ -604,8 +605,13 @@ def export(root, relative, report):
         visible = artifact_path(root, relative)
         info = visible.stat(follow_symlinks=False)
         require((info.st_dev, info.st_ino) == identity)
+        if publication is not None:
+            # This single trusted assignment is the publication commit point.
+            # Earlier interruption rolls back; later interruption cannot relabel
+            # finalized evidence while snapshot/descriptor cleanup unwinds.
+            publication["result"] = outcome
     except BaseException:
-        if linked:
+        if linked and (publication is None or publication["result"] is None):
             try:
                 info = os.stat(target.name, dir_fd=descriptor, follow_symlinks=False)
                 if (info.st_dev, info.st_ino) == identity:
@@ -634,9 +640,10 @@ class Parser(argparse.ArgumentParser):
 
 def main():
     result_fd = quiet()
+    publication = {"result": None}
     reason, code = "invalid_input", 2
     try:
-        install_termination_handler()
+        install_termination_handler(publication)
         sys.dont_write_bytecode = True
         parser = Parser(description=__doc__)
         parser.add_argument("--manifest", default=MANIFEST, choices=[MANIFEST])
@@ -665,7 +672,8 @@ def main():
                 require(binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot) == pins)
                 passed = validate(report, snapshot, manifest, pins)
                 reason = "export_failed"
-                export(root, args.output, report)
+                outcome = ("passed", 0) if passed else ("required_evidence_incomplete", 1)
+                export(root, args.output, report, publication=publication, outcome=outcome)
         reason, code = ("passed", 0) if passed else ("required_evidence_incomplete", 1)
     except KeyboardInterrupt:
         reason, code = "interrupted", 2
@@ -673,7 +681,9 @@ def main():
         reason, code = "invalid_input", 2
     except Exception:
         pass
-    if _TERMINATION_REQUESTED:
+    if publication["result"] is not None:
+        reason, code = publication["result"]
+    elif _TERMINATION_REQUESTED:
         reason, code = "interrupted", 2
     os.write(result_fd, (json.dumps({"status": "PASS" if code == 0 else "FAIL", "reason": reason}, sort_keys=True) + "\n").encode("ascii"))
     os.close(result_fd)

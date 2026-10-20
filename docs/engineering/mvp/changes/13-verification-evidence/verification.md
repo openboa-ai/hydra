@@ -373,3 +373,34 @@ workflow/protection/authority expansion, new model runtime or P13-R8 activation.
 Private test logs and host paths remain outside public artifacts. Final corrected
 head CI, independent code/security reviews, scoped CODEOWNER approval, protected
 merge and exact-main checks remain required; native/full-v1 limits are unchanged.
+
+
+## Completed publication and late cancellation -- 2026-10-21
+
+Parent `793a800aca5e41dde03d7d6581359d2c13e76bad` passed all four
+[CI jobs](https://github.com/openboa-ai/hydra/actions/runs/39463406466).
+Each Python suite collected 1,190 tests: 1,182 passed, eight explicit skips.
+Both real hosted artifacts passed independent source/checked/base binding and
+archive-digest validation without reexecuting tests. One further code review
+identified contradictory late cancellation: a valid report could remain after
+the public outcome was relabeled interrupted during snapshot teardown.
+
+Successful export now commits the completed D outcome. Only after data/directory
+sync, temporary-link cleanup and visible inode read-back does one supervisor-owned
+assignment publish that outcome to the signal handler, export rollback and final
+public reply. Cancellation before this point still interrupts and removes this
+export's new report. After this point, late signals or teardown exceptions cannot
+relabel finalized evidence. No verification, publication or other effect is replayed.
+Validation-only calls publish nothing and retain their cancellation behavior.
+The per-call state stays in memory and cannot be supplied by manifest/model data.
+
+An actual precommit directory-sync SIGTERM remains a nonzero interrupted result
+without a new report. Three postcommit controls (real SIGTERM, KeyboardInterrupt
+and teardown exception) reproduced three assertion failures on unchanged parent
+source. After correction they retain the completed outcome and the same report
+passes read-only validation, with its single effect unchanged. The final focused
+collector suite passes **39 tests, zero failures/errors/skips**. The earlier 53
+unaffected adjacent passing regressions are retained; full local suites were not
+repeated. P13/VF pins, workflow policy, authority and native exclusions are unchanged.
+New final-head CI/reviews, scoped human approval, protected merge and actual-main
+checks remain required. This is source evidence recovery, not full v1 acceptance.

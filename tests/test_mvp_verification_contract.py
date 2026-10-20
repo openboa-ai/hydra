@@ -513,6 +513,34 @@ class VerificationProcessBoundaryTests(unittest.TestCase):
                     self.assertFalse(target.exists())
                 self.assertEqual((fixture.root / "effect").read_text(), "once")
 
+    def test_publication_commit_point_keeps_late_cancellation_consistent(self):
+        early_hook = ("import signal,stat\noriginal_sync=os.fsync\n"
+            "def cancel_before_commit(fd):\n"
+            " if stat.S_ISDIR(os.fstat(fd).st_mode): os.kill(os.getpid(),signal.SIGTERM)\n"
+            " return original_sync(fd)\nos.fsync=cancel_before_commit\n")
+        early = self.fixture(body="Path('effect').write_text('once')")
+        result = early.run(driver=self.driver(early_hook))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)['reason'], 'interrupted')
+        self.assertFalse((early.root / 'artifacts/mvp-verification/report.json').exists())
+        self.assertEqual((early.root / 'effect').read_text(), 'once')
+        for after_commit in ("os.kill(os.getpid(),signal.SIGTERM)",
+                             "raise KeyboardInterrupt()", "raise OSError('cleanup failed')"):
+            with self.subTest(after_commit=after_commit):
+                fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once')")
+                hook = ("import signal\nfrom contextlib import contextmanager\n"
+                    "scope=namespace['main'].__globals__\noriginal_snapshot=scope['source_snapshot']\n"
+                    "@contextmanager\ndef cancelled_teardown(root,head):\n"
+                    " with original_snapshot(root,head) as snapshot:\n"
+                    "  yield snapshot\n  " + after_commit + "\n"
+                    "scope['source_snapshot']=cancelled_teardown\n")
+                result = fixture.run(driver=self.driver(hook))
+                self.assertEqual(result.returncode, 0,
+                                 'A completed publication was relabeled after its commit point')
+                self.assertEqual(json.loads(result.stdout), {'status':'PASS','reason':'passed'})
+                self.assertEqual(fixture.run(validate=True, freeze=False).returncode, 0)
+                self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+
 
 class VerificationCIContractTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
