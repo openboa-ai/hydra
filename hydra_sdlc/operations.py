@@ -45,8 +45,9 @@ class OperationDenied(RuntimeError):
 class OperationUncertain(OperationDenied):
     """Replacement may have happened; current state is not a request receipt."""
 
-    def __init__(self, reason="operation_state_unknown", observation=None):
+    def __init__(self, reason="operation_state_unknown", observation=None, observation_at=None):
         self.observation = observation
+        self.observation_at = observation_at
         super().__init__(reason)
 
 
@@ -129,7 +130,15 @@ def _io_reason(exc):
 
 @dataclass
 class _WriteAttempt:
-    replacement_started: bool = False
+    replacement_completed: bool = False
+    replacement_unknown: bool = False
+
+
+@dataclass(frozen=True)
+class AdmissionReadback:
+    """An owned per-call snapshot paired with its locked observation time."""
+    snapshot: dict
+    observed_at: str
 
 
 @dataclass(frozen=True)
@@ -350,10 +359,18 @@ class OperatingControl:
             os.close(fd)
 
     def snapshot(self, *, blocking=True):
+        return self.snapshot_observed(blocking=blocking).snapshot
+
+    @staticmethod
+    def _readback(snapshot):
+        return AdmissionReadback({**snapshot, "projects": dict(snapshot["projects"])},
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+
+    def snapshot_observed(self, *, blocking=True):
         if type(blocking) is not bool:
             raise OperationDenied("invalid_command")
         with self._locked(exclusive=False, create=False, blocking=blocking) as held:
-            return self._read(held)[0]
+            return self._readback(self._read(held)[0])
 
     @staticmethod
     def _reason(snapshot, repository):
@@ -406,6 +423,15 @@ class OperatingControl:
 
     def set_mode_if_current(self, action, repository=None, *, expected_revision, blocking=True):
         """Separate optimistic-concurrency entry; callers retain authority checks."""
+        return self._compare_and_set(action, repository, expected_revision=expected_revision,
+                                     blocking=blocking, observed=False)
+
+    def set_mode_if_current_observed(self, action, repository=None, *, expected_revision, blocking=True):
+        """The same CAS with its exact in-lock observation, without a new store."""
+        return self._compare_and_set(action, repository, expected_revision=expected_revision,
+                                     blocking=blocking, observed=True)
+
+    def _compare_and_set(self, action, repository, *, expected_revision, blocking, observed):
         if expected_revision is None:
             raise OperationDenied("precondition_required")
         if type(expected_revision) is not int or not 0 <= expected_revision <= MAX_REVISION:
@@ -413,18 +439,24 @@ class OperatingControl:
         if type(blocking) is not bool:
             raise OperationDenied("invalid_command")
         try:
-            return self._set_mode(action, repository, expected_revision=expected_revision, blocking=blocking)
+            return self._set_mode(action, repository, expected_revision=expected_revision,
+                                  blocking=blocking, observed=observed)
         except OperationUncertain as exc:
             # One bounded read, not a mutation retry or reconstructed receipt.
+            observation_at = None
             try:
-                observation = self.snapshot() if blocking else self.snapshot(blocking=False)
+                if observed:
+                    readback = self.snapshot_observed(blocking=blocking)
+                    observation, observation_at = readback.snapshot, readback.observed_at
+                else:
+                    observation = self.snapshot() if blocking else self.snapshot(blocking=False)
             except (OperationDenied, OSError):
                 observation = None
-            raise OperationUncertain(observation=observation) from exc
+            raise OperationUncertain(observation=observation, observation_at=observation_at) from exc
         except OSError as exc:
             raise OperationDenied(_io_reason(exc)) from exc
 
-    def _set_mode(self, action, repository, *, expected_revision=None, blocking=True):
+    def _set_mode(self, action, repository, *, expected_revision=None, blocking=True, observed=False):
         repository = self._target(repository)
         if not isinstance(action, str) or action not in _ACTIONS:
             raise OperationDenied("operation_state_action_invalid")
@@ -440,7 +472,7 @@ class OperatingControl:
                 if expected_revision is not None:
                     stored = snapshot["global_mode"] if repository is None else snapshot["projects"].get(repository, "running")
                     if stored == mode or (stored == "stopped" and mode == "paused"):
-                        return snapshot
+                        return self._readback(snapshot) if observed else snapshot
                 if snapshot["revision"] == MAX_REVISION:
                     raise OperationDenied("operation_state_revision_exhausted")
                 if repository is None:
@@ -449,11 +481,12 @@ class OperatingControl:
                     snapshot["projects"][repository] = mode
                 snapshot["revision"] += 1
                 snapshot["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                return self._write_snapshot(snapshot, before, held, attempt)
+                snapshot = self._write_snapshot(snapshot, before, held, attempt)
+                return self._readback(snapshot) if observed else snapshot
         except (OSError, OperationDenied) as exc:
             # The transaction also includes lock/parent verification and descriptor
             # cleanup on context exit, after _write_snapshot has returned.
-            if expected_revision is not None and attempt.replacement_started:
+            if expected_revision is not None and (attempt.replacement_completed or attempt.replacement_unknown):
                 raise OperationUncertain() from exc
             raise
 
@@ -480,8 +513,21 @@ class OperatingControl:
             if self._read(held)[1] != before:
                 raise OperationDenied("operation_state_changed")
             self._check_lock(held)
-            attempt.replacement_started = True
-            os.replace(temporary, self.settings_path.name, src_dir_fd=held.parent, dst_dir_fd=held.parent)
+            try:
+                os.replace(temporary, self.settings_path.name, src_dir_fd=held.parent, dst_dir_fd=held.parent)
+            except OSError as exc:
+                # Some filesystems can report an error after completing a
+                # rename. Only a narrow permission failure plus an unchanged
+                # destination is treated as a confirmed pre-effect rejection.
+                attempt.replacement_unknown = True
+                if exc.errno in {errno.EACCES, errno.EPERM, errno.EROFS}:
+                    try:
+                        if self._read(held)[1] == before:
+                            attempt.replacement_unknown = False
+                    except (OSError, OperationDenied):
+                        pass
+                raise
+            attempt.replacement_completed = True
             os.fsync(held.parent)
             observed = self._read(held)[0]
             if observed != snapshot:

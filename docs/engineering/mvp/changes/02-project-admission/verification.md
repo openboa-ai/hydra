@@ -185,3 +185,45 @@ focused selector는 `test_admission_cas.py`, `test_control_commands.py`, `test_o
 최종 head를 다시 대조하고, 해당 head의 필수 review/CI와 보호 병합 및 실제 merge SHA의 main
 검사를 각각 확인해야 한다. transport 인증·원격 Codex 조작·설치 runtime qualification은
 이 결과로 통과 처리하지 않는다.
+
+
+## PR #11 오류 분류·권한 갱신·관측 시각 수정 — 2026-10-20
+
+리뷰 대상 `4e2f55e9c6afdd5acd8a290c5d86026ad3c54a45`(tree
+`884c5e971283bcd6bd7daaddc16496130c33af7e`)의 네 지적을 P02 revision 4 안에서 수정했다.
+maintained spec §3.2는 아래 경계와 오류 우선순위를 명시한다. 위 947개 결과는 수정 전 증거다.
+
+- 지원하지 않는 schema/action의 object body는 common identity/container 검증 뒤 opaque하게
+  분기한다. 지원 admission의 closed fields는 유지한다.
+- 실제 replace의 성공과 실패를 구분한다. 좁은 permission 오류와 잠금 안 destination 불변이
+  함께 확인될 때만 확정 거절하고, 효과 후 오류·불명확한 오류·확인 실패는 unknown을 유지한다.
+- 성공 CAS·no-op·한 번의 unknown 복구 관측에서 snapshot/time을 같은 잠금 안에서 얻는다.
+  formatter는 새 clock/read를 호출하지 않는다. legacy dict API와 저장 schema는 유지한다.
+- repository 조회 후 current config/runtime을 관측하고 authority를 마지막에 갱신한다.
+  config 실패, current authority, repository 결과, 원 expected와 runtime 비교 순서로 판정한다.
+  설정 조회 중 철회된 grant로 쓰지 않으며 외부 원본 전체의 원자성을 주장하지 않는다.
+
+| 관측한 검증 | 실제 결과와 oracle |
+| --- | --- |
+| 수정 전 행동 RED 9개 | assertion 실패 7개, 잘못된 unsupported 분류의 business error 1개, 기존 ambiguous-error 보존 1개 PASS. import/API 부재 오류는 아님 |
+| 같은 selector 수정 후 GREEN | 9 PASS, 0 skip, 0.032초 |
+| 추가 regression 포함 focused 8개 suite | **189 PASS, 0 skip**, failure/error 0, 32.097초 |
+| 같은 최종 source/test/spec의 전체 suite | **959개 수집·실행, 934 PASS, 25 skip**, failure/error 0, 254.857초, exit 0 |
+| 독립 코드·보안 리뷰 | 아래 frozen source/test와 spec의 경계 검토 완료, 추가 material finding 없음. 정적 리뷰는 실행 결과와 별도 |
+| 실행 전후 보존 | 격리 snapshot·overlay·제품 checkout 파일 hash 및 제품 HEAD 불변 |
+
+RED/GREEN과 focused/full은 Python 3.12.7, `mcp==2.3.0`, `mcp-types==2.3.0`에서
+수행했다. 25개 skip은 수정 전 947개 suite의 항목 집합과 정확히 동일하며 PASS로 세지 않는다.
+기존 실제 process 경합·retirement 회귀와 함께, 신규 TC는 실제 replace 전후 오류, recovery
+실패, intervening writer, 잠금 내 clock, 설정 재조회 중 권한 철회 및 runtime 변경을 검증한다.
+focused/full 이후 source/test 변경은 없다. 이 문단은 관측 결과만 추가한 검증 companion이다.
+
+| 최종 source artifact | SHA-256 |
+| --- | --- |
+| `hydra_sdlc/operations.py` | `ff959755823234b44f6a7e656157ae5d69a03f4b41e7160c1fa0d6712efcc1c1` |
+| `hydra_sdlc/control_commands.py` | `b911cd7a1c2a33f93b0d760c4645468aca57247adc9a7c8c96ed49da6afc8bbc` |
+| `tests/test_admission_cas.py` | `3c733cc2206ee458c86ad34657237698f1bb33fd36b8fd519db8c00693936fd5` |
+| `tests/test_control_commands.py` | `0011630e8ed5ac055b0df6e3c3f5325409888f72652c33f3542e44987d49b41f` |
+
+새 head의 hosted CI·코드/보안 리뷰, 보호 병합 및 실제 main 검증은 별도로 확인한다.
+이 결과는 설치된 transport의 권한 활성화·실제 원격 Codex 조작·운영 수용의 증거가 아니다.

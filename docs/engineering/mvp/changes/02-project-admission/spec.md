@@ -104,11 +104,11 @@ dict 진입은 이미 decoded된 값만 받으며 duplicate JSON key 검출은 �
 조회 실패가 있었을 때 unknown, 완전 조회의 미등록일 때 rejected다. remote lookup은 lock 밖이며,
 lookup 후 config/runtime와 context를 재확인한다. 원 expected를 최신 값으로 바꾸지 않는다.
 
-typed handler는 `set_mode_if_current(..., blocking=False)`로 exclusive lock을 한 번 시도한다.
+typed handler는 `set_mode_if_current_observed(..., blocking=False)`로 같은 CAS의 exclusive lock을 한 번 시도한다.
 경합이면 `waiting/operation_state_busy`를 반환하며 설정 변경·receipt·내부 대기/재시도는 없다.
 후속 명시적 요청은 context/config/runtime/target을 다시 검증한다. legacy `set_mode`와 기존
 CAS의 기본 `blocking=True`는 유지하고 async caller의 기존 nonblocking 동작도 유지한다.
-불확실 쓰기 뒤 한 번의 `snapshot(blocking=False)`도 경합을 기다리지 않는다. 이 관측이 busy이면
+불확실 쓰기 뒤 한 번의 `snapshot_observed(blocking=False)`도 경합을 기다리지 않는다. 이 관측이 busy이면
 unknown과 observation/receipt 부재를 유지한다. `blocking`은 strict bool인 내부 인자다.
 이 방식은 lock 대기 동안 오래된 grant/config가 보류되는 것을 막지만 외부 권한·config와 설정
 CAS 전체를 하나의 원자적 transaction으로 만들지는 않는다. lock 안에서 callback이나 remote
@@ -122,6 +122,30 @@ revision은 실제 store revision의 monotonic 문자열이며 receipt/observed_
 unknown의 한 번 관측은 `command:<request_id>:admission-current`로 분리하며 receipt=null이다.
 no-op은 반환 revision과 원 expected의 동일성, stronger stopped는 반환된 실제 override로 판정한다.
 현재 gate 사유는 대상 project와 host의 실제 mode에서 계산하며 실행 중단·재개를 나타내지 않는다.
+
+### 3.2. 오류 분류·관측 시각·동시 변경 보충
+
+`os.replace`의 정상 반환 뒤에 replacement 완료를 표시한다. EACCES/EPERM/EROFS와 같은 좁은
+permission 실패에서 같은 잠금 안의 기존 destination fingerprint가 불변으로 확인된 경우만
+확정 미적용으로 거절한다. EIO/EINTR/ENOENT·알 수 없는 실패나 변경/확인 불가 fingerprint는
+교체가 이미 일어났을 수 있으므로 unknown이다. 실제 교체 후 fsync/read-back/lock·descriptor
+정리 실패의 unknown은 유지한다. 확인을 성공 receipt로 바꾸거나 mutation을 다시 시도하지 않는다.
+
+`AdmissionReadback(snapshot, observed_at)`는 호출별 자료다. 성공 CAS·no-op과 불확실 결과 뒤
+한 번의 현재 관측은 각각 기존 잠금 안에서 snapshot과 시각을 함께 얻는다. reply formatter는
+그 시각을 그대로 사용하며 새 clock/read를 호출하지 않는다. 뒤의 writer가 더 높은 revision을
+써도 원 receipt의 snapshot/time을 바꾸지 않는다. 시각은 revision·명령 순서·권한의 대체물이 아니다.
+새 observed API는 같은 store·CAS를 쓰며, 기존 set_mode/set_mode_if_current/snapshot의 dict
+반환과 저장 schema는 유지한다. recovery의 read 또는 시각이 없으면 unknown/receipt=null을
+유지하며 observation을 만들지 않는다.
+
+미지원 schema/action은 기존 common object container·identity를 확인한 뒤 admission의 exact
+expected key 및 상세 body 검사 전에 분기한다. future body는 해석·복제·echo하지 않는다.
+지원 admission의 closed fields는 그대로 검증한다. remote lookup 뒤에는 current config/control/
+runtime을 읽거나 실패를 보존한 다음 context/epoch를 마지막에 갱신한다. config 실패를 먼저
+반환하고, 그 다음 current authority 오류와 repository 결과를 판정하며 효과 전 원 expected와
+current runtime을 대조한다. config 실패에 과거 runtime identity를 현재 값처럼 붙이지 않으며,
+config/runtime 관측 도중 철회된 grant로 CAS에 도달하지 않는다. 이 순서는 여러 외부 원본의 원자성을 주장하지 않는다.
 
 ## 4. 구현 순서와 의미 있는 RED
 

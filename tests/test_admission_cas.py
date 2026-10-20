@@ -28,6 +28,19 @@ class AdmissionCASTests(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertEqual(self.control.settings_path.read_bytes(), payload)
 
+    def test_observed_api_preserves_legacy_dict_shape_and_owns_snapshot(self):
+        before = self.control.snapshot()
+        payload = self.control.settings_path.read_bytes()
+        observed = self.control.set_mode_if_current_observed('resume', expected_revision=before['revision'])
+        self.assertIs(type(self.control.set_mode_if_current('resume', expected_revision=before['revision'])), dict)
+        self.assertIs(type(self.control.snapshot()), dict)
+        self.assertEqual(observed.snapshot, before)
+        self.assertEqual(self.control.settings_path.read_bytes(), payload)
+        self.assertRegex(observed.observed_at, r'\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z')
+        self.assertIs(type(self.control.set_mode('resume')), dict)
+        observed.snapshot['projects']['example/alpha'] = 'stopped'
+        self.assertNotIn('example/alpha', self.control.snapshot_observed().snapshot['projects'])
+
     def test_stale_same_mode_is_not_success(self):
         old = self.control.snapshot()['revision']
         self.control.set_mode('pause', 'example/alpha')

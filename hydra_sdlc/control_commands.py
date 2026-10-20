@@ -6,7 +6,6 @@ authentication. No public endpoint or default authority is provided here.
 """
 import copy
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import re
 import uuid
@@ -76,7 +75,7 @@ def _parse(command):
         and ('issue_number' not in target or _integer(target['issue_number'], 1)))
     if not admission_target and not repository_target:
         raise InvalidAdmissionCommand()
-    if (type(expected) is not dict or set(expected) != _EXPECTED_KEYS or type(parameters) is not dict):
+    if type(expected) is not dict or type(parameters) is not dict:
         raise InvalidAdmissionCommand()
     if command['command_schema'] != 1 or command['action'] != 'admission_set':
         # A recognizable common header can receive an exact unsupported reply.
@@ -84,7 +83,7 @@ def _parse(command):
         return {key: (dict(target) if key == 'target' else None if key in
                       {'expected', 'parameters', 'effect_key'} else value)
                 for key, value in command.items()}
-    if not admission_target:
+    if not admission_target or set(expected) != _EXPECTED_KEYS:
         raise InvalidAdmissionCommand()
     key = expected['runtime_key']
     if key is not None and (type(key) is not str or not 1 <= len(key) <= 1024
@@ -146,9 +145,8 @@ def _repository(github, names, identifier):
     return None, 'repository_unavailable' if failed else 'target_unregistered'
 
 
-def _observation(command, runtime, snapshot, repository, suffix):
+def _observation(command, runtime, snapshot, repository, suffix, observed_at):
     key = f"command:{command['request_id']}:admission-{suffix}"
-    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
     revision = {'kind': 'monotonic', 'value': str(snapshot['revision'])}
     mode = snapshot['global_mode']
     project_mode = snapshot['projects'].get(repository, 'running')
@@ -157,7 +155,7 @@ def _observation(command, runtime, snapshot, repository, suffix):
     return {
         'key': key,
         'resource': {'source': 'hydra', 'kind': 'admission', 'id': runtime['control_binding_digest']},
-        'revision': revision, 'observed_at': now, 'last_attempt_at': now,
+        'revision': revision, 'observed_at': observed_at, 'last_attempt_at': observed_at,
         'availability': 'current',
         'coverage': {'state': 'complete', 'scope': key, 'returned_count': 1,
                      'total_count': 1, 'next_cursor': None, 'reason': None},
@@ -209,36 +207,42 @@ def execute_admission_command(config_path, command, *, context_provider, github)
     key = _runtime_key(runtime)
     if key is None or key != expected['runtime_key']:
         return _reply(command, runtime, epoch, 'rejected', 'runtime_unavailable' if key is None else 'stale_runtime')
-    repository, reason = _repository(github, cfg['repos'], command['target']['repository_id'])
-    if reason:
-        return _reply(command, runtime, epoch,
-                      'unknown' if reason == 'repository_unavailable' else 'rejected', reason)
+    repository, repository_reason = _repository(github, cfg['repos'], command['target']['repository_id'])
     # Remote lookup may take time. Re-read the installed binding and current grant
     # without extending the admission lock around network work.
-    context, reason = _context(context_provider, command)
-    epoch = context.binding_epoch if context else None
-    if reason:
-        return _reply(command, runtime, epoch, 'rejected', reason)
-    if command['target']['repository_id'] not in context.repository_ids:
-        return _reply(command, runtime, epoch, 'rejected', 'authority_denied')
+    config_unavailable = False
     try:
         current_cfg = load_host_config(config_path)
         current_control = control_from_config(current_cfg)
+        current_runtime = capture_runtime_identity(current_cfg, current_control)
     except (OSError, ValueError, OperationDenied):
-        return _reply(command, runtime, epoch, 'rejected', 'host_config_unavailable')
-    current_runtime = capture_runtime_identity(current_cfg, current_control)
+        config_unavailable = True
+        current_runtime = capture_runtime_identity()
+    # Read authority last, including on config failure. Never return an old
+    # config identity or retain a grant revoked during the config/runtime read.
+    context, reason = _context(context_provider, command)
+    epoch = context.binding_epoch if context else None
+    if config_unavailable:
+        return _reply(command, current_runtime, epoch, 'rejected', 'host_config_unavailable')
+    if reason:
+        return _reply(command, current_runtime, epoch, 'rejected', reason)
+    if command['target']['repository_id'] not in context.repository_ids:
+        return _reply(command, current_runtime, epoch, 'rejected', 'authority_denied')
+    if repository_reason:
+        return _reply(command, current_runtime, epoch,
+                      'unknown' if repository_reason == 'repository_unavailable' else 'rejected', repository_reason)
     current_key = _runtime_key(current_runtime)
     if current_key is None or current_key != expected['runtime_key']:
         return _reply(command, current_runtime, epoch, 'rejected',
                       'runtime_unavailable' if current_key is None else 'stale_runtime')
     mode = command['parameters']['mode']
     try:
-        snapshot = current_control.set_mode_if_current(
+        readback = current_control.set_mode_if_current_observed(
             'pause' if mode == 'paused' else 'resume', repository,
             expected_revision=expected['admission_revision'], blocking=False)
     except OperationUncertain as exc:
-        observation = (_observation(command, current_runtime, exc.observation, repository, 'current')
-                       if exc.observation is not None else None)
+        observation = (_observation(command, current_runtime, exc.observation, repository, 'current', exc.observation_at)
+                       if exc.observation is not None and exc.observation_at is not None else None)
         return _reply(command, current_runtime, epoch, 'unknown', 'operation_state_unknown',
                       observation=observation, required_next='reconcile')
     except OperationDenied as exc:
@@ -247,8 +251,9 @@ def execute_admission_command(config_path, command, *, context_provider, github)
         return _reply(command, current_runtime, epoch,
                       'waiting' if reason == 'operation_state_busy' else 'rejected', reason)
     reason = None
+    snapshot = readback.snapshot
     if snapshot['revision'] == expected['admission_revision']:
         reason = ('stronger_mode_retained' if mode == 'paused'
                   and snapshot['projects'].get(repository) == 'stopped' else 'already_satisfied')
     return _reply(command, current_runtime, epoch, 'applied', reason,
-                  observation=_observation(command, current_runtime, snapshot, repository, 'readback'))
+                  observation=_observation(command, current_runtime, snapshot, repository, 'readback', readback.observed_at))

@@ -3,6 +3,7 @@ import asyncio
 import copy
 import errno
 import fcntl
+from datetime import datetime, timezone, timedelta
 import json
 import os
 from pathlib import Path
@@ -40,7 +41,7 @@ def execute():
     return execute_admission_command(sys.argv[1], command,
         context_provider=lambda: context, github=RepositoryReader())
 if sys.argv[2] == 'uncertain':
-    fsync, snapshot, calls = os.fsync, OperatingControl.snapshot, []
+    fsync, snapshot, calls = os.fsync, OperatingControl.snapshot_observed, []
     def fail_parent(fd):
         calls.append(fd)
         if len(calls) == 2:
@@ -51,7 +52,7 @@ if sys.argv[2] == 'uncertain':
         sys.stdin.readline()
         return snapshot(control, *args, **kwargs)
     with patch('hydra_sdlc.operations.os.fsync', side_effect=fail_parent), \\
-            patch.object(OperatingControl, 'snapshot', recovery):
+            patch.object(OperatingControl, 'snapshot_observed', recovery):
         result = execute()
 else:
     result = execute()
@@ -389,12 +390,12 @@ class AdmissionCommandTests(unittest.TestCase):
         self.assert_rejected_without_write(self.command('running'), 'host_stopped')
 
     def test_success_receipt_keeps_r_plus_one_after_another_writer(self):
-        original = OperatingControl.set_mode_if_current
+        original = OperatingControl.set_mode_if_current_observed
         def followed_by_other_writer(control, *args, **kwargs):
             result = original(control, *args, **kwargs)
             control.set_mode('stop', 'example/alpha')
             return result
-        with patch.object(OperatingControl, 'set_mode_if_current', followed_by_other_writer):
+        with patch.object(OperatingControl, 'set_mode_if_current_observed', followed_by_other_writer):
             result = self.run_command(self.command())
         self.assertEqual(self.control.snapshot()['revision'], 3)
         observation = result['observations'][0]
@@ -421,7 +422,7 @@ class AdmissionCommandTests(unittest.TestCase):
 
     def test_uncertain_recovery_read_and_close_failure_preserve_unknown(self):
         fsync, read, close = os.fsync, os.read, os.close
-        snapshot, check_lock = OperatingControl.snapshot, OperatingControl._check_lock
+        snapshot, check_lock = OperatingControl.snapshot_observed, OperatingControl._check_lock
         state = {'fsync': 0, 'recovery': False, 'reads': 0, 'closes': 0, 'lock': None}
 
         def fail_parent(fd):
@@ -460,7 +461,7 @@ class AdmissionCommandTests(unittest.TestCase):
                 patch('hydra_sdlc.operations.os.read', side_effect=fail_read), \
                 patch('hydra_sdlc.operations.os.close', side_effect=fail_close), \
                 patch.object(OperatingControl, '_check_lock', remember_lock), \
-                patch.object(OperatingControl, 'snapshot', autospec=True, side_effect=recover) as recovery:
+                patch.object(OperatingControl, 'snapshot_observed', autospec=True, side_effect=recover) as recovery:
             result = self.run_command(command)
         self.assertEqual(recovery.call_count, 1)
         self.assertEqual((state['reads'], state['closes']), (1, 1))
@@ -477,7 +478,7 @@ class AdmissionCommandTests(unittest.TestCase):
         for reason, outcome in (('operation_state_busy', 'waiting'),
                                 ('operation_state_unsafe', 'rejected')):
             before = self.payload()
-            with patch.object(OperatingControl, 'set_mode_if_current', side_effect=OperationDenied(reason)):
+            with patch.object(OperatingControl, 'set_mode_if_current_observed', side_effect=OperationDenied(reason)):
                 result = self.run_command(self.command())
             self.assertEqual(result['request']['outcome'], outcome)
             self.assertIsNone(result['request']['receipt'])
@@ -545,8 +546,8 @@ class AdmissionCommandTests(unittest.TestCase):
 
     def test_unknown_without_observation_does_not_probe_or_create_receipt(self):
         command = self.command()
-        with patch.object(OperatingControl, 'set_mode_if_current', side_effect=OperationUncertain()), \
-                patch.object(OperatingControl, 'snapshot', side_effect=AssertionError('extra snapshot')):
+        with patch.object(OperatingControl, 'set_mode_if_current_observed', side_effect=OperationUncertain()), \
+                patch.object(OperatingControl, 'snapshot_observed', side_effect=AssertionError('extra snapshot')):
             result = self.run_command(command)
         self.assertEqual(result['request']['outcome'], 'unknown')
         self.assertIsNone(result['request']['receipt'])
@@ -594,6 +595,170 @@ class AdmissionCommandTests(unittest.TestCase):
         self.assertNotIn('repository_ids', payload)
         self.assertEqual(set(result['observations'][0]['value']),
                          {'revision', 'global_mode', 'project_overrides', 'gate_reason'})
+
+    def test_future_expected_object_is_opaque_for_unsupported_identity(self):
+        for action, schema in (('admission_set', 2), ('workflow_step', 1)):
+            command = self.command()
+            command.update(action=action, command_schema=schema,
+                           expected={'future': 'SYNTHETIC_PRIVATE_FUTURE_CANARY'},
+                           parameters={'future_operation': {'private': 'SYNTHETIC_PRIVATE_FUTURE_CANARY'}})
+            result = self.assert_rejected_without_write(command, 'unsupported_operation')
+            self.assertEqual(result['request']['request_id'], command['request_id'])
+            self.assertEqual(result['request']['target'], command['target'])
+            self.assertEqual(result['binding_epoch'], EPOCH)
+            self.assertNotIn('SYNTHETIC_PRIVATE_FUTURE_CANARY', json.dumps(result))
+        self.assertEqual(self.github.calls, [])
+        command = self.command(); command['expected'] = {'future': 'private'}
+        with self.assertRaises(InvalidAdmissionCommand):
+            self.run_command(command)
+
+    def test_permission_denied_at_replace_is_definite_without_retry(self):
+        before = self.payload()
+        for code in (errno.EACCES, errno.EPERM, errno.EROFS):
+            with self.subTest(code=code), patch('hydra_sdlc.operations.os.replace',
+                    side_effect=OSError(code, 'SYNTHETIC_PRIVATE_REPLACE_CANARY')) as replace:
+                result = self.assert_rejected_without_write(self.command(), 'operation_state_unavailable')
+            replace.assert_called_once()
+            self.assertEqual(result['observations'], [])
+            self.assertEqual(self.payload(), before)
+            self.assertNotIn('SYNTHETIC_PRIVATE_REPLACE_CANARY', json.dumps(result))
+
+    def test_ambiguous_replace_error_preserves_unknown_even_after_real_effect(self):
+        replace = os.replace
+        def uncertain(*args, **kwargs):
+            replace(*args, **kwargs)
+            raise OSError(errno.EIO, 'SYNTHETIC_PRIVATE_REPLACE_CANARY')
+        with patch('hydra_sdlc.operations.os.replace', side_effect=uncertain) as called:
+            result = self.run_command(self.command())
+        called.assert_called_once()
+        self.assertEqual(result['request']['outcome'], 'unknown')
+        self.assertIsNone(result['request']['receipt'])
+        self.assertEqual(result['request']['effect_refs'], [])
+        self.assertEqual(self.control.snapshot()['revision'], 2)
+        self.assertNotIn('SYNTHETIC_PRIVATE_REPLACE_CANARY', json.dumps(result))
+
+    def test_ambiguous_replace_failure_without_readback_stays_unknown(self):
+        before = self.payload()
+        for code in (errno.EIO, errno.EINTR, errno.ENOENT):
+            command = self.command()
+            with self.subTest(code=code), \
+                    patch('hydra_sdlc.operations.os.replace', side_effect=OSError(code, 'ambiguous failure')) as replace, \
+                    patch.object(OperatingControl, 'snapshot_observed',
+                                 side_effect=OperationDenied('operation_state_unavailable')) as read:
+                result = self.run_command(command)
+            replace.assert_called_once()
+            read.assert_called_once_with(blocking=False)
+            self.assertEqual(result['request']['outcome'], 'unknown')
+            self.assertIsNone(result['request']['receipt'])
+            self.assertEqual(result['observations'], [])
+            self.assertEqual(self.payload(), before)
+
+    def test_permission_error_after_real_replace_keeps_uncertainty(self):
+        replace = os.replace
+        def failed_ack(*args, **kwargs):
+            replace(*args, **kwargs)
+            raise PermissionError(errno.EACCES, 'post-effect failure')
+        with patch('hydra_sdlc.operations.os.replace', side_effect=failed_ack) as called:
+            result = self.run_command(self.command())
+        called.assert_called_once()
+        self.assertEqual(result['request']['outcome'], 'unknown')
+        self.assertIsNone(result['request']['receipt'])
+        self.assertEqual(result['observations'][0]['value']['revision'], 2)
+        self.assertEqual(self.control.snapshot()['revision'], 2)
+
+    def assert_locked_observation_time(self, *, noop=False, uncertain=False):
+        first = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        clock, depth, events, drift = [first], [0], [], []
+        command = self.command('running' if noop else 'paused')
+        original_lock = OperatingControl._locked
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                events.append(('clock', depth[0], clock[0]))
+                return clock[0]
+        @contextmanager
+        def after_read(control, *args, **kwargs):
+            with original_lock(control, *args, **kwargs) as held:
+                depth[0] += 1
+                try:
+                    yield held
+                finally:
+                    depth[0] -= 1
+            events.append(('unlock', kwargs.get('exclusive'), clock[0]))
+            if not drift and kwargs.get('exclusive') == (not uncertain):
+                drift.append(True)
+                clock[0] = first + timedelta(seconds=1)
+                control.set_mode('stop', 'example/beta')
+                clock[0] = first + timedelta(seconds=2)
+        fsync, fsync_calls = os.fsync, []
+        def fail_parent(fd):
+            fsync_calls.append(fd)
+            if uncertain and len(fsync_calls) == 2:
+                raise OSError(errno.EIO, 'post-replace fixture fault')
+            return fsync(fd)
+        with patch.object(OperatingControl, '_locked', after_read), \
+                patch('hydra_sdlc.operations.datetime', Clock), \
+                patch('hydra_sdlc.control_commands.datetime', Clock, create=True), \
+                patch('hydra_sdlc.operations.os.fsync', side_effect=fail_parent):
+            result = self.run_command(command)
+        self.assertEqual(drift, [True], 'A real writer must run after the locked observation')
+        observation = result['observations'][0]
+        self.assertEqual(observation['observed_at'], first.strftime('%Y-%m-%dT%H:%M:%S.%fZ'))
+        self.assertEqual(observation['last_attempt_at'], observation['observed_at'])
+        self.assertEqual(observation['value']['revision'], 1 if noop else 2)
+        self.assertEqual(self.control.snapshot()['revision'], 2 if noop else 3)
+        self.assertTrue(all(row[1] > 0 for row in events if row[0] == 'clock'),
+                        'Evidence time must be captured inside the observation lock')
+        self.assertEqual(result['request']['outcome'], 'unknown' if uncertain else 'applied')
+        if uncertain:
+            self.assertIsNone(result['request']['receipt'])
+
+    def test_cas_observation_time_precedes_intervening_writer(self):
+        self.assert_locked_observation_time()
+
+    def test_noop_observation_time_is_locked_read_not_old_update_time(self):
+        self.assert_locked_observation_time(noop=True)
+
+    def test_unknown_current_observation_time_is_paired_with_recovery_read(self):
+        self.assert_locked_observation_time(uncertain=True)
+
+    def test_config_failure_during_lookup_precedes_each_authority_error(self):
+        contexts = (None, AdmissionCallContext('bridge', '33333333-3333-4333-8333-333333333333', frozenset({101})),
+                    AdmissionCallContext('bridge', EPOCH, frozenset()))
+        for context in contexts:
+            self.config_path.write_text(self.config_text)
+            self.context = AdmissionCallContext('bridge', EPOCH, frozenset({101, 202}))
+            command = self.command()
+            def change():
+                self.config_path.write_text('invalid = [')
+                self.context = context
+            self.github.during_read = change
+            result = self.assert_rejected_without_write(command, 'host_config_unavailable')
+            self.assertIsNone(result['runtime']['config_digest'])
+            self.assertIsNone(result['runtime']['control_binding_digest'])
+            self.assertEqual(result['binding_epoch'], context.binding_epoch if context else None)
+
+    def test_authority_revoked_during_current_config_read_cannot_reach_cas(self):
+        load, calls = load_host_config, []
+        def revoke(path):
+            cfg = load(path); calls.append(True)
+            if len(calls) == 2:
+                self.context = None
+            return cfg
+        with patch('hydra_sdlc.control_commands.load_host_config', side_effect=revoke):
+            self.assert_rejected_without_write(self.command(), 'authority_unavailable')
+
+    def test_changed_authority_reply_uses_current_config_identity(self):
+        command = self.command()
+        def change():
+            self.config_path.write_text(self.config_text.replace('host_alias="fixture"', 'host_alias="changed"'))
+            self.context = None
+        self.github.during_read = change
+        result = self.assert_rejected_without_write(command, 'authority_unavailable')
+        current_cfg = load_host_config(self.config_path)
+        current = capture_runtime_identity(current_cfg, control_from_config(current_cfg))
+        self.assertEqual(result['runtime'], current)
+        self.assertNotEqual(result['runtime']['config_digest'], self.runtime['config_digest'])
 
 
 if __name__ == '__main__':
