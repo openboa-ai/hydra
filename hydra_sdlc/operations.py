@@ -398,7 +398,7 @@ class OperatingControl:
         return None if reason == "operation_state_busy" else reason
 
     @contextmanager
-    def guard(self, repo=None, *, cleanup=False):
+    def guard(self, repo=None, *, cleanup=False, expected_revision=None):
         """Gate one bounded effect; async lock contention denies without waiting.
 
         A bounded async admission may use this context manager, but callers must
@@ -408,8 +408,13 @@ class OperatingControl:
         repository = self._target(repo)
         if type(cleanup) is not bool:
             raise OperationDenied("operation_state_cleanup_invalid")
+        if expected_revision is not None and (type(expected_revision) is not int
+                or not 0 <= expected_revision <= MAX_REVISION):
+            raise OperationDenied("invalid_command")
         with self._locked(exclusive=False, create=True) as held:
             snapshot = self._read(held)[0]
+            if expected_revision is not None and snapshot["revision"] != expected_revision:
+                raise OperationDenied("stale_revision")
             reason = self._reason(snapshot, repository)
             if reason is not None and not cleanup:
                 raise OperationDenied(reason)

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import re
 import uuid
+from pathlib import Path
 
 from .control import control_from_config, load_host_config
 from .operations import MAX_PROJECTS, MAX_REVISION, OperationDenied, OperationUncertain
@@ -36,6 +37,26 @@ class AdmissionCallContext:
     surface: str
     binding_epoch: str | None
     repository_ids: frozenset[int]
+    operations: frozenset[str] = frozenset({'admission_set'})
+
+
+@dataclass(frozen=True)
+class CheckpointStoppedEvidence:
+    """Trusted adapter observation, never a model's stopped-outcome assertion.
+
+    Producing this value requires independent execution/descendant evidence.
+    This module supplies no native evidence adapter or default proof.
+    """
+    repository_id: int
+    issue_number: int
+    host_alias: str
+    control_binding_digest: str
+    assignment: tuple[str, str, str, str, str | None]
+    state: str
+    availability: str
+    coverage: str
+    descendants: str
+    observation_id: str
 
 
 class InvalidAdmissionCommand(ValueError):
@@ -56,7 +77,7 @@ def _integer(value, minimum=0):
     return type(value) is int and minimum <= value <= MAX_REVISION
 
 
-def _parse(command):
+def _parse(command, *, checkpoint=False):
     """Read safe common identities before interpreting the supported action body."""
     if (type(command) is not dict or set(command) != _COMMAND_KEYS
             or not _integer(command['command_schema'], 1)
@@ -75,23 +96,52 @@ def _parse(command):
         and ('issue_number' not in target or _integer(target['issue_number'], 1)))
     if not admission_target and not repository_target:
         raise InvalidAdmissionCommand()
-    if type(expected) is not dict or type(parameters) is not dict:
-        raise InvalidAdmissionCommand()
-    if command['command_schema'] != 1 or command['action'] != 'admission_set':
+    supported = 'workflow_step' if checkpoint else 'admission_set'
+    if command['command_schema'] != 1 or command['action'] != supported:
         # A recognizable common header can receive an exact unsupported reply.
         # Future action bodies are neither interpreted, traversed nor echoed.
         return {key: (dict(target) if key == 'target' else None if key in
                       {'expected', 'parameters', 'effect_key'} else value)
                 for key, value in command.items()}
-    if not admission_target or set(expected) != _EXPECTED_KEYS:
+    if checkpoint:
+        if (type(parameters) is not dict or type(parameters.get('operation')) is not str
+                or not parameters['operation']):
+            raise InvalidAdmissionCommand()
+        if parameters['operation'] != 'checkpoint_only':
+            # An unknown operation's expected/effect/body are also opaque.
+            return {key: (dict(target) if key == 'target' else None if key in
+                          {'expected', 'parameters', 'effect_key'} else value)
+                    for key, value in command.items()}
+    if type(expected) is not dict or type(parameters) is not dict:
+        raise InvalidAdmissionCommand()
+    supported_target = (repository_target and set(target) == {'repository_id', 'issue_number'}
+                        if checkpoint else admission_target)
+    if not supported_target or set(expected) != _EXPECTED_KEYS:
         raise InvalidAdmissionCommand()
     key = expected['runtime_key']
     if key is not None and (type(key) is not str or not 1 <= len(key) <= 1024
                             or any(ord(c) < 32 or ord(c) >= 127 for c in key)):
         raise InvalidAdmissionCommand()
     if ((expected['admission_revision'] is not None and not _integer(expected['admission_revision']))
-            or type(expected['source_checks']) is not list or expected['source_checks'] != []
-            or expected['assignment'] is not None or command['effect_key'] is not None
+            or type(expected['source_checks']) is not list or expected['source_checks'] != []):
+        raise InvalidAdmissionCommand()
+    if checkpoint:
+        assignment = expected['assignment']
+        if (type(assignment) is not dict or set(assignment) !=
+                {'attempt_id', 'step_id', 'head', 'contract_revision', 'spec_revision'}
+                or not _uuid(assignment['attempt_id']) or not _uuid(assignment['step_id'])
+                or any(type(assignment[k]) is not str or not re.fullmatch('[0-9a-f]{40}', assignment[k])
+                       for k in ('head', 'contract_revision'))
+                or (assignment['spec_revision'] is not None and (type(assignment['spec_revision']) is not str
+                    or not re.fullmatch('[0-9a-f]{40}', assignment['spec_revision'])))
+                or command['effect_key'] != f"checkpoint:{assignment['attempt_id']}:{assignment['step_id']}"
+                or set(parameters) != {'operation', 'outcome', 'summary'}
+                or type(parameters['outcome']) is not str
+                or parameters['outcome'] not in {'candidate_ready', 'needs_decision', 'stopped', 'failed'}
+                or type(parameters['summary']) is not str or len(parameters['summary']) > 24000
+                or any(0xD800 <= ord(c) <= 0xDFFF for c in parameters['summary'])):
+            raise InvalidAdmissionCommand()
+    elif (expected['assignment'] is not None or command['effect_key'] is not None
             or type(parameters) is not dict or set(parameters) != {'mode'}
             or type(parameters['mode']) is not str or parameters['mode'] not in {'running', 'paused', 'stopped'}):
         raise InvalidAdmissionCommand()
@@ -123,6 +173,9 @@ def _context(provider, command):
             or type(context.repository_ids) is not frozenset
             or len(context.repository_ids) > MAX_PROJECTS
             or any(not _integer(value, 1) for value in context.repository_ids)):
+        return None, 'authority_unavailable'
+    if (type(context.operations) is not frozenset or not context.operations <=
+            {'admission_set', 'workflow_step.checkpoint_only'}):
         return None, 'authority_unavailable'
     if context.binding_epoch != command['binding_epoch']:
         return context, 'stale_binding'
@@ -165,7 +218,7 @@ def _observation(command, runtime, snapshot, repository, suffix, observed_at):
     }
 
 
-def _reply(command, runtime, epoch, outcome, reason, *, observation=None, required_next='refresh'):
+def _reply(command, runtime, epoch, outcome, reason, *, observation=None, required_next='refresh', receipt=None):
     observations = [] if observation is None else [observation]
     refs = [{'observation_key': o['key'], 'revision': dict(o['revision'])} for o in observations]
     applied = outcome == 'applied'
@@ -174,9 +227,9 @@ def _reply(command, runtime, epoch, outcome, reason, *, observation=None, requir
         'request': {
             'request_id': command['request_id'], 'action': command['action'],
             'target': dict(command['target']), 'outcome': outcome, 'reason': reason,
-            'effect_refs': [dict(observation['resource'])] if applied else [],
+            'effect_refs': [dict(receipt['progress_ref'] if receipt else observation['resource'])] if applied else [],
             'observed_refs': refs,
-            'receipt': {'kind': 'admission', 'readback': refs[0]} if applied else None,
+            'receipt': (receipt or {'kind': 'admission', 'readback': refs[0]}) if applied else None,
             'required_next': 'none' if applied else required_next,
         },
         'observations': observations,
@@ -199,7 +252,7 @@ def execute_admission_command(config_path, command, *, context_provider, github)
     if (command['command_schema'] != 1 or command['action'] != 'admission_set'
             or command['target']['kind'] != 'repository' or command['parameters']['mode'] == 'stopped'):
         return _reply(command, runtime, epoch, 'rejected', 'unsupported_operation', required_next='open_source')
-    if command['target']['repository_id'] not in context.repository_ids:
+    if ('admission_set' not in context.operations or command['target']['repository_id'] not in context.repository_ids):
         return _reply(command, runtime, epoch, 'rejected', 'authority_denied')
     expected = command['expected']
     if expected['runtime_key'] is None or expected['admission_revision'] is None:
@@ -226,7 +279,7 @@ def execute_admission_command(config_path, command, *, context_provider, github)
         return _reply(command, current_runtime, epoch, 'rejected', 'host_config_unavailable')
     if reason:
         return _reply(command, current_runtime, epoch, 'rejected', reason)
-    if command['target']['repository_id'] not in context.repository_ids:
+    if ('admission_set' not in context.operations or command['target']['repository_id'] not in context.repository_ids):
         return _reply(command, current_runtime, epoch, 'rejected', 'authority_denied')
     if repository_reason:
         return _reply(command, current_runtime, epoch,
@@ -257,3 +310,112 @@ def execute_admission_command(config_path, command, *, context_provider, github)
                   and snapshot['projects'].get(repository) == 'stopped' else 'already_satisfied')
     return _reply(command, current_runtime, epoch, 'applied', reason,
                   observation=_observation(command, current_runtime, snapshot, repository, 'readback', readback.observed_at))
+
+
+async def execute_checkpoint_command(config_path, command, *, context_provider, github, controller,
+                                     ended_provider=None):
+    """Internal checkpoint-only dispatch; no endpoint or native grant adapter."""
+    command = _parse(command, checkpoint=True)
+    context, reason = _context(context_provider, command)
+    epoch = context.binding_epoch if context else None
+    runtime = capture_runtime_identity()
+    try:
+        cfg = load_host_config(config_path)
+        control = control_from_config(cfg)
+        runtime = capture_runtime_identity(cfg, control)
+    except (OSError, ValueError, OperationDenied):
+        return _reply(command, runtime, epoch, 'rejected', 'host_config_unavailable')
+    if reason:
+        return _reply(command, runtime, epoch, 'rejected', reason)
+    if command['command_schema'] != 1 or command['action'] != 'workflow_step' or command['parameters'] is None:
+        return _reply(command, runtime, epoch, 'rejected', 'unsupported_operation')
+    if command['parameters']['outcome'] == 'failed':
+        return _reply(command, runtime, epoch, 'rejected', 'unsupported_outcome')
+    if command['parameters']['outcome'] == 'stopped' and ended_provider is None:
+        return _reply(command, runtime, epoch, 'rejected', 'termination_unconfirmed')
+    expected = command['expected']
+    if expected['runtime_key'] is None or expected['admission_revision'] is None:
+        return _reply(command, runtime, epoch, 'rejected', 'precondition_required')
+    target = command['target']
+    if ('workflow_step.checkpoint_only' not in context.operations or target['repository_id'] not in context.repository_ids):
+        return _reply(command, runtime, epoch, 'rejected', 'authority_denied')
+    repository, repository_reason = _repository(github, cfg['repos'], target['repository_id'])
+
+    def validate(*, include_evidence=True):
+        nonlocal runtime, epoch
+        config_unavailable = False
+        try:
+            current_cfg = load_host_config(config_path)
+            current_control = control_from_config(current_cfg)
+            runtime = capture_runtime_identity(current_cfg, current_control)
+        except (OSError, ValueError, OperationDenied):
+            config_unavailable = True
+            runtime = capture_runtime_identity()
+        # Match admission's final order: config/runtime, then current authority.
+        # Even a failed config read must not retain an earlier grant or identity.
+        current, reason = _context(context_provider, command)
+        epoch = current.binding_epoch if current else None
+        if config_unavailable:
+            raise OperationDenied('host_config_unavailable')
+        if reason:
+            raise OperationDenied(reason)
+        if ('workflow_step.checkpoint_only' not in current.operations or target['repository_id'] not in current.repository_ids):
+            raise OperationDenied('authority_denied')
+        key = _runtime_key(runtime)
+        if key is None or key != expected['runtime_key']:
+            raise OperationDenied('runtime_unavailable' if key is None else 'stale_runtime')
+        runner = controller.runner
+        if (runner.github is not github or runner.host != current_cfg['host_alias']
+                or tuple(controller.repos) != tuple(current_cfg['repos'])
+                or Path(controller.lock_path).absolute() != Path(current_cfg['lock_path'])
+                or runner.operations is None
+                or runner.operations.control_lock_path != current_control.control_lock_path
+                or runner.operations.repos != current_control.repos
+                or Path(runner.workspace.root).absolute() != Path(current_cfg['workspace_root'])):
+            raise OperationDenied('checkpoint_binding_mismatch')
+        if command['parameters']['outcome'] == 'stopped' and include_evidence:
+            try:
+                evidence = ended_provider()
+            except Exception as exc:
+                raise OperationDenied('termination_unconfirmed') from exc
+            assignment = expected['assignment']
+            exact = tuple(assignment[key] for key in ('attempt_id', 'step_id', 'head', 'contract_revision', 'spec_revision'))
+            if (type(evidence) is not CheckpointStoppedEvidence
+                    or type(evidence.repository_id) is not int or evidence.repository_id != target['repository_id']
+                    or type(evidence.issue_number) is not int or evidence.issue_number != target['issue_number']
+                    or evidence.host_alias != current_cfg['host_alias']
+                    or evidence.control_binding_digest != runtime['control_binding_digest']
+                    or type(evidence.assignment) is not tuple or evidence.assignment != exact
+                    or evidence.state != 'ended' or evidence.availability != 'current'
+                    or evidence.coverage != 'complete' or evidence.descendants != 'ended'
+                    or type(evidence.observation_id) is not str or not 1 <= len(evidence.observation_id) <= 256
+                    or any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in evidence.observation_id)):
+                raise OperationDenied('termination_unconfirmed')
+            # Evidence can require a remote observation. It must not leave the
+            # authority/config read from before that observation as the grant.
+            validate(include_evidence=False)
+
+    try:
+        validate()
+        if repository_reason:
+            return _reply(command, runtime, epoch,
+                          'unknown' if repository_reason == 'repository_unavailable' else 'rejected',
+                          repository_reason)
+        with control.guard(repository, cleanup=command['parameters']['outcome'] == 'stopped',
+                           expected_revision=expected['admission_revision']):
+            pass
+    except OperationDenied as exc:
+        return _reply(command, runtime, epoch, 'waiting' if exc.reason == 'operation_state_busy' else 'rejected', exc.reason)
+    from .coordinator import HostBusy
+    try:
+        receipt = await controller._checkpoint_only(repository, target['issue_number'], expected['assignment'],
+            command['parameters']['outcome'], repository_id=target['repository_id'],
+            admission_revision=expected['admission_revision'], before_effect=validate)
+    except OperationDenied as exc:
+        if exc.reason == 'unsupported_phase':
+            return _reply(command, runtime, epoch, 'rejected', exc.reason, required_next='open_source')
+        return _reply(command, runtime, epoch, 'unknown' if exc.reason == 'assignment_unattributed' else 'waiting',
+                      exc.reason, required_next='reconcile')
+    except (OSError, RuntimeError, ValueError, HostBusy):
+        return _reply(command, runtime, epoch, 'unknown', 'checkpoint_unconfirmed', required_next='reconcile')
+    return _reply(command, runtime, epoch, 'applied', None, receipt=receipt)

@@ -78,6 +78,28 @@ class RepositoryReader:
 
 
 class AdmissionCommandTests(unittest.TestCase):
+    def test_future_body_containers_are_opaque_before_repository_lookup(self):
+        for version, action, expected, parameters in (
+                (2, 'admission_set', None, None),
+                (2, 'admission_set', ['future'], 'future'),
+                (1, 'work_create', 'future', [])):
+            with self.subTest(version=version, action=action):
+                command = self.command()
+                command.update(command_schema=version, action=action,
+                               expected=expected, parameters=parameters)
+                try:
+                    self.assert_rejected_without_write(command, 'unsupported_operation')
+                except InvalidAdmissionCommand:
+                    self.fail('A supported common identity must receive an unsupported reply')
+
+    def test_checkpoint_scope_does_not_grant_admission_writes(self):
+        self.context = AdmissionCallContext('bridge', EPOCH, frozenset({101, 202}),
+                                           frozenset({'workflow_step.checkpoint_only'}))
+        before = self.payload()
+        reply = self.run_command(self.command())
+        self.assertEqual(reply['request']['reason'], 'authority_denied')
+        self.assertEqual(self.payload(), before)
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

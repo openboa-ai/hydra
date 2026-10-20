@@ -323,8 +323,19 @@ class GitHub:
 
     def progress(self, repo, n):
         comment = self._progress_comment(repo, n)
+        return self._progress_value(repo, n, comment) if comment is not None else None
+
+    def progress_source(self, repo, n):
+        """Return validated progress with its authenticated, actual comment locator."""
+        comment = self._progress_comment(repo, n)
         if comment is None:
             return None
+        value = self._progress_value(repo, n, comment)
+        identifier = _number(comment.get("id"))
+        return {"record": value, "resource": {"source": "github", "kind": "issue_comment",
+                "id": f"{_repo(repo)}/comments/{identifier}"}}
+
+    def _progress_value(self, repo, n, comment):
         value = _marker(comment.get("body"), "hydra-progress")
         if value.get("repository_id") != self.repository(repo)["id"] or value.get("issue_number") != n or value.get("version") != 1:
             raise GitHubError("Progress identity mismatch")
@@ -437,7 +448,10 @@ class GitHub:
         return result
 
     def record_checkpoint(self, repo, n, record):
-        """Only a caller-confirmed stopped checkpoint; leave discovery labels alone."""
+        """Record a confirmed finished/stopped checkpoint without discovery effects.
+
+        Callers still enforce their own admission and exact assignment authority.
+        """
         return self.record(repo, n, record, cleanup=True)
 
     def ref(self, repo, branch):
