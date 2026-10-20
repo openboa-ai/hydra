@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "scope": "selected_source_d",
+  "excluded": [
+    "live_model_evaluation",
+    "native_operation",
+    "trusted_ci_attestation",
+    "unselected_v1_requirements",
+    "verify_only_command"
+  ],
+  "cases": [
+    {
+      "case_id": "VF-D23-REPOSITORY-IDENTITY",
+      "requirements": [
+        {
+          "path": "docs/engineering/github-workflow/spec.md",
+          "revision": "sha256:e6b4ffc1ce4e557f082fd4823dd4d9fa3e00364a86c3821d1e8abb44ecc9e9bf",
+          "section": "product-contract-and-work-intake"
+        }
+      ],
+      "selectors": [
+        "test_repository_intake_identity.RepositoryPolicyTests.test_canonical_full_name_binds_actual_ci_and_provider_evidence",
+        "test_repository_intake_identity.RepositoryPolicyTests.test_foreign_or_malformed_canonical_identity_never_rebinds_policy"
+      ],
+      "fixture": "tests/fixtures/mvp/verification/repository_identity.json"
+    },
+    {
+      "case_id": "VF-D09-REQUIRED-CI",
+      "requirements": [
+        {
+          "path": "docs/engineering/github-workflow/spec.md",
+          "revision": "sha256:e6b4ffc1ce4e557f082fd4823dd4d9fa3e00364a86c3821d1e8abb44ecc9e9bf",
+          "section": "execution-delivery-and-recovery"
+        }
+      ],
+      "selectors": [
+        "test_project.ProjectTests.test_exact_head_genuine_checks_and_completed_provider_pass",
+        "test_project.ProjectTests.test_spoofed_or_stale_checks_and_native_evidence_block",
+        "test_project.ProjectTests.test_missing_required_job_in_completed_bound_run_requires_diagnosis"
+      ],
+      "fixture": "tests/fixtures/mvp/verification/required_ci.json"
+    }
+  ]
+}

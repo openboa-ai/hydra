@@ -1,0 +1,434 @@
+"""P13 actual subprocess, Git, export and public non-disclosure oracles."""
+
+import copy
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = "scripts/run_mvp_verification.py"
+MANIFEST = "tests/fixtures/mvp/verification/cases.json"
+CANARY = "PRIVATE_CANARY_DO_NOT_EXPORT"
+EXCLUSIONS = sorted(["unselected_v1_requirements", "live_model_evaluation", "native_operation",
+                     "verify_only_command", "trusted_ci_attestation"])
+
+
+def digest(data):
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+class Fixture:
+    def __init__(self, root, body="pass", decorator="", extra=""):
+        self.root = Path(root)
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "PYTHON"))}
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+                        GIT_AUTHOR_NAME="Evidence fixture", GIT_COMMITTER_NAME="Evidence fixture",
+                        GIT_AUTHOR_EMAIL="fixture@example.invalid", GIT_COMMITTER_EMAIL="fixture@example.invalid",
+                        PYTHONDONTWRITEBYTECODE="1")
+        self.write(SCRIPT, (ROOT / SCRIPT).read_text())
+        self.write("docs/contract.md", "Public fixture contract.\n")
+        self.write(".github/workflows/ci.yml", "name: Synthetic policy\n")
+        self.write("tests/test_probe.py", "import unittest, os, subprocess, sys\nfrom pathlib import Path\n"
+                   + extra + "\nclass Probe(unittest.TestCase):\n"
+                   + (" " + decorator + "\n" if decorator else "")
+                   + " def test_required(self):\n" + "\n".join("  " + line for line in body.splitlines()) + "\n")
+        self.case = {"case_id": "VF-D01-FIXTURE", "requirements": [{"path": "docs/contract.md",
+            "revision": digest((self.root / "docs/contract.md").read_bytes()), "section": "acceptance"}],
+            "selectors": ["test_probe.Probe.test_required"],
+            "fixture": "tests/fixtures/mvp/verification/probe.json"}
+        self.manifest = {"schema_version": 1, "scope": "selected_source_d", "excluded": EXCLUSIONS,
+                         "cases": [self.case]}
+        self.json(self.case["fixture"], {"case_id": self.case["case_id"], "preconditions": ["synthetic"],
+             "events": ["execute"], "expected": ["actual required evidence"],
+             "forbidden_effects": ["incomplete evidence accepted"], "oracle": "independent subprocess exit"})
+        self.save()
+        self.git("init", "--quiet", "--object-format=sha1")
+        self.git("config", "commit.gpgsign", "false")
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "Synthetic evidence source")
+        self.head = self.git("rev-parse", "HEAD")
+
+    def write(self, name, value):
+        target = self.root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(value)
+
+    def json(self, name, value):
+        self.write(name, json.dumps(value, indent=2) + "\n")
+
+    def save(self):
+        self.json(MANIFEST, self.manifest)
+
+    def git(self, *args):
+        result = subprocess.run(["git", *args], cwd=self.root, env=self.env, capture_output=True, timeout=15)
+        if result.returncode:
+            raise AssertionError("Synthetic git setup failed")
+        return result.stdout.decode().strip()
+
+    def freeze(self):
+        paths = [name for name in ("scripts", "tests", "docs", ".github", "hydra_sdlc")
+                 if (self.root / name).exists()]
+        self.git("add", "--", *paths)
+        self.git("commit", "--quiet", "--allow-empty", "-m", "Freeze synthetic candidate")
+        self.head = self.git("rev-parse", "HEAD")
+
+    def run(self, *, output="report.json", validate=False, args=(), freeze=True):
+        if freeze and not validate:
+            self.freeze()
+        result = subprocess.run([sys.executable, "-I", SCRIPT, "--manifest", MANIFEST,
+            "--validate-report" if validate else "--output", "artifacts/mvp-verification/" + output,
+            "--checked-sha", self.head, *args], cwd=self.root, env=self.env, capture_output=True, timeout=20)
+        assert CANARY.encode() not in result.stdout + result.stderr
+        assert b"Traceback" not in result.stdout + result.stderr
+        assert str(self.root).encode() not in result.stdout + result.stderr
+        return result
+
+    def report(self, name="report.json"):
+        return json.loads((self.root / "artifacts/mvp-verification" / name).read_text())
+
+    def add_missing_case(self):
+        second = copy.deepcopy(self.case)
+        second.update(case_id="VF-D01-MISSING", selectors=["test_probe.Probe.test_missing"],
+                      fixture="tests/fixtures/mvp/verification/missing.json")
+        value = json.loads((self.root / self.case["fixture"]).read_text())
+        value["case_id"] = second["case_id"]
+        self.json(second["fixture"], value)
+        self.manifest["cases"].append(second)
+        self.save()
+
+
+class VerificationCollectorTests(unittest.TestCase):
+    def fixture(self, **kwargs):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return Fixture(directory.name, **kwargs)
+
+    def test_normal_required_collection_export_and_same_revision_consumer_pass(self):
+        fixture = self.fixture(body="Path('effect').write_text('once')\nself.assertEqual(2 + 2, 4)")
+        args = ("--base-sha", "a" * 40, "--source-head", "b" * 40)
+        self.assertEqual(fixture.run(args=args).returncode, 0)
+        report = fixture.report()
+        self.assertEqual(report["binding"]["candidate_head"], fixture.head)
+        self.assertEqual(report["binding"]["source_head"], "b" * 40)
+        self.assertEqual(report["binding"]["base_sha"], "a" * 40)
+        row = report["results"][0]
+        self.assertEqual((row["status"], row["observed"][0]["executed"], row["observed"][0]["completed"]), ("PASS", 1, 1))
+        self.assertEqual(report["excluded"], EXCLUSIONS)
+        self.assertEqual(fixture.run(validate=True, args=args).returncode, 0)
+
+    def test_versioned_manifest_executes_five_actual_source_methods(self):
+        fixture = self.fixture()
+        shutil.copytree(ROOT / "hydra_sdlc", fixture.root / "hydra_sdlc",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for name in ("test_project.py", "test_repository_intake_identity.py", "test_runner.py"):
+            fixture.write("tests/" + name, (ROOT / "tests" / name).read_text())
+        manifest = json.loads((ROOT / MANIFEST).read_text())
+        fixture.json(MANIFEST, manifest)
+        for case in manifest["cases"]:
+            fixture.write(case["fixture"], (ROOT / case["fixture"]).read_text())
+            for reference in case["requirements"]:
+                fixture.write(reference["path"], (ROOT / reference["path"]).read_text())
+        result = fixture.run()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        rows = fixture.report()["results"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sum(len(row["observed"]) for row in rows), 5)
+        self.assertTrue(all(row["status"] == "PASS" for row in rows))
+
+    def test_required_skip_expected_failure_unexpected_success_error_and_subtest_fail_are_not_green(self):
+        cases = [dict(decorator="@unittest.skip('" + CANARY + "')"),
+                 dict(decorator="@unittest.expectedFailure", body="self.fail('" + CANARY + "')"),
+                 dict(decorator="@unittest.expectedFailure"),
+                 dict(body="raise RuntimeError('" + CANARY + "')"),
+                 dict(body="with self.subTest(secret='" + CANARY + "'):\n self.assertEqual(1, 2)"),
+                 dict(body="self.fail('" + CANARY + "')")]
+        for kwargs in cases:
+            with self.subTest(kind=sorted(kwargs)):
+                fixture = self.fixture(**kwargs)
+                self.assertNotEqual(fixture.run().returncode, 0)
+                self.assertNotEqual(fixture.report()["results"][0]["status"], "PASS")
+                self.assertNotIn(CANARY, json.dumps(fixture.report()))
+
+    def test_class_setup_skip_and_error_are_not_executed(self):
+        for exception in ("unittest.SkipTest", "RuntimeError"):
+            fixture = self.fixture()
+            path = fixture.root / "tests/test_probe.py"
+            path.write_text(path.read_text() + " @classmethod\n def setUpClass(cls):\n  raise " + exception + "('" + CANARY + "')\n")
+            self.assertNotEqual(fixture.run().returncode, 0)
+            self.assertEqual(fixture.report()["results"][0]["observed"][0]["executed"], 0)
+
+    def test_missing_zero_duplicate_callable_and_import_failure_never_satisfy_collection(self):
+        for mode in ("missing", "zero", "duplicate", "callable", "import", "load_zero"):
+            with self.subTest(mode=mode):
+                fixture = self.fixture()
+                if mode == "missing":
+                    fixture.case["selectors"] = ["test_probe.Probe.test_missing"]
+                elif mode == "zero":
+                    fixture.manifest["cases"] = []
+                elif mode == "duplicate":
+                    fixture.case["selectors"] *= 2
+                elif mode == "callable":
+                    fixture.write("tests/test_probe.py", "def Probe():\n raise RuntimeError('" + CANARY + "')\n")
+                elif mode == "import":
+                    fixture.write("tests/test_probe.py", "raise RuntimeError('" + CANARY + "')\n")
+                else:
+                    path = fixture.root / "tests/test_probe.py"
+                    path.write_text(path.read_text() + "\nProbe.test_required = None\n")
+                fixture.save()
+                self.assertNotEqual(fixture.run().returncode, 0)
+
+    def test_missing_requirement_evidence_fails_only_that_case_not_complete_control(self):
+        fixture = self.fixture()
+        fixture.add_missing_case()
+        self.assertNotEqual(fixture.run().returncode, 0)
+        self.assertEqual([row["status"] for row in fixture.report()["results"]], ["PASS", "NOT RUN"])
+
+    def test_output_from_import_python_fd_child_and_exception_is_never_public(self):
+        payload = "print('" + CANARY + "' * 10000)\nos.write(2, b'" + CANARY + "')\n"
+        fixture = self.fixture(extra=payload, body=payload +
+            "subprocess.run([sys.executable, '-c', \"print('" + CANARY + "')\"])\nself.fail('" + CANARY + "')")
+        self.assertNotEqual(fixture.run().returncode, 0)
+        self.assertNotIn(CANARY, json.dumps(fixture.report()))
+
+    def test_output_from_test_shutdown_handlers_is_never_public(self):
+        fixture = self.fixture(extra="import atexit\n"
+            "atexit.register(lambda: os.write(2, b'" + CANARY + "'))\n"
+            "atexit.register(lambda: print('" + CANARY + "'))")
+        self.assertEqual(fixture.run().returncode, 0)
+
+    def test_interruption_preserves_effect_without_retry_and_marks_remaining_case(self):
+        fixture = self.fixture(body="Path('effect').write_text('once')\nraise KeyboardInterrupt('" + CANARY + "')")
+        fixture.add_missing_case()
+        self.assertNotEqual(fixture.run().returncode, 0)
+        self.assertEqual((fixture.root / "effect").read_text(), "once")
+        self.assertEqual(fixture.report()["results"][1]["status"], "NOT RUN")
+
+    def test_export_failure_preserves_prior_bytes_and_single_effect(self):
+        fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once')")
+        fixture.write("artifacts/mvp-verification/report.json", "prior evidence")
+        result = fixture.run()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["reason"], "export_failed")
+        self.assertEqual((fixture.root / "artifacts/mvp-verification/report.json").read_text(), "prior evidence")
+        self.assertEqual((fixture.root / "effect").read_text(), "once")
+
+    def test_revision_and_corrupt_artifact_cannot_be_reused_or_rerun_effects(self):
+        for mode in ("head", "source", "base", "spec", "policy", "fixture", "extra", "status", "count"):
+            with self.subTest(mode=mode):
+                fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once')")
+                self.assertEqual(fixture.run().returncode, 0)
+                report = fixture.report()
+                if mode in {"head", "source", "base"}:
+                    report["binding"][{"head": "candidate_head", "source": "source_head", "base": "base_sha"}[mode]] = "c" * 40
+                elif mode == "spec":
+                    fixture.write("docs/contract.md", "Changed requirement\n")
+                elif mode == "policy":
+                    fixture.write(".github/workflows/ci.yml", "Changed policy\n")
+                elif mode == "fixture":
+                    fixture.write(fixture.case["fixture"], "{}")
+                elif mode == "extra":
+                    report["results"][0]["raw"] = CANARY
+                elif mode == "status":
+                    report["results"][0]["status"] = "NOT RUN"
+                else:
+                    report["results"][0]["observed"][0]["executed"] = 0
+                fixture.json("artifacts/mvp-verification/report.json", report)
+                self.assertNotEqual(fixture.run(validate=True).returncode, 0)
+                self.assertEqual((fixture.root / "effect").read_text(), "once")
+
+    def test_source_change_during_execution_invalidates_export(self):
+        fixture = self.fixture(body="Path('docs/contract.md').write_text('changed')")
+        self.assertNotEqual(fixture.run().returncode, 0)
+        self.assertFalse((fixture.root / "artifacts/mvp-verification/report.json").exists())
+
+    def test_checked_revision_mismatch_before_any_effect(self):
+        fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+        self.assertNotEqual(fixture.run(args=("--checked-sha", "d" * 40)).returncode, 0)
+        self.assertFalse((fixture.root / "effect").exists())
+
+    def test_dirty_source_at_start_cannot_claim_committed_candidate(self):
+        fixture = self.fixture()
+        path = fixture.root / "tests/test_probe.py"
+        path.write_text(path.read_text().replace("  pass", "  Path('effect').write_text('forbidden')"))
+        self.assertNotEqual(fixture.run(freeze=False).returncode, 0)
+        self.assertFalse((fixture.root / "effect").exists())
+
+    def test_untracked_python_shadow_cannot_claim_committed_candidate(self):
+        fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+        fixture.write("tests/shadow.py", "# Uncommitted source\n")
+        self.assertNotEqual(fixture.run(freeze=False).returncode, 0)
+        self.assertFalse((fixture.root / "effect").exists())
+
+    def test_startup_module_shadow_cannot_execute_before_rejection(self):
+        fixture = self.fixture()
+        fixture.write("scripts/argparse.py", "from pathlib import Path\n"
+                      "Path('effect').write_text('forbidden')\nprint('" + CANARY + "')\n")
+        self.assertNotEqual(fixture.run(freeze=False).returncode, 0)
+        self.assertFalse((fixture.root / "effect").exists())
+        result = subprocess.run([sys.executable, SCRIPT, "--output", "artifacts/mvp-verification/report.json"],
+            cwd=fixture.root, env=fixture.env, capture_output=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(CANARY.encode(), result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["reason"], "isolated_python_required")
+        self.assertFalse((fixture.root / "effect").exists())
+
+    def test_index_hints_cannot_hide_dirty_bytes_from_candidate_binding(self):
+        for flag in ("--assume-unchanged", "--skip-worktree"):
+            with self.subTest(flag=flag):
+                fixture = self.fixture()
+                fixture.git("update-index", flag, "tests/test_probe.py")
+                path = fixture.root / "tests/test_probe.py"
+                path.write_text(path.read_text().replace("  pass", "  Path('effect').write_text('forbidden')"))
+                self.assertNotEqual(fixture.run(freeze=False).returncode, 0)
+                self.assertFalse((fixture.root / "effect").exists())
+
+    def test_passing_rows_from_two_failed_same_revision_runs_cannot_be_combined(self):
+        fixture = self.fixture(body="self.assertNotEqual(os.environ.get('FAILING_CASE'), 'first')")
+        path = fixture.root / "tests/test_probe.py"
+        path.write_text(path.read_text() + " def test_second(self):\n"
+                        "  self.assertNotEqual(os.environ.get('FAILING_CASE'), 'second')\n")
+        fixture.add_missing_case()
+        fixture.manifest["cases"][1]["selectors"] = ["test_probe.Probe.test_second"]
+        fixture.save()
+        fixture.freeze()
+        fixture.env["FAILING_CASE"] = "first"
+        self.assertNotEqual(fixture.run(output="first.json", freeze=False).returncode, 0)
+        first = fixture.report("first.json")
+        fixture.env["FAILING_CASE"] = "second"
+        self.assertNotEqual(fixture.run(output="second.json", freeze=False).returncode, 0)
+        second = fixture.report("second.json")
+        self.assertEqual(first["binding"], second["binding"])
+        mixed = copy.deepcopy(first)
+        mixed["results"][0] = second["results"][0]
+        self.assertTrue(all(row["status"] == "PASS" for row in mixed["results"]))
+        fixture.json("artifacts/mvp-verification/mixed.json", mixed)
+        self.assertNotEqual(fixture.run(validate=True, output="mixed.json").returncode, 0)
+        del fixture.env["FAILING_CASE"]
+        self.assertEqual(fixture.run(output="complete.json", freeze=False).returncode, 0)
+        self.assertEqual(fixture.run(validate=True, output="complete.json").returncode, 0)
+
+    def test_symlink_output_parent_and_target_preserve_foreign_files(self):
+        for target in (False, True):
+            fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+            directory = tempfile.TemporaryDirectory()
+            self.addCleanup(directory.cleanup)
+            outside = Path(directory.name)
+            (outside / "report.json").write_text("owned elsewhere")
+            if target:
+                (fixture.root / "artifacts/mvp-verification").mkdir(parents=True)
+                (fixture.root / "artifacts/mvp-verification/report.json").symlink_to(outside / "report.json")
+            else:
+                (fixture.root / "artifacts").symlink_to(outside, target_is_directory=True)
+            self.assertNotEqual(fixture.run().returncode, 0)
+            self.assertFalse((fixture.root / "effect").exists())
+            self.assertEqual((outside / "report.json").read_text(), "owned elsewhere")
+
+    def test_manifest_shell_or_unknown_fields_are_not_authority(self):
+        fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+        fixture.case["command"] = "touch forbidden"
+        fixture.save()
+        self.assertNotEqual(fixture.run().returncode, 0)
+        self.assertFalse((fixture.root / "effect").exists())
+
+    def test_actual_gate_oracles_detect_isolated_defects_and_always_deny(self):
+        body = ("from hydra_sdlc.project import load_project, ProjectError, gate_checks\n"
+                "from test_project import ConfigGitHub, TOML, config, observation, HEAD, BASE\n"
+                "self.assertEqual(load_project(ConfigGitHub(), 'example/product')['repository_id'], 123)\n"
+                "with self.assertRaises(ProjectError):\n"
+                " load_project(ConfigGitHub(TOML.replace('repository_id = 123', 'repository_id = 999')), 'example/product')\n"
+                "self.assertEqual(gate_checks(config(), observation(), HEAD), [])\n"
+                "unknown = observation(); unknown['checks'][0]['app']['id'] = 999\n"
+                "self.assertTrue(gate_checks(config(), unknown, HEAD))\n"
+                "stale = observation(); stale['runs'][0]['head_sha'] = BASE\n"
+                "self.assertTrue(gate_checks(config(), stale, HEAD))")
+        defects = {"control": "", "identity": (
+            "\n_real_require = _require\ndef _require(condition, message):\n"
+            " return _real_require(True if message == 'Repository identity mismatch' else condition, message)\n"),
+            "unknown": ("\n_real_gate = gate_checks\ndef gate_checks(cfg, obs, sha, **kw):\n"
+                         " return [] if obs['checks'][0]['app']['id'] == 999 else _real_gate(cfg, obs, sha, **kw)\n"),
+            "stale": ("\n_real_gate = gate_checks\ndef gate_checks(cfg, obs, sha, **kw):\n"
+                       " return [] if obs['runs'][0]['head_sha'] != sha else _real_gate(cfg, obs, sha, **kw)\n"),
+            "always_deny": "\ndef gate_checks(*args, **kwargs): return ['denied']\n"}
+        for name, change in defects.items():
+            with self.subTest(defect=name):
+                fixture = self.fixture(body=body)
+                fixture.write("hydra_sdlc/__init__.py", "")
+                fixture.write("hydra_sdlc/project.py", (ROOT / "hydra_sdlc/project.py").read_text() + change)
+                fixture.write("tests/test_project.py", (ROOT / "tests/test_project.py").read_text())
+                result = fixture.run()
+                self.assertEqual(result.returncode == 0, name == "control")
+                if name != "control":
+                    self.assertEqual(fixture.report()["results"][0]["observed"][0]["reasons"], ["test_failure"])
+
+
+def ci_script(text):
+    marker = "      - name: Collect selected source verification evidence\n"
+    if text.count(marker) != 1:
+        raise AssertionError("Missing unique collection step")
+    step = text.split(marker)[1].split("      - name:", 1)[0]
+    run = step.split("        run: |\n", 1)[1]
+    return "\n".join(line[10:] for line in run.splitlines()) + "\n"
+
+
+def assert_ci_contract(text):
+    """Bounded regression tripwire, backed by actionlint and independent CI review."""
+    required = ["permissions:\n  contents: read\n", "timeout-minutes: 5", "python: ['3.11', '3.14.2']",
+        "python3 -m pip install '.[mcp]'", "python3 -m unittest discover -s tests -v",
+        "uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+        "path: artifacts/mvp-verification/result.json", "if-no-files-found: error",
+        "include-hidden-files: false", "overwrite: false", "--checked-sha \"$CHECKED_SHA\"",
+        "python3 -I scripts/run_mvp_verification.py",
+        "SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}",
+        "CHECKED_SHA: ${{ github.sha }}"]
+    if not all(item in text for item in required):
+        raise AssertionError("Required CI contract removed")
+    for forbidden in ("continue-on-error", "contents: write", "secrets.", "pull_request_target", "|| true"):
+        if forbidden in text:
+            raise AssertionError("CI authority or gate changed")
+    if text.count("  mac-app:\n") != 1:
+        raise AssertionError("Mac job removed")
+    suffix = "  mac-app:\n" + text.split("  mac-app:\n", 1)[1]
+    if hashlib.sha256(suffix.encode()).hexdigest() != "91b45a94c8cdbea92ce97b6e6e61d6e80722e09fa5342bc50196a65e7920c79e":
+        raise AssertionError("Existing Mac or trusted hygiene policy changed")
+
+
+class VerificationCIContractTests(unittest.TestCase):
+    fixture = VerificationCollectorTests.fixture
+    def test_ci_shell_consumes_actual_collector_exit_and_separate_checked_revision(self):
+        text = (ROOT / ".github/workflows/ci.yml").read_text()
+        assert_ci_contract(text)
+        for skipped in (False, True):
+            fixture = self.fixture(decorator="@unittest.skip('unavailable')" if skipped else "")
+            environment = {**fixture.env, "CHECKED_SHA": fixture.head, "SOURCE_HEAD": "b" * 40,
+                           "BASE_SHA": "a" * 40}
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c", ci_script(text)],
+                cwd=fixture.root, env=environment, capture_output=True, timeout=20)
+            self.assertEqual(result.returncode == 0, not skipped)
+            self.assertEqual(fixture.report("result.json")["binding"]["candidate_head"], fixture.head)
+            self.assertEqual(fixture.report("result.json")["binding"]["source_head"], "b" * 40)
+
+    def test_ci_contract_rejects_required_deletion_untrusted_scan_and_permissions(self):
+        text = (ROOT / ".github/workflows/ci.yml").read_text()
+        assert_ci_contract(text)
+        mutations = [text.replace("python3 -m unittest discover -s tests -v", "true"),
+                     text.replace("contents: read", "contents: write"),
+                     text.replace('--config "$GITLEAKS_TRUSTED_CONFIG"', '--config candidate/.gitleaks.toml'),
+                     text.replace("if-no-files-found: error", "if-no-files-found: ignore"),
+                     text.replace("python3 -I scripts/run_mvp_verification.py", "true #")]
+        for changed in mutations:
+            with self.subTest(changed=changed != text):
+                self.assertTrue(changed != text, "Defect injection must alter the workflow")
+                with self.assertRaises(AssertionError):
+                    assert_ci_contract(changed)
+
+
+if __name__ == "__main__":
+    unittest.main()

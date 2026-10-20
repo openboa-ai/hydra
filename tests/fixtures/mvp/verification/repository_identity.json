@@ -1,0 +1,11 @@
+{
+  "case_id": "VF-D23-REPOSITORY-IDENTITY",
+  "kind": "D",
+  "scenarios": ["S01"],
+  "preconditions": ["Existing synthetic repository policy fixtures in test_repository_intake_identity and test_project; no live provider."],
+  "events": ["Resolve an authorized canonical name through a case-insensitive alias.", "Replace the name with malformed or foreign identity; independently replace the numeric repository ID."],
+  "expected": ["Valid aliases retain one canonical policy and exact CI/provider binding.", "Malformed or foreign identities raise ProjectError before policy adoption."],
+  "forbidden_effects": ["Adopt another repository based only on a similar name.", "Reject all valid aliases as a substitute for identity validation."],
+  "oracle": "Existing explicit positive empty-gate assertion and independent ProjectError matrix; no expectation computed from load_project.",
+  "scope": "Source D for repository policy identity only; not all VF-D23 lifecycle behavior."
+}
