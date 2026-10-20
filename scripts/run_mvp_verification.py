@@ -29,10 +29,12 @@ import secrets
 import selectors
 import signal
 import stat
+import struct
 import subprocess
 import tempfile
 import threading
 import time
+import types
 import unittest
 
 
@@ -48,6 +50,9 @@ CASE = re.compile(r"[A-Z][A-Z0-9-]{1,63}\Z")
 SELECTOR = re.compile(r"test_[a-z0-9_]+\.[A-Za-z][A-Za-z0-9_]*\.test_[a-z0-9_]+\Z")
 REASONS = {"passed", "test_failure", "test_error", "required_skipped", "expected_failure",
            "unexpected_success", "interrupted", "not_executed", "collection_invalid"}
+_REASON_CODES = tuple(sorted(REASONS))
+_SELECTOR_PACKET = struct.Struct('!4s10I')
+_LAZY_RETURNS = (types.GeneratorType, types.AsyncGeneratorType, types.CoroutineType)
 EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_operation",
               "verify_only_command", "trusted_ci_attestation"}
 LIMITATIONS = sorted(EXCLUSIONS)
@@ -339,7 +344,36 @@ def source_snapshot(root, head):
                     directory.chmod(0o700)
 
 
-def verify_snapshot(root, revision):
+def _snapshot_fingerprint(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _snapshot_identity(info):
+    return info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink
+
+
+def _check_snapshot_bytes(checks):
+    directories, files = checks
+    # Reuse known paths and expected hashes, never timestamps as content proof.
+    # Names detect extra entries; inode/mode/owner binds the opened source.
+    for path, identity, names in directories:
+        require(_snapshot_identity(os.lstat(path)) == identity)
+        require(tuple(sorted(os.listdir(path))) == names)
+    for path, identity, size, expected, link in files:
+        require(_snapshot_identity(os.lstat(path)) == identity)
+        if link:
+            data = os.readlink(path).encode('utf-8')
+        else:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                require(_snapshot_identity(info) == identity and info.st_size == size)
+                data = stream.read(size + 1)
+        require(len(data) == size and hashlib.sha256(data).digest() == expected)
+
+
+def verify_snapshot(root, revision, *, signatures=None, remember=False):
     """Check the actual input tree against the pinned canonical Git stream.
 
     Mode bits alone cannot prevent its owner from rewriting a file. Check bytes,
@@ -347,6 +381,9 @@ def verify_snapshot(root, revision):
     boundaries, and independently in the supervisor before publication.
     This is source-drift detection, not isolation from arbitrary same-user code.
     """
+    if signatures is not None:
+        _check_snapshot_bytes(signatures)
+        return signatures
     require(root.is_dir() and not root.is_symlink())
     paths, folders = [], set()
     for directory, children, files in os.walk(root, followlinks=False):
@@ -362,6 +399,14 @@ def verify_snapshot(root, revision):
     for path in paths:
         expected_folders.update(path.parents)
     require(folders == expected_folders)
+    names = {folder: set() for folder in folders}
+    for path in paths:
+        names[path.parent].add(path.name)
+    for folder in folders - {Path('.')}:
+        names[folder.parent].add(folder.name)
+    directories = tuple((str(root / folder), _snapshot_identity(os.lstat(root / folder)),
+                         tuple(sorted(names[folder]))) for folder in folders)
+    files = []
     digest = hashlib.sha256()
     for relative in sorted(paths, key=lambda path: path.as_posix()):
         path = root / relative
@@ -373,9 +418,14 @@ def verify_snapshot(root, revision):
             require(not info.st_mode & 0o222)
             mode = '100755' if info.st_mode & 0o111 else '100644'
             data = regular(root, relative.as_posix()).read_bytes()
+        files.append((str(path), _snapshot_identity(os.lstat(path)), len(data),
+                      hashlib.sha256(data).digest(), mode == '120000'))
         digest.update(relative.as_posix().encode('utf-8') + b'\0')
         digest.update(mode.encode('ascii') + b'\0' + data + b'\0')
     require('sha256:' + digest.hexdigest() == revision)
+    checks = directories, tuple(files)
+    _check_snapshot_bytes(checks)
+    return checks if remember else None
 
 
 def quiet():
@@ -458,23 +508,49 @@ def execute_selector(root, selector):
     """One selected import/run in a fresh interpreter, with no earlier test heap."""
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "tests"))
-    result, collected, reasons, invoked = Result(), 0, [], [0]
+    result, collected, reasons, invoked, finished, method_reasons = Result(), 0, [], [0], [0], []
+    is_instance = isinstance
+    lazy_returns = _LAZY_RETURNS
+    def failed(error, failure_type):
+        if is_instance(error, KeyboardInterrupt):
+            method_reasons.append('interrupted')
+        elif is_instance(error, unittest.SkipTest):
+            method_reasons.append('required_skipped')
+        else:
+            method_reasons.append('test_failure' if is_instance(error, failure_type) else 'test_error')
+    def returned(value):
+        if is_instance(value, lazy_returns):
+            method_reasons.append('not_executed')
+        return value
     try:
         suite = collect(root, selector)
         collected = 1
         test = next(flatten(suite))
         name = selector.rsplit('.', 1)[1]
         original = getattr(test, name)
+        failure_type = test.failureException
         if inspect.iscoroutinefunction(original):
             @functools.wraps(original)
             async def method(*args, **kwargs):
                 invoked[0] += 1
-                return await original(*args, **kwargs)
+                try:
+                    return returned(await original(*args, **kwargs))
+                except BaseException as error:
+                    failed(error, failure_type)
+                    raise
+                finally:
+                    finished[0] += 1
         else:
             @functools.wraps(original)
             def method(*args, **kwargs):
                 invoked[0] += 1
-                return original(*args, **kwargs)
+                try:
+                    return returned(original(*args, **kwargs))
+                except BaseException as error:
+                    failed(error, failure_type)
+                    raise
+                finally:
+                    finished[0] += 1
         setattr(test, name, method)
         suite.run(result)
     except KeyboardInterrupt:
@@ -482,13 +558,17 @@ def execute_selector(root, selector):
     except (SystemExit, Exception):
         reasons = ["collection_invalid"] if not collected else ["test_error"]
     reasons += result.reasons
+    if 'interrupted' in method_reasons:
+        reasons.append('interrupted')
+    elif not reasons:
+        reasons += method_reasons
     if _TERMINATION_REQUESTED:
         reasons.append("interrupted")
-    if not reasons and (result.testsRun != 1 or result.completed != 1 or invoked[0] != 1):
+    if not reasons and (result.testsRun != 1 or result.completed != 1 or invoked[0] != 1 or finished[0] != 1):
         reasons = ["test_error" if invoked[0] > 1 else "not_executed"]
     return {"selector": selector, "collected": collected, "executed": result.testsRun,
             "completed": result.completed, "subtests": result.subtests,
-            "reasons": sorted(set(reasons)) or ["passed"]}
+            "reasons": sorted(set(reasons)) or ["passed"]}, invoked[0], finished[0]
 
 
 def execution_environment():
@@ -500,11 +580,12 @@ def execute(root, manifest, pins):
     # own clean process and private pipe; prior class/helper/stdlib patches cannot
     # replace later committed implementations without changing checked files.
     entries, interrupted = [], False
+    signatures = verify_snapshot(root, pins['source_revision'], remember=True)
     run_alias = "verification-" + secrets.token_hex(16)
     for case in manifest["cases"]:
         started, outcomes = now(), []
         for selector in case["selectors"]:
-            verify_snapshot(root, pins['source_revision'])
+            verify_snapshot(root, pins['source_revision'], signatures=signatures)
             if interrupted:
                 outcome = {"selector": selector, "collected": 0, "executed": 0,
                            "completed": 0, "subtests": 0, "reasons": ["not_executed"]}
@@ -514,7 +595,7 @@ def execute(root, manifest, pins):
                 require(selected["environment"] == execution_environment())
                 outcome = selected["outcome"]
                 interrupted = "interrupted" in outcome["reasons"]
-            verify_snapshot(root, pins['source_revision'])
+            verify_snapshot(root, pins['source_revision'], signatures=signatures)
             outcomes.append(outcome)
         passed = all(row["reasons"] == ["passed"] for row in outcomes)
         status = "PASS" if passed else ("NOT RUN" if all(row["executed"] == 0 for row in outcomes) else "FAIL")
@@ -527,6 +608,7 @@ def execute(root, manifest, pins):
             "started_at": started, "finished_at": now(), "observed": outcomes,
             "evidence_refs": [{"kind": "same_run", "case_id": case["case_id"], "run_alias": run_alias}],
             "limitations": LIMITATIONS, "remaining_owner": None if passed else "implementation_owner"})
+    verify_snapshot(root, pins['source_revision'])
     return {"schema_version": VERSION, "scope": "selected_source_d", "excluded": LIMITATIONS, "run_alias": run_alias,
             "binding": pins, "results": entries}
 
@@ -542,6 +624,44 @@ def _fork_available():
     # Keep the fresh-exec route for platforms without this safe fork profile.
     return (sys.platform in {'darwin', 'linux'} and hasattr(os, 'fork')
             and Path('/dev/fd').is_dir() and threading.active_count() == 1)
+
+
+def _emit_selector(root, selector, descriptor):
+    # Capture immutable C operations before any selected import. Selected tests
+    # may legitimately patch json.dumps/JSONEncoder; they never serialize their
+    # own verdict. The pristine orchestrator constructs all JSON.
+    pack, write, close = _SELECTOR_PACKET.pack, os.write, os.close
+    codes = _REASON_CODES
+    try:
+        outcome, invoked, finished = execute_selector(root, selector)
+        mask = 0
+        for bit, reason in enumerate(codes):
+            if reason in outcome['reasons']:
+                mask |= 1 << bit
+        data = pack(b'HYD1', outcome['collected'], outcome['executed'], outcome['completed'],
+                    outcome['subtests'], invoked, finished, mask, *sys.version_info[:3])
+        while data:
+            count = write(descriptor, data)
+            require(count > 0)
+            data = data[count:]
+    finally:
+        close(descriptor)
+
+
+def _selector_result(data, selector):
+    require(len(data) == _SELECTOR_PACKET.size)
+    magic, collected, executed, completed, subtests, invoked, finished, mask, major, minor, micro = _SELECTOR_PACKET.unpack(data)
+    require(magic == b'HYD1' and mask and not mask >> len(_REASON_CODES))
+    require(0 <= completed <= executed <= collected <= 1 and subtests <= 100000)
+    require(invoked <= 100000 and finished <= invoked)
+    reasons = [reason for bit, reason in enumerate(_REASON_CODES) if mask & (1 << bit)]
+    if reasons == ['passed']:
+        require(collected == executed == completed == invoked == finished == 1)
+    else:
+        require('passed' not in reasons)
+    return {'outcome': {'selector': selector, 'collected': collected, 'executed': executed,
+            'completed': completed, 'subtests': subtests, 'reasons': reasons},
+            'environment': {'python': '.'.join(map(str, (major, minor, micro))), 'execution': 'local_subprocess'}}
 
 
 def _fork_selector_main(root, selector, write_fd):
@@ -560,9 +680,7 @@ def _fork_selector_main(root, selector, write_fd):
         result_fd = quiet()
         install_termination_handler()
         sys.dont_write_bytecode = True
-        report = {'outcome': execute_selector(root, selector), 'environment': execution_environment()}
-        with os.fdopen(result_fd, 'wb') as stream:
-            stream.write(json.dumps(report, ensure_ascii=True, sort_keys=True).encode('ascii'))
+        _emit_selector(root, selector, result_fd)
         return 0
     except BaseException:
         return 2
@@ -623,7 +741,8 @@ def _worker_main():
             report = execute(root, manifest, request["pins"])
         else:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
-            report = {"outcome": execute_selector(root, selector), "environment": execution_environment()}
+            _emit_selector(root, selector, result_fd)
+            return 0
     except _SelectorExit as ended:
         return ended.code
     except KeyboardInterrupt:
@@ -644,7 +763,7 @@ def isolated_worker(root, pins, *, selector=None):
     stdout descriptor is closed in the fresh child along with other inherited fds.
     """
     if selector is not None and _fork_available():
-        return _capture_worker(_ForkedSelector(root, selector), group=False)
+        return _capture_worker(_ForkedSelector(root, selector), group=False, selector=selector)
     bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
     envelope = json.dumps({'root': str(root), 'pins': pins, 'selector': None}, ensure_ascii=True).encode('ascii')
     require(len(envelope) <= _INPUT_LIMIT)
@@ -656,10 +775,10 @@ def isolated_worker(root, pins, *, selector=None):
         child = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(root / SCRIPT)],
             stdin=channel, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             close_fds=True, start_new_session=selector is None)
-        return _capture_worker(child, group=selector is None)
+        return _capture_worker(child, group=selector is None, selector=selector)
 
 
-def _capture_worker(child, *, group):
+def _capture_worker(child, *, group, selector=None):
     try:
         data, deadline = bytearray(), time.monotonic() + 600
         with selectors.DefaultSelector() as poller:
@@ -672,11 +791,13 @@ def _capture_worker(child, *, group):
                 if not chunk:
                     break
                 data.extend(chunk)
-                require(len(data) <= _REPORT_LIMIT)
+                require(len(data) <= (_SELECTOR_PACKET.size if selector is not None else _REPORT_LIMIT))
         returncode = child.wait(timeout=2)
         if returncode in {-signal.SIGTERM, -signal.SIGINT}:
             raise KeyboardInterrupt()
         require(returncode == 0)
+        if selector is not None:
+            return _selector_result(data, selector)
         report = decode_json(data, limit=_REPORT_LIMIT)
         if report == {"worker_interrupted": True}:
             raise KeyboardInterrupt()

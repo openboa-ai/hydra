@@ -530,3 +530,43 @@ No full local kernel replay or CI-budget/required-check relaxation was performed
 Final-head CI, actual artifact consumption, independent reviews, existing scoped
 CODEOWNER approval, protected merge and actual-main checks remain required.
 Accepted P13/VF contracts and native/verify_only/full-v1 exclusions are unchanged.
+
+
+## Verdict transport, completed execution and source-check cost -- 2026-10-21
+
+Parent `54a1ecf9f846b9daa56be50046944adc6b82bb4e` failed both Python jobs in
+[CI](https://github.com/openboa-ai/hydra/actions/runs/39490156193): each collected
+1,236 methods and hit the 240-second 64x32 fixture timeout. Mac/hygiene passed.
+The outer job budget did not cancel these runs; the collector artifact stage was
+not reached. These failures remain distinct from earlier cancelled runs.
+
+Independent review reproduced a failed selected method becoming PASS when its
+tearDown patched process-global JSON encoding. Selected code now writes a fixed
+44-byte primitive packet using operations captured before import. The pristine
+orchestrator validates it and owns aggregate JSON serialization. Public artifact
+fields and existing output bounds are unchanged. This is an output boundary for
+reviewed repository tests, not a same-user or OS sandbox.
+
+The execution probe requires exactly one invocation and one completed return.
+It retains actual method exceptions even when a custom run override swallows
+them; unfinished daemon calls and lazy generator/async-generator/coroutine returns
+cannot certify an unexecuted body. Ordinary async, unittest fixtures and shutdown
+semantics remain covered. Four new methods produced seven actual assertion
+failures on unchanged published parent source, with no setup errors/skips.
+
+Repeated boundary checks reuse pinned paths and per-file hashes while reading and
+hashing actual bytes every time. Directory identity/names, file identity/mode,
+length and content must still match. Initial/final canonical checks remain. A
+same-size rewrite with restored mode/mtime cannot execute a later substituted
+module. An unpublished metadata-cache prototype was rejected after its own fault
+test reproduced that forbidden effect under coarsened metadata; it was never
+committed or published. The final byte-check implementation passes that regression.
+
+The final exact product/test bytes pass 108 focused and impact methods (55 collector
++53 project/repository-identity/CI-policy), zero failures/errors/skips, on Python
+3.14.4 in 174.526 seconds. The full 64x32 effect/count/export/read-only-consumption
+case remains required. No maximum, timeout, required check or CI budget was relaxed,
+and no full local kernel suite was repeated. Accepted P13 Rev4/VF Rev11 pins are
+unchanged. Final-head CI, actual hosted artifact consumption, independent reviews,
+existing scoped CODEOWNER approval, protected merge and actual-main checks remain
+required. This does not complete P13-R8 or qualify native/full-v1 operation.

@@ -73,7 +73,15 @@ regular UTF-8 files and rejects FIFOs, directories and final symlinks before rea
 The isolated orchestration worker imports no selected modules. On single-threaded
 Linux/macOS, each selector forks that clean state, closes inherited channels and
 returns through normal private interpreter shutdown. Other profiles use fresh exec.
-Sync/async invocation probes require the selected callable itself exactly once;
-result counters alone cannot certify execution. Private request framing has a
+Sync/async probes require the selected callable to run and finish exactly once;
+swallowed assertions, unfinished daemon calls and lazy generator/coroutine returns
+cannot pass. Result counters alone cannot certify execution. Private request framing has a
 separate bound from accepted manifest bytes. The maximum 64x32 execution remains
 required while the redundant smaller matrix is retained only as historical evidence.
+
+
+Selected code never serializes its verdict with mutable process-global JSON tools.
+A fixed, bounded primitive packet goes to the pristine orchestrator, which checks
+the completion/reason counts and creates JSON. Snapshot boundaries compare actual
+bytes and directory names using pinned per-file hashes; timestamps do not replace
+content checks. Initial/final canonical source checks remain independently pinned.

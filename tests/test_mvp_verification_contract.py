@@ -405,6 +405,105 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_selected_json_patch_cannot_serialize_failure_as_pass(self):
+        for target in ('dumps', 'encoder'):
+            with self.subTest(target=target):
+                fixture = self.fixture(extra='import json', body=
+                    "Path('effect').write_text('once')\nself.fail('required failure')")
+                if target == 'dumps':
+                    tail = (" def tearDown(self):\n  original=json.dumps\n"
+                        "  def forged(value,*args,**kwargs):\n"
+                        "   if isinstance(value,dict) and 'outcome' in value: value['outcome']['reasons']=['passed']\n"
+                        "   return original(value,*args,**kwargs)\n  json.dumps=forged\n")
+                else:
+                    tail = (" def tearDown(self):\n  original=json.JSONEncoder.encode\n"
+                        "  def forged(encoder,value,*args,**kwargs):\n"
+                        "   if isinstance(value,dict) and 'outcome' in value: value['outcome']['reasons']=['passed']\n"
+                        "   return original(encoder,value,*args,**kwargs)\n  json.JSONEncoder.encode=forged\n")
+                path = fixture.root / 'tests/test_probe.py'
+                path.write_text(path.read_text() + tail)
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'Patched selected heap serialized actual failure as PASS')
+                self.assertEqual(fixture.report()['results'][0]['observed'][0]['reasons'], ['test_failure'])
+                self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+                self.assertNotEqual(fixture.run(validate=True).returncode, 0)
+
+    def test_unfinished_daemon_call_cannot_be_completed_by_result_counters(self):
+        fixture = self.fixture(extra='import threading\nstarted=threading.Event()\nblocked=threading.Event()',
+            body="Path('started').write_text('once')\nstarted.set()\nblocked.wait(60)\nPath('effect').write_text('late')")
+        path = fixture.root / 'tests/test_probe.py'
+        path.write_text(path.read_text() + " def run(self,result):\n  result.startTest(self)\n"
+            "  threading.Thread(target=self.test_required,daemon=True).start()\n"
+            "  started.wait(5)\n  result.stopTest(self)\n")
+        result = fixture.run()
+        self.assertNotEqual(result.returncode, 0, 'A still-blocked selected body was reported complete')
+        self.assertEqual((fixture.root / 'started').read_text(), 'once')
+        self.assertFalse((fixture.root / 'effect').exists())
+        self.assertNotEqual(fixture.report()['results'][0]['status'], 'PASS')
+
+    def test_swallowed_selected_assertion_is_not_a_successful_method(self):
+        fixture = self.fixture(body="Path('effect').write_text('once')\nself.fail('must be reported')")
+        path = fixture.root / 'tests/test_probe.py'
+        path.write_text(path.read_text() + " def run(self,result):\n  result.startTest(self)\n"
+            "  try: self.test_required()\n  except AssertionError: pass\n  result.stopTest(self)\n")
+        result = fixture.run()
+        self.assertNotEqual(result.returncode, 0, 'Lifecycle suppressed an actual selected assertion')
+        self.assertEqual(fixture.report()['results'][0]['observed'][0]['reasons'], ['test_failure'])
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+
+    def test_lazy_selected_returns_do_not_certify_unexecuted_bodies(self):
+        for mode in ('generator', 'async_generator', 'wrapped_generator'):
+            with self.subTest(mode=mode):
+                fixture = self.fixture(body="Path('effect').write_text('must not be certified')\nyield None")
+                path = fixture.root / 'tests/test_probe.py'
+                if mode == 'async_generator':
+                    path.write_text(path.read_text().replace(' def test_required(self):',
+                                                             ' async def test_required(self):'))
+                elif mode == 'wrapped_generator':
+                    fixture.write('tests/test_probe.py', 'import unittest\nfrom pathlib import Path\n'
+                        'def lazy():\n Path("effect").write_text("must not be certified")\n yield None\n'
+                        'class Probe(unittest.TestCase):\n def test_required(self): return lazy()\n')
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'Unittest did not consume this lazy body')
+                self.assertFalse((fixture.root / 'effect').exists())
+                self.assertNotEqual(fixture.report()['results'][0]['status'], 'PASS')
+
+    def test_snapshot_drift_with_restored_size_mode_and_mtime_holds_before_next_method(self):
+        fixture = self.fixture(body="target=Path(__file__).parent/'test_control.py'\n"
+            "info=target.stat()\nraw=target.read_bytes()\ntarget.chmod(0o644)\n"
+            "target.write_bytes(raw.replace(b'False',b'True '))\ntarget.chmod(info.st_mode & 0o777)\n"
+            "os.utime(target,ns=(info.st_atime_ns,info.st_mtime_ns))\nPath('effect').write_text('once')")
+        self.add_control(fixture)
+        path = fixture.root / 'tests/test_control.py'
+        path.write_text(path.read_text() + '  self.assertTrue(False)\n')
+        original = path.read_bytes()
+        result = fixture.run()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+        self.assertFalse((fixture.root / 'control_effect').exists())
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_coarse_metadata_never_replaces_actual_snapshot_byte_checks(self):
+        fixture = self.fixture(body="target=Path(__file__).parent/'test_control.py'\n"
+            "info=target.stat()\nraw=target.read_bytes()\ntarget.chmod(0o644)\n"
+            "target.write_bytes(raw.replace(b'False',b'True '))\ntarget.chmod(info.st_mode & 0o777)\n"
+            "os.utime(target,ns=(info.st_atime_ns,info.st_mtime_ns))\nPath('effect').write_text('once')")
+        self.add_control(fixture)
+        path = fixture.root / 'tests/test_control.py'
+        path.write_text(path.read_text() + '  self.assertTrue(False)\n')
+        # Simulate a filesystem metadata cache/timestamp tick while bytes change.
+        # The actual later effect is the oracle, not a checker call count.
+        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() +
+            '\n_original_fingerprint=_snapshot_fingerprint\n'
+            'def _snapshot_fingerprint(info):\n'
+            ' return _original_fingerprint(info)[:-2]+(1700000000123000000,1700000000123000000)\n')
+        result = fixture.run()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+        self.assertFalse((fixture.root / 'control_effect').exists(), 'Metadata equality let substituted code execute')
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
     def test_compact_maximum_manifest_reserves_private_worker_envelope(self):
         fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once\\n')")
         # Cover the fresh-exec path on every host, including hosts that can fork.
