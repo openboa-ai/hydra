@@ -49,7 +49,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                     sdk.Context = context
                 async with Client(server) as client:
                     listed = (await client.list_tools()).tools
-                    self.assertEqual(len(listed), 5)
+                    self.assertEqual(len(listed), 6)
                     status = next(t for t in listed if t.name == 'hydra_status')
                     self.assertEqual(status.input_schema.get('properties', {}), {})
                     result = await client.call_tool('hydra_status', {})
@@ -113,7 +113,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         async with Client(create_server(ControllerFixture())) as client:
             listed = await client.list_tools()
             self.assertEqual({tool.name for tool in listed.tools},
-                {"hydra_status", "hydra_begin", "hydra_checkpoint", "hydra_verify", "hydra_deliver"})
+                {"hydra_status", "hydra_begin", "hydra_checkpoint", "hydra_verify", "hydra_deliver", "hydra_command_v1"})
             checkpoint = next(tool for tool in listed.tools if tool.name == "hydra_checkpoint")
             self.assertIn("step_id", checkpoint.input_schema["required"])
             with self.assertLogs(level="ERROR"):
@@ -136,7 +136,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                         data = result.structured_content or json.loads(result.content[0].text)
                         self.assertEqual(data['runtime'], expected)
                         self.assertEqual(data['projects'], ControllerFixture().status())
-                    self.assertEqual(len((await client.list_tools()).tools), 5)
+                    self.assertEqual(len((await client.list_tools()).tools), 6)
                 digest.assert_not_called()
             capture.assert_called_once_with()
 
@@ -198,7 +198,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             args=[str(Path(__file__).resolve()), "--fixture"],
             cwd=str(Path(__file__).resolve().parents[1]))
         async with Client(params) as client:
-            self.assertEqual(len((await client.list_tools()).tools), 5)
+            self.assertEqual(len((await client.list_tools()).tools), 6)
             result = await client.call_tool("hydra_status", {})
             self.assertFalse(result.is_error)
             data = result.structured_content or json.loads(result.content[0].text)
