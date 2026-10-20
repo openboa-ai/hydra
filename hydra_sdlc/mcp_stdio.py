@@ -305,6 +305,12 @@ def run_stdio(high, subscriptions):
     import anyio
     try:
         anyio.run(serve_stdio, high, subscriptions)
-    except StdioUnavailable:
+    except (StdioUnavailable, BaseExceptionGroup) as exc:
+        # SDK task groups wrap transport failures, including nested groups.
+        # Preserve unrelated failures rather than relabelling an entire group.
+        if isinstance(exc, BaseExceptionGroup):
+            _, unrelated = exc.split(StdioUnavailable)
+            if unrelated is not None:
+                raise
         print('stdio_unavailable', file=sys.stderr)
         raise SystemExit(2) from None

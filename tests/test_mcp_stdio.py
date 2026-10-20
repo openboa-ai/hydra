@@ -430,3 +430,79 @@ class ClaimTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+@unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional pinned MCP SDK not installed')
+class StdioExitTests(unittest.TestCase):
+    def test_sdk_grouped_stdio_failures_exit_safely_and_restore_descriptors(self):
+        import subprocess
+        script = '''import os, sys
+sys.path.insert(0, ROOT)
+from contextlib import contextmanager
+from unittest.mock import patch
+from mcp.server import MCPServer
+from mcp.server.subscriptions import InMemorySubscriptionBus
+import hydra_sdlc.mcp_stdio as module
+assert str(module.__file__).startswith(ROOT + os.sep)
+def identities():
+    return [(os.fstat(fd).st_dev, os.fstat(fd).st_ino) for fd in (0, 1)]
+before = identities()
+original_claim = module.claimed_stdin
+original_identity = module._identity
+@contextmanager
+def failed_read():
+    with original_claim() as lines:
+        original_read = os.read
+        def read(fd, count):
+            if fd == lines.fd:
+                raise OSError('SYNTHETIC_RAW_PRIVATE_CANARY')
+            return original_read(fd, count)
+        with patch.object(module.os, 'read', side_effect=read):
+            yield lines
+def changed_identity(fd):
+    value = original_identity(fd)
+    if fd == 1 and value == original_identity(2):
+        return (-1, -1, value[2])
+    return value
+fault = (patch.object(module, 'claimed_stdin', failed_read) if FAULT == 'read'
+         else patch.object(module, '_identity', side_effect=changed_identity))
+try:
+    with fault:
+        module.run_stdio(MCPServer('stdio-failure-fixture'), InMemorySubscriptionBus())
+finally:
+    assert identities() == before, 'standard descriptors were not restored'
+    assert not module._owner.locked(), 'restored stdin claim was retained'
+'''
+        for fault in ('read', 'stdout_identity'):
+            with self.subTest(fault=fault):
+                code = script.replace('ROOT', repr(str(ROOT))).replace('FAULT', repr(fault))
+                result = subprocess.run([sys.executable, '-I', '-c', code], input=b'',
+                    capture_output=True, timeout=15,
+                    env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                self.assertEqual(result.returncode, 2, result.stderr.decode(errors='replace')[-2200:])
+                self.assertEqual(result.stdout, b'')
+                self.assertEqual(result.stderr, b'stdio_unavailable\n')
+
+    def test_only_stdio_failures_are_relabelled_in_nested_groups(self):
+        import io
+        from contextlib import redirect_stderr
+        from hydra_sdlc.mcp_stdio import run_stdio
+        failures = [StdioUnavailable(), ExceptionGroup('outer', [
+            StdioUnavailable(), ExceptionGroup('inner', [StdioUnavailable()])])]
+        for error in failures:
+            with self.subTest(kind=type(error).__name__):
+                output = io.StringIO()
+                with patch('anyio.run', side_effect=error), redirect_stderr(output):
+                    with self.assertRaises(SystemExit) as result:
+                        run_stdio(None, None)
+                self.assertEqual(result.exception.code, 2)
+                self.assertEqual(output.getvalue(), 'stdio_unavailable\n')
+        failures = [RuntimeError('unrelated'), ExceptionGroup('outer', [
+            ExceptionGroup('inner', [RuntimeError('unrelated')])]),
+            ExceptionGroup('mixed', [StdioUnavailable(), RuntimeError('unrelated')])]
+        for error in failures:
+            with self.subTest(kind=str(error)):
+                with patch('anyio.run', side_effect=error):
+                    with self.assertRaises(type(error)) as result:
+                        run_stdio(None, None)
+                self.assertIs(result.exception, error)

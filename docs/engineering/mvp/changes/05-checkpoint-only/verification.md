@@ -200,3 +200,35 @@ SDK InputRequired 왕복은 별도 synthetic fixture 증거이며 제품 command
 전체 후보 검사는
 hosted CI에서 수행하고 exact-head code/security review, protected merge와 main 확인을 구분한다.
 새 실제 native 권한·질문/답변 적용·원격 Pause/Resume·두 프로젝트 운영을 완료로 세지 않는다.
+
+
+## Grouped stdio failure correction — 2026-10-20
+
+PR #15 review found that the official SDK's AnyIO task group wraps transport
+`StdioUnavailable` errors in exception groups. The direct handler missed those
+errors, producing an uncaught traceback and exit 1 instead of the fixed
+`stdio_unavailable` diagnostic and exit 2.
+
+Two actual SDK subprocess cases reproduced the old behavior: an owned-stdin read
+error and the stdout identity guard inside the SDK context. Both failed the
+independent exit-code assertion on original head `3ea67711d57e20e510f15e9ad21504d9a349b8d1`; there were no
+collection/import errors or skips. The same cases also check restored stdin/stdout
+identities and release of a successfully restored stdin claim.
+
+The dedicated entry now recognizes groups whose leaves are all
+`StdioUnavailable`, including nested groups. Direct failures preserve the existing
+behavior. Unrelated and mixed groups propagate unchanged rather than being
+misclassified as transport unavailability. No SDK internals, protocol handling,
+command grant, fallback path or control policy changed.
+
+GREEN: **38 tests passed, no skips/failures/errors, 37.148 seconds**: raw stdio
+14, decoded MCP command 14, and existing MCP 10. The actual grouped-fault cases now
+return exit 2, empty protocol output and exactly the fixed stderr diagnostic;
+the descriptor-restoration checks pass. Nested/direct and unrelated/mixed-group
+classification controls pass. Existing raw framing, active cancellation,
+subscription barriers, Unicode/escape and real temporary CAS/Git cases remain.
+
+Source bytes and unrelated implementation work were preserved during verification.
+Only this record was appended afterward. Full final-head checks remain hosted CI;
+independent code/security review, protected merge and exact-main evidence remain
+separate gates. Installed native authority and the full remote flow remain unqualified.
