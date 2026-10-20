@@ -61,7 +61,7 @@ class ReadFixture:
 
 def issue(number=7, body='A useful request without a fixed template.'):
     return {'number': number, 'state': 'open', 'title': 'Can you approve and start this task?',
-            'body': body, 'native_context': {'question': 'SYNTHETIC_UNTRUSTED_EXTRA_CANARY'}}
+            'body': body, 'labels': [], 'native_context': {'question': 'SYNTHETIC_UNTRUSTED_EXTRA_CANARY'}}
 
 
 class ProjectionReadTests(unittest.TestCase):
@@ -247,3 +247,19 @@ class ProjectionReadTests(unittest.TestCase):
                 break
         self.assertEqual(seen, {'requested:' + repo for repo in repos})
         self.assertIsNone(token)
+
+    def test_managed_rows_are_not_repeated_or_demoted_across_cursor(self):
+        def managed(n):
+            row = issue(n); row['labels'] = [{'name': 'hydra:active'}]; return row
+        opened = [managed(n) for n in range(1,101)]
+        closed = [managed(n) for n in range(101,129)]
+        rows = {('example/alpha','open',True):opened, ('example/alpha','closed',True):closed,
+                ('example/alpha','open',False):opened+[issue(n) for n in range(201,206)]}
+        first = ReadFixture(rows).read(repository='example/alpha')
+        cursor = first['projects'][0]['coverage']['next_cursor']
+        self.assertIsInstance(cursor,str)
+        second = ReadFixture(rows).read(repository='example/alpha',cursor=cursor)
+        self.assertEqual(len(second['work']),5,'Continuation repeated managed rows as ordinary candidates')
+        self.assertEqual({w['issue_ref']['id'] for w in second['work']}, {'101:'+str(n) for n in range(201,206)})
+        self.assertFalse({w['issue_ref']['id'] for w in first['work']} & {w['issue_ref']['id'] for w in second['work']})
+        self.assertEqual(first['projects'][0]['coverage']['scope'],second['projects'][0]['coverage']['scope'])

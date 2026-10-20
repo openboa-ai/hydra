@@ -217,6 +217,15 @@ def _issue_rows(client, repository, limit, position):
                         complete, reason = False, 'invalid_source'; continue
                     if 'pull_request' in raw:
                         continue
+                    if plan == 2:
+                        labels = raw.get('labels')
+                        if type(labels) is not list:
+                            complete, reason = False, 'label_metadata_unavailable'
+                        elif any(isinstance(name, str) and name.casefold() == ACTIVE_LABEL.casefold()
+                                 for name in (label.get('name') if type(label) is dict else label for label in labels)):
+                            # Managed plans already own these identities, even on
+                            # an earlier continuation page. Do not demote them.
+                            continue
                     if len(rows) >= limit:
                         if reason != 'invalid_source':
                             client.accepted(start)
@@ -460,8 +469,6 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
                         repo_observation = _observation(repo_observation['key'], requested_ref,
                             repo_observation['coverage']['scope'], None, _now(), reason=reason)
             project['coverage'] = _coverage(project['coverage']['scope'], len(project['work_refs']), complete, reason)
-            if cursor is not None and repository is not None:
-                project['coverage']['scope'] += ';cursor:' + hashlib.sha256(cursor.encode()).hexdigest()
             project['coverage']['next_cursor'] = next_cursor
             project_locations[p.canonical(project['repository_ref'])] = start_project + index
             projects[p.canonical(project['repository_ref'])] = project
@@ -489,7 +496,8 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     frame['projects'] = list(projects.values()); frame['work'] = list(work.values())
     frame['observations'] = list(observations.values())
     complete = all(row['coverage']['state'] == 'complete' for row in frame['projects'])
-    frame['page'] = _coverage('registered-projects;overview' + (':from:' + str(start_project) if start_project else ''), len(frame['projects']), complete,
+    page_scope = 'registered-projects;' + ('repository:' + repository if repository is not None else 'overview')
+    frame['page'] = _coverage(page_scope + (':from:' + str(start_project) if start_project else ''), len(frame['projects']), complete,
                               None if complete else 'source_coverage_incomplete')
     frame['assembled_at'] = _now()
     frame = _finish(frame, cfg, binding_epoch, locations, project_locations)

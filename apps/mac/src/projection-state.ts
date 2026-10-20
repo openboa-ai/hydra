@@ -106,7 +106,7 @@ function bound(state: ProjectionState) {
       reason: "receipt_capacity_held", receipt: null });
   }
   const view = state.view; if (!view) return;
-  while (size(view) + feedbackSize() > MAX_PROJECTION_BYTES || view.work.length > 512 || view.projects.length > 1024) {
+  while (size(view) > MAX_PROJECTION_BYTES || view.work.length > 512 || view.projects.length > 1024) {
     if (view.work.length) view.work.shift();
     else if (view.projects.length) view.projects.shift();
     else {
@@ -165,10 +165,9 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       }
       const identity = runtime(frame);
       if (state.runtime_key !== null && state.runtime_key !== identity) {
-        stale(state,state.source_slots.keys(),"runtime_binding_changed");
-        refreshFacts(state,new Set(state.source_slots.keys()),new Set(),event.sequence);
         for (const [id,c] of state.pending_commands) state.feedback.set(id,{...c,outcome:"unknown",reason:"runtime_binding_changed",receipt:null});
-        state.pending_commands.clear();state.queries.clear();state.error = "runtime_binding_changed"; break;
+        state.pending_commands.clear();state.queries.clear();state.source_slots.clear();
+        state.view=null;state.selected_ref=null;
       }
       state.runtime_key = identity;
       if (event.now < state.last_now) stale(state,state.source_slots.keys(),"clock_resumed");
@@ -211,7 +210,8 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         // A local-only poll did not attempt GitHub. Preserve its original age and value.
         if (old && observation.resource.source !== "hydra" && observation.reason === "not_requested") continue;
         if (event.response.cached && old?.frame === marker) continue; // no freshness renewal
-        changed.add(observation.key);
+        const semantic=(o:Observation)=>json([o.resource,o.revision,o.availability,o.coverage,o.reason,o.value]);
+        if (!old || semantic(old.observation)!==semantic(observation)) changed.add(observation.key);
         const failedRead = observation.availability !== "current";
         const retained = failedRead && old?.observation.value !== null && old?.observation.value !== undefined ?
           { ...old.observation, availability: "stale" as const, last_attempt_at: observation.last_attempt_at,
@@ -229,13 +229,33 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         if (!p.repository_ref.id.startsWith("requested:")) continue;
         const address=p.repository_ref.id.slice("requested:".length);
         const observed=[...state.source_slots.values()].find(s=>s.observation.resource.kind === "repository" &&
-          s.observation.value?.full_name === address && !s.observation.resource.id.startsWith("requested:"));
+          typeof s.observation.value?.full_name === "string" && s.observation.value.full_name.toLowerCase() === address.toLowerCase() &&
+          !s.observation.resource.id.startsWith("requested:"));
         const old=state.view?.projects.find(p=>observed && key(p.repository_ref) === key(observed.observation.resource));
         if (old) Object.assign(p,structuredClone(old),{admission:p.admission});
       }
       const incoming = new Set<object>();
       if (!state.view) { state.view = structuredClone(frame); for (const x of [...state.view.projects,...state.view.work,...state.view.relations]) incoming.add(x); }
       else {
+        // Absence is meaningful only for a complete refresh of the same set.
+        // Removing a display record does not complete or retire its native work.
+        const removed=new Set<string>();
+        for (const p of frame.projects) {
+          const old=state.view.projects.find(old=>key(old.repository_ref)===key(p.repository_ref));
+          if (!old || p.coverage.state!=="complete" || p.coverage.scope!==old.coverage.scope) continue;
+          const present=new Set(p.work_refs.map(key));
+          for (const w of state.view.work) if (w.issue_ref.source==="github" &&
+              w.issue_ref.id.startsWith(p.repository_ref.id+":") && !present.has(key(w.issue_ref))) removed.add(key(w.issue_ref));
+        }
+        state.view.work=state.view.work.filter(w=>!removed.has(key(w.issue_ref)));
+        state.view.relations=state.view.relations.filter(r=>!removed.has(key(r.from)) && !removed.has(key(r.to)));
+        for (const [k,slot] of state.source_slots) {
+          const o=slot.observation,issue=o.value?.issue_ref as ResourceRef|undefined;
+          if ((o.resource.kind==="issue" && removed.has(key(o.resource))) ||
+              (o.resource.kind==="progress" && issue && removed.has(key(issue)))) {
+            state.source_slots.delete(k);changed.add(k);
+          }
+        }
         const merge = <T extends object>(old:T[],next:T[],identify:(x:T)=>string) => {
           const values = new Map(old.map(x => [identify(x),x]));
           for (const x of next) { const clone = structuredClone(x); values.set(identify(clone),clone); incoming.add(clone); }

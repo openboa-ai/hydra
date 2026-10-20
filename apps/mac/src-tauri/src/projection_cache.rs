@@ -123,11 +123,18 @@ impl ReadCache {
             Err(reason)=>{self.failed(ticket);return Err(reason);}
         };
         if self.runtime.as_ref().is_some_and(|old|old!=&key) {
-            self.clock_resumed(); self.failed(ticket); return Err("runtime_binding_changed");
+            if !current {return Err("stale_read");}
+            // The response is a fresh, bound read of the new runtime. Invalidate
+            // older cache/pending generations; retain the connection's quota wait.
+            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();self.ledger.clear();
+            self.orders.insert(ticket.scope.clone(),Order{issued:ticket.sequence,settled:0});
+            self.ledger.push_back((ticket.clone(),false));
         }
         let (_,seen)=self.ledger.iter_mut().find(|(t,_)|t.sequence==ticket.sequence).unwrap();
         *seen=true;
-        let regressed=self.entries.values().any(|entry|payload.regresses_from(entry.payload.as_ref()));
+        // Different read lanes can capture shared metadata at different times.
+        // Per-source reduction handles that overlap without discarding healthy sources.
+        let regressed=self.entries.get(&ticket.scope).is_some_and(|entry|payload.regresses_from(entry.payload.as_ref()));
         self.policy.observe(&payload,now,current && !regressed);
         if !current {return Err("stale_read");}
         if regressed {self.failed(ticket);return Err("source_revision_regressed");}
@@ -320,5 +327,43 @@ mod tests {
         let retained=cache.get("local",true,now).unwrap();assert!(retained.stale);
         let retained=serde_json::to_value(retained.payload.as_ref()).unwrap();
         assert_eq!(retained["observations"][0]["revision"]["value"],high);
+    }
+    #[test]
+    fn older_shared_metadata_in_an_independent_read_does_not_discard_new_github_data() {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let remote=cache.issue("remote".into(),request(2),false).unwrap();
+        let local=cache.issue("local".into(),request(3),false).unwrap();
+        let mut value:Value=serde_json::from_slice(&fixture(&local.request_id)).unwrap();
+        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
+        value["observations"][0]["revision"]["value"]="8".into();
+        cache.accept(&local,&serde_json::to_vec(&value).unwrap(),now).unwrap();
+        let remote=cache.accept(&remote,&fixture(&remote.request_id),now).expect("An older admission sample discarded an independent GitHub read");
+        let remote=serde_json::to_value(remote.payload.as_ref()).unwrap();
+        assert_eq!(remote["projects"].as_array().unwrap().len(),2);
+        assert!(remote["observations"].as_array().unwrap().iter().any(|o|o["resource"]["source"]=="github" && o["availability"]=="current"));
+        let local=cache.get("local",true,now).unwrap();assert!(!local.stale);
+        let local=serde_json::to_value(local.payload.as_ref()).unwrap();
+        assert_eq!(local["observations"][0]["revision"]["value"],"8");
+    }
+    #[test]
+    fn current_runtime_change_recovers_a_generation_without_late_rollback_or_quota_reset() {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        let mut value:Value=serde_json::from_slice(&fixture(&first.request_id)).unwrap();
+        let mut o=value["observations"].as_array().unwrap().iter().find(|o|o["resource"]["source"]=="github").unwrap().clone();
+        o["key"]="query:runtime".into();o["reason"]="provider_wait".into();
+        value["observations"].as_array_mut().unwrap().push(o);
+        value["retry_hints"]=serde_json::json!([{"observation_key":"query:runtime","scope":format!("github:registered-read:{EPOCH}"),"after_seconds":600,"basis":"provider"}]);
+        cache.accept(&first,&serde_json::to_vec(&value).unwrap(),now).unwrap();
+        let old=cache.issue("old-independent".into(),request(3),false).unwrap();
+        let fresh=cache.issue("local".into(),request(4),false).unwrap();
+        let mut value:Value=serde_json::from_slice(&fixture(&fresh.request_id)).unwrap();
+        value["runtime"]["code_digest"]="f".repeat(64).into();
+        let accepted=cache.accept(&fresh,&serde_json::to_vec(&value).unwrap(),now).expect("A legitimate runtime update permanently poisoned the cache");
+        assert_eq!(serde_json::to_value(accepted.payload.as_ref()).unwrap()["runtime"]["code_digest"],"f".repeat(64));
+        assert!(cache.get("remote",false,now).is_none());
+        assert_eq!(cache.accept(&old,&fixture(&old.request_id),now).unwrap_err(),"stale_read");
+        assert!(!cache.get("local",true,now).unwrap().stale);
+        assert_eq!(cache.remote_wait(now,true),Ok(600));
     }
 }

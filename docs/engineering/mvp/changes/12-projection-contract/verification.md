@@ -91,3 +91,44 @@ No new database, scheduler, LLM call, wake, admission mutation, progress write o
 is introduced by reading. Current native, resource inventory and work-binding mapping capabilities
 remain explicitly unsupported until their owning work supplies actual qualification. P16 owns visible
 screen/action integration and live source observation; P12 source fixtures are not evidence of that.
+
+
+## Read generation, complete scope and bounded feedback corrections
+
+Review of 7029761 identified five gaps. Fresh current reads now establish a new runtime
+cache/display generation, discard older pending read identities and preserve unresolved
+command effects. The existing connection's provider deadline is retained; no write is retried.
+An older shared admission sample in an independent remote read cannot discard healthy GitHub
+data. Same query-cache monotonic ordering and cross-source reducer ordering remain separate.
+Unchanged source input is revalidated, while equal/null revisions with changed values still
+invalidate dependent facts.
+
+Complete refreshes remove absent work/source records only for the same repository/query set.
+Partial/continuation frames retain uncovered records, and display removal never claims native
+termination or resource retirement. Managed labels are excluded from the ordinary continuation
+plan, so 100 managed-open plus 28 managed-closed records do not repeat or lose progress on the
+ordinary page. Missing label metadata preserves meaningful Issues with partial coverage.
+Continuation preserves the underlying query scope; repository-only reads identify their scope.
+GitHub display casing is matched against registered names case-insensitively.
+
+Command feedback has its own bounded queue (16 entries and 128-KiB retained receipt budget).
+It does not consume the 1-MiB projection payload budget or silently evict the producer's visible
+records/cursors. A near-limit valid wire frame plus a real P02 receipt verifies that separation.
+
+Actual RED against published code includes the independent-cache regression, runtime recovery,
+complete/partial scope, casing, feedback and managed continuation assertions. The complete-scope
+input was corrected to explicitly declare complete coverage; its earlier inherited partial flag
+is not treated as evidence for complete-scope pruning. The four corrected frontend assertions
+were reproduced against unchanged published model bytes before GREEN.
+
+The corrective candidate passes 53 projection/source/CLI methods, 117 control methods,
+84 frontend methods and 32 Rust methods, with no failures/errors/skips/ignored cases. Typecheck
+and Vite build pass. Bundles overlap; no full local kernel or unrelated bundle was repeated.
+19 actual producer vectors still cross the real Python/Rust/TypeScript path. Small/record/byte
+fixture reads use 4/5/5 injected GETs and encode 8,444/324,434/1,041,917 bytes respectively;
+these are fixture measurements, not production performance claims.
+
+Parent 7029761 passed all four jobs in run 39512490322 and security review without findings;
+its five code findings require this correction. Those results do not qualify the later head.
+Accepted P12 Rev4/CP8/NC8, the unchanged v2/default path and all live/native/P16 exclusions remain.
+Final-head CI/reviews, protected merge and main checks are separate and pending.

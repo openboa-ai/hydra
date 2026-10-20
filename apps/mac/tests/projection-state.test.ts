@@ -194,7 +194,7 @@ test("a changed runtime invalidates pending bindings and retains their effect as
   s=reduceProjection(s,{type:"command_started",request_id:id(90),effect_key:"pause:101",action:"admission_set",target:{kind:"repository",repository_id:101}});
   const changed=structuredClone(base);changed.runtime.code_digest="f".repeat(64);
   s=read(s,2,changed);
-  assert.equal(s.error,"runtime_binding_changed");assert.equal(s.pending_commands.size,0);
+  assert.equal(s.error,null);assert.equal(s.view!.runtime.code_digest,"f".repeat(64));assert.equal(s.pending_commands.size,0);
   assert.equal(s.feedback.get(id(90))!.outcome,"unknown");
 });
 
@@ -213,4 +213,13 @@ test("monotonic revisions compare decimal meaning without floating-point convers
   assert.equal(slot.observation.revision!.value,high);
   assert.equal(slot.observation.value!.global_mode,"paused");
   assert.equal(slot.stale,true);
+});
+
+test("unchanged source input is revalidated on local reads without losing known work admission",()=>{
+  let s=read(projectionState(base.binding_epoch),1);
+  const local=structuredClone(base);local.projects=[];local.work=[];local.relations=[];
+  local.observations=local.observations.filter(o=>o.resource.source === "hydra");
+  s=read(s,2,local,"local",6000);
+  assert.equal(s.view!.work[0]!.admission.value,"paused");
+  assert.equal(sourceFresh(s,"hydra:host:admission",6000),true);
 });
