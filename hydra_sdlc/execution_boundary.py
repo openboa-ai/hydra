@@ -708,8 +708,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             if stopped():
                 raise OwnedCommandError("stopped")
             if time.monotonic() >= deadline:
-                fail("timeout")
-                raise TimeoutError("Command dispatch deadline expired")
+                fail("unavailable")
+                raise OwnedCommandError("unavailable")
             coordinator = _ownership_coordinator()
             with _operation_guard():
                 ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
@@ -1241,6 +1241,19 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
               "turn_id": observed["turn_id"], "detail": detail}
     if not clean or failure == "supervisor_cleanup_unknown":
         detail["cleanup"] = "unknown"
+        return result
+    reported_detail = outcome.get("detail") if isinstance(outcome, dict) else None
+    unsettled_outcome = isinstance(outcome, dict) and (
+        outcome.get("status") == "transport_unknown"
+        or any(outcome.get(key) is not None for key in accepted)
+        or (isinstance(reported_detail, dict) and (
+            reported_detail.get("cleanup") == "unknown"
+            or reported_detail.get("terminal") is not None)))
+    if (policy_hold and not grants and terminal is None and not unsettled_outcome
+            and all(value is None for value in (*observed.values(), *accepted.values()))):
+        result["status"] = "interrupted"
+        detail["reason"] = "stopped_before_dispatch"
+        detail["policy_denial"] = policy_hold
         return result
     if (isinstance(outcome, dict) and isinstance(outcome.get("status"), str)
             and outcome["status"] in {"completed", "failed", "interrupted", "transport_unknown"}):

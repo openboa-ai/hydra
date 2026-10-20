@@ -263,6 +263,105 @@ class WorkSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('change_review', self.calls)
         self.assertFalse(any(write[0] in {'push', 'pr', 'merge'} for write in self.github.writes))
 
+    async def test_actual_verifier_predispatch_timeout_holds_without_failed_evidence_or_correction(self):
+        import time
+        from types import SimpleNamespace
+        from hydra_sdlc import execution_boundary as boundary
+        from test_workspace import LocalWorkspace, git
+        remote, seed = self.root / 'origin.git', self.root / 'seed'
+        remote.mkdir(); seed.mkdir()
+        git(remote, 'init', '--bare', '--initial-branch=main')
+        git(seed, 'init', '--initial-branch=main')
+        spec = seed / 'docs/engineering/task/spec.md'
+        spec.parent.mkdir(parents=True)
+        spec.write_text('Accepted requirement and regression evidence.')
+        (seed / 'src').mkdir()
+        (seed / 'src/base.py').write_text('base = True\n')
+        git(seed, 'add', '.'); git(seed, 'commit', '-m', 'accepted fixture')
+        base = git(seed, 'rev-parse', 'HEAD')
+        git(seed, 'remote', 'add', 'origin', str(remote)); git(seed, 'push', 'origin', 'main')
+        verification = '[[verification]]\nargv=' + json.dumps([sys.executable, '-c',
+            "from pathlib import Path; Path('must-not-run').touch()"])
+        verification += '\ncwd="."\ntimeout=1\n'
+        old = LEGACY[LEGACY.index('[[verification]]'):LEGACY.index('[[required_checks]]')]
+        self.github = SourceGitHub(LEGACY.replace(old, verification))
+        self.github.contracts[base] = self.github.contracts.pop(BASE)
+        self.github.current = base
+        self.github.cfg = load_project(self.github, REPO)
+        self.workspace = LocalWorkspace(self.root / 'work', remote)
+        owned = self.root / 'work/example/product/issue-4'
+        async def candidate(assignment, **kwargs):
+            self.calls.append(self.github.note['pending_action'])
+            if assignment['mode'] == 'workspace_write':
+                (owned / 'src/implementation.py').write_text('implemented = True\n')
+            return {'status': 'completed', 'detail': {'result': {'outcome': 'candidate_ready'}}}
+        runner = self.runner()
+        runner.execute = candidate
+        self.assertEqual((await runner.step(REPO, 4))['action'], 'continue')
+        verify = self.workspace.verify
+        def delayed_preflight(*args, **kwargs):
+            original = kwargs['before_command']
+            clock = [time.monotonic()]
+            def preflight():
+                original()
+                clock[0] += 2
+            with patch.object(boundary, 'time', SimpleNamespace(monotonic=lambda: clock[0])):
+                return verify(*args, **{**kwargs, 'before_command': preflight})
+        self.workspace.verify = delayed_preflight
+        result = await runner.step(REPO, 4)
+        self.assertEqual(result['reason'], 'replan_required')
+        self.assertEqual(self.github.note['next_action'], 'diagnose_verification')
+        self.assertIsNone(self.github.note['pending_action'])
+        self.assertEqual(self.github.note['head'], git(owned, 'rev-parse', 'HEAD'))
+        self.assertEqual(self.github.note['contract_revision'], base)
+        self.assertFalse(runner.verified_heads)
+        self.assertFalse((owned / 'must-not-run').exists())
+        self.assertNotIn('correction', self.calls)
+        self.assertNotIn('change_review', self.calls)
+        self.assertFalse(any(write[0] in {'push', 'pr', 'merge'} for write in self.github.writes))
+        from hydra_sdlc.workspace import WorkspaceWait
+        with self.assertRaisesRegex(WorkspaceWait, 'verification_output_unavailable'):
+            self.workspace.verification_output(hashlib.sha256(b'').hexdigest())
+
+    async def test_actual_initial_worker_policy_denial_clears_intent_without_false_stopped_recovery(self):
+        from hydra_sdlc import execution_boundary as boundary
+        from test_execution_boundary import WORKER
+        worker, marker = self.root / 'worker.py', self.root / 'observations.jsonl'
+        worker.write_text(WORKER)
+        events, deny_once, mode = [], [True], ['denied_exit']
+        async def execute(assignment, **kwargs):
+            def preflight():
+                if deny_once[0]:
+                    deny_once[0] = False
+                    self.github.change_source()
+                kwargs['before_dispatch']()
+            return await boundary.execute_worker(assignment, kwargs['on_identity'],
+                lambda _, payload: events.append(payload), kwargs['stop_requested'],
+                kwargs.get('resume_thread_id'), worker_source=str(worker), timeout=3, grace=.1, poll=.005,
+                before_dispatch=preflight)
+        runner = self.runner()
+        runner.execute = execute
+        def command(_):
+            return [sys.executable, '-I', str(worker), str(Path(boundary.__file__).resolve()), mode[0], str(marker)]
+        with patch.object(boundary, '_worker_command', side_effect=command):
+            result = await runner.step(REPO, 4)
+            self.assertEqual(result['reason'], 'policy_changed')
+            self.assertIsNone(self.github.note['pending_action'])
+            self.assertEqual(self.github.note['contract_revision'], BASE)
+            self.assertFalse(any(e['method'] == 'hydra/dispatchIntent' for e in events))
+            self.assertFalse(any(write[0] in {'push', 'pr', 'merge'} for write in self.github.writes))
+            self.assertIsNone(runner.host_hold_reason)
+            self.github.current = BASE
+            mode[0] = 'normal'
+            resumed = await runner.step(REPO, 4)
+        self.assertNotIn(resumed.get('reason'), {'confirm_previous_stopped', 'execution_failed', 'execution_unknown'})
+        self.assertTrue(any(e['method'] == 'hydra/dispatchIntent' for e in events))
+        for row in marker.read_text().splitlines():
+            value = json.loads(row)
+            if 'pid' in value:
+                with self.assertRaises(ProcessLookupError):
+                    __import__('os').kill(value['pid'], 0)
+
     async def test_actual_worker_source_hold_reconciles_clean_thread_without_publication(self):
         from hydra_sdlc import execution_boundary as boundary
         from test_execution_boundary import WORKER

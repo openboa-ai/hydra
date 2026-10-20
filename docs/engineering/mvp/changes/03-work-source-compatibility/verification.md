@@ -223,3 +223,50 @@ source/test/spec의 bytes는 위에 기록한 판본 그대로다. 이 검증 �
 이 문단만 실제 관측 결과를 추가했다. 최종 head의 hosted CI·코드/보안 리뷰, 보호 병합과
 실제 merge-SHA main 검증은 따로 확인한다. 실제 v2 정책 전환, 설치·원격 Codex 운용,
 원격 질문·Pause·재시작·Resume 전체 흐름은 이 source 검증으로 통과 처리하지 않는다.
+
+
+## PR #12 실행 전 거절·deadline 분류 수정 — 2026-10-20
+
+리뷰 대상 `c4bfd57eb4c30c2f128a9fb1977be1735ee5304a`(tree
+`6744637faa3813c41baf4fd241ea8fee7332b2cc`)의 두 지적을 P03 revision 1의 기존
+preflight 경계 안에서 수정했다. 위 997개 결과는 수정 전의 증거다.
+
+- 최초 정책 거절 뒤 worker가 종료하거나 잘못된 결과를 보내더라도 parent의 거절·zero grant·
+  identity/terminal 부재·실제 cleanup 확인이 모두 있으면 `stopped_before_dispatch`로 보류한다.
+  반환 결과에만 있는 identity/terminal·cleanup unknown·transport unknown은 기존 미확정
+  경로에 보존한다. worker의 문구를 parent 정책 근거로 채택하지 않는다.
+- preflight가 deadline을 소모해 Popen을 호출하지 않았다면 `command_unavailable`다.
+  실행하지 않은 명령의 실패 receipt나 correction을 생성하지 않는다. 실제 spawn 뒤 timeout의
+  종료 확인과 실패 검증은 바꾸지 않았다.
+
+| 실제 검증 | 결과 |
+| --- | --- |
+| 최초 행동 RED 7개 | 실제 assertion 실패 9개(6 worker subcase와 Workspace/Runner 3경로), import/API 부재 오류 없음 |
+| known-clean fixture의 실제 종료 보강 뒤 원 구현 RED | 7개에서 같은 9개 assertion 실패. bounded 실제 wait 뒤 원래 cleanup Boolean을 사용하며 unknown countercase는 별도 유지 |
+| 반환 결과의 미확정 보존 oracle | 초기 정규화에서 4 subcase RED → 최종 보존 조건으로 GREEN |
+| 최종 새 selector | **8 PASS, 0 skip**, 6.176초 |
+| 영향 회귀 13개 모듈 | **356 collected, 354 PASS, 2 explicit skip**, failure/error 0, 119.107초 |
+| 같은 source/test/spec의 전체 suite 1회 | **1005 collected, 980 PASS, 25 explicit skip**, failure/error 0, 272.185초, exit 0 |
+| 독립 code·security 검토 | 최종 source/test/spec hash 검토 완료, 남은 material finding 없음 |
+| 보존 | snapshot·overlay·제품 checkout 파일·HEAD 불변. 전체 skip 항목은 직전 997개 suite의 25건과 동일 |
+
+raw malformed frame의 최초 fixture는 worker가 종료 중일 때 실제 cleanup unknown을 관측했다.
+이를 성공으로 바꾸지 않고, known-clean 사례에서 실제 worker 종료를 먼저 기다렸다.
+반환 unknown 결과에 `reason`이 필수가 아니므로 추가 음성 assertion은 optional lookup을
+사용한다. 이 fixture 오류와 초기 정규화의 불충분한 조건은 최종 source 회귀 전에 수정했다.
+실제 cleanup unknown·contradictory identity·grant 유실 사례의 미확정 oracle은 유지했다.
+
+신규 TC는 실제 worker start/resume 거절·종료·반환 프레임, public Workspace 검증 결과의 부재,
+실제 Runner의 intent 정리와 다음 정상 진행 및 verification correction 부재를 검사한다.
+Python 3.12.7 / `mcp==2.3.0` / `mcp-types==2.3.0`에서 수행했다.
+이 검증 뒤 source/test/spec 변경 없이 관측 결과만 이 문단에 추가했다.
+
+| 최종 artifact | SHA-256 |
+| --- | --- |
+| `hydra_sdlc/execution_boundary.py` | `b3429b95e2c495b639ec09f7146eb637315e29d211ed3af3a3380e37096c8e00` |
+| `tests/test_execution_boundary.py` | `a3ac6bff94af9a96b6d2ee19840b75f0b04d7345dda18bae1ce067b55a3a9f84` |
+| `tests/test_workspace.py` | `eee919799c4c029d97f3718394d2658ece7b9db60da88502f4e162b2d4506c45` |
+| `tests/test_work_source_compatibility.py` | `c6ffd36c89837280ba2a4735d2284c234ebdc6ef79fc3ddcf77f5ef578953960` |
+| `docs/engineering/mvp/changes/03-work-source-compatibility/spec.md` | `15e6f04b3bc818e23d70ea13790619629c6c4eabbf5be5b488dfeb7269dd4179` |
+
+최종 head hosted CI·코드/보안 리뷰·보호 병합·실제 main 확인은 별도 증거다. 이 source/fixture 검증은 실제 v2 migration·설치·원격 질문/Pause/재시작/Resume 전체 흐름을 통과 처리하지 않는다.

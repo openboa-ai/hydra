@@ -449,6 +449,23 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(checked, [True])
         self.assertFalse((self.path / 'must-not-run').exists())
 
+    def test_policy_preflight_timeout_before_spawn_does_not_create_verification_result(self):
+        from types import SimpleNamespace
+        from hydra_sdlc import execution_boundary as boundary
+        clock = [time.monotonic()]
+        def preflight():
+            clock[0] += 2
+        commands = [{'argv': [sys.executable, '-c',
+                     "from pathlib import Path; Path('must-not-run').touch()"], 'timeout': 1}]
+        with patch.object(boundary, 'time', SimpleNamespace(monotonic=lambda: clock[0])):
+            with self.assertRaises(WorkspaceWait) as error:
+                self.workspace.verify(self.path, commands, before_command=preflight)
+        self.assertEqual(error.exception.reason, 'command_unavailable')
+        self.assertFalse(error.exception.uncertain)
+        self.assertFalse((self.path / 'must-not-run').exists())
+        with self.assertRaisesRegex(WorkspaceWait, 'verification_output_unavailable'):
+            self.workspace.verification_output(hashlib.sha256(b'').hexdigest())
+
     def test_verification_does_not_receive_publishing_tokens_and_timeout_fails(self):
         with patch.dict(os.environ, {"GH_TOKEN": "not-forwarded", "GITHUB_TOKEN": "not-forwarded"}):
             records = self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",

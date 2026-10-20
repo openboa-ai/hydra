@@ -77,6 +77,15 @@ cleanup unknown은 policy 거절보다 우선한다. 검증 command 1의 변경�
 종료가 확인된 경우 기존 pinned checkpoint에 보존하며, 이를 성공 검증이나 재발행 허가로 보지 않는다.
 native ticket/intent 뒤 최종 조회 실패도 exact recovery tuple을 보존하는 waiting이며 grant가 아니다.
 
+최초 dispatch가 parent 정책 검사에서 거절됐고 grant·관측 identity·terminal이 없으며 cleanup이
+확인되면 worker의 무응답·비정상 결과와 무관하게 parent가 `stopped_before_dispatch`와 bounded
+policy reason을 반환한다. worker 문구를 거절 근거로 채택하지 않는다. 이미 전달됐을 수 있는
+grant, 모순된 identity/terminal 또는 cleanup unknown은 이 known-clean 경로로 정규화하지 않는다.
+worker 결과에만 남은 identity·terminal·cleanup unknown·transport unknown도 기존 미확정 경로에 보존한다.
+검증 preflight 중 deadline이 지나 command를 spawn하지 않았다면 `command_unavailable`로
+보류한다. 실행 결과·검증 실패 receipt·correction을 만들지 않으며 실제 spawn 뒤 timeout의
+종료 확인과 실패 검증 의미는 유지한다.
+
 기존 pinned post-merge completion은 해당 완료 대사만 허용하며 active native 결과 채택에는
 사용할 수 없다. exact stopped ticket 정리는 기존 조건을 유지한다. admission이 설치된 경로는
 기존 worktree만 사용하고, admission 미설치 legacy 경로의 기존 workspace 복구 조건도 유지한다.

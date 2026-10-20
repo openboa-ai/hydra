@@ -55,6 +55,25 @@ async def execute(assignment, identity, event, stopped, resume_thread_id=None, o
     if mode == 'false_completed':
         return {'status': 'completed', 'thread_id': None, 'turn_id': None, 'detail': {}}
     if not on_dispatch('thread/resume' if resume_thread_id else 'thread/start'):
+        if mode == 'denied_exit':
+            os._exit(0)
+        if mode == 'denied_malformed':
+            sys.stdout.buffer.write(b'not-json\n')
+            sys.stdout.buffer.flush()
+            os._exit(0)
+        if mode == 'denied_failed':
+            return {'status': 'failed', 'thread_id': None, 'turn_id': None,
+                    'detail': {'reason': 'private-worker-canary'}}
+        if mode.startswith('denied_result_'):
+            return {'status': 'transport_unknown' if mode == 'denied_result_transport' else 'failed',
+                    'thread_id': 'contradictory-thread' if mode == 'denied_result_identity' else None,
+                    'turn_id': None,
+                    'detail': {'cleanup': 'unknown'} if mode == 'denied_result_cleanup' else
+                              {'terminal': {'id': 'contradictory-turn', 'status': 'completed'}}
+                              if mode == 'denied_result_terminal' else {}}
+        if mode == 'denied_identity':
+            identity(thread_id='contradictory-thread')
+            os._exit(0)
         return {'status': 'interrupted', 'thread_id': None, 'turn_id': None,
                 'detail': {'reason': 'stopped_before_dispatch'}}
     mark('thread_dispatch')
@@ -148,6 +167,85 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.events[0][1]['method'], 'hydra/workerStarted')
         self.assertNotIn('private-assignment-marker', json.dumps(self.observations()[0]['argv']))
         self.assert_pids_gone()
+
+    async def test_initial_policy_denial_survives_worker_exit_or_invalid_result(self):
+        from hydra_sdlc.operations import OperationDenied
+        def denied():
+            raise OperationDenied('policy_changed')
+        cleanup = boundary._cleanup
+        async def after_worker_exit(process):
+            if process is not None:
+                try:
+                    await asyncio.wait_for(process.wait(), boundary.CLEANUP_SECONDS)
+                except TimeoutError:
+                    pass
+            return await cleanup(process)
+        for mode in ('denied_exit', 'denied_malformed', 'denied_failed'):
+            for resume in (None, 'original-resume-thread'):
+                with self.subTest(mode=mode, resume=resume):
+                    self.mode = mode
+                    # Establish actual worker exit before checking this known-clean case.
+                    with patch.object(boundary, '_cleanup', side_effect=after_worker_exit):
+                        result = await self.run_worker(resume=resume, before_dispatch=denied)
+                    self.assertEqual(result['status'], 'interrupted')
+                    self.assertEqual(result['detail']['reason'], 'stopped_before_dispatch')
+                    self.assertEqual(result['detail']['policy_denial'], 'policy_changed')
+                    self.assertEqual(result['detail']['requested_resume_thread_id'], resume)
+                    self.assertIsNone(result['thread_id'])
+                    self.assertIsNone(result['turn_id'])
+                    self.assertEqual(self.identities, [])
+                    self.assertFalse(any(p['method'] == 'hydra/dispatchIntent' for _, p in self.events))
+                    self.assertNotIn('private-worker-canary', str(result))
+                    self.assert_pids_gone()
+
+    async def test_initial_policy_denial_cannot_override_lost_cleanup(self):
+        from hydra_sdlc.operations import OperationDenied
+        self.mode = 'denied_exit'
+        def denied():
+            raise OperationDenied('policy_changed')
+        cleanup = boundary._cleanup
+        async def unconfirmed(process):
+            await cleanup(process)
+            return False
+        with patch.object(boundary, '_cleanup', side_effect=unconfirmed):
+            result = await self.run_worker(before_dispatch=denied)
+        self.assertEqual(result['status'], 'transport_unknown')
+        self.assertEqual(result['detail']['cleanup'], 'unknown')
+        self.assert_pids_gone()
+
+    async def test_initial_policy_denial_with_contradictory_identity_remains_unsettled(self):
+        from hydra_sdlc.operations import OperationDenied
+        self.mode = 'denied_identity'
+        def denied():
+            raise OperationDenied('policy_changed')
+        result = await self.run_worker(before_dispatch=denied)
+        self.assertNotEqual(result['status'], 'interrupted')
+        self.assertEqual(result['thread_id'], 'contradictory-thread')
+        self.assertFalse(any(p['method'] == 'hydra/dispatchIntent' for _, p in self.events))
+        self.assert_pids_gone()
+
+    async def test_worker_cannot_supply_parent_policy_denial(self):
+        self.worker.write_text(WORKER.replace("'detail': {'reason': 'provider_terminal',",
+            "'detail': {'policy_denial': 'policy_changed', 'reason': 'provider_terminal',"))
+        result = await self.run_worker()
+        self.assertEqual(result['status'], 'completed')
+        self.assertNotIn('policy_denial', result['detail'])
+        self.assert_pids_gone()
+
+    async def test_initial_policy_denial_preserves_contradictory_worker_result(self):
+        from hydra_sdlc.operations import OperationDenied
+        def denied():
+            raise OperationDenied('policy_changed')
+        for mode in ('denied_result_identity', 'denied_result_cleanup',
+                     'denied_result_terminal', 'denied_result_transport'):
+            with self.subTest(mode=mode):
+                self.mode = mode
+                result = await self.run_worker(before_dispatch=denied)
+                self.assertNotEqual(result['status'], 'interrupted')
+                self.assertNotEqual(result['detail'].get('reason'), 'stopped_before_dispatch')
+                self.assertEqual(self.identities, [])
+                self.assertFalse(any(p['method'] == 'hydra/dispatchIntent' for _, p in self.events))
+                self.assert_pids_gone()
 
     async def test_policy_changed_after_thread_identity_denies_turn_and_preserves_clean_identity(self):
         from hydra_sdlc.operations import OperatingControl, OperationDenied
