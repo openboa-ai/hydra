@@ -335,6 +335,47 @@ class GitHub:
         return {"record": value, "resource": {"source": "github", "kind": "issue_comment",
                 "id": f"{_repo(repo)}/comments/{identifier}"}}
 
+    def work_binding_source(self, repo, n, *, spec_directory, selected_comment_id=None,
+                            selected_digest=None, recover=False):
+        """Bounded read-only v2 binding identity; never an execution grant.
+
+        Explicit adoption reads the exact ID/digest supplied by its reviewer.
+        Recovery reads authenticated existing progress, then its attempt anchor.
+        Accepted reference payloads, delegation and native relations still require
+        their own qualified resolvers before a future dispatch consumer can run.
+        """
+        from .work_records import WorkRecordError, recover_binding, select_binding
+
+        if (type(recover) is not bool or
+                (recover and (selected_comment_id is not None or selected_digest is not None)) or
+                (not recover and (selected_comment_id is None or selected_digest is None))):
+            raise WorkRecordError('invalid_selection')
+        with self.read_budget(seconds=15, requests=32):
+            identity = self._identity()
+            repository = self.repository(repo)
+            issue = self.issue(repo, n)
+            if issue.get('url') != f'https://api.github.com/repos/{repo}/issues/{n}':
+                raise WorkRecordError('identity_mismatch')
+            rows = self.comments(repo, n)
+            arguments = dict(repository_id=repository['id'], issue=issue, author=identity,
+                             coverage='complete', spec_directory=spec_directory)
+            if recover:
+                # Use one collected view for progress and its immutable links.
+                # A separate progress() read can race with a new active attempt.
+                own = [c for c in rows if isinstance(c, dict)
+                       and isinstance(c.get('user'), dict)
+                       and type(c['user'].get('id')) is int and c['user']['id'] == identity['id']
+                       and c['user'].get('login') == identity['login']
+                       and isinstance(c.get('body'), str) and '<!-- hydra-progress:v1 ' in c['body']]
+                if len(own) > 1:
+                    raise GitHubError('Duplicate service progress comments')
+                if own and own[0].get('issue_url') != issue['url']:
+                    raise WorkRecordError('identity_mismatch')
+                progress = self._progress_value(repo, n, own[0]) if own else None
+                return recover_binding(rows, progress=progress, **arguments)
+            return select_binding(rows, selected_comment_id=selected_comment_id,
+                                  selected_digest=selected_digest, **arguments)
+
     def _progress_value(self, repo, n, comment):
         value = _marker(comment.get("body"), "hydra-progress")
         if value.get("repository_id") != self.repository(repo)["id"] or value.get("issue_number") != n or value.get("version") != 1:
