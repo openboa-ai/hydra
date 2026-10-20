@@ -91,3 +91,20 @@ python -c 'import unittest; patterns=("test_native_capabilities.py","test_mcp.py
 현재 source와 fixture의 독립 검토는 진단의 권한 비승격·optional SDK 호환·공개 경계를
 확인한다. 원격 CI·보호 전달·candidate 설치 read·원격 Codex 관측은 아직 NOT RUN이다.
 로컬 SDK stdio 성공으로 실제 설치된 reader capability나 native 제어를 완료 처리하지 않는다.
+
+
+## Protected-main candidate — 2026-10-20
+
+P03의 protected merge와 main CI가 통과한 `63b62ebe7c0ed2c7f4a70e1839a179bebe36cbf9`
+(tree `1c052675fe4520c6e0b586169b5564e8446e7a4a`)에서 기존 P01 source/test 네 파일과
+JSON fixture 여섯 파일을 그대로 재사용했다. 기존 구현을 새로 작성하거나 schema·허용 범위를
+넓히지 않았다. 해당 target의 main bytes가 기존 구현 전 base와 같고, 수용 spec revision 1과
+NC 계약의 hash가 유지되는지 확인했다. P03/P02 및 CI·제어·실행 감독 파일은 현재 main 그대로다.
+
+Python 3.12.7 / mcp 2.3.0 / mcp-types 2.3.0의 실제 SDK로 같은 세 suite를 실행했다.
+**30 PASS, failure/error/skip 0**, 0.985초, exit 0이다. 후보·기존 제품 checkout·
+Git HEAD/index·별도 skill 변경은 실행 전후 불변이다. 이 문단은 검증 뒤 관측 결과만 추가했다.
+
+기존 source bytes의 독립 검토를 재사용하며 현재 PR의 exact-head hosted code/security review와
+전체 CI는 별도 전달 조건이다. 이 실행은 local SDK/stdio 통합이며 설치 후보의 실제 원격
+Codex read, caller 인증, 질문/답변·Pause/Resume·재시작 수용을 완료 처리하지 않는다.

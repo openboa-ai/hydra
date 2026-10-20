@@ -33,6 +33,81 @@ class ControllerFixture:
 
 @unittest.skipUnless(importlib.util.find_spec("mcp"), "optional pinned MCP SDK not installed")
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_or_invalid_context_export_keeps_legacy_server_usable(self):
+        from mcp import Client
+        import mcp.server.mcpserver as sdk
+        context = sdk.Context
+        for replacement in (None, 'missing-export'):
+            with self.subTest(replacement=replacement):
+                try:
+                    if replacement == 'missing-export':
+                        del sdk.Context
+                    else:
+                        sdk.Context = replacement
+                    server = create_server(ControllerFixture())
+                finally:
+                    sdk.Context = context
+                async with Client(server) as client:
+                    listed = (await client.list_tools()).tools
+                    self.assertEqual(len(listed), 5)
+                    status = next(t for t in listed if t.name == 'hydra_status')
+                    self.assertEqual(status.input_schema.get('properties', {}), {})
+                    result = await client.call_tool('hydra_status', {})
+                    self.assertFalse(result.is_error)
+                    data = result.structured_content or json.loads(result.content[0].text)
+                    self.assertEqual(data['projects'], ControllerFixture().status())
+                    self.assertEqual(data['native_context']['input_required_sdk'], 'unknown')
+                    self.assertIsNone(data['native_context']['protocol_version'])
+
+    async def test_diagnostic_failure_isolated_but_controller_failure_preserved(self):
+        from mcp import Client
+        from mcp.server.mcpserver import Context
+        from hydra_sdlc.native_context import read_probe
+        controller = ControllerFixture()
+        server = create_server(controller)
+        async with Client(server) as client:
+            def inaccessible(_):
+                raise RuntimeError('SYNTHETIC_PRIVATE_CANARY')
+            with patch.object(Context, 'client_capabilities', property(inaccessible)):
+                result = await client.call_tool('hydra_status', {})
+            self.assertFalse(result.is_error)
+            data = result.structured_content or json.loads(result.content[0].text)
+            self.assertEqual(data['projects'], controller.status())
+            self.assertEqual(read_probe(data)['form_elicitation'], 'unknown')
+            self.assertNotIn('SYNTHETIC_PRIVATE_CANARY', str(result.content))
+            if result.structured_content and result.content:
+                self.assertEqual(result.structured_content, json.loads(result.content[0].text))
+            with patch.object(controller, 'status', side_effect=ValueError('status unavailable')), self.assertLogs(level='ERROR'):
+                failure = await client.call_tool('hydra_status', {})
+            self.assertTrue(failure.is_error)
+
+    async def test_profile_is_inspected_only_at_startup(self):
+        from mcp import Client
+        from hydra_sdlc.native_context import load_sdk_profile
+        with patch('hydra_sdlc.native_context.load_sdk_profile', wraps=load_sdk_profile) as profile:
+            server = create_server(ControllerFixture())
+            async with Client(server) as client:
+                for _ in range(2):
+                    result = await client.call_tool('hydra_status', {})
+                    self.assertFalse(result.is_error)
+            profile.assert_called_once_with()
+
+    async def test_status_exposes_request_diagnostic_without_claiming_caller(self):
+        from mcp import Client
+        async with Client(create_server(ControllerFixture())) as client:
+            result = await client.call_tool('hydra_status', {})
+            self.assertFalse(result.is_error)
+            data = result.structured_content or json.loads(result.content[0].text)
+            self.assertIn('native_context', data)
+            self.assertEqual(data['native_context'], {
+                'schema_version': 1, 'protocol_version': '2026-07-28',
+                'request_channel': 'unavailable', 'form_elicitation': 'not_declared',
+                'input_required_sdk': 'present', 'input_required_client': 'unverified',
+                'caller_task_binding': 'unverified',
+            })
+            status = next(t for t in (await client.list_tools()).tools if t.name == 'hydra_status')
+            self.assertEqual(status.input_schema.get('properties', {}), {})
+
     async def test_inprocess_schema_and_refusal(self):
         from mcp import Client
         async with Client(create_server(ControllerFixture())) as client:
@@ -133,6 +208,9 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 'code_digest_scope', 'config_digest', 'control_binding_digest', 'identity_reason'})
             self.assertEqual(data['runtime']['identity_schema'], 1)
             self.assertEqual(data['runtime']['package'], 'openboa-hydra-sdlc')
+            from hydra_sdlc.native_context import read_probe
+            self.assertIsNotNone(read_probe(data))
+            self.assertEqual(data['native_context']['caller_task_binding'], 'unverified')
             self.assertIsNone(data['runtime']['config_digest'])
             self.assertIsNone(data['runtime']['control_binding_digest'])
             again = await client.call_tool('hydra_status', {})

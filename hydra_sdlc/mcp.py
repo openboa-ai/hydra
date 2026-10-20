@@ -39,12 +39,12 @@ def controller_from_file(path):
 
 def create_server(controller):
     from mcp.server import MCPServer
+    from .native_context import load_sdk_profile, probe_context
     server = MCPServer("Hydra", log_level="WARNING")
     runtime = dict(getattr(controller, "runtime_identity", None) or capture_runtime_identity())
+    profile = load_sdk_profile()
 
-    @server.tool()
-    def hydra_status() -> dict:
-        """Read registered GitHub work and waiting reasons without claiming it."""
+    def status_result(ctx=None):
         result = {"projects": controller.status(), "runtime": dict(runtime)}
         operations = getattr(getattr(controller, "runner", None), "operations", None)
         if operations is not None:
@@ -53,7 +53,20 @@ def create_server(controller):
                 result["controls"] = operations.snapshot()
             except OperationDenied as exc:
                 result["controls"] = {"reason": exc.reason, "gate_status": "unknown"}
+        result["native_context"] = probe_context(ctx, profile)
         return result
+
+    if profile.supported:
+        def hydra_status(ctx=None) -> dict:
+            """Read registered GitHub work and waiting reasons without claiming it."""
+            return status_result(ctx)
+        # Real SDK type, not a postponed local annotation or model argument.
+        hydra_status.__annotations__['ctx'] = profile.context_type
+    else:
+        def hydra_status() -> dict:
+            """Read registered GitHub work and waiting reasons without claiming it."""
+            return status_result()
+    server.tool()(hydra_status)
 
     @server.tool()
     async def hydra_begin(issue_url: str) -> dict:
