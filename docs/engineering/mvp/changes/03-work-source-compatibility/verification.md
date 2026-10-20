@@ -310,3 +310,22 @@ verifier/helper spawn 0회다. Python 3.12.7 / mcp 2.3.0 / mcp-types 2.3.0에서
 
 최종 head hosted CI·코드/보안 리뷰·보호 병합·실제 main은 별도 증거다. 원격 질문·답변·Pause·
 재시작·Resume 전체 흐름, 설치와 두 프로젝트 수용을 이 결과로 통과 처리하지 않는다.
+
+
+## PR #12 CI worker-start rendezvous — 2026-10-20
+
+Head `3fed2521d850cc26aa57adcf1efcd1f1f6e370fb`의 CI에서 Python 3.11·Mac·hygiene은
+통과했고 Python 3.14.2는 pending-policy-read 시험 한 개가 실패했다. 두 번째 worker가
+정책 요청을 보내기 전에 0.15초 startup budget이 소진될 수 있는데, 시험은 이미 pending
+관측에 도달했다고 가정했다. 이때 제품의 clean zero-grant failed 분류는 유지한다.
+
+기존 fixture의 실제 0.25초 startup 지연을 넣고 원래 0.15초 제한으로 같은 실패를 재현했다.
+해당 시험만 read gate 5초, worker timeout 3초, 외부 await 1.5초로 분리해 의도한 단계에
+도달하게 했다. callback 1회·grant 0회·pending unknown·실제 PID 수집 oracle을 모두 유지하고
+실제 worker 두 개의 시작 확인을 추가했다. 제품 source·CI·skip·완료 기준은 변경하지 않았다.
+
+- 결정적 일정의 RED: 1 failure, 0 skip, 0.813초.
+- 같은 oracle의 GREEN: 1 PASS, 0 skip, 0.996초.
+- 현재 boundary 모듈: 46 PASS, 0 skip, 9.956초. 독립 exact diff 검토 완료.
+- 앞의 1035개 local suite는 이 시험 수정 전 후보의 기록이다. 제품 source는 같으며,
+  현재 후보의 전체 suite·hosted review·병합·main 검증은 각각 후속 증거로 확인한다.

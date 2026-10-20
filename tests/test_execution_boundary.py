@@ -122,9 +122,10 @@ b.worker_main(execute)
 class FinitePolicyRead:
     """A real synchronous read, released by the test or a finite RED fallback."""
 
-    def __init__(self, *, gate_call=1):
+    def __init__(self, *, gate_call=1, wait_seconds=1.8):
         self.loop = asyncio.get_running_loop()
         self.gate_call = gate_call
+        self.wait_seconds = wait_seconds
         self.calls = 0
         self.lock = threading.Lock()
         self.entered = asyncio.Event()
@@ -144,7 +145,7 @@ class FinitePolicyRead:
         try:
             # The old inline implementation cannot process the entered event
             # until this finite fallback expires. It produces a bounded RED.
-            self.release.wait(1.8)
+            self.release.wait(self.wait_seconds)
         finally:
             self.returned.set()
             self.loop.call_soon_threadsafe(self.finished.set)
@@ -305,7 +306,7 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             await self.finish_policy_read(read, task)
 
     async def test_pending_policy_read_is_not_reissued_for_same_raw_callback_owner(self):
-        read = FinitePolicyRead()
+        read = FinitePolicyRead(wait_seconds=5)
         first = asyncio.create_task(self.run_worker(timeout=.6, before_dispatch=read))
         tasks = [first]
         try:
@@ -315,11 +316,15 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             self.assert_pids_gone()
             # Re-entry uses the exact same raw callable as its observation owner.
             # It cannot create a second read while the original one is pending.
-            second = asyncio.create_task(self.run_worker(timeout=.15, before_dispatch=read))
+            # Force a real startup delay so this oracle cannot silently rely
+            # on a worker reaching its dispatch request within 150 milliseconds.
+            self.mode = 'slow_silent'
+            second = asyncio.create_task(self.run_worker(timeout=3, before_dispatch=read))
             tasks.append(second)
-            self.assert_pending_read_unknown(await asyncio.wait_for(asyncio.shield(second), .7))
+            self.assert_pending_read_unknown(await asyncio.wait_for(asyncio.shield(second), 1.5))
             self.assertFalse(read.returned.is_set())
             self.assertEqual(read.calls, 1)
+            self.assertEqual(sum(row['name'] == 'started' for row in self.observations()), 2)
             self.assert_no_sdk_grant()
             self.assert_pids_gone()
         finally:
