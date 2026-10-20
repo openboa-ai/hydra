@@ -15,8 +15,10 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from datetime import datetime, timezone
 from contextlib import ExitStack, nullcontext
+from contextvars import Context
 from pathlib import Path
 
 MAX_FRAME_BYTES = 1024 * 1024
@@ -29,6 +31,113 @@ _NATIVE_EXECUTE_CHILD = getattr(subprocess.Popen._execute_child, "__code__", Non
 PUBLISHING_TOKEN_VARIABLES = frozenset({
     "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
 })
+POLICY_HOLD_REASONS = frozenset({"policy_changed", "work_source_unsupported",
+                                 "project_contract_unavailable", "project_policy_unbound"})
+_policy_observations = weakref.WeakKeyDictionary()
+_policy_observation_lock = threading.Lock()
+
+
+class DispatchPreflight:
+    """Trusted parent read with a stable owner and absolute execution deadline."""
+
+    def __init__(self, callback, *, owner):
+        self.callback = callback
+        self.owner = owner
+
+    def __call__(self):
+        # Retain the synchronous callback contract for trusted direct callers.
+        # The supervised path passes its absolute execution deadline explicitly.
+        return self.callback(time.monotonic() + 15)
+
+
+class _PolicyObservation:
+    def __init__(self, callback, deadline, timed):
+        self.reason = "project_contract_unavailable"
+        # Thread.run releases its target/arguments on exit. Do not retain the
+        # wrapper or owner here: a completed slot must not keep its weak key alive.
+        self.thread = threading.Thread(target=self._read, args=(callback, deadline, timed),
+                                       name="hydra-policy-read", daemon=True)
+
+    def _read(self, callback, deadline, timed):
+        try:
+            if time.monotonic() >= deadline:
+                return
+            call = (lambda: callback(deadline)) if timed else callback
+            self.reason = Context().run(_preflight_reason, call)
+        except BaseException:
+            self.reason = "project_contract_unavailable"
+
+
+def _begin_policy_observation(callback, deadline, observation):
+    if callback is None:
+        return None, True
+    timed = isinstance(callback, DispatchPreflight)
+    owner = callback.owner if timed else callback
+    call = callback.callback if timed else callback
+    with _policy_observation_lock:
+        try:
+            previous = _policy_observations.get(owner)
+        except TypeError:
+            return None, False
+        if previous is not None and previous.thread.is_alive():
+            observation[0] = previous
+            return previous, False
+        job = _PolicyObservation(call, deadline, timed)
+        try:
+            _policy_observations[owner] = job
+        except TypeError:
+            return None, False
+        observation[0] = job
+        job.thread.start()
+        return job, True
+
+
+def _policy_observation_pending(observation):
+    return observation[0] is not None and observation[0].thread.is_alive()
+
+
+class _AbandonedPolicyObservation(RuntimeError):
+    pass
+
+
+def _sync_preflight(callback, deadline, stop_requested, observation):
+    if stop_requested() or time.monotonic() >= deadline:
+        raise _AbandonedPolicyObservation()
+    job, fresh = _begin_policy_observation(callback, deadline, observation)
+    if not fresh:
+        return "project_contract_unavailable"
+    while job is not None and job.thread.is_alive():
+        remaining = deadline - time.monotonic()
+        if stop_requested() or remaining <= 0:
+            raise _AbandonedPolicyObservation()
+        job.thread.join(min(.02, remaining))
+    return None if job is None else job.reason
+
+
+async def _async_preflight(callback, deadline, stop_requested, observation):
+    loop = asyncio.get_running_loop()
+    if stop_requested() or loop.time() >= deadline:
+        raise _AbandonedPolicyObservation()
+    job, fresh = _begin_policy_observation(callback, deadline, observation)
+    if not fresh:
+        return "project_contract_unavailable"
+    while job is not None and job.thread.is_alive():
+        remaining = deadline - loop.time()
+        if stop_requested() or remaining <= 0:
+            raise _AbandonedPolicyObservation()
+        await asyncio.sleep(min(.005, remaining))
+    return None if job is None else job.reason
+
+
+def _preflight_reason(callback):
+    """Trusted parent callback only; never copy provider diagnostics to results."""
+    if callback is None:
+        return None
+    try:
+        return None if callback() is None else "project_contract_unavailable"
+    except Exception as exc:
+        reason = getattr(exc, "reason", None) if _operation_denied(exc) else None
+        return reason if reason in POLICY_HOLD_REASONS else "project_contract_unavailable"
 
 
 class ProtocolError(RuntimeError):
@@ -569,12 +678,14 @@ async def _cleanup(process):
     return True if process is None else await process.cleanup()
 
 
-def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_bytes):
+def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_bytes, before_dispatch=None):
     """Run a synchronous check using the same owned helper and receipt contract.
 
-    No nested event loop or background thread is needed. The caller retains its
-    storage lease and evaluates its stop callback on the original thread.
+    The caller retains its storage lease and evaluates Stop on its original
+    thread. Only the trusted read-only preflight uses a supervised observer.
     """
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise ValueError("Invalid dispatch preflight")
     if os.name != "posix":
         raise OwnedCommandError("unavailable")
     if stop_requested is not None and stop_requested():
@@ -589,6 +700,8 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
     buffered = b""
     data = bytearray()
     reason = None
+    policy_hold = None
+    observation = [None]
     group_gone = stdout_closed = control_closed = control_failed = False
 
     def fail(value):
@@ -602,6 +715,16 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             fail("stopped")
             return True
         return False
+
+    def preflight():
+        try:
+            return _sync_preflight(before_dispatch, deadline, stopped, observation)
+        except _AbandonedPolicyObservation:
+            # Stop is already latched by stopped(). A cleared control mode or
+            # a late read completion must not revive this execution's admission.
+            if reason is None:
+                fail("unavailable" if process is None else "timeout")
+            return None
 
     def signal_group(sig):
         nonlocal group_gone
@@ -685,8 +808,24 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 control.setblocking(False)
                 command = _helper_command(command, peer.fileno(), deadline)
                 options["pass_fds"] = (peer.fileno(),)
+            policy_hold = preflight()
+            if policy_hold:
+                fail("stopped")
+                raise OwnedCommandError("stopped")
+            if reason is not None:
+                raise OwnedCommandError(reason)
+            if stopped():
+                raise OwnedCommandError("stopped")
+            if time.monotonic() >= deadline:
+                fail("unavailable")
+                raise OwnedCommandError("unavailable")
             coordinator = _ownership_coordinator()
             with _operation_guard():
+                if reason is not None or stopped():
+                    raise OwnedCommandError("stopped")
+                if time.monotonic() >= deadline:
+                    fail("unavailable")
+                    raise OwnedCommandError("unavailable")
                 ownership_ticket = None if coordinator is None else coordinator.register_owned_process()
                 try:
                     process = subprocess.Popen(command, **options)
@@ -701,14 +840,23 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
             if linux:
                 selector.register(control, selectors.EVENT_READ, "control")
                 if time.monotonic() < deadline:
-                    initial = "terminate" if stopped() else "launch"
+                    policy_hold = preflight()
+                    if policy_hold:
+                        fail("stopped")
+                    if time.monotonic() >= deadline:
+                        fail("timeout")
+                    initial = "terminate" if stopped() or reason is not None else "launch"
                     try:
                         if initial == "launch":
                             try:
                                 admission_stack.enter_context(_operation_guard())
-                                launch_sent = True
+                                if stopped() or time.monotonic() >= deadline:
+                                    if reason is None:
+                                        fail("timeout")
+                                    initial = "terminate"
+                                launch_sent = initial == "launch"
                                 control.sendall(_supervision_frame(initial))
-                                if _operation_scope_active():
+                                if launch_sent and _operation_scope_active():
                                     admission_deadline = min(deadline, time.monotonic() + DISPATCH_SECONDS)
                                     while pid is None and rejection is None and cancellation is None:
                                         if control_failed or stopped():
@@ -718,7 +866,7 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                                             fail("timeout")
                                             break
                                         receive(remaining)
-                                if (not _operation_scope_active() or pid is not None
+                                if (not launch_sent or not _operation_scope_active() or pid is not None
                                         or rejection is not None or cancellation is not None):
                                     admission_stack.close()
                                 # Otherwise keep this permit until bounded
@@ -815,10 +963,14 @@ def run_owned_sync(argv, *, cwd, env, timeout, stop_requested=None, max_output_b
                 _ownership_coordinator().confirm_owned_cleanup(ownership_ticket)
         except Exception:
             clean = False
-    if not clean or reason == "cleanup_unknown":
+    if not clean or reason == "cleanup_unknown" or _policy_observation_pending(observation):
         raise OwnedCommandError("cleanup_unknown")
+    if policy_hold:
+        raise OwnedCommandError(policy_hold)
     if reason in {"stopped", "output_limit", "unavailable"}:
         raise OwnedCommandError(reason)
+    if cancellation is not None:
+        raise OwnedCommandError("unavailable")
     code = -signal.SIGKILL if reason == "timeout" else receipt["returncode"] if linux else process.returncode
     return subprocess.CompletedProcess(list(argv), code, bytes(data))
 
@@ -1002,8 +1154,10 @@ def _supervisor_main(fd, deadline, command):
 
 
 async def execute_worker(assignment, on_identity, on_event, stop_requested, resume_thread_id,
-                         *, worker_source, timeout, grace, poll):
+                         *, worker_source, timeout, grace, poll, before_dispatch=None):
     """Admit one worker and keep all SDK threads inside its owned process group."""
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise ValueError("Invalid dispatch preflight")
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     process = None
@@ -1016,6 +1170,14 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
     stopped = False
     stop_at = None
     failure = None
+    policy_hold = None
+    observation = [None]
+
+    def observe_stop():
+        nonlocal stopped, stop_at
+        if not stopped and stop_requested():
+            stopped, stop_at = True, loop.time()
+        return stopped
 
     def audit(method, params):
         payload = {"method": method, "params": params}
@@ -1023,7 +1185,7 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         on_event(hashlib.sha256(raw.encode()).hexdigest(), payload)
 
     async def session():
-        nonlocal process, terminal, outcome, outcome_at
+        nonlocal process, terminal, outcome, outcome_at, policy_hold
         initial = _encode(_frame("assignment", 0, {
             "assignment": assignment, "resume_thread_id": resume_thread_id,
         }))
@@ -1090,15 +1252,18 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
                 elif kind == "poll":
                     if data:
                         raise ProtocolError("Invalid stop poll")
-                    answer = {"stop": stopped or stop_requested() or loop.time() >= deadline}
+                    answer = {"stop": stopped or observe_stop() or loop.time() >= deadline}
                 elif kind == "dispatch":
                     operation = data.get("operation")
                     if set(data) != {"operation"} or operation not in {"thread/start", "thread/resume", "turn/start"}:
                         raise ProtocolError("Invalid dispatch operation")
-                    allow = not (stopped or stop_requested() or loop.time() >= deadline)
+                    if dispatch_barrier is not None:
+                        raise ProtocolError("Overlapping dispatch admission")
+                    if policy_hold is None and not (stopped or observe_stop() or loop.time() >= deadline):
+                        policy_hold = await _async_preflight(before_dispatch, deadline,
+                                                            lambda: stopped or observe_stop(), observation)
+                    allow = not (policy_hold or stopped or observe_stop() or loop.time() >= deadline)
                     if allow:
-                        if dispatch_barrier is not None:
-                            raise ProtocolError("Overlapping dispatch admission")
                         barrier = _operation_guard()
                         try:
                             barrier.__enter__()
@@ -1107,10 +1272,14 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
                                 raise
                             allow = False
                         else:
-                            dispatch_barrier = barrier
-                            dispatch_identity = "turn_id" if operation == "turn/start" else "thread_id"
-                            dispatch_deadline = (min(deadline, loop.time() + DISPATCH_SECONDS)
-                                                 if _operation_scope_active() else None)
+                            allow = not (stopped or observe_stop() or loop.time() >= deadline)
+                            if not allow:
+                                barrier.__exit__(None, None, None)
+                            else:
+                                dispatch_barrier = barrier
+                                dispatch_identity = "turn_id" if operation == "turn/start" else "thread_id"
+                                dispatch_deadline = (min(deadline, loop.time() + DISPATCH_SECONDS)
+                                                     if _operation_scope_active() else None)
                     if allow:
                         if operation == "turn/start" and accepted["thread_id"] is None:
                             raise ProtocolError("Turn before durable thread identity")
@@ -1145,13 +1314,13 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
     try:
         if os.name != "posix":
             raise ProtocolError("POSIX host required")
-        if stop_requested():
+        if observe_stop():
             stopped, stop_at = True, loop.time()
         else:
             task = asyncio.create_task(session())
         while task is not None:
             now = loop.time()
-            if not stopped and stop_requested():
+            if not stopped and observe_stop():
                 stopped, stop_at = True, now
             cutoff = deadline + (grace if grants else 0)
             if stopped:
@@ -1202,8 +1371,21 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
               "requested_resume_thread_id": resume_thread_id}
     result = {"status": "transport_unknown", "thread_id": observed["thread_id"],
               "turn_id": observed["turn_id"], "detail": detail}
-    if not clean or failure == "supervisor_cleanup_unknown":
+    if not clean or failure == "supervisor_cleanup_unknown" or _policy_observation_pending(observation):
         detail["cleanup"] = "unknown"
+        return result
+    reported_detail = outcome.get("detail") if isinstance(outcome, dict) else None
+    unsettled_outcome = isinstance(outcome, dict) and (
+        outcome.get("status") == "transport_unknown"
+        or any(outcome.get(key) is not None for key in accepted)
+        or (isinstance(reported_detail, dict) and (
+            reported_detail.get("cleanup") == "unknown"
+            or reported_detail.get("terminal") is not None)))
+    if (policy_hold and not grants and terminal is None and not unsettled_outcome
+            and all(value is None for value in (*observed.values(), *accepted.values()))):
+        result["status"] = "interrupted"
+        detail["reason"] = "stopped_before_dispatch"
+        detail["policy_denial"] = policy_hold
         return result
     if (isinstance(outcome, dict) and isinstance(outcome.get("status"), str)
             and outcome["status"] in {"completed", "failed", "interrupted", "transport_unknown"}):
@@ -1216,6 +1398,12 @@ async def execute_worker(assignment, on_identity, on_event, stop_requested, resu
         if isinstance(worker_detail, dict) and worker_detail.get("cleanup") != "unknown" and same_ids:
             if (provider_terminal or before_turn or (not grants and outcome["status"] in {"failed", "interrupted"})
                     or outcome["status"] == "transport_unknown"):
+                # This field belongs to the trusted parent, never worker prose.
+                worker_detail = dict(worker_detail)
+                worker_detail.pop("policy_denial", None)
+                if policy_hold:
+                    worker_detail["policy_denial"] = policy_hold
+                outcome = {**outcome, "detail": worker_detail}
                 worker_detail.setdefault("requested_resume_thread_id", resume_thread_id)
                 return outcome
     if outcome is not None:

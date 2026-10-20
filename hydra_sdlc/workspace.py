@@ -120,18 +120,20 @@ def _check_stop(stop_requested):
         raise WorkspaceWait("verification_stopped")
 
 
-def _run(argv, cwd, timeout, env=None, *, stop_requested=None):
+def _run(argv, cwd, timeout, env=None, *, stop_requested=None, before_dispatch=None):
     """Bound command and descendants, retaining bounded private output only."""
     _check_stop(stop_requested)
     if stop_requested is not None:
-        from .execution_boundary import OwnedCommandError, run_owned_sync
+        from .execution_boundary import OwnedCommandError, POLICY_HOLD_REASONS, run_owned_sync
         try:
             return run_owned_sync(argv, cwd=cwd, env=env if env is not None else _environment(),
                                   timeout=timeout, stop_requested=stop_requested,
+                                  before_dispatch=before_dispatch,
                                   max_output_bytes=MAX_OUTPUT_BYTES)
         except OwnedCommandError as exc:
-            reason = {"stopped": "verification_stopped", "output_limit": "command_output_limit",
-                      "cleanup_unknown": "verification_cleanup_unknown", "unavailable": "command_unavailable"}[exc.reason]
+            reason = (exc.reason if exc.reason in POLICY_HOLD_REASONS else
+                      {"stopped": "verification_stopped", "output_limit": "command_output_limit",
+                       "cleanup_unknown": "verification_cleanup_unknown", "unavailable": "command_unavailable"}[exc.reason])
             raise WorkspaceWait(reason, uncertain=exc.reason == "cleanup_unknown") from exc
     try:
         process = subprocess.Popen(argv, cwd=cwd, env=env or _environment(),
@@ -721,7 +723,9 @@ class Workspace:
             raise WorkspaceWait("fetched_base_mismatch")
         return _sha(observed)
 
-    def verify(self, path, commands, *, stop_requested=None):
+    def verify(self, path, commands, *, stop_requested=None, before_command=None):
+        if before_command is not None and not callable(before_command):
+            raise WorkspaceWait("invalid_verification_preflight")
         if stop_requested is None:
             stop_requested = lambda: False
         if not callable(stop_requested):
@@ -768,7 +772,7 @@ class Workspace:
                     execution_argv, execution_cwd = list(execution_argv), path
                 _check_stop(stop_requested)
                 result = _run(execution_argv, execution_cwd, timeout, env=_environment(),
-                              stop_requested=stop_requested)
+                              stop_requested=stop_requested, before_dispatch=before_command)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise WorkspaceWait("verification_unavailable") from exc
             _check_stop(stop_requested)

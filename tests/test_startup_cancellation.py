@@ -315,16 +315,11 @@ class StartupCancellationTests(unittest.IsolatedAsyncioTestCase):
                 def stopped():
                     return stop and cancellation_seen
 
-                if confirmed and not stop:
-                    result = boundary.run_owned_sync(self.command, cwd=self.root, env=boundary.worker_environment(),
-                                                     timeout=5, stop_requested=stopped, max_output_bytes=1024)
-                    self.assertLess(result.returncode, 0)
-                    self.assertEqual(result.stdout, b"")
-                else:
-                    with self.assertRaises(boundary.OwnedCommandError) as caught:
-                        boundary.run_owned_sync(self.command, cwd=self.root, env=boundary.worker_environment(),
-                                                timeout=5, stop_requested=stopped, max_output_bytes=1024)
-                    self.assertEqual(caught.exception.reason, "stopped" if confirmed else "cleanup_unknown")
+                with self.assertRaises(boundary.OwnedCommandError) as caught:
+                    boundary.run_owned_sync(self.command, cwd=self.root, env=boundary.worker_environment(),
+                                            timeout=5, stop_requested=stopped, max_output_bytes=1024)
+                expected = ("stopped" if stop else "unavailable") if confirmed else "cleanup_unknown"
+                self.assertEqual(caught.exception.reason, expected)
             if stale:
                 self.assertEqual(len(new_ticket), 1)
                 self.assertIn(new_ticket[0][1].encode(), self.lock.read_bytes())
@@ -333,8 +328,82 @@ class StartupCancellationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(bool(marker), not confirmed)
         self.assert_restart(marker)
 
-    async def test_sync_cancelled_receipt_is_nonzero_not_verification_success(self):
+    async def test_sync_cancelled_receipt_is_unavailable_without_execution_result(self):
         await self.consume_receipt("sync")
+
+    def sync_preflight_expiry(self, *, after_helper_spawn):
+        from types import SimpleNamespace
+
+        real_monotonic = time.monotonic
+        native_spawn = subprocess.Popen
+        original_validate = boundary._validate_launch_cancelled
+        offset = [0.0]
+        preflights, helpers, cancellations = [], [], []
+
+        def preflight():
+            preflights.append(True)
+            if not after_helper_spawn and len(preflights) == 2:
+                offset[0] = 60.0
+
+        def observed_spawn(command, **kwargs):
+            process = native_spawn(command, **kwargs)
+            if "--actual-helper" in command:
+                helpers.append(process)
+                if after_helper_spawn:
+                    offset[0] = 60.0
+            return process
+
+        def observed_cancellation(frame):
+            result = original_validate(frame)
+            cancellations.append(result.copy())
+            return result
+
+        clock = SimpleNamespace(monotonic=lambda: real_monotonic() + offset[0])
+        try:
+            with coordinator.coordinator_lock(self.lock), ExitStack() as stack:
+                # Exercise the real helper protocol on POSIX; only its unavailable
+                # prctl is omitted by this fixture on macOS. Linux uses real prctl.
+                stack.enter_context(patch.object(boundary.sys, "platform", "linux"))
+                # The second case gives the actual helper an expired deadline,
+                # then advances only the parent's clock after real Popen. It
+                # reaches the pre-callback expiry branch without a wall-time wait.
+                stack.enter_context(patch.object(
+                    boundary, "_helper_command",
+                    side_effect=lambda command, fd, deadline: self.helper_command(
+                        command, fd, deadline, expired=after_helper_spawn)))
+                stack.enter_context(patch.object(boundary, "time", clock))
+                stack.enter_context(patch.object(boundary.subprocess, "Popen", side_effect=observed_spawn))
+                stack.enter_context(patch.object(
+                    boundary, "_validate_launch_cancelled", side_effect=observed_cancellation))
+                ready = stack.enter_context(patch.object(boundary, "_validate_ready", wraps=boundary._validate_ready))
+                with self.assertRaises(boundary.OwnedCommandError) as caught:
+                    boundary.run_owned_sync(
+                        self.command, cwd=self.root, env=boundary.worker_environment(), timeout=30,
+                        stop_requested=lambda: False, before_dispatch=preflight, max_output_bytes=1024)
+                self.assertEqual(caught.exception.reason, "unavailable")
+                self.assertEqual(len(preflights), 1 if after_helper_spawn else 2)
+                self.assertEqual(cancellations, [CANCELLED])
+                ready.assert_not_called()
+                self.assertEqual(len(helpers), 1)
+                self.assertEqual(helpers[0].returncode, 0)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(helpers[0].pid, 0)
+                self.assert_no_child()
+                self.assertTrue(any(event["name"] == "cancelled_receipt" for event in _events(self.root)))
+                self.assertTrue(any(event["name"] == "helper_returned" and event["code"] == 0
+                                    for event in _events(self.root)))
+                marker = self.lock.read_bytes()
+                self.assertEqual(marker, b"")
+            self.assert_restart(marker)
+        finally:
+            for helper in helpers:
+                self.fixture_cleanup(helper)
+
+    async def test_sync_second_preflight_expiry_has_confirmed_no_child_and_no_execution_result(self):
+        self.sync_preflight_expiry(after_helper_spawn=False)
+
+    async def test_sync_expiry_after_helper_spawn_skips_second_preflight_and_has_no_execution_result(self):
+        self.sync_preflight_expiry(after_helper_spawn=True)
 
     async def test_sync_stop_remains_stopped_after_confirmed_no_child_receipt(self):
         await self.consume_receipt("sync", stop=True)

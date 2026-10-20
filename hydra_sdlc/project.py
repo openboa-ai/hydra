@@ -38,6 +38,32 @@ def matches(path, patterns):
     return any(path == p.rstrip("/") or path.startswith(p.rstrip("/") + "/") if p.endswith("/") else fnmatch.fnmatchcase(path, p) for p in patterns)
 
 
+def legacy_work_source(config):
+    """Execution capability, independent of the native/CLI executor choice."""
+    return (type(config.get("version")) is int and (config["version"] == 1 or
+            config["version"] == 2 and config.get("work_source") == "legacy_issue"))
+
+
+def _planning(config):
+    value = config.get("planning", {"source": "issue"})
+    _require(type(value) is dict, "Invalid planning policy")
+    if value.get("source") == "issue":
+        _require(set(value) == {"source"}, "Unknown issue planning fields")
+    else:
+        _require(config["work_source"] == "github_native" and value.get("source") == "github_project"
+                 and set(value) == {"source", "project_id", "priority_field_id", "option_priorities"},
+                 "Unsupported planning source")
+        def opaque(identifier):
+            return (type(identifier) is str and 1 <= len(identifier) <= 200
+                    and all(32 <= ord(c) < 127 for c in identifier))
+        _require(opaque(value["project_id"]) and opaque(value["priority_field_id"]), "Invalid planning identity")
+        priorities = value["option_priorities"]
+        _require(type(priorities) is dict and 1 <= len(priorities) <= 100
+                 and all(opaque(key) and type(priority) is int and -1000 <= priority <= 1000
+                         for key, priority in priorities.items()), "Invalid planning priorities")
+    return value
+
+
 def load_project(github, repo, *, revision=None):
     identity = github.repository(repo)
     revision = github.ref(repo, identity["default_branch"]) if revision is None else revision
@@ -48,8 +74,15 @@ def load_project(github, repo, *, revision=None):
     except (ValueError, KeyError, TypeError) as exc:
         raise ProjectError("Invalid project TOML") from exc
     keys = {"version", "repository_id", "authorized_actors", "human_reviewers", "spec_directory", "allowed_paths", "protected_paths", "labels", "verification", "required_checks", "review_provider", "delivery", "ui_paths"}
+    version = config.get("version")
+    _require(type(version) is int and version in {1, 2}, "Unknown project version")
+    if version == 2:
+        keys |= {"work_source", "planning"}
     _require(not set(config) - keys, "Unknown project configuration fields")
-    _require(config.get("version") == 1 and type(config.get("version")) is int, "Unknown project version")
+    if version == 2:
+        _require(type(config.get("work_source")) is str and config["work_source"] in {"legacy_issue", "github_native"},
+                 "Invalid work source")
+        config["planning"] = _planning(config)
     _require(type(config.get("repository_id")) is int and config["repository_id"] == identity["id"], "Repository identity mismatch")
     canonical = identity.get("full_name")
     _require(isinstance(canonical, str) and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", canonical)
@@ -102,6 +135,7 @@ def load_project(github, repo, *, revision=None):
 
 
 def parse_intake(issue, config):
+    _require(legacy_work_source(config), "work_source_unsupported")
     _require(isinstance(issue, dict) and "pull_request" not in issue and type(issue.get("number")) is int, "Expected a product Issue")
     _require(issue.get("state") == "open", "Issue is closed")
     _require((issue.get("user") or {}).get("login") in config["authorized_actors"] and config.get("actor_permissions", {}).get((issue.get("user") or {}).get("login")) in {"admin", "write", "maintain"}, "Issue author is not an authorized repository writer")

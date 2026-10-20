@@ -45,6 +45,15 @@ class GitHub:
         self.merge_message = "External merge without a service request"
         self.decision_context_link = None
 
+    def read_client(self):
+        # This fixture has no transport/auth/budget state; each read facade
+        # captures the fixture's current synthetic data at invocation time.
+        return copy.copy(self)
+
+    def read_budget(self, **kwargs):
+        from contextlib import nullcontext
+        return nullcontext()
+
     def issue(self, repo, n):
         return copy.deepcopy(self.work)
 
@@ -230,7 +239,7 @@ class Workspace:
             self.dirty = False
         return self.head
 
-    def verify(self, path, commands, *, stop_requested=lambda: False):
+    def verify(self, path, commands, *, stop_requested=lambda: False, before_command=None):
         self.verification_calls += 1
         return [{'passed': True, 'exit_code': 0, 'argv': ['true'], 'cwd': '.', 'output_digest': 'e' * 64}]
 
@@ -1363,7 +1372,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         from hydra_sdlc.workspace import WorkspaceWait
         runner = await self.publish()
         self.calls.clear()
-        def verify(path, commands, *, stop_requested):
+        def verify(path, commands, *, stop_requested, before_command=None):
             self.stop = True
             self.assertTrue(stop_requested())
             raise WorkspaceWait('verification_stopped')

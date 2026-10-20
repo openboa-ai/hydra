@@ -91,7 +91,7 @@ class RunnerOutputBudgetTests(unittest.IsolatedAsyncioTestCase):
             reads.append((digest, max_chars))
             return stored.verification_output(digest, max_chars=max_chars)
 
-        def verify(path, commands, *, stop_requested):
+        def verify(path, commands, *, stop_requested, before_command=None):
             workspace.verification_calls += 1
             self.assertFalse(stop_requested())
             return receipts
