@@ -431,8 +431,11 @@ class NativeController:
                 else 'implementation_done', resume_phase=record.get('native_resume_phase'),
                 spec_record=record, remote_before=record.get('expected_head'))
         elif phase == 'design':
+            current_issue = runner.github.issue(repo, number)
+            if intake_digest(current_issue) != record['intake_digest']:
+                raise OperationDenied('intake_changed')
             runner._finish_design(repo, number, scoped, record, path,
-                parse_intake(runner.github.issue(repo, number), config), {'outcome': 'candidate_ready'})
+                parse_intake(current_issue, config), {'outcome': 'candidate_ready'})
         else:
             runner._complete_implementation(repo, number, record, head)
         return dict(runner._checkpoint_ceiling.get()[3]['record'])

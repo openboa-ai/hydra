@@ -18,6 +18,70 @@ from hydra_sdlc.operations import OperationDenied
 
 
 class CheckpointOnlyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_future_body_shapes_return_unsupported_without_effects(self):
+        assignment = await self.implementation()
+        before, ticket = copy.deepcopy(self.gh.note), self.lock.read_bytes()
+        settings = self.control.settings_path.read_bytes()
+        cases = [(2, None, None), (2, ['future'], 'future'),
+                 (1, None, {'operation': 'future_operation', 'future': []}),
+                 (1, ['future'], {'operation': 'future_operation'})]
+        for version, expected, parameters in cases:
+            with self.subTest(version=version, expected=expected):
+                command = self.command(assignment)
+                command.update(command_schema=version, expected=expected, parameters=parameters)
+                try:
+                    reply = await self.checkpoint(assignment, command=command)
+                except InvalidAdmissionCommand:
+                    self.fail('Unsupported body must not enter the current schema validator')
+                self.assertEqual(reply['request']['outcome'], 'rejected')
+                self.assertEqual(reply['request']['reason'], 'unsupported_operation')
+                self.assertEqual(reply['request']['target'], command['target'])
+                self.assertIsNone(reply['request']['receipt'])
+                self.assertEqual(self.gh.note, before)
+                self.assertEqual(self.lock.read_bytes(), ticket)
+                self.assertEqual(self.control.settings_path.read_bytes(), settings)
+                self.assertTrue(self.ws.dirty)
+
+    async def test_issue_edit_after_scoped_validation_cannot_finish_or_retire_design(self):
+        from test_spec_reacceptance import SnapshotWorkspace
+        from test_project import BASE
+        self.ws = SnapshotWorkspace(Path(self.tmp.name) / 'owned', self.gh, [])
+        self.ws.root = Path(self.tmp.name)
+        self.ws.existing = lambda repo, number, branch: self.ws.path
+        spec = self.ws.path / 'docs/engineering/task/spec.md'
+        spec.unlink()
+        self.ws.snapshots[BASE] = self.ws.contents()
+        self.controller = self.new_controller()
+        runner = self.controller.runner
+        runner.operations = self.control
+        assignment = await self.controller.begin(self.url)
+        self.assertEqual(assignment['phase'], 'design')
+        spec.write_text('Requirement-linked specification with lifecycle acceptance')
+        completed_scope = False
+        checkpoint = runner._spec_checkpoint
+        read = self.gh.issue
+        def validated_scope(*args, **kwargs):
+            nonlocal completed_scope
+            result = checkpoint(*args, **kwargs)
+            completed_scope = True
+            return result
+        def changed_issue(repo, number):
+            value = copy.deepcopy(read(repo, number))
+            if completed_scope:
+                value['title'] += ' changed after scope validation'
+            return value
+        with patch.object(runner, '_spec_checkpoint', side_effect=validated_scope), \
+             patch.object(self.gh, 'issue', side_effect=changed_issue):
+            reply = await self.checkpoint(assignment)
+        self.assertTrue(completed_scope)
+        self.assertEqual(reply['request']['reason'], 'intake_changed', reply)
+        self.assertIsNone(reply['request']['receipt'])
+        self.assertEqual(self.gh.note['native_step'], assignment['step_id'])
+        self.assertIn(assignment['step_id'].encode(), self.lock.read_bytes())
+        self.assertNotEqual(self.gh.note['phase'], 'design_done')
+        self.assertEqual(spec.read_text(), 'Requirement-linked specification with lifecycle acceptance')
+        self.assertEqual(self.ws.verification_calls, 0)
+
     new_controller = test_native.NativeTests.new_controller
     result = test_native.NativeTests.result
 
@@ -868,4 +932,8 @@ class CheckpointOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.gh.note['native_phase'] = 'change_review'
         review = await self.checkpoint(assignment)
         self.assertEqual(review['request']['reason'], 'unsupported_phase')
+        self.assertEqual(review['request']['outcome'], 'rejected')
+        self.assertEqual(review['request']['required_next'], 'open_source')
+        self.assertIsNone(review['request']['receipt'])
+        self.assertIn(assignment['step_id'].encode(), self.lock.read_bytes())
         self.assertEqual(self.gh.note['head'], before['head'])

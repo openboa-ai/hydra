@@ -96,8 +96,6 @@ def _parse(command, *, checkpoint=False):
         and ('issue_number' not in target or _integer(target['issue_number'], 1)))
     if not admission_target and not repository_target:
         raise InvalidAdmissionCommand()
-    if type(expected) is not dict or type(parameters) is not dict:
-        raise InvalidAdmissionCommand()
     supported = 'workflow_step' if checkpoint else 'admission_set'
     if command['command_schema'] != 1 or command['action'] != supported:
         # A recognizable common header can receive an exact unsupported reply.
@@ -106,13 +104,16 @@ def _parse(command, *, checkpoint=False):
                       {'expected', 'parameters', 'effect_key'} else value)
                 for key, value in command.items()}
     if checkpoint:
-        if type(parameters.get('operation')) is not str or not parameters['operation']:
+        if (type(parameters) is not dict or type(parameters.get('operation')) is not str
+                or not parameters['operation']):
             raise InvalidAdmissionCommand()
         if parameters['operation'] != 'checkpoint_only':
             # An unknown operation's expected/effect/body are also opaque.
             return {key: (dict(target) if key == 'target' else None if key in
                           {'expected', 'parameters', 'effect_key'} else value)
                     for key, value in command.items()}
+    if type(expected) is not dict or type(parameters) is not dict:
+        raise InvalidAdmissionCommand()
     supported_target = (repository_target and set(target) == {'repository_id', 'issue_number'}
                         if checkpoint else admission_target)
     if not supported_target or set(expected) != _EXPECTED_KEYS:
@@ -411,6 +412,8 @@ async def execute_checkpoint_command(config_path, command, *, context_provider, 
             command['parameters']['outcome'], repository_id=target['repository_id'],
             admission_revision=expected['admission_revision'], before_effect=validate)
     except OperationDenied as exc:
+        if exc.reason == 'unsupported_phase':
+            return _reply(command, runtime, epoch, 'rejected', exc.reason, required_next='open_source')
         return _reply(command, runtime, epoch, 'unknown' if exc.reason == 'assignment_unattributed' else 'waiting',
                       exc.reason, required_next='reconcile')
     except (OSError, RuntimeError, ValueError, HostBusy):

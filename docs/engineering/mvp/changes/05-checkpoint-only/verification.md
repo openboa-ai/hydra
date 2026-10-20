@@ -140,3 +140,25 @@ continue 양성 사례, 기존 native/operation/source-policy/MCP 진단 회귀�
 현재 PR의 hosted CI에서 실행하고 독립 code/security review와 protected merge/main 확인은
 별도 전달 조건이다. 이 내부 단계는 새 MCP 도구를 등록하거나 transport 권한을 부여하지
 않는다. 실제 원격 Pause/Resume·종료 증거 adapter·질문/답변 수용은 여전히 미검증이다.
+
+
+## Hosted review corrections — 2026-10-20
+
+PR #14의 최초 head `316eac5603d4165a02a2caf8dd888ab6b8c170f3`는 전체 hosted CI 네 항목과
+security review를 통과했다. 이어진 code review의 세 P2 finding을 실제 동작으로 재현했다.
+수용 P05 revision 2의 입력/실패/현재 intake 경계 내 수정이며 권한·제품 범위는 바꾸지 않는다.
+
+| 사건 | 기존 head의 RED | 수정한 결과 |
+| --- | --- | --- |
+| 미지원 version/action/operation의 미래 body | 정상 공통 identity가 있어도 null/list/string body를 현재 schema 오류로 처리 | 안전한 공통 target/identity를 유지하고 미지원 body의 구조 검사·복사를 생략; rejected/unsupported_operation, 효과 0 |
+| review phase에 checkpoint 요청 | unsupported_phase를 waiting/reconcile로 반환 | rejected/open_source로 종료; receipt·회수·후속 실행 0 |
+| scoped spec 확인 뒤 Issue 수정 | 변경된 새 Issue를 재검증하지 않고 design_done/회수 성공 | 사용 직전 같은 intake digest를 확인하고 변경되면 intake_changed; owned spec/head/ticket 보존 |
+
+네 회귀 selector에서 **9개 assertion 실패, error/skip 0**를 원래 source 그대로 관측했다.
+수정 후 같은 사례를 포함한 변경 영향 회귀는 **427 PASS, failure/error/skip 0**다.
+checkpoint-only 실제 수집은 44개이며 기존 정상 design 완료, future body 불투명성,
+권한 철회·ACK 유실·재시작·legacy/MCP 동작도 유지했다.
+
+격리 source bytes와 기존 checkout·HEAD·index·별도 skill 변경을 보존했다. 이 문단만 검증 뒤
+추가했다. 새 head의 hosted CI·code/security review와 protected merge/main 확인은 별도 조건이다.
+실제 원격 질문/답변·Pause/Resume 및 설치 native 권한 수용을 완료로 세지 않는다.
