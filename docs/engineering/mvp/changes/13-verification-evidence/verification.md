@@ -522,7 +522,7 @@ missing/repeated calls cannot pass. Ordinary async unittest remains supported.
 Two behavior methods reproduced four actual assertion failures on unchanged
 published parent source, with zero setup errors/skips. The corrected collector
 plus adjacent project/repository-identity/CI-policy regressions passed 102 methods
-(49 collector +53 impact), zero failures/errors/skips, on Python 3.14.4 in 218.720s.
+(49 collector +53 impact), zero failures/errors/skips, on Python 3.14 (patch version not retained) in 218.720s.
 That run exercised both 32x32 and full 64x32 shapes. The final test edit only removes
 the smaller parameter: exact AST comparison confirms every remaining body/oracle
 is the already-executed one. Product bytes are identical to the GREEN snapshot.
@@ -564,7 +564,7 @@ committed or published. The final byte-check implementation passes that regressi
 
 The final exact product/test bytes pass 108 focused and impact methods (55 collector
 +53 project/repository-identity/CI-policy), zero failures/errors/skips, on Python
-3.14.4 in 174.526 seconds. The full 64x32 effect/count/export/read-only-consumption
+3.14 (patch version not retained) in 174.526 seconds. The full 64x32 effect/count/export/read-only-consumption
 case remains required. No maximum, timeout, required check or CI budget was relaxed,
 and no full local kernel suite was repeated. Accepted P13 Rev4/VF Rev11 pins are
 unchanged. Final-head CI, actual hosted artifact consumption, independent reviews,
@@ -603,8 +603,28 @@ cross-selector mutation/source-drift tests still cover independent execution.
 On fixture timeout the test runner sends SIGTERM and waits for the collector's
 existing supervisor cleanup before removing files; the timeout still fails.
 The exact final source/test bytes pass 111 focused/impact methods (58 collector
-+53 adjacent cases), zero failures/errors/skips, Python 3.14.4 in 93.050 seconds.
++53 adjacent cases), zero failures/errors/skips, Python 3.14 (patch version not retained) in 93.050 seconds.
 No full local kernel suite was repeated. Accepted P13 Rev4/VF Rev11 and all native,
 verify_only and full-v1 exclusions are unchanged. Final-head CI, actual hosted
 artifact consumption, independent reviews, existing scoped CODEOWNER approval,
 protected merge and actual-main checks remain required.
+
+
+## Environment label correction -- 2026-10-21
+
+The three local records above previously named Python 3.14.4 without a captured
+patch-version field. That precision is withdrawn; the commands selected Python
+3.14 and retain their original source hashes, test counts, durations and logs.
+No local test was replayed merely to reconstruct missing historical metadata.
+
+The actual hosted reports for head 2b8fd4f in
+[run 39499391626](https://github.com/openboa-ai/hydra/actions/runs/39499391626)
+separately record Python 3.11.17 and 3.14.2. All four required jobs passed, each
+Python job collected 1,245 tests with 1,237 passing and eight explicit skips, and
+the two selected-source reports each contain two cases and five methods. Their
+checked commit has the exact head tree and expected base/head parents. Those are
+observations of that head, not evidence for a subsequent revision.
+
+This correction changes only documentation. Product/test blobs and accepted
+specification pins are unchanged. Final-head CI/reviews, the existing scoped
+CODEOWNER approval, protected merge and main checks remain separate gates.
