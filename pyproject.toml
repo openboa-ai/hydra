@@ -7,6 +7,7 @@ name = "openboa-hydra-sdlc"
 dynamic = ["version"]
 description = "GitHub-native coordination for Codex software development"
 requires-python = ">=3.11"
+dependencies = ["markdown-it-py==4.2.0"]
 
 [project.optional-dependencies]
 codex = ["openai-codex==0.162.0"]
