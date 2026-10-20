@@ -228,7 +228,7 @@ pub struct RuntimeIdentity {
 }
 
 impl RuntimeIdentity {
-    fn valid(&self) -> bool {
+    pub(crate) fn valid(&self) -> bool {
         self.identity_schema == 1
             && self.package == "openboa-hydra-sdlc"
             && self.code_digest_scope == "package_sources_at_startup"
@@ -262,7 +262,7 @@ impl RuntimeIdentity {
             })
     }
 
-    fn known(&self) -> bool {
+    pub(crate) fn known(&self) -> bool {
         self.valid()
             && self.version.is_some()
             && self.identity_reason.is_none()

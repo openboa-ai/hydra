@@ -13,17 +13,18 @@ import subprocess
 import time
 import uuid
 from types import MethodType
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 ACTIVE_LABEL = "hydra:active"
 MAX_COLLECTION_BYTES = 8_000_000
 
 
 class GitHubError(RuntimeError):
-    def __init__(self, reason, *, status=None, uncertain=False):
+    def __init__(self, reason, *, status=None, uncertain=False, read_response=None):
         super().__init__(reason)
         self.status = status
         self.uncertain = uncertain
+        self.read_response = read_response
 
 
 class _ReadBudget:
@@ -164,6 +165,9 @@ class GitHub:
             budget.remaining_requests -= 1
 
     def _gh(self, method, path, payload):
+        return self._gh_request(method, path, payload)
+
+    def _gh_request(self, method, path, payload, *, include_headers=False):
         try:
             token = subprocess.run(
                 ["gh", "auth", "token", "--hostname", "github.com", "--user", self.user],
@@ -187,10 +191,22 @@ class GitHub:
                 self._authenticated_fingerprint = fingerprint
             argv = ["gh", "api", "--hostname", "github.com", "--method", method,
                     "-H", "Accept: application/vnd.github+json", path.lstrip("/")]
+            if include_headers:
+                if method != "GET":
+                    raise GitHubError("Invalid GitHub read profile")
+                argv.append("--include")
             if payload is not None:
                 argv += ["--input", "-"]
             result = subprocess.run(argv, input=json.dumps(payload) if payload is not None else None,
                                     env=env, capture_output=True, text=True, timeout=self._request_timeout(45))
+            if include_headers:
+                from .github_read import parse_response
+                match = re.search(r"HTTP (\d{3})", result.stderr)
+                response = parse_response(result.stdout, status_hint=int(match[1]) if match else None)
+                if result.returncode or response.status >= 400:
+                    raise GitHubError("GitHub read failed", status=response.status,
+                                      read_response=response.without_value())
+                return response
             if result.returncode:
                 match = re.search(r"HTTP (\d{3})", result.stderr)
                 raise GitHubError("GitHub request failed", status=int(match[1]) if match else None,
@@ -209,6 +225,27 @@ class GitHub:
         self._reserve_request()
         result = self.transport(method, path, payload)
         self._request_timeout(45, uncertain=method != "GET")
+        return result
+
+    def read_response(self, path):
+        """One owned GET with sanitized delay metadata; no cache or automatic retry.
+
+        Existing injected JSON transports retain their contract. Missing headers
+        stay unknown; only the built-in owned GET parses actual HTTP metadata.
+        """
+        if (not isinstance(path, str) or not path.startswith("/") or "://" in path
+                or "\\" in path or any(ord(c) < 32 or ord(c) == 127 for c in path)
+                or any(part in {".", ".."} for part in unquote(path.split("?", 1)[0]).split("/"))):
+            raise GitHubError("Invalid GitHub API request")
+        self._reserve_request()
+        own = (isinstance(self.transport, MethodType) and self.transport.__self__ is self
+               and self.transport.__func__ is GitHub._gh)
+        if own:
+            result = self._gh_request("GET", path, None, include_headers=True)
+        else:
+            from .github_read import ReadResponse
+            result = ReadResponse(200, self.transport("GET", path, None), received_at=time.monotonic())
+        self._request_timeout(45)
         return result
 
     def _pages(self, path, key=None):

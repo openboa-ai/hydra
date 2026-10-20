@@ -44,6 +44,11 @@ def parser():
     target.add_argument("--all", action="store_true")
     target.add_argument("--project")
     control.add_argument("--refresh", action="store_true", help="Refresh read-only GitHub observations")
+    control.add_argument("--projection-schema", type=int, choices=(2, 3), default=2)
+    control.add_argument("--binding-epoch")
+    control.add_argument("--request-id")
+    control.add_argument("--repository", help="Registered read scope; never a mutation target")
+    control.add_argument("--cursor", help="Opaque continuation for this exact registered read scope")
     return p
 
 
@@ -60,9 +65,31 @@ def operate_control(args):
             raise ValueError("Status does not take a mutation target")
     elif (not args.all and args.project is None) or args.refresh:
         raise ValueError("Mutation requires one explicit target and no remote refresh")
+    schema = getattr(args, "projection_schema", 2)
+    fields = [getattr(args, name, None) for name in ("binding_epoch", "request_id", "repository", "cursor")]
+    if schema == 3:
+        if args.action != "status":
+            raise ValueError("Projection profile is read-only")
+        from .projection import uid
+        uid(fields[0]); uid(fields[1])
+        from .control import load_host_config
+        from .projection_read import read_projection
+        kwargs = {'binding_epoch': fields[0], 'request_id': fields[1], 'repository': fields[2], 'refresh': args.refresh}
+        if fields[3] is not None:
+            kwargs['cursor'] = fields[3]
+        return read_projection(load_host_config(args.config), **kwargs)
+    if schema != 2 or any(value is not None for value in fields):
+        raise ValueError("Unsupported control read profile")
     from .control import control_result, load_host_config
     return control_result(load_host_config(args.config), action=args.action,
                           repository=args.project, refresh=args.refresh)
+
+
+def _control_json(args, result):
+    if getattr(args, "projection_schema", 2) == 3:
+        from .projection import encode
+        return encode(result).decode("utf-8")
+    return json.dumps(result, ensure_ascii=False)
 
 
 async def operate(args, *, github=None, workspace=None, execute=None, capabilities=None,
@@ -75,7 +102,7 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
         return result
     if args.command == "control":
         result = operate_control(args)
-        emit(json.dumps(result, ensure_ascii=False))
+        emit(_control_json(args, result))
         return result
     if args.command != "status" and args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
         raise ValueError("Timeout must be finite and positive")
@@ -207,7 +234,7 @@ def main(argv=None):
         if args.command == "control":
             # Exclusive mode changes can wait for an admitted bounded call.
             # Keep this synchronous and outside the async worker event loop.
-            print(json.dumps(operate_control(args), ensure_ascii=False))
+            print(_control_json(args, operate_control(args)))
         else:
             asyncio.run(operate(args))
         return 0

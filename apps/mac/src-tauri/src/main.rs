@@ -1,8 +1,13 @@
 mod process;
 mod protocol;
+mod projection;
+mod projection_cache;
+mod projection_policy;
 
 use process::{bounded_output, LaunchConfig};
 use protocol::{Action, RecordKind, Snapshot, Target};
+use projection_cache::{CachedRead,ReadCache};
+use std::time::Instant;
 use serde::Serialize;
 use std::{
     sync::{
@@ -38,6 +43,7 @@ impl BridgeError {
 
 struct Bridge {
     launch: Result<LaunchConfig, &'static str>,
+    projection: Mutex<Result<ReadCache, &'static str>>,
     mutation: Mutex<()>,
     local_read: Mutex<()>,
     remote_read: Mutex<()>,
@@ -50,12 +56,52 @@ impl Bridge {
     fn new() -> Self {
         Self {
             launch: LaunchConfig::from_arguments(std::env::args_os().skip(1)),
+            projection: Mutex::new(read_epoch().and_then(ReadCache::new)),
             mutation: Mutex::new(()),
             local_read: Mutex::new(()),
             remote_read: Mutex::new(()),
             record_open: Mutex::new(()),
             quitting: AtomicBool::new(false),
             exit_confirmed: AtomicBool::new(false),
+        }
+    }
+
+    async fn projection_read(&self,epoch:&str,request:String,refresh:bool,repository:Option<&str>,cursor:Option<&str>,recovery:bool)->Result<CachedRead,BridgeError> {
+        if self.quitting.load(Ordering::Acquire) || self.exit_confirmed.load(Ordering::Acquire) {
+            return Err(BridgeError::new("quit_in_progress"));
+        }
+        if repository.is_some_and(|r|!protocol::repository_valid(r)) {
+            return Err(BridgeError::new("project_unregistered"));
+        }
+        let _lane=if refresh {self.remote_read.lock().await}else{self.local_read.lock().await};
+        if self.quitting.load(Ordering::Acquire) || self.exit_confirmed.load(Ordering::Acquire) {
+            return Err(BridgeError::new("quit_in_progress"));
+        }
+        let launch=self.launch.as_ref().map_err(|code|BridgeError::new(*code))?;
+        if cursor.is_some_and(|c|c.len()>2048 || c.is_empty() || !c.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_')) || (cursor.is_some() && repository.is_some() && !refresh) {
+            return Err(BridgeError::new("invalid_cursor"));
+        }
+        let scope=format!("{}:{}:{}",if refresh {"remote"}else{"local"},repository.unwrap_or("overview"),cursor.unwrap_or(""));
+        let ticket={
+            let mut state=self.projection.lock().await;
+            let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+            if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
+            let now=Instant::now();
+            let held=if refresh {cache.remote_wait(now,recovery).map_err(BridgeError::new)? > 0}else{cache.local_wait(now)};
+            if held {
+                return cache.get(&scope,!refresh,now).ok_or_else(||BridgeError::new("source_wait"));
+            }
+            let ticket=cache.issue(scope,request,repository.is_some()).map_err(BridgeError::new)?;
+            if refresh {cache.remote_started(now);}else{cache.local_started(now);}
+            ticket
+        };
+        let output=bounded_output(launch.projection_command(&ticket.epoch,&ticket.request_id,refresh,repository,cursor),
+            Duration::from_secs(if refresh {60}else{15})).await;
+        let mut state=self.projection.lock().await;
+        let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+        match output {
+            Ok(bytes)=>cache.accept(&ticket,&bytes,Instant::now()).map_err(BridgeError::new),
+            Err(code)=>{cache.failed(&ticket);Err(BridgeError::new(code))}
         }
     }
 
@@ -165,6 +211,37 @@ impl Bridge {
         }
         self.mutate_locked(action, &target).await
     }
+}
+
+// A fresh process connection identity, with no persisted task, credential or conversation state.
+fn read_epoch()->Result<String,&'static str> {
+    use std::io::Read;
+    let mut bytes=[0u8;16];
+    std::fs::File::open("/dev/urandom").and_then(|mut file|file.read_exact(&mut bytes))
+        .map_err(|_|"binding_unavailable")?;
+    bytes[6]=(bytes[6]&0x0f)|0x40;bytes[8]=(bytes[8]&0x3f)|0x80;
+    let hex=bytes.iter().map(|b|format!("{b:02x}")).collect::<String>();
+    Ok(format!("{}-{}-{}-{}-{}",&hex[..8],&hex[8..12],&hex[12..16],&hex[16..20],&hex[20..]))
+}
+
+#[tauri::command]
+async fn projection_binding(window:tauri::WebviewWindow,state:tauri::State<'_,Arc<Bridge>>)->Result<String,BridgeError> {
+    main_window(&window)?;
+    let cache=state.projection.lock().await;
+    Ok(cache.as_ref().map_err(|code|BridgeError::new(*code))?.epoch().to_owned())
+}
+#[tauri::command(rename_all="camelCase")]
+async fn projection_status(window:tauri::WebviewWindow,state:tauri::State<'_,Arc<Bridge>>,
+    epoch:String,request_id:String,refresh:bool,repository:Option<String>,cursor:Option<String>,explicit_recovery:bool)->Result<CachedRead,BridgeError> {
+    main_window(&window)?;
+    state.projection_read(&epoch,request_id,refresh,repository.as_deref(),cursor.as_deref(),explicit_recovery).await
+}
+#[tauri::command]
+async fn projection_clock_resumed(window:tauri::WebviewWindow,state:tauri::State<'_,Arc<Bridge>>)->Result<(),BridgeError> {
+    main_window(&window)?;
+    let mut cache=state.projection.lock().await;
+    cache.as_mut().map_err(|code|BridgeError::new(*code))?.clock_resumed();
+    Ok(())
 }
 
 fn main_window(window: &tauri::WebviewWindow) -> Result<(), BridgeError> {
@@ -362,6 +439,9 @@ fn main() {
         .manage(Arc::new(Bridge::new()))
         .invoke_handler(tauri::generate_handler![
             status,
+            projection_binding,
+            projection_status,
+            projection_clock_resumed,
             control,
             open_record,
             request_quit
