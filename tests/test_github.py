@@ -38,6 +38,28 @@ class Fake:
 
 
 class GitHubTests(unittest.TestCase):
+    def test_progress_source_uses_authenticated_comment_locator_and_validated_metadata(self):
+        record = {'version': 1, 'repository_id': 123, 'issue_number': 4, 'phase': 'implementation_done', 'head': HEAD}
+        comment = {'id': 741, 'user': IDENTITY, 'body': '<!-- hydra-progress:v1 ' + json.dumps(record) + ' -->'}
+        listing = ('GET', f'/repos/{REPO}/issues/4/comments?per_page=100&page=1')
+        replies = {('GET', '/user'): IDENTITY, ('GET', f'/repos/{REPO}'): REPOSITORY, listing: [comment]}
+        client = GitHub(transport=Fake(replies))
+        source = client.progress_source(REPO, 4)
+        self.assertEqual(source['record'], record)
+        self.assertEqual(source['resource'], {'source': 'github', 'kind': 'issue_comment', 'id': 'example/product/comments/741'})
+        wrong = copy.deepcopy(comment)
+        wrong['user'] = {'id': 12, 'login': 'openboa'}
+        replies[listing] = [wrong]
+        self.assertIsNone(GitHub(transport=Fake(replies)).progress_source(REPO, 4))
+        for field, value in [('repository_id', 999), ('issue_number', 5)]:
+            wrong = {**comment, 'body': '<!-- hydra-progress:v1 ' + json.dumps({**record, field: value}) + ' -->'}
+            replies[listing] = [wrong]
+            with self.assertRaises(GitHubError):
+                GitHub(transport=Fake(replies)).progress_source(REPO, 4)
+        replies[listing] = [{**comment, 'id': True}]
+        with self.assertRaises(GitHubError):
+            GitHub(transport=Fake(replies)).progress_source(REPO, 4)
+
     def test_reads_all_pages_without_treating_pull_requests_as_intake(self):
         first = [{'number': n, 'state': 'open'} for n in range(1, 101)]
         fake = Fake({('GET', f'/repos/{REPO}/issues?state=open&sort=created&direction=asc&per_page=100&page=1'): first,

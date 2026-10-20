@@ -102,6 +102,7 @@ class Runner:
         self.host_hold_reason = None
         self.operations = operations
         self._policy_scope = ContextVar("hydra_project_policy_scope", default=None)
+        self._checkpoint_ceiling = ContextVar("hydra_checkpoint_ceiling", default=None)
         self._cleanup_scope = ContextVar("hydra_cleanup_scope", default=None)
         self._ended_execution = ContextVar("hydra_ended_execution", default=None)
         # Exact completion evidence is process-local. Keep an unsettled proof
@@ -119,11 +120,25 @@ class Runner:
         )
 
     def _guard(self, repo, *, cleanup=False):
+        ceiling = self._checkpoint_ceiling.get()
+        if ceiling is not None:
+            target, revision, _, _ = ceiling
+            if target != repo or self.operations is None:
+                raise OperationDenied("checkpoint_binding_mismatch")
+            return self.operations.guard(repo, cleanup=cleanup, expected_revision=revision)
         return self.operations.guard(repo, cleanup=cleanup) if self.operations is not None else nullcontext()
 
-    def _effect(self, repo, callback, *args, cleanup=False, **kwargs):
+    def _effect(self, repo, callback, *args, cleanup=False, _checkpoint_effect=None, **kwargs):
+        ceiling = self._checkpoint_ceiling.get()
+        if ceiling is not None:
+            if ceiling[0] != repo or _checkpoint_effect not in {"progress", "checkpoint"}:
+                raise OperationDenied("checkpoint_effect_unsupported")
         if not cleanup:
             self._require_policy(repo)
+        if ceiling is not None:
+            # Policy observation can be remote. Refresh authority after it,
+            # immediately before acquiring the bounded admission guard.
+            ceiling[2]()
         with self._guard(repo, cleanup=cleanup):
             return callback(*args, **kwargs)
 
@@ -188,7 +203,8 @@ class Runner:
     def _workspace_effect(self, repo, method, *args, **kwargs):
         current = self._cleanup_scope.get()
         cleanup = method == "checkpoint" and current is not None and current[0] == repo
-        return self._effect(repo, getattr(self.workspace, method), *args, cleanup=cleanup, **kwargs)
+        return self._effect(repo, getattr(self.workspace, method), *args, cleanup=cleanup,
+                            _checkpoint_effect=method if method == "checkpoint" else None, **kwargs)
 
     @contextmanager
     def _confirmed_cleanup(self, repo, number, record):
@@ -278,7 +294,7 @@ class Runner:
         record = self._record_values(record, **values)
         cleanup = self._cleanup_scope.get() == (repo, number, record.get("attempt_id"))
         writer = self.github.record
-        if cleanup and self.operations is not None:
+        if (cleanup and self.operations is not None) or self._checkpoint_ceiling.get() is not None:
             writer = getattr(self.github, "record_checkpoint", None)
             if not callable(writer):
                 raise OperationDenied("checkpoint_recording_unavailable")
@@ -288,7 +304,10 @@ class Runner:
             # Retain the exact attempted values before the effect. A lost
             # response permits read-back only, never retransmission.
             self._unconfirmed_checkpoints[self._ended_key(ended)] = dict(record)
-        self._effect(repo, writer, repo, number, record, cleanup=cleanup)
+        ceiling = self._checkpoint_ceiling.get()
+        if ceiling is not None:
+            ceiling[3]['record'] = dict(record)
+        self._effect(repo, writer, repo, number, record, cleanup=cleanup, _checkpoint_effect="progress")
         if cleanup and self.operations is not None:
             observed = self.github.progress(repo, number)
             if not observed or any(observed.get(key) != value for key, value in record.items()):
@@ -1780,14 +1799,21 @@ class Runner:
             integrating=integrating, completed_phase=completed_phase, resume_phase=resume_phase,
             spec_record=spec_record, remote_before=remote_before)
 
+    def _design_problem(self, path, base, spec, *, require_tracked=False):
+        """Original design/correction scope and artifact checks, without effects."""
+        changed = self.workspace.changed_paths(path, base)
+        if any(name != spec for name in changed):
+            return 'implementation_before_design_acceptance', 'reconcile'
+        if set(changed) != {spec} or not self.workspace.valid_spec(path, spec, require_tracked=require_tracked):
+            return 'replan_required', 'diagnose_spec_artifact'
+        return None
+
     def _finish_design(self, repo, number, config, record, path, intake, result):
         if result["outcome"] != "candidate_ready":
             return self._wait(repo, number, record, "replan_required", next_action="diagnose")
-        changed = self.workspace.changed_paths(path, config["revision"])
-        if any(name != intake["spec"] for name in changed):
-            return self._wait(repo, number, record, "implementation_before_design_acceptance")
-        if set(changed) != {intake["spec"]} or not self.workspace.valid_spec(path, intake["spec"], require_tracked=False):
-            return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
+        problem = self._design_problem(path, config['revision'], intake['spec'])
+        if problem:
+            return self._wait(repo, number, record, problem[0], next_action=problem[1])
         head = self._workspace_effect(repo, "checkpoint", path, f"Specify Issue {number}")
         if not self.workspace.valid_spec(path, intake["spec"]):
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
@@ -1803,7 +1829,11 @@ class Runner:
         if result["outcome"] != "candidate_ready":
             record = self._record(repo, number, record, head=head)
             return await self._correct(repo, number, config, record, path, "implementation_failure", details=result.get("summary", ""))
-        record = self._record(repo, number, record, head=head, phase="implementation_done", resume_phase=None, next_action="verification")
+        return self._complete_implementation(repo, number, record, head)
+
+    def _complete_implementation(self, repo, number, record, head):
+        self._record(repo, number, record, head=head, phase="implementation_done", resume_phase=None,
+                     pending_action=None, wait_reason=None, next_action="verification")
         return {"action": "continue", "repository": repo, "issue": number}
 
     def _finish_correction(self, repo, number, config, record, path, result, *, reason, attempts, spec_only,
@@ -1813,14 +1843,11 @@ class Runner:
         self.failures[key] = attempts
         record = self.github.progress(repo, number)
         record = self._record(repo, number, record, correction_reason=reason, correction_attempt=attempts)
-        if spec_only and any(p != self._scoped_spec(repo, number, config, record)
-                             for p in self.workspace.changed_paths(path, spec_base)):
-            return self._wait(repo, number, record, "implementation_before_design_acceptance")
         if spec_only:
             spec = self._scoped_spec(repo, number, config, record)
-            if (set(self.workspace.changed_paths(path, spec_base)) != {spec} or
-                    not self.workspace.valid_spec(path, spec, require_tracked=False)):
-                return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")
+            problem = self._design_problem(path, spec_base, spec)
+            if problem:
+                return self._wait(repo, number, record, problem[0], next_action=problem[1])
         head = self._workspace_effect(repo, "checkpoint", path, f"Correct Issue {number}")
         if spec_only and not self.workspace.valid_spec(path, spec):
             return self._wait(repo, number, record, "replan_required", next_action="diagnose_spec_artifact")

@@ -8,17 +8,52 @@ import hashlib
 import json
 import re
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 from .coordinator import (confirm_native_assignment, coordinator_lock,
                           native_assignment_matches, register_native_assignment, residual_workers, operation_scope)
 from .runner import Runner, intake_digest, issue_url
-from .project import load_project
+from .project import load_project, matches, parse_intake
 from .operations import OperationDenied
 from .progress import with_progress_hint
 
 NATIVE_FIELDS = {"native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest",
                  "native_origin_phase", "native_resume_phase", "native_correction"}
+_FINISHED_CHECKPOINT = 'native_complete_'
+
+
+def _completed_checkpoint(record, outcome):
+    """Closed final source states; an outcome-only legacy write is not completion."""
+    if record.get('pending_action') is not None or record.get('native_outcome') != outcome:
+        return False
+    if (record.get('checkpoint') or '').startswith(_FINISHED_CHECKPOINT):
+        return True
+    phase, next_action, wait = record.get('phase'), record.get('next_action'), record.get('wait_reason')
+    if outcome == 'stopped':
+        return phase == 'checkpoint' and record.get('checkpoint') == 'interrupted_committed' and next_action in {
+            'reconcile', 'operator_decision', 'diagnose'} and wait in {
+            'stop_requested', 'remote_head_changed', 'product_decision', 'replan_required'}
+    if outcome == 'needs_decision':
+        completed = (phase == record['native_phase'] + '_done' or
+                     phase == 'design_done' and record.get('correction_reason') == 'accepted_spec_changed')
+        return (completed and next_action == 'operator_decision' and wait == 'product_decision'
+                and record.get('resume_phase') == (record.get('native_resume_phase') or record['native_phase']))
+    correction = record.get('native_correction')
+    if correction:
+        completed = (record['native_origin_phase'] if correction == 'integration_changed' else
+                     'design_done' if record['native_phase'] == 'design' else 'implementation_done')
+        resume = record.get('native_resume_phase') if correction == 'integration_changed' or record['native_phase'] == 'design' else None
+        if (phase == completed and record.get('checkpoint') == f"correction_{record.get('correction_attempt')}_{correction}"
+            and next_action == ('reconcile' if correction == 'integration_changed' else 'verification')
+            and wait is None and record.get('resume_phase') == resume):
+            return True
+    elif (wait is None and record.get('resume_phase') is None and (phase, next_action) == (
+            ('design_done', 'spec_review') if record['native_phase'] == 'design' else ('implementation_done', 'verification'))):
+        return True
+    # Accepted-spec records can precede scope/budget diagnosis. Until the full
+    # completion marker is read back, reconcile that retained step below.
+    return False
 
 
 def assignment_scope(repo, number, attempt, head, policy):
@@ -51,13 +86,23 @@ class NativeRunner(Runner):
             record = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
         return super()._record(repo, number, record, **values)
 
-    def _retire_assignment(self, repo, number, record, **values):
+    def _retire_assignment(self, repo, number, record, *, checkpoint_only=False, **values):
         """One fixed retirement, with remote policy observed before admission.
 
         This synchronous operation never grants a policy bypass to a callback
         or subsequent work. The coordinator owns the exact original assignment.
         """
-        if set(values) - {"phase", "pending_action", "resume_phase", "wait_reason", "next_action"}:
+        allowed = {"phase", "pending_action", "resume_phase", "wait_reason", "next_action"}
+        ceiling = self._checkpoint_ceiling.get()
+        if type(checkpoint_only) is not bool:
+            raise OperationDenied("native_retirement_binding_mismatch")
+        if checkpoint_only:
+            if ceiling is None or ceiling[0] != repo:
+                raise OperationDenied("checkpoint_binding_mismatch")
+            allowed.add("checkpoint")
+        elif ceiling is not None:
+            raise OperationDenied("checkpoint_effect_unsupported")
+        if set(values) - allowed:
             raise OperationDenied("native_retirement_binding_mismatch")
         step = record.get("native_step")
         if not step or record.get("execution_mode") != "native" or record.get("host_alias") != self.host:
@@ -65,17 +110,26 @@ class NativeRunner(Runner):
         scope = assignment_scope(repo, number, record["attempt_id"],
                                  record["native_head"], record["contract_revision"])
         clean = {k: v for k, v in self._record_values(record, **values).items() if k not in NATIVE_FIELDS}
-        self._require_policy(repo)
-        with self._guard(repo):
+        cleanup = checkpoint_only and self._cleanup_scope.get() == (repo, number, record["attempt_id"])
+        writer = getattr(self.github, "record_checkpoint", None) if checkpoint_only else self.github.record
+        if not callable(writer):
+            raise OperationDenied("checkpoint_recording_unavailable")
+        if not cleanup:
+            self._require_policy(repo)
+        if checkpoint_only:
+            ceiling[2]()
+        with self._guard(repo, cleanup=cleanup) if checkpoint_only else self._guard(repo):
             if not native_assignment_matches(step, scope):
                 raise OperationDenied("native_retirement_binding_mismatch")
-            self.github.record(repo, number, clean)
-            observed = self.github.progress(repo, number)
-            if not observed or observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items()):
+            writer(repo, number, clean)
+            source = self.github.progress_source(repo, number) if checkpoint_only else None
+            observed = (source["record"] if source else None) if checkpoint_only else self.github.progress(repo, number)
+            if (not observed or observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items())
+                    or checkpoint_only and any(k in observed for k in NATIVE_FIELDS)):
                 raise RuntimeError("Native retirement is unconfirmed")
             confirm_native_assignment(step)
             self.consumed.add(step)
-        return clean
+        return source if checkpoint_only else clean
 
     async def step(self, repo, number):
         record = self.github.progress(repo, number)
@@ -226,6 +280,162 @@ class NativeController:
 
     async def advance(self, url, attempt_id, head, contract_revision):
         return await self._entry(url, self._advance, attempt_id, head, contract_revision)
+
+    async def _checkpoint_only(self, repo, number, assignment, outcome, *, repository_id, admission_revision, before_effect):
+        """Internal, already-authorized original-phase completion. No dispatch."""
+        runner = self.runner
+        policy = runner._policy_scope.set(None)
+        ceiling = runner._checkpoint_ceiling.set((repo, admission_revision, before_effect, {}))
+        try:
+            with operation_scope(runner.operations, repo), coordinator_lock(self.lock_path,
+                    native_step=assignment['step_id'], native_scope=assignment_scope(repo, number,
+                    assignment['attempt_id'], assignment['head'], assignment['contract_revision'])):
+                record, config = self._bound(repo, number, assignment['attempt_id'], assignment['head'],
+                    assignment['contract_revision'], assignment['step_id'], stopping=outcome == 'stopped')
+                if record is None:
+                    raise OperationDenied('assignment_unattributed')
+                if record.get('repository_id') != repository_id or config.get('repository_id') != repository_id:
+                    raise OperationDenied('stale_assignment')
+                if record.get('spec_revision') != assignment['spec_revision']:
+                    raise OperationDenied('stale_assignment')
+                phase = record['native_phase']
+                if phase not in {'design', 'implementation', 'correction'}:
+                    raise OperationDenied('unsupported_phase')
+                if outcome != 'stopped' and record.get('native_outcome') not in {None, outcome}:
+                    raise OperationDenied('outcome_conflict')
+                reason = runner._latest(repo, number, {**config, 'intake_digest': record['intake_digest']})
+                if reason and outcome != 'stopped':
+                    raise OperationDenied(reason)
+                path = runner.workspace.existing(repo, number, record['branch'])
+                state = runner.workspace.inspect(path)
+                finished = (_completed_checkpoint(record, outcome)
+                    and record.get('head') == state['head'] and not state['dirty'])
+                scope_recovery = False
+                if (phase == 'design' and outcome != 'stopped'
+                        and not (record.get('checkpoint') or '').startswith(_FINISHED_CHECKPOINT)):
+                    base = assignment['head'] if record.get('native_correction') and record.get('spec_revision') else config['revision']
+                    spec = runner._scoped_spec(repo, number, config, record)
+                    problem = runner._design_problem(path, base, spec, require_tracked=True)
+                    if problem and (outcome == 'candidate_ready' or problem[0] == 'implementation_before_design_acceptance'):
+                        finished = False
+                        scope_recovery = record.get('native_outcome') == outcome and record.get('head') == state['head'] and not state['dirty']
+                recovering = (record.get('native_outcome') == outcome and record.get('phase') == 'checkpoint'
+                    and record.get('next_action') == 'checkpoint_only' and record.get('head') == state['head'])
+                recovering_spec = (record.get('native_outcome') == outcome and record.get('phase') == 'design_done'
+                    and record.get('correction_reason') == 'accepted_spec_changed'
+                    and record.get('correction_attempt') in {None, 1, 2, 3}
+                    and record.get('next_action') in {'spec_review', 'diagnose', 'operator_decision'}
+                    and record.get('head') == state['head'] and not state['dirty'])
+                if outcome != 'stopped' and state['head'] != assignment['head'] and not (finished or recovering or recovering_spec or scope_recovery):
+                    raise OperationDenied('checkpoint_head_unknown')
+                # The trusted before_effect adapter independently proves ended
+                # execution for stopped requests; the JSON outcome is no proof.
+                # Cleanup relaxes mode only, never runtime/revision/ownership.
+                with runner._confirmed_cleanup(repo, number, record) if outcome == 'stopped' else nullcontext():
+                    if not finished:
+                        record = self._complete_checkpoint_phase(repo, number, config, record, path,
+                            assignment, outcome)
+                    final = runner.github.progress(repo, number)
+                    if not final or any(final.get(key) != value for key, value in record.items()):
+                        raise RuntimeError('Checkpoint final record unconfirmed')
+                    if not (final.get('checkpoint') or '').startswith(_FINISHED_CHECKPOINT):
+                        marker = _FINISHED_CHECKPOINT + ('null' if final.get('checkpoint') is None
+                                                        else 'value_' + final['checkpoint'])
+                        if len(marker) > 120:
+                            raise OperationDenied('checkpoint_marker_unavailable')
+                        final = runner._record(repo, number, final, checkpoint=marker)
+                        observed = runner.github.progress(repo, number)
+                        if not observed or any(observed.get(key) != value for key, value in final.items()):
+                            raise RuntimeError('Checkpoint completion marker unconfirmed')
+                    prior_checkpoint = final['checkpoint'][len(_FINISHED_CHECKPOINT):]
+                    if prior_checkpoint == 'null':
+                        original_checkpoint = None
+                    elif prior_checkpoint.startswith('value_'):
+                        original_checkpoint = prior_checkpoint[len('value_'):]
+                    else:
+                        raise OperationDenied('checkpoint_marker_unavailable')
+                    source = runner._retire_assignment(repo, number, final, checkpoint_only=True,
+                        checkpoint=original_checkpoint)
+                    observed = source['record']
+                    runner.summaries.pop(assignment['step_id'], None)
+                    return {'kind': 'checkpoint', 'assignment': dict(assignment), 'outcome': outcome,
+                        'checkpoint_head': observed['head'], 'progress_ref': source['resource'],
+                        'step_retired': True, 'ticket_released': True}
+        finally:
+            runner._checkpoint_ceiling.reset(ceiling)
+            runner._policy_scope.reset(policy)
+
+    def _complete_checkpoint_phase(self, repo, number, config, record, path, assignment, outcome):
+        runner = self.runner
+        phase = record['native_phase']
+        decision = outcome == 'needs_decision' or (outcome == 'stopped' and
+            (record.get('native_outcome') == 'needs_decision' or record.get('wait_reason') == 'product_decision'))
+        # The existing progress record is the recovery anchor. No result prose is
+        # persisted, and an unfinished write remains visibly checkpoint_only.
+        record = runner._record(repo, number, record, native_outcome=outcome, phase='checkpoint',
+            pending_action=None, next_action='checkpoint_only',
+            resume_phase=record.get('native_resume_phase') or phase,
+            wait_reason='product_decision' if decision else None)
+        head = runner._workspace_effect(repo, 'checkpoint', path, f'Checkpoint native Issue {number}')
+        from .workspace import WorkspaceWait
+        design_scope_unknown = False
+        try:
+            scoped = {**config, '_scoped_spec': runner._scoped_spec(repo, number, config, record)}
+            if phase == 'design':
+                base = assignment['head'] if record.get('native_correction') and record.get('spec_revision') else config['revision']
+                problem = runner._design_problem(path, base, scoped['_scoped_spec'], require_tracked=True)
+                if problem:
+                    if decision and problem[0] == 'implementation_before_design_acceptance':
+                        design_scope_unknown = True
+                    elif outcome == 'candidate_ready':
+                        record = runner._record(repo, number, record, head=head)
+                        runner._wait(repo, number, record, problem[0], phase='checkpoint',
+                                     next_action='diagnose' if problem[0] == 'implementation_before_design_acceptance' else problem[1])
+                        return dict(runner._checkpoint_ceiling.get()[3]['record'])
+            record, revised, wait = runner._spec_checkpoint(repo, number, scoped, record, path, head,
+                previous=record, preserve_decision=decision)
+        except WorkspaceWait as exc:
+            if outcome != 'stopped' or str(exc) != 'intake_changed':
+                raise
+            record = {**record, 'correction_reason': 'spec_scope_unknown', 'correction_attempt': 3}
+            revised, wait = True, {'reason': 'replan_required'}
+        if not revised or outcome == 'stopped':
+            record = runner._record(repo, number, record, head=head)
+        if design_scope_unknown:
+            # The spec checkpoint may record accepted_spec_changed. Preserve
+            # the stronger diagnosis debt after that bounded observation/write.
+            record = {**record, 'correction_reason': 'spec_scope_unknown', 'correction_attempt': 3}
+        if outcome == 'stopped':
+            remote = runner.github.ref(repo, record['branch'])
+            return runner._record(repo, number, record, phase='checkpoint', checkpoint='interrupted_committed',
+                pending_action=None, wait_reason='product_decision' if decision else wait['reason'] if wait else
+                'remote_head_changed' if remote != record.get('expected_head') else 'stop_requested',
+                next_action='operator_decision' if decision else 'diagnose' if wait else 'reconcile')
+        if decision:
+            return runner._record(repo, number, record, phase=record['phase'] if revised else phase + '_done',
+                pending_action=None, wait_reason='product_decision', next_action='operator_decision',
+                resume_phase=record.get('native_resume_phase') or phase)
+        paths = runner.workspace.changed_paths(path, config['revision'])
+        if any(not matches(name, config['allowed_paths']) for name in paths):
+            runner._wait(repo, number, record, 'scope_violation', phase='checkpoint', next_action='diagnose')
+        elif revised:
+            pass  # Accepted-spec changes retain their own review/diagnosis state.
+        elif record.get('native_correction'):
+            spec_only = phase == 'design'
+            integrating = record['native_correction'] == 'integration_changed'
+            runner._finish_correction(repo, number, scoped, record, path, {'outcome': 'candidate_ready'},
+                reason=record['native_correction'], attempts=record['correction_attempt'],
+                prior_head=assignment['head'], spec_base=assignment['head'] if spec_only and record.get('spec_revision')
+                else config['revision'], spec_only=spec_only, integrating=integrating,
+                completed_phase=record['native_origin_phase'] if integrating else 'design_done' if spec_only
+                else 'implementation_done', resume_phase=record.get('native_resume_phase'),
+                spec_record=record, remote_before=record.get('expected_head'))
+        elif phase == 'design':
+            runner._finish_design(repo, number, scoped, record, path,
+                parse_intake(runner.github.issue(repo, number), config), {'outcome': 'candidate_ready'})
+        else:
+            runner._complete_implementation(repo, number, record, head)
+        return dict(runner._checkpoint_ceiling.get()[3]['record'])
 
     async def _begin(self, url):
         repo, n = self._issue(url)

@@ -94,3 +94,49 @@ protected merge 또는 main의 성공 증거로 사용하지 않는다.
 P05 전체 완료를 주장하지 않는다. 최종 독립 review, exact isolated 전체 회귀, CI/merge는
 각기 다른 증거다. 위 독립 review와 전체 회귀는 이 내부 source 단계에 한정하며 CI/merge는
 아직 NOT RUN이다. 기존 다섯 MCP 도구의 입력/동작은 수정하지 않았다.
+
+## 현재 admission·work-source 기준의 첫 단계 통합 준비
+
+위 실행 결과는 각각 명시한 이전 구현 기준의 역사적 증거다. P02의 수정된 admission
+관측·CAS와 P03의 현재 정책·배정 종료 경계에 첫 checkpoint-only 단계를 다시 연결하는
+후보는 **정적 준비 상태이며 실행 NOT RUN**이다. 기존 결과를 새 조합의 통과로 세지 않는다.
+
+- 미래 command version/action/operation의 본문은 해석하지 않는다. 현재 admission의
+  실제 locked 관측 시각, 불확실한 replace 결과, config 뒤 마지막 권한 갱신을 보존한다.
+- 원 단계 완료 후 기존 고정 retirement helper를 좁은 내부 checkpoint mode로 재사용한다.
+  현재 정책과 권한은 admission guard 전에 읽고, exact 원 배정 확인·최종 progress-only
+  기록·원본 read-back·ticket release·consumed 순서는 같은 guard 안에서 유지한다.
+- 기존 세 retirement 호출의 기본 동작, 현재 work-source 정책과 완료 후처리의 보호 경계를
+  유지한다. checkpoint mode에서 generic retirement callback이나 legacy fallback은 허용하지 않는다.
+- 미래 opaque 본문, config 관측 중 권한 철회/조회 실패, 원 ticket 변경, retirement 직전
+  철회와 동일 marker 재발견 후 진전의 추가 oracle을 준비했다. 실제 수집·실행 결과는 아직 없다.
+
+이 준비에는 MCP 여섯 번째 도구, raw stdio, 증거 export, 결정 적용, continuation,
+native 종료 adapter 또는 권한 활성화가 포함되지 않는다. 통합 기준의 최종 판본을 다시
+확인하고 독립 검토와 허용된 격리 검증을 마친 뒤 실제 결과를 별도로 기록한다.
+
+
+## Verified-main integration — 2026-10-20
+
+P01/P02/P03의 protected delivery와 모든 main CI가 통과한
+`822d86c3197a5b6278d3496f4b5cf69ed41c8d67` (tree `1e3a168d17cb3130b28e46fb02fbc9faf291f81d`)에서 P05 revision 2 / CP revision 7 /
+EX revision 7의 내부 core를 통합했다. 기존 수용 명세의 SHA-256을 고정했고, 원 구현을
+재작성하지 않고 준비한 변경을 현재 main에 병합했다. 현재 P03의 독립 read client,
+절대 deadline·관측 supervisor·Stop 보존과 P02의 parser/CAS/현재 권한 재검사를 유지한다.
+
+내부 checkpoint는 original phase의 완료/대기를 원본 progress에서 확인한 뒤 matching
+assignment를 회수한다. 고정된 효과 제한은 progress 기록과 owned checkpoint만 허용하며
+검증·새 배정·전달로 이어지지 않는다. 기존 retirement helper를 재사용하고 remote policy
+관측은 admission guard 밖에, 원 ticket 검사·진짜 comment read-back·회수는 같은 guard 안에 둔다.
+
+Python 3.12.7 / mcp 2.3.0 / mcp-types 2.3.0에서 변경 동작과 영향 회귀
+**424개 실행, 424 PASS, 0 skip, failure/error 0**,
+76.221초, exit 0이다. checkpoint-only 42개를 실제 수집했으며 중복 수집은 없다.
+현재 config 관측 중 철회·unknown body 불투명성·ticket 변경·회수 직전 철회와 재시도·
+generic retirement 우회 금지를 포함한다. 실제 임시 Git의 ACK 유실/재시작과 독립 명시적
+continue 양성 사례, 기존 native/operation/source-policy/MCP 진단 회귀를 함께 실행했다.
+
+격리 후보와 기존 checkout·HEAD·index·별도 skill 변경은 보존했다. 전체 후보 검사는
+현재 PR의 hosted CI에서 실행하고 독립 code/security review와 protected merge/main 확인은
+별도 전달 조건이다. 이 내부 단계는 새 MCP 도구를 등록하거나 transport 권한을 부여하지
+않는다. 실제 원격 Pause/Resume·종료 증거 adapter·질문/답변 수용은 여전히 미검증이다.

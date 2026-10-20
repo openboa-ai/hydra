@@ -78,6 +78,14 @@ class RepositoryReader:
 
 
 class AdmissionCommandTests(unittest.TestCase):
+    def test_checkpoint_scope_does_not_grant_admission_writes(self):
+        self.context = AdmissionCallContext('bridge', EPOCH, frozenset({101, 202}),
+                                           frozenset({'workflow_step.checkpoint_only'}))
+        before = self.payload()
+        reply = self.run_command(self.command())
+        self.assertEqual(reply['request']['reason'], 'authority_denied')
+        self.assertEqual(self.payload(), before)
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
