@@ -1,8 +1,8 @@
 # P12 — 원본별 v3 projection과 실제 consumer 계약
 
-상태: 설계 후보 · revision 3 · 2026-10-19. P12는 계획 ID이며 실제 PR 번호가 아니다.
+상태: 설계 후보 · revision 4 · 2026-10-21. P12는 계획 ID이며 실제 PR 번호가 아니다.
 수용 판본·구현 head·검증 결과는 [공통 변경 절차](../README.md)에 연결한다. 현재 D/L/O는 NOT RUN이다.
-검토 기준은 CP revision 7·NC revision 8이다. 구현 시작 때 수용한 immutable 판본을 고정한다.
+검토 기준은 CP revision 8·NC revision 8이다. 구현 시작 때 수용한 immutable 판본을 고정한다.
 
 ## 1. 목적·요구·범위
 
@@ -63,6 +63,9 @@ source 관측마다 종속 Fact를 다시 계산하며 같은/null revision이�
 4. qualified source mapping 없는 DecisionView는 unknown이다. task active/userMessage로 질문·권한·실행을 만들지 않는다.
 5. bounded memory cache와 source별 seq/binding을 적용한다. 재시작은 빈 cache에서 원본으로 재구성한다.
 6. 실제 Python 출력이 Rust와 TS에서 같은 의미로 소비되게 한다. 세 벌의 수동 JSON fixture를 계약 시험으로 세지 않는다.
+7. CP4의 `retry_hints`를 같은 실제 encoder/decoder/reducer에 연결한다. 기존 Observation 및
+   MCP command reply의 key 집합은 유지한다. 검증한 provider 대기와 fallback backoff를 구분하고
+   공유 connection의 제한을 독립 source 실패나 실행/admission 상태로 바꾸지 않는다.
 
 v2는 read-only 호환 view이며 빠진 축은 unsupported/unknown이다. v2에 v3 필드를 추가하거나
 unknown key를 조용히 무시하지 않는다. 이 PR은 enabling 버튼을 켜지 않으며 command receipt와
@@ -99,6 +102,7 @@ bytes·지연·rate limit을 측정하고 304/다른 권한 cache/partial을 전
 | CP-D15/16, VF-D03/12/22 | 질문 같은 문장·raw canary·악성 링크·read 반복 | 권한/질문 생성 0, 공개 누출 0, 원격 write·LLM/wake·ticket release·자동 URL fetch 0 |
 | CP-D14/18 | merged+cleanup pending, decision applied+execution 미관측 | 결과/전달/정리/실행 축 독립. read 장애로 기존 명령 unknown feedback 소거 0 |
 | CP-D01/08/15/17 | 후속 후보/PR/정리 receipt와 native-only reply, 잘못된 pin·누락된 nullable key | 실제 source pin·단계 의미 보존, unsupported reply strict 거절. native payload renderer 유출·가짜 receipt·표시 pin 자동 교체 0 |
+| CP-D20 | source 제한→일부 정상 source 유지→같은 cached frame/수동 Refresh→대기 종료/복구 | 실제 Python→Rust→TS에 같은 scope와 남은 대기 의미 보존. provider/fallback 혼동·시계 변경으로 조기 재조회·다른 source 무효화 0 |
 
 ## 5. 검증·리뷰·완료 증거
 
@@ -130,3 +134,9 @@ bounded 메모리와 private 필드 누출을 확인한다. 완료 증거는 exa
 CP availability/coverage 의미로 재조회하고 외부에 상태를 복원 쓰기하지 않는다.
 DecisionView source mapping이 미정인 부분은 그 capability만 unsupported로 남기며 generic JSON으로 메우지 않는다.
 P16에는 strict v3 타입·fixture·read-only v2 동작·지원 source별 범위를 인계한다.
+
+Revision 4는 producer/consumer 구현 전에 확인된 조회 wire의 누락을 닫는다. CP의 SourceValue
+필드 타입·typed GoalRef와 nullable 목록을 구체화하고 v3에만 retry_hints를 정의한다. 기존
+v2·Observation·command_schema=1의 wire, runtime 권한과 native mapping은 바꾸지 않는다.
+이 문서 개정의 검토만으로 P12 구현이나 실제 wire/native/설치 검증이 완료된 것은 아니다.
+같은 P12 구현 PR에서 실제 Python→Rust→TS 결과와 TC를 완성한 뒤 전달한다.

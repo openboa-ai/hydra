@@ -1,6 +1,6 @@
 # Control plane: projection과 안전한 명령
 
-상태: 설계 후보 · revision 7 · 2026-10-19 · 관련 작업: Issue #3
+상태: 설계 후보 · revision 8 · 2026-10-21 · 관련 작업: Issue #3
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 W3/W7의
 wire contract, 관측·화면·명령·호환·TC를 소유한다. native 연동 qualification 이전의
@@ -150,9 +150,48 @@ ProjectionV3 = {
   binding_epoch: string, request_id: string, assembled_at: timestamp,
   observations: Observation<SourceValue>[],
   projects: ProjectView[], work: WorkView[], relations: RelationView[],
-  page: Coverage, capabilities: Capability[], request: CommandResult | null
+  page: Coverage, capabilities: Capability[], retry_hints: RetryHint[],
+  request: CommandResult | null
 }
 ```
+
+`retry_hints`는 아직 구현되지 않은 v3 조회 경계의 개정이며 기존 v2·`StandardCommandReplyV1`·
+`Observation`의 필드 집합을 바꾸지 않는다. 세 v3 producer/consumer가 함께 수용하기 전까지
+이 필드를 생략한 v3를 호환 성공으로 처리하지 않는다.
+
+```text
+RetryHint = {
+  observation_key: string, scope: string,
+  after_seconds: integer, basis: provider | fallback
+}
+```
+
+모든 key는 필수다. 힌트가 없으면 빈 배열이다. `observation_key`는 같은 frame의 실제
+제한/실패 관측을 가리키고 `scope`는 해당 adapter가 정한 provider/connection의 요청 제한
+범위다. scope는 연결 generation 안의 256자 이하 opaque 값으로 같음만 비교한다.
+실제 관측의 source와 scope를 함께 key로 써서 서로 다른 provider를 합치지 않는다.
+표시할 Issue의 제목·본문·모델 제안으로 범위를 만들지 않는다. 같은 credential을 공유하는
+GitHub 요청처럼 제한 범위가 공유되면 해당 scope의 자동 조회를 함께 대기하되 정상 관측과
+local admission을 실패로 덮지 않는다. source나 credential이 다른 연결에 힌트를 이식하지 않는다.
+
+`after_seconds`는 조립 시점의 **남은 대기 시간을 올림한** 0 이상 safe integer다.
+`basis=provider`는 검증한 `Retry-After` 또는 primary-limit reset 등의 실제 응답 메타데이터에서
+얻은 값이다. 명시된 0과 미확인은 다르다. header를 읽지 못한 것을 provider=0으로 만들지 않는다.
+`basis=fallback`은 관측한 제한 오류에 적용하는 공개된 adapter 재시도 정책이며 source 사실이
+아니다. GitHub는 알려진 provider 대기보다 먼저 요청하지 않고, 유효한 대기 정보가 없으면
+최소 60초 이후부터 증가하는 bounded backoff를 사용한다. 정상 poll 간격도 하한으로 유지한다.
+GitHub fallback의 연속 실패 대기는 60→120→240→480→900초이며 다섯 번의 자동 재시도 뒤에는
+같은 scope의 자동 조회를 멈추고 명시적 복구 조회를 기다린다. provider가 알려준 더 긴 대기는
+이 fallback 상한으로 줄이지 않는다. 다른 source나 같은 scope의 무관한 조회 성공은 실패 횟수를 지우지 않는다. 실패한 조회 또는
+제한 원본의 실제 회복을 확인한 경우만 해당 실패 횟수를 해소한다.
+이 값과 정상/실패 event열을 adapter·Rust·TS TC에 고정한다. raw headers·오류 본문·token은 wire에 넣지 않는다.
+
+bridge/renderer는 실제 응답 수신 시 단조 시계로 대기를 시작하고 같은 cached frame을 다시
+보여주는 것으로 대기를 줄이거나 늘리지 않는다. 더 엄격한 같은-scope 힌트는 보존하며 다른
+source의 성공·수동 Refresh·화면 복귀로 provider 대기를 우회하지 않는다. sleep/clock skew는
+freshness를 무효화하지만 남은 provider 대기를 지우는 근거가 아니다. 이 자료는 메모리 수명만
+가지며 admission·실행·source revision·명령 권한이 아니다. serializer가 record prefix를 줄일 때도
+남겨 둔 힌트의 관측을 함께 보존하며 유실/손상 힌트를 즉시 재조회 허가로 바꾸지 않는다.
 
 `RuntimeIdentityV1`은 현재 package/version/code/config/control binding identity를 그대로 쓴다.
 `binding_epoch`는 bridge process 시작과 binding 변경 시 발급하는 메모리 UUID다. persistent
@@ -183,9 +222,45 @@ nullable로 둔다. 기존 progress field 이름과 enum은 현재 parser의 의
 공개·열람 허용된 원문의 처음 4,096 code points, `title`은 최대 512, URL/open_ref는 최대
 2,048, ID/reason은 최대 256/120이다. 나머지는 원본으로 이동해 읽는다. native 질문 원문을
 GitHub excerpt에 넣지 않는다. source payload에 없는 선택적 사실은 null이며 모든 key는 필수다.
-예외적으로 `requirement_refs`, `spec_refs`, `parent_refs`는 [작업 기록 계약](work-records.md)의
+예외적으로 `requirement_refs`, `spec_refs`, `parent_refs`, `goal_refs`는 [작업 기록 계약](work-records.md)의
 RequirementRef와 IssueRef/GoalRef를 그대로 사용한다. 이 타입을 ResourceRef의 opaque ID로
 손실 변환하지 않는다. observation 조회용 ResourceRef와 제품 요구의 정밀 참조를 구분한다.
+
+### SourceValue의 구현용 타입
+
+앞의 표는 key 집합의 정본이며 다음은 그 key의 타입이다. nullable은 key 생략을 허용하지 않는다.
+UInt는 0..2^53−1 JSON 정수(bool 제외), Positive는 1 이상의 UInt, Code는 `Reason`과 같은
+bounded public code, Ref는 ResourceRef다. ExecutionView는 이 절의 실행 축과 같은
+{state: unobserved/running/ended, active_count: UInt 또는 null}다. source가 읽지 않은 선택 사실과 목록은 null이며
+조회로 확인한 빈 목록만 `[]`다. 표에 없는 임의 object/JSON payload는 받지 않는다. 닫힌 kind 집합은 value=null인
+unavailable/unsupported 관측에도 적용한다. native_context는 이 관측 kind에 추가하지 않는다.
+
+| kind | 타입과 추가 제약 |
+| --- | --- |
+| repository | numeric_id: Positive; full_name: canonical owner/name; url: string(2048); contract_ref: null 또는 {path: string(512), revision: git_sha 또는 null}. numeric ID가 없으면 repository value 자체를 unavailable로 두고 숫자를 추측하지 않는다. |
+| issue | number: Positive; title: string(512); state: open/closed; url: string(2048); work_kind: goal/work/null; parent_refs: IssueRef[] 또는 null; requirement_refs: RequirementRef[] 또는 null; description_excerpt: string(4096) 또는 null; description_truncated: bool. |
+| progress | issue_ref: Ref(kind=issue); attempt_id/native_step: UUID 또는 null; phase/wait_reason/next_action/pending_action/cleanup_state: Code 또는 null; head/contract_revision/expected_head/expected_base/published_head: git_sha 또는 null; branch: 기존 owned branch validator 또는 null; pr_ref: Ref 또는 null; completion_refs: Ref[] 또는 null. 기존 parser가 제공하지 않는 cleanup_state 등은 null이다. |
+| pull_request | number: Positive; url: string(2048); state: open/closed; head/base/merge_commit: git_sha 또는 null; required_check_refs/review_refs: Ref[] 또는 null. provider가 merged임을 확인하기 전에는 synthetic merge_commit_sha를 merge_commit에 넣지 않는다. |
+| check | producer: Ref 또는 null; name: string(512); head: git_sha 또는 null; status: Code; conclusion: Code 또는 null; url: string(2048) 또는 null. producer는 실제 app/actor locator이며 표시 이름을 identity로 쓰지 않는다. |
+| review | producer: Ref 또는 null; head: git_sha 또는 null; state: Code; unresolved_count: UInt 또는 null; url: string(2048) 또는 null. source Code는 표시 값이고 approved/완료 자격은 별도 검증한다. |
+| native_task_metadata/native_history_page | 아래 최소 profile의 정확한 타입. metadata/history resource 및 native_task/native_turn/native_message locator의 source는 codex다. |
+| native_task | task_ref: Ref(kind=native_task); assignment_ref/question_ref: Ref 또는 null; execution: ExecutionView 또는 null; schedule_refs: Ref[] 또는 null; open_ref: string(2048) 또는 null. |
+| native_schedule | schedule_ref: Ref(kind=native_schedule); task_ref: Ref 또는 null; status: Code; next_wake_at: timestamp 또는 null; open_ref: string(2048) 또는 null. |
+| resource | resource_ref: Ref; owner_ref: Ref 또는 null; activity/preservation/retirement: Code 또는 null; open_ref: string(2048) 또는 null. qualified adapter만 해당 Code의 의미를 해석한다. |
+| admission | revision: UInt; global_mode: running/paused/stopped; project_overrides: canonical repository name→같은 mode의 object(최대 1024개); gate_reason: Code 또는 null. |
+| ownership | state: free/absent/owned/busy/native/unknown; scope_digest: SHA-256 또는 null; step_nonce: UUID 또는 null. free/absent만으로 execution=ended나 active_count=0을 만들지 않는다. |
+
+Revision.monotonic.value는 leading zero 없는 음이 아닌 십진 문자열(0 포함)이다. 문자열을
+JSON number나 부동소수로 바꾸지 않고 길이·숫자 의미로 비교한다. opaque revision에는
+이 순서를 적용하지 않는다. key/coverage.scope는 최대 512자, ref ID는 최대 256자다.
+native metadata/history에는 revision=null만 허용한다. stale 값은 원래 observed_at을 유지한다.
+
+ProjectView의 source_refs는 Ref[]이고 WorkView의 evidence_refs 및 Fact.evidence는
+EvidenceRef[]다. goal_refs는 작업 기록 계약의 GoalRef(현재 IssueRef와 같은 정확한 두 정수
+필드) 배열이며 opaque Ref로 바꾸지 않는다. spec_refs/requirement_refs는 RequirementRef[]다.
+알려진 Fact에는 같은 frame의 current·complete 관측과 일치하는 revision을 가진 근거가
+필요하다. unknown Fact는 null과 reason을 갖는다. typed DecisionView를 표현할 수 있다는
+사실은 아직 미확인인 decision source mapping이나 실제 원격 답변 qualification을 완료시키지 않는다.
 
 ProjectView는 `repository_ref`, `goal_refs`, `work_refs`, `admission`, `execution`,
 `attention_refs`, `coverage`, `source_refs`를 갖는다. WorkView는 `issue_ref`, `goal_refs`,
@@ -1182,6 +1257,7 @@ TC는 사전 상태→입력/사건 순서→기대값→금지 효과를 고정
 | CP-D17 | v2→v3, v3→v2, 미지원 v4, 실제 Python 출력→Rust→TS | 호환 표시/명시 거절, native unknown. 의미와 null을 세 계층에서 보존 | `tests/test_control_wire_contract.py`, Rust/TS fixture tests |
 | CP-D18 | 관측→부분 실패→재시작→빈 cache→재조회, command 오류 중 다른 poll 성공 | 원래 상태·책임 재구성. read mutation 0, 미해결 오류 보존 | projection/commands Python, TS |
 | CP-D19 | template 없는 유용한 외부 Issue, 주입 지시와 유용한 요구가 혼재, 원문 revision 변경 | propose/해석/부족한 의미 표시, 제목·헤더만으로 거절 금지. 위임 생성·secret 접근·stale 해석 실행 0 | `tests/test_control_projection.py`, `apps/mac/tests/projection.test.ts` |
+| CP-D20 | 실제 source 제한 hint, 공유/독립 connection, header 부재, cached frame 반복, 시계 변경, 수동 Refresh | 같은 binding/scope 대기 보존, 다른 source 유지, missing→provider=0 금지, 알려진 provider 대기 우회 0. 실제 Python 출력→Rust→TS에서 hint·nullable source·남은 대기의 의미를 보존 | `tests/test_control_projection.py`, `tests/test_control_wire_contract.py`, Rust/TS projection tests |
 | CP-O01 | installed app과 일반 repo 둘, 실제 Issue/PR 변경, 한쪽 연결 장애 | 변경이 app에 반영되고 다른 repo 유지. 화면·installed identity·source refs 기록 | installed acceptance receipt |
 | CP-O02 | qualified native start/reentry/interrupt, Pause/Stop, 실제 질문/예약 | admission과 실제 동작 별도 관측. W1 미지원 부분 BLOCKED | native qualification+app receipt |
 | CP-O03 | app 종료/재시작, work complete+cleanup pending, 복구 뒤 retire | DB 없이 책임 재발견. 실제 종료/보존/cleanup 확인 후 안전한 Quit 허용 | installed recovery receipt |
