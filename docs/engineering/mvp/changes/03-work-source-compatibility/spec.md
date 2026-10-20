@@ -91,7 +91,31 @@ worker 결과에만 남은 identity·terminal·cleanup unknown·transport unknow
 기존 worktree만 사용하고, admission 미설치 legacy 경로의 기존 workspace 복구 조건도 유지한다.
 새 worker·source migration·권한 확대는 이 보충에 포함하지 않는다.
 
-### 3.2 native retirement와 현재 정책 확인의 통합
+### 3.2 정책 조회 지연과 실제 실행 증거 — revision 1 범위 내
+
+정책 callback은 read-only이며 감독 event loop나 admission lock을 점유하지 않는다.
+parent에서 repository와 pinned 정책의 독립 snapshot을 고정한 뒤, admission/ownership
+ContextVar를 상속하지 않는 단일 관측에서 확인한다. GitHub client의 read budget과 인증
+fingerprint는 다른 관측·monitor와 공유하지 않는다. 기존 전체 정책 validator와 actor 권한
+검사를 유지하고, 실행의 남은 absolute monotonic deadline과 최대 15초, pinned actor 수에
+필요한 유한 요청 수로 조회를 제한한다. 이 관측은 새로운 권한이나 실행 grant가 아니다.
+
+신뢰된 executor owner마다 동시에 하나의 관측만 허용한다. Stop·취소·deadline은 조회가
+끝나기를 기다리지 않고 owned worker의 종료·수집을 진행한다. 관측한 중단은 해당 실행에 고정하며,
+바로 Resume되어도 미완료·중단된 조회를 성공으로 사용하지 않는다. 늦게 끝난 조회 결과는 폐기하고
+다음 호출은 새로 조회한다. 남은 read-only 관측을 강제 종료했다고 주장하지 않으며, 그 thread가
+실제로 끝나지 않았으면 cleanup unknown/hold를 유지하고 추가 관측을 만들지 않는다.
+관측 thread는 interpreter 종료를 막지 않는 daemon이며, thread 종료 자체가 이미 held 상태인
+Runner의 명시적 recovery 조건을 대신하지 않는다. 기존 unknown effect의 해제를 일반화하지 않는다.
+
+sync 호출도 원래 caller에서 Stop을 계속 확인하고 deadline을 제한한다. 짧은 admission guard를
+획득한 뒤 process 등록/Popen, Linux launch 또는 SDK grant/ACK 직전 Stop/deadline을 다시 검사한다.
+helper가 존재한다는 사실은 verifier argv 실행 증거가 아니다. exact no-child cancellation receipt,
+helper exit 0, output/control EOF와 exact ticket retirement가 확인되면 command_unavailable이며
+실행 결과·검증 실패 receipt·correction을 만들지 않는다. 실제 argv 시작 뒤 timeout은 기존
+실패 검증 의미를 유지한다. receipt 모순·유실·cleanup/retirement 실패는 unknown이 우선한다.
+
+### 3.3 native retirement와 현재 정책 확인의 통합
 
 진행 기록의 native 필드 제거·정확한 read-back·배정 티켓 해제·consumed 표시는 하나의
 고정된 동기 retirement로 묶는다. 세 기존 경로(오래된 verification review, 정상 review,

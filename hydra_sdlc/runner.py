@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -12,7 +13,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 from .coordinator import operation_scope
-from .execution_boundary import POLICY_HOLD_REASONS
+from .execution_boundary import DispatchPreflight, POLICY_HOLD_REASONS
 from .operations import OperationDenied
 from .progress import with_progress_hint
 
@@ -127,13 +128,17 @@ class Runner:
             return callback(*args, **kwargs)
 
     def _policy_reason(self, repo, config):
+        return self._observed_policy_reason(self.github, repo, config)
+
+    @staticmethod
+    def _observed_policy_reason(github, repo, config):
         if not legacy_work_source(config):
             return "work_source_unsupported"
         if config.get("_completion_only"):
             # _work_config grants this only for the exact already-merged work.
             return None
         try:
-            fresh = load_project(self.github, repo)
+            fresh = load_project(github, repo)
         except (ValueError, RuntimeError, OSError):
             return "project_contract_unavailable"
         if (fresh["blob_sha"] != config["blob_sha"] or any(fresh.get(key) != config.get(key)
@@ -151,6 +156,34 @@ class Runner:
         reason = self._policy_reason(repo, bound[1])
         if reason:
             raise OperationDenied(reason)
+
+    def _dispatch_preflight(self, repo):
+        bound = self._policy_scope.get()
+        if bound is None or bound[0] != repo.casefold():
+            raise OperationDenied("project_policy_unbound")
+        config = copy.deepcopy(bound[1])
+        if config.get("_completion_only") or not legacy_work_source(config):
+            raise OperationDenied("work_source_unsupported")
+        github = self.github
+        factory = getattr(github, "read_client", None)
+        if not callable(factory):
+            raise OperationDenied("project_contract_unavailable")
+        compare = Runner._observed_policy_reason
+
+        def read(deadline):
+            try:
+                reader = factory()
+                if reader is github:
+                    raise ValueError("Policy observation requires an isolated client")
+                with reader.read_budget(seconds=15, requests=4 + len(config["authorized_actors"]),
+                                        deadline=deadline):
+                    reason = compare(reader, repo, config)
+            except Exception:
+                raise OperationDenied("project_contract_unavailable") from None
+            if reason:
+                raise OperationDenied(reason)
+
+        return DispatchPreflight(read, owner=self)
 
     def _workspace_effect(self, repo, method, *args, **kwargs):
         current = self._cleanup_scope.get()
@@ -281,7 +314,7 @@ class Runner:
             raise WorkspaceWait(exc.reason) from exc
         return self.workspace.verify(path, config["verification"],
                                      stop_requested=lambda: self._stopping(evidence_key[0]),
-                                     before_command=lambda: self._require_policy(evidence_key[0]))
+                                     before_command=self._dispatch_preflight(evidence_key[0]))
 
     def _resource_completion(self, repo, number, config, record, pr_number, merge_sha):
         result = {"repository": repo, "issue": number, "action": "completed", "pr": pr_number}
@@ -609,7 +642,7 @@ class Runner:
                 on_identity=lambda **values: None, on_event=lambda *args: None,
                 stop_requested=lambda: self._stopping(repo) or interrupted,
                 resume_thread_id=None,
-                before_dispatch=lambda: self._require_policy(repo),
+                before_dispatch=self._dispatch_preflight(repo),
             )
         except (Exception, asyncio.CancelledError):
             result = {"status": "transport_unknown", "detail": {"cleanup": "unknown"}}

@@ -270,3 +270,43 @@ Python 3.12.7 / `mcp==2.3.0` / `mcp-types==2.3.0`에서 수행했다.
 | `docs/engineering/mvp/changes/03-work-source-compatibility/spec.md` | `15e6f04b3bc818e23d70ea13790619629c6c4eabbf5be5b488dfeb7269dd4179` |
 
 최종 head hosted CI·코드/보안 리뷰·보호 병합·실제 main 확인은 별도 증거다. 이 source/fixture 검증은 실제 v2 migration·설치·원격 질문/Pause/재시작/Resume 전체 흐름을 통과 처리하지 않는다.
+
+
+## PR #12 정책 조회 감독·미실행 검증 수정 — 2026-10-20
+
+리뷰 대상 `f0df27f768f1c28571b5f8a46e3549df33a95c37`의 두 추가 지적과 독립 검토의
+Pause→Resume 경합을 P03 revision 1의 기존 preflight 경계에서 수정했다. 앞의 1005개
+suite는 이번 수정 전의 증거다.
+
+정책 조회는 parent에서 고정한 repository·정책 snapshot과 독립 GitHub client를 사용한다.
+기존 actor 권한 검사를 유지하며 전체 조회에 남은 absolute deadline·최대 15초·유한 요청
+예산을 적용한다. 관측은 admission ContextVar를 상속하지 않는 daemon thread이며 executor
+owner당 미완료 조회 하나만 허용한다. Stop·취소·deadline은 worker 종료를 먼저 진행하고,
+조회가 남아 있으면 cleanup unknown을 유지한다. daemon은 강제 종료 증거나 자동 recovery가 아니다.
+
+중단된 조회는 성공을 반환하지 않으며 관측한 Stop은 같은 실행에 고정한다. 바로 Resume되어도
+Popen·SDK grant를 허용하지 않는다. admission 획득 뒤 Stop/deadline을 재검사한다. Linux helper의
+exact no-child receipt·exit 0·EOF·ticket retirement가 확인되면 command_unavailable이며
+실행 결과·실패 검증 receipt를 만들지 않는다. 실제 명령 시작 뒤 timeout과 미확정 cleanup은 보존한다.
+
+| 실제 검증 | 결과 |
+| --- | --- |
+| 최초 문제의 행동 RED 재확인 | 13 collected; 적용 가능 12개 실패, 실제 Linux 전용 1 skip. API/import 부재 오류가 아닌 동작 assertion 실패 |
+| Pause→Resume 경합 | 실제 control Pause/Resume와 worker/verifier grant oracle 2개 RED → GREEN |
+| 최종 신규 동작·reader·capture 검사 | **31 collected, 30 PASS, 1 explicit Linux skip**, 4.935초 |
+| 최종 source/test/spec 전체 suite | **1035 collected, 1009 PASS, 26 explicit skip**, failure/error 0, 276.609초, exit 0 |
+| 독립 code·security 검토 | 같은 source/test/spec hash 검토, 남은 material finding 없음 |
+| 보존 | snapshot·overlay·제품 checkout·HEAD 불변. 기존 25 skip 유지 + 실제 Linux 전용 Workspace 시험 1개 |
+
+Mac에서 no-child helper 검사는 실제 POSIX helper protocol을 사용하되 사용할 수 없는 prctl만
+fixture에서 생략했다. 실제 Linux subreaper와 production Workspace의 추가 사례는 hosted Linux
+CI에서 따로 확인해야 한다. no-child receipt 유실·변조·nonzero·stale ticket·retirement 실패와
+실제 command timeout의 기존 음성 oracle을 유지했다.
+
+초기 no-spawn fixture가 Workspace의 정상 Git identity 조회까지 셌으므로 actual verifier/helper
+argv만 세도록 진단 범위를 수정한 뒤 기존 source에서 RED를 재확인했다. 기준은 여전히 실제
+verifier/helper spawn 0회다. Python 3.12.7 / mcp 2.3.0 / mcp-types 2.3.0에서 수행했으며,
+최종 source/test/spec 변경 없이 이 관측 문단만 추가했다.
+
+최종 head hosted CI·코드/보안 리뷰·보호 병합·실제 main은 별도 증거다. 원격 질문·답변·Pause·
+재시작·Resume 전체 흐름, 설치와 두 프로젝트 수용을 이 결과로 통과 처리하지 않는다.

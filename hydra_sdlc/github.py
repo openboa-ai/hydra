@@ -12,6 +12,7 @@ import re
 import subprocess
 import time
 import uuid
+from types import MethodType
 from urllib.parse import quote, urlencode
 
 ACTIVE_LABEL = "hydra:active"
@@ -107,17 +108,37 @@ class GitHub:
         self._authenticated_fingerprint = None
         self._read_budgets = []
 
+    def read_client(self):
+        """Return a fresh client for one separately supervised read observation.
+
+        Rebind the built-in transport to the new instance. An explicitly
+        injected or later-replaced transport retains its existing semantics;
+        this does not make an arbitrary injected callable independently owned.
+        No authentication result or active budget is inherited.
+        """
+        reader = GitHub(user=self.user)
+        transport = self.transport
+        if not (isinstance(transport, MethodType) and transport.__self__ is self
+                and transport.__func__ is GitHub._gh):
+            reader.transport = transport
+        return reader
+
     @contextmanager
-    def read_budget(self, *, seconds, requests):
+    def read_budget(self, *, seconds, requests, deadline=None):
         """Bound one synchronous observation and its nested reads, without caching.
 
         The caller owns this client for the scope. Budgets are transient limits,
         not authority to call an API or to retry an uncertain effect.
         """
         if (type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds < 0
-                or type(requests) is not int or requests < 0):
+                or type(requests) is not int or requests < 0
+                or deadline is not None and (type(deadline) not in {int, float}
+                                             or not math.isfinite(deadline))):
             raise GitHubError("Invalid GitHub read budget")
-        deadline = min([time.monotonic() + seconds] + [b.deadline for b in self._read_budgets])
+        bounds = [time.monotonic() + seconds] + [b.deadline for b in self._read_budgets]
+        if deadline is not None:
+            bounds.append(deadline)
+        deadline = min(bounds)
         budget = _ReadBudget(deadline, requests)
         self._read_budgets.append(budget)
         try:

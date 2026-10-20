@@ -45,6 +45,15 @@ class GitHub:
         self.merge_message = "External merge without a service request"
         self.decision_context_link = None
 
+    def read_client(self):
+        # This fixture has no transport/auth/budget state; each read facade
+        # captures the fixture's current synthetic data at invocation time.
+        return copy.copy(self)
+
+    def read_budget(self, **kwargs):
+        from contextlib import nullcontext
+        return nullcontext()
+
     def issue(self, repo, n):
         return copy.deepcopy(self.work)
 

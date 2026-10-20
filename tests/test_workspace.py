@@ -466,6 +466,164 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceWait, 'verification_output_unavailable'):
             self.workspace.verification_output(hashlib.sha256(b'').hexdigest())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires the actual Linux subreaper")
+    def test_second_preflight_expiry_has_no_verification_receipt(self):
+        from types import SimpleNamespace
+        from hydra_sdlc import execution_boundary as boundary
+        real_monotonic = time.monotonic
+        offset, calls = [0.0], []
+        marker = self.path / "must-not-run"
+
+        def preflight():
+            calls.append(True)
+            if len(calls) == 2:
+                offset[0] = 60.0
+
+        clock = SimpleNamespace(monotonic=lambda: real_monotonic() + offset[0])
+        commands = [{"argv": [sys.executable, "-I", "-c",
+                     "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()", str(marker)], "timeout": 30}]
+        with patch.object(boundary, "time", clock), \
+                patch.object(boundary, "_validate_launch_cancelled",
+                             wraps=boundary._validate_launch_cancelled) as cancelled, \
+                patch.object(boundary, "_validate_ready", wraps=boundary._validate_ready) as ready:
+            with self.assertRaises(WorkspaceWait) as caught:
+                self.workspace.verify(self.path, commands, before_command=preflight)
+        self.assertEqual(calls, [True, True])
+        cancelled.assert_called_once_with({"version": 1, "kind": "launch_cancelled", "reaped": True})
+        ready.assert_not_called()
+        self.assertEqual(caught.exception.reason, "command_unavailable")
+        self.assertFalse(caught.exception.uncertain)
+        self.assertFalse(marker.exists())
+        with self.assertRaisesRegex(WorkspaceWait, "verification_output_unavailable"):
+            self.workspace.verification_output(hashlib.sha256(b"").hexdigest())
+
+    def test_pause_then_resume_during_policy_read_cannot_spawn(self):
+        import threading
+        from hydra_sdlc import execution_boundary as boundary
+        from hydra_sdlc.coordinator import operation_scope
+        from hydra_sdlc.operations import OperatingControl
+        control = OperatingControl(self.root / 'pulse.lock', ['example/project'])
+        control.set_mode('start')
+        entered, released, returned = [threading.Event() for _ in range(3)]
+        pulses = []
+        def preflight():
+            entered.set()
+            try:
+                released.wait(1.8)
+            finally:
+                returned.set()
+        def stop_requested():
+            if entered.is_set() and not returned.is_set() and not pulses:
+                control.set_mode('pause')
+                pulses.append(control.reason('example/project'))
+                control.set_mode('resume')
+                return True
+            return False
+        try:
+            with patch.object(boundary.subprocess, 'Popen', wraps=subprocess.Popen) as spawn:
+                with operation_scope(control, 'example/project'), self.assertRaises(WorkspaceWait) as caught:
+                    self.workspace.verify(self.path, [{'argv': [sys.executable, '-c', 'pass'], 'timeout': 3}],
+                                          before_command=preflight, stop_requested=stop_requested)
+                self.assertEqual(sum(bool(call.args and call.args[0][0] == sys.executable)
+                                     for call in spawn.call_args_list), 0)
+                self.assertEqual(len(pulses), 1)
+                self.assertIsNotNone(pulses[0])
+                self.assertIsNone(control.reason('example/project'))
+                self.assertFalse(returned.is_set())
+                self.assertTrue(caught.exception.uncertain)
+            with self.assertRaisesRegex(WorkspaceWait, 'verification_output_unavailable'):
+                self.workspace.verification_output(hashlib.sha256(b'').hexdigest())
+        finally:
+            released.set()
+            if entered.is_set():
+                self.assertTrue(returned.wait(3))
+
+    def test_stop_during_slow_policy_read_retains_uncertainty_without_spawn(self):
+        import threading
+        from hydra_sdlc import execution_boundary as boundary
+        entered, released, returned, stopping = [threading.Event() for _ in range(4)]
+        def preflight():
+            entered.set()
+            try:
+                released.wait(1.8)
+            finally:
+                returned.set()
+        def stop_after_read_starts():
+            if entered.wait(3):
+                stopping.set()
+        signaler = threading.Thread(target=stop_after_read_starts)
+        signaler.start()
+        try:
+            with patch.object(boundary.subprocess, 'Popen', wraps=subprocess.Popen) as spawn:
+                with self.assertRaises(WorkspaceWait) as caught:
+                    self.workspace.verify(self.path, [{'argv': [sys.executable, '-c', 'pass'], 'timeout': 5}],
+                                          before_command=preflight, stop_requested=stopping.is_set)
+                self.assertFalse(returned.is_set(), 'Stop waited for the policy read')
+                self.assertEqual(sum(bool(call.args and call.args[0][0] == sys.executable)
+                                         for call in spawn.call_args_list), 0)
+                self.assertTrue(caught.exception.uncertain)
+            with self.assertRaisesRegex(WorkspaceWait, 'verification_output_unavailable'):
+                self.workspace.verification_output(hashlib.sha256(b'').hexdigest())
+        finally:
+            released.set()
+            signaler.join(3)
+            if entered.is_set():
+                self.assertTrue(returned.wait(3))
+        self.assertFalse(signaler.is_alive())
+
+    def test_stop_or_expiry_while_waiting_for_admission_cannot_spawn(self):
+        import fcntl
+        import threading
+        from types import SimpleNamespace
+        from hydra_sdlc import execution_boundary as boundary
+        from hydra_sdlc.coordinator import operation_scope
+        from hydra_sdlc.operations import OperatingControl
+        for stop in (False, True):
+            with self.subTest(stop=stop):
+                control = OperatingControl(self.root / ('stop.lock' if stop else 'expiry.lock'), ['example/project'])
+                control.set_mode('start')
+                held, acquiring = threading.Event(), threading.Event()
+                offset, stopping, errors = [0.0], [False], []
+                native_flock, real_monotonic = fcntl.flock, time.monotonic
+                def holder():
+                    try:
+                        with control.control_lock_path.open('rb') as fd:
+                            native_flock(fd, fcntl.LOCK_EX)
+                            held.set()
+                            if not acquiring.wait(3):
+                                raise AssertionError('caller did not attempt real admission lock')
+                            if stop:
+                                stopping[0] = True
+                            else:
+                                offset[0] = 60.0
+                    except BaseException as exc:
+                        errors.append(exc)
+                def observed_flock(fd, mode):
+                    if mode == fcntl.LOCK_SH:
+                        acquiring.set()
+                    return native_flock(fd, mode)
+                thread = threading.Thread(target=holder)
+                thread.start()
+                try:
+                    self.assertTrue(held.wait(3))
+                    clock = SimpleNamespace(monotonic=lambda: real_monotonic() + offset[0])
+                    with patch.object(boundary, 'time', clock), patch.object(fcntl, 'flock', side_effect=observed_flock), \
+                            patch.object(boundary.subprocess, 'Popen', wraps=subprocess.Popen) as spawn:
+                        with operation_scope(control, 'example/project'), self.assertRaises(WorkspaceWait) as caught:
+                            self.workspace.verify(self.path, [{'argv': [sys.executable, '-c', 'pass'], 'timeout': 30}],
+                                                  stop_requested=lambda: stopping[0])
+                    self.assertEqual(sum(bool(call.args and call.args[0][0] == sys.executable)
+                                         for call in spawn.call_args_list), 0)
+                    self.assertEqual(caught.exception.reason, 'verification_stopped' if stop else 'command_unavailable')
+                    self.assertFalse(caught.exception.uncertain)
+                    with self.assertRaisesRegex(WorkspaceWait, 'verification_output_unavailable'):
+                        self.workspace.verification_output(hashlib.sha256(b'').hexdigest())
+                finally:
+                    acquiring.set()
+                    thread.join(3)
+                self.assertFalse(thread.is_alive())
+                self.assertFalse(errors)
+
     def test_verification_does_not_receive_publishing_tokens_and_timeout_fails(self):
         with patch.dict(os.environ, {"GH_TOKEN": "not-forwarded", "GITHUB_TOKEN": "not-forwarded"}):
             records = self.workspace.verify(self.path, [{"argv": [sys.executable, "-c",

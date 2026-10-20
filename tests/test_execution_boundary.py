@@ -6,8 +6,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -117,6 +119,38 @@ b.worker_main(execute)
 '''
 
 
+class FinitePolicyRead:
+    """A real synchronous read, released by the test or a finite RED fallback."""
+
+    def __init__(self, *, gate_call=1):
+        self.loop = asyncio.get_running_loop()
+        self.gate_call = gate_call
+        self.calls = 0
+        self.lock = threading.Lock()
+        self.entered = asyncio.Event()
+        self.finished = asyncio.Event()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.returned = threading.Event()
+
+    def __call__(self):
+        with self.lock:
+            self.calls += 1
+            call = self.calls
+        if call != self.gate_call:
+            return None
+        self.started.set()
+        self.loop.call_soon_threadsafe(self.entered.set)
+        try:
+            # The old inline implementation cannot process the entered event
+            # until this finite fallback expires. It produces a bounded RED.
+            self.release.wait(1.8)
+        finally:
+            self.returned.set()
+            self.loop.call_soon_threadsafe(self.finished.set)
+        return None
+
+
 class BoundaryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -166,6 +200,173 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.identities, [{'thread_id': 'thread-1'}, {'turn_id': 'turn-1'}])
         self.assertEqual(self.events[0][1]['method'], 'hydra/workerStarted')
         self.assertNotIn('private-assignment-marker', json.dumps(self.observations()[0]['argv']))
+        self.assert_pids_gone()
+
+    async def await_read_without_blocking_loop(self, read):
+        await asyncio.wait_for(read.entered.wait(), 3)
+        heartbeat = asyncio.Event()
+        asyncio.get_running_loop().call_soon(heartbeat.set)
+        await asyncio.wait_for(heartbeat.wait(), .5)
+        self.assertFalse(read.returned.is_set(),
+                         'the parent loop resumed only after the blocking read ended')
+
+    async def finish_policy_read(self, read, *tasks):
+        # Always finish the test-owned callback and collect real worker tasks,
+        # including after a RED assertion. No test leaves an indefinite thread.
+        read.release.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 4)
+        if read.started.is_set():
+            await asyncio.wait_for(read.finished.wait(), 2)
+
+    def assert_pending_read_unknown(self, result, *, thread=None):
+        self.assertEqual(result['status'], 'transport_unknown')
+        self.assertEqual(result['detail'].get('cleanup'), 'unknown')
+        self.assertEqual(result['thread_id'], thread)
+        self.assertIsNone(result['turn_id'])
+
+    def assert_no_sdk_grant(self):
+        self.assertFalse(any(payload['method'] == 'hydra/dispatchIntent'
+                             for _, payload in self.events))
+        self.assertNotIn('thread_dispatch', [row['name'] for row in self.observations()])
+
+    async def test_policy_read_does_not_block_loop_or_execution_deadline(self):
+        read = FinitePolicyRead()
+        task = asyncio.create_task(self.run_worker(timeout=.6, before_dispatch=read))
+        try:
+            await self.await_read_without_blocking_loop(read)
+            result = await asyncio.wait_for(asyncio.shield(task), 1.2)
+            self.assertFalse(read.returned.is_set(), 'deadline waited for the policy read')
+            self.assert_pending_read_unknown(result)
+            self.assert_no_sdk_grant()
+            # Unknown refers to the still-running parent read, not a worker
+            # left alive. Check actual absence before test-finally cleanup.
+            self.assert_pids_gone()
+        finally:
+            await self.finish_policy_read(read, task)
+
+    async def test_stop_during_policy_read_collects_worker_before_read_returns(self):
+        read = FinitePolicyRead()
+        task = asyncio.create_task(self.run_worker(timeout=3, before_dispatch=read))
+        try:
+            await self.await_read_without_blocking_loop(read)
+            self.stop = True
+            result = await asyncio.wait_for(asyncio.shield(task), 1.2)
+            self.assertFalse(read.returned.is_set(), 'Stop waited for the policy read')
+            self.assert_pending_read_unknown(result)
+            self.assert_no_sdk_grant()
+            self.assert_pids_gone()
+        finally:
+            await self.finish_policy_read(read, task)
+
+    async def test_parent_cancel_during_policy_read_cannot_late_grant(self):
+        read = FinitePolicyRead()
+        task = asyncio.create_task(self.run_worker(timeout=3, before_dispatch=read))
+        try:
+            await self.await_read_without_blocking_loop(read)
+            task.cancel()
+            result = await asyncio.wait_for(asyncio.shield(task), 1.2)
+            self.assertFalse(read.returned.is_set(), 'cancellation waited for the policy read')
+            self.assert_pending_read_unknown(result)
+            self.assert_no_sdk_grant()
+            self.assert_pids_gone()
+            read.release.set()
+            await asyncio.wait_for(read.finished.wait(), 2)
+            # A late successful read has no live worker to grant and cannot
+            # retroactively turn this unconfirmed operation into a completion.
+            self.assert_pending_read_unknown(task.result())
+            self.assert_no_sdk_grant()
+            self.assert_pids_gone()
+        finally:
+            await self.finish_policy_read(read, task)
+
+    async def test_cancel_during_second_policy_read_preserves_thread_without_turn(self):
+        read = FinitePolicyRead(gate_call=2)
+        task = asyncio.create_task(self.run_worker(timeout=3, before_dispatch=read))
+        try:
+            await self.await_read_without_blocking_loop(read)
+            self.assertEqual(self.identities, [{'thread_id': 'thread-1'}])
+            self.assertEqual(read.calls, 2)
+            task.cancel()
+            result = await asyncio.wait_for(asyncio.shield(task), 1.2)
+            self.assertFalse(read.returned.is_set())
+            self.assert_pending_read_unknown(result, thread='thread-1')
+            self.assertEqual([payload['params']['operation'] for _, payload in self.events
+                              if payload['method'] == 'hydra/dispatchIntent'], ['thread/start'])
+            self.assert_pids_gone()
+            read.release.set()
+            await asyncio.wait_for(read.finished.wait(), 2)
+            self.assertEqual(self.identities, [{'thread_id': 'thread-1'}])
+            self.assertEqual([payload['params']['operation'] for _, payload in self.events
+                              if payload['method'] == 'hydra/dispatchIntent'], ['thread/start'])
+        finally:
+            await self.finish_policy_read(read, task)
+
+    async def test_pending_policy_read_is_not_reissued_for_same_raw_callback_owner(self):
+        read = FinitePolicyRead()
+        first = asyncio.create_task(self.run_worker(timeout=.6, before_dispatch=read))
+        tasks = [first]
+        try:
+            await self.await_read_without_blocking_loop(read)
+            self.assert_pending_read_unknown(await asyncio.wait_for(asyncio.shield(first), 1.2))
+            self.assertFalse(read.returned.is_set())
+            self.assert_pids_gone()
+            # Re-entry uses the exact same raw callable as its observation owner.
+            # It cannot create a second read while the original one is pending.
+            second = asyncio.create_task(self.run_worker(timeout=.15, before_dispatch=read))
+            tasks.append(second)
+            self.assert_pending_read_unknown(await asyncio.wait_for(asyncio.shield(second), .7))
+            self.assertFalse(read.returned.is_set())
+            self.assertEqual(read.calls, 1)
+            self.assert_no_sdk_grant()
+            self.assert_pids_gone()
+        finally:
+            await self.finish_policy_read(read, *tasks)
+
+    async def test_pause_then_resume_cannot_grant_an_abandoned_policy_read(self):
+        from hydra_sdlc.operations import OperatingControl
+        control = OperatingControl(self.root / 'pulse.lock', ['example/product'])
+        control.set_mode('start')
+        read, pulses = FinitePolicyRead(), []
+        def stop_requested():
+            if read.started.is_set() and not read.returned.is_set() and not pulses:
+                control.set_mode('pause')
+                pulses.append(control.reason('example/product'))
+                control.set_mode('resume')
+                return True
+            return False
+        try:
+            # The supervisor's long poll isolates the Stop observed by its
+            # dispatch task; the actual control mode is running again at guard.
+            with coordinator.operation_scope(control, 'example/product'):
+                result = await boundary.execute_worker(
+                    {'cwd': str(self.root)}, self.identity, self.event, stop_requested, None,
+                    worker_source=self.module, timeout=3, grace=.08, poll=1, before_dispatch=read)
+            self.assertEqual(len(pulses), 1)
+            self.assertIsNotNone(pulses[0])
+            self.assertIsNone(control.reason('example/product'))
+            self.assertFalse(read.returned.is_set())
+            self.assert_no_sdk_grant()
+            self.assert_pending_read_unknown(result)
+            self.assert_pids_gone()
+        finally:
+            await self.finish_policy_read(read)
+
+    async def test_policy_observer_does_not_inherit_parent_context(self):
+        caller_context = ContextVar('test_parent_policy_authority', default='unbound')
+        token = caller_context.set('parent-only-authority')
+        seen = []
+        try:
+            def read():
+                seen.append(caller_context.get())
+            result = await self.run_worker(before_dispatch=read)
+        finally:
+            caller_context.reset(token)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(seen, ['unbound', 'unbound'])
+        self.assertEqual(self.identities, [{'thread_id': 'thread-1'}, {'turn_id': 'turn-1'}])
         self.assert_pids_gone()
 
     async def test_initial_policy_denial_survives_worker_exit_or_invalid_result(self):
@@ -613,6 +814,37 @@ print(json.dumps(asyncio.run(b.execute_worker({},lambda **x:None,lambda *x:None,
         result = subprocess.run([sys.executable, '-I', '-c', script, self.module, str(self.worker), str(self.marker)],
                                 capture_output=True, text=True, timeout=5, check=True)
         self.assertEqual(json.loads(result.stdout)['status'], 'failed')
+        self.assert_pids_gone()
+
+    def test_outer_asyncio_run_does_not_join_pending_policy_read(self):
+        script = '''
+import asyncio, importlib.util, json, sys, threading
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('boundary',sys.argv[1]); b=importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+b._worker_command=lambda _: [sys.executable,'-I',sys.argv[2],sys.argv[1],'normal',sys.argv[3]]
+started=threading.Event()
+finished=threading.Event()
+def read():
+    started.set()
+    threading.Event().wait(1.5)
+    Path(sys.argv[4]).write_text('read-finished')
+    finished.set()
+result=asyncio.run(b.execute_worker({},lambda **x:None,lambda *x:None,lambda:False,None,
+    worker_source=sys.argv[1],timeout=.6,grace=.05,poll=.005,before_dispatch=read))
+print(json.dumps({'result':result,'read_started':started.is_set(),'read_finished':finished.is_set()}))
+'''
+        completion = self.root / 'parent-read-finished'
+        process = subprocess.run(
+            [sys.executable, '-I', '-c', script, self.module, str(self.worker),
+             str(self.marker), str(completion)],
+            capture_output=True, text=True, timeout=6, check=True,
+        )
+        report = json.loads(process.stdout)
+        self.assertTrue(report['read_started'])
+        self.assertFalse(report['read_finished'], 'asyncio.run joined the pending read')
+        self.assertFalse(completion.exists(), 'interpreter shutdown joined a non-daemon read')
+        self.assert_pending_read_unknown(report['result'])
+        self.assertNotIn('thread_dispatch', [row['name'] for row in self.observations()])
         self.assert_pids_gone()
 
     def test_standalone_sync_facade_needs_no_package_import(self):
