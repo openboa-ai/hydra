@@ -238,7 +238,7 @@ unavailable/unsupported 관측에도 적용한다. native_context는 이 관측 
 | kind | 타입과 추가 제약 |
 | --- | --- |
 | repository | numeric_id: Positive; full_name: canonical owner/name; url: string(2048); contract_ref: null 또는 {path: string(512), revision: git_sha 또는 null}. numeric ID가 없으면 repository value 자체를 unavailable로 두고 숫자를 추측하지 않는다. |
-| issue | number: Positive; title: string(512); state: open/closed; url: string(2048); work_kind: goal/work/null; parent_refs: IssueRef[] 또는 null; requirement_refs: RequirementRef[] 또는 null; description_excerpt: string(4096) 또는 null; description_truncated: bool. |
+| issue | number: Positive; title: string(512); state: open/closed; url: string(2048); work_kind: goal/work/null; parent_refs: (IssueRef 또는 GoalRef)[] 또는 null; requirement_refs: RequirementRef[] 또는 null; description_excerpt: string(4096) 또는 null; description_truncated: bool 또는 null. 설명을 읽지 않았으면 두 description 필드는 모두 null이며, 실제 빈 본문을 확인한 경우만 빈 excerpt/false를 쓴다. |
 | progress | issue_ref: Ref(kind=issue); attempt_id/native_step: UUID 또는 null; phase/wait_reason/next_action/pending_action/cleanup_state: Code 또는 null; head/contract_revision/expected_head/expected_base/published_head: git_sha 또는 null; branch: 기존 owned branch validator 또는 null; pr_ref: Ref 또는 null; completion_refs: Ref[] 또는 null. 기존 parser가 제공하지 않는 cleanup_state 등은 null이다. |
 | pull_request | number: Positive; url: string(2048); state: open/closed; head/base/merge_commit: git_sha 또는 null; required_check_refs/review_refs: Ref[] 또는 null. provider가 merged임을 확인하기 전에는 synthetic merge_commit_sha를 merge_commit에 넣지 않는다. |
 | check | producer: Ref 또는 null; name: string(512); head: git_sha 또는 null; status: Code; conclusion: Code 또는 null; url: string(2048) 또는 null. producer는 실제 app/actor locator이며 표시 이름을 identity로 쓰지 않는다. |
@@ -256,8 +256,11 @@ JSON number나 부동소수로 바꾸지 않고 길이·숫자 의미로 비교�
 native metadata/history에는 revision=null만 허용한다. stale 값은 원래 observed_at을 유지한다.
 
 ProjectView의 source_refs는 Ref[]이고 WorkView의 evidence_refs 및 Fact.evidence는
-EvidenceRef[]다. goal_refs는 작업 기록 계약의 GoalRef(현재 IssueRef와 같은 정확한 두 정수
-필드) 배열이며 opaque Ref로 바꾸지 않는다. spec_refs/requirement_refs는 RequirementRef[]다.
+EvidenceRef[]다. goal_refs는 작업 기록 계약의 정확한 GoalRef
+`{repository_id, issue_number, source_digest}` 배열이다. 두 ID는 Positive,
+source_digest는 위임 당시 범위를 고정한 소문자 64hex다. digest를 버리거나 현재 원문으로
+덮지 않고 opaque Ref로도 바꾸지 않는다. parent_refs 안 GoalRef에도 같은 세 필드를 보존한다.
+spec_refs/requirement_refs는 RequirementRef[]다.
 알려진 Fact에는 같은 frame의 current·complete 관측과 일치하는 revision을 가진 근거가
 필요하다. unknown Fact는 null과 reason을 갖는다. typed DecisionView를 표현할 수 있다는
 사실은 아직 미확인인 decision source mapping이나 실제 원격 답변 qualification을 완료시키지 않는다.
