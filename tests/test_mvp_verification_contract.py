@@ -495,17 +495,25 @@ class VerificationRuntimeBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
     def test_selected_source_is_read_only_while_effect_workspace_stays_writable(self):
-        fixture = self.fixture(body="source = Path(__file__)\n"
-            "original = source.read_bytes()\n"
-            "with self.assertRaises(PermissionError):\n source.write_bytes(original)\n"
-            "Path('effect').write_text('snapshot-used')")
-        original = (fixture.root / "tests/test_probe.py").read_bytes()
-        fixture.freeze()
-        # Packaging output is not part of the frozen import root.
-        fixture.write('build/lib/unrelated.py', "raise RuntimeError('untracked build output must not run')\n")
-        self.assertEqual(fixture.run(freeze=False).returncode, 0)
-        self.assertEqual((fixture.root / "effect").read_text(), "snapshot-used")
-        self.assertEqual((fixture.root / "tests/test_probe.py").read_bytes(), original)
+        for reported_root in (False, True):
+            with self.subTest(reported_root=reported_root):
+                prefix = ("os.geteuid = lambda: 0\n"
+                    "def forbidden_write(*args): raise AssertionError('privileged write oracle is not portable')\n"
+                    "Path.write_bytes = forbidden_write\n") if reported_root else ""
+                fixture = self.fixture(body=prefix + "source = Path(__file__)\n"
+                    "original = source.read_bytes()\n"
+                    "self.assertNotEqual(source.resolve(), Path.cwd() / 'tests/test_probe.py')\n"
+                    "self.assertEqual(source.stat().st_mode & 0o222, 0)\n"
+                    "if not hasattr(os, 'geteuid') or os.geteuid() != 0:\n"
+                    " with self.assertRaises(PermissionError): source.write_bytes(original)\n"
+                    "Path('effect').write_text('snapshot-used')")
+                original = (fixture.root / "tests/test_probe.py").read_bytes()
+                fixture.freeze()
+                # Packaging output is not part of the frozen import root.
+                fixture.write('build/lib/unrelated.py', "raise RuntimeError('untracked build output must not run')\n")
+                self.assertEqual(fixture.run(freeze=False).returncode, 0)
+                self.assertEqual((fixture.root / "effect").read_text(), "snapshot-used")
+                self.assertEqual((fixture.root / "tests/test_probe.py").read_bytes(), original)
 
     def test_late_background_source_write_cannot_export_pass(self):
         import time
@@ -609,6 +617,28 @@ class VerificationRuntimeBoundaryTests(unittest.TestCase):
                     (fixture.root / ('hydra_sdlc/project' + suffix)).write_bytes(b'synthetic extension placeholder')
                 self.assertNotEqual(fixture.run(freeze=False).returncode, 0)
                 self.assertFalse((fixture.root / 'effect').exists())
+
+
+    def test_existing_hash_bytecode_cache_is_not_an_execution_input(self):
+        import importlib.util
+        import py_compile
+        fixture = self.fixture(body="from hydra_sdlc import source_input\n"
+            "self.assertEqual(source_input.value, 'verified')\n"
+            "Path('effect').write_text(source_input.value)")
+        fixture.write('hydra_sdlc/__init__.py', '')
+        fixture.write('hydra_sdlc/source_input.py', "value = 'verified'\n")
+        fixture.freeze()
+        cache = Path(importlib.util.cache_from_source(str(fixture.root / 'hydra_sdlc/source_input.py')))
+        cache.parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'untracked.py'
+            source.write_text("from pathlib import Path\nPath('poisoned').write_text('forbidden')\nvalue='poisoned'\n")
+            py_compile.compile(str(source), cfile=str(cache), doraise=True,
+                invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        self.assertEqual(fixture.run(freeze=False).returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text(), 'verified')
+        self.assertFalse((fixture.root / 'poisoned').exists())
+        self.assertTrue(cache.is_file(), 'unrelated existing cache must be preserved')
 
     def test_kernel_budget_covers_documented_suite_plus_evidence_overhead(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()

@@ -273,3 +273,40 @@ The P05 MCP source and P01 installed-read record are preserved. Accepted P13/VF
 specification bytes are unchanged. Final-head independent reviews, CI, scoped
 human workflow approval, protected merge and exact-main checks remain required.
 P13-R8, live model/native operation and the full remote v1 sequence remain incomplete.
+
+
+## Warm-cache CI recovery and portable snapshot oracle -- 2026-10-21
+
+Run [39443825518](https://github.com/openboa-ai/hydra/actions/runs/39443825518)
+failed the standalone collector at original head
+`b09c93542be74e9be13275c6a4738bf05e06c288`. Both complete Python suites had
+already succeeded: 1,160 collected, 1,152 passed, eight explicit skips, zero
+failures/errors (3.11: 204.798 seconds; 3.14.2: 218.023 seconds). The collector then
+returned invalid_input/exit 2. This is a failed CI run, not a passed artifact gate.
+
+Preflight was rejecting existing PEP 3147 caches even though these are excluded
+from the fresh Git-only import snapshot. Execution-root scanning now leaves those
+unrelated caches intact; legacy sourceless modules and extension shadows remain
+rejected. The snapshot still contains only tracked Git inputs and disables cache
+writes. No cleanup or live-cache execution substitutes for source verification.
+
+A new actual subprocess control creates an unchecked-hash cache containing
+different code and a forbidden side effect beside the verified tracked source.
+It reproduced one assertion failure on the original collector. After correction,
+the verified source executes and exports PASS, the poisoned side effect is absent
+and the original cache still exists. This guards both compatibility and import
+isolation rather than merely allowing all cached code.
+
+Review also identified a nonportable test assumption: UID 0 may write a file whose
+mode is 0444. The oracle now checks the separate snapshot source identity, declared
+read-only modes, unchanged original bytes and writable effects cwd on all runs.
+The actual write-denial assertion is applied to unprivileged execution. A simulated
+root-reporting branch verifies that no write-denial assumption is used there;
+this is not a real root isolation or sandbox qualification.
+
+The full focused collector suite now passes **32 tests, no skips/failures/errors**,
+including snapshot/race/cancellation, legacy bytecode/extension rejection, safe
+output, CI shell and versioned manifest controls. Production/source bytes and the
+unrelated checkout were preserved. This record was appended afterward. Final-head
+hosted CI, independent reviews, existing human workflow approval, protected merge
+and exact-main checks remain required; native/full-v1 limits are unchanged.

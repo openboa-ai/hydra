@@ -252,6 +252,9 @@ def importable_paths(root):
     # execution below uses only the Git snapshot, with no live-root sys.path.
     for name in ("hydra_sdlc", "tests", "scripts"):
         for folder, directories, files in os.walk(root / name, followlinks=False):
+            # Warm PEP 3147 caches are not import inputs: the Git-only snapshot
+            # contains none of these untracked files and disables cache writes.
+            directories[:] = [entry for entry in directories if entry != "__pycache__"]
             for filename in files:
                 if filename.endswith(suffixes):
                     paths.add((Path(folder) / filename).relative_to(root).as_posix())
