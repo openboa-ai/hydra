@@ -80,10 +80,11 @@ class Fixture:
         self.git("commit", "--quiet", "--allow-empty", "-m", "Freeze synthetic candidate")
         self.head = self.git("rev-parse", "HEAD")
 
-    def run(self, *, output="report.json", validate=False, args=(), freeze=True):
+    def run(self, *, output="report.json", validate=False, args=(), freeze=True, driver=None):
         if freeze and not validate:
             self.freeze()
-        result = subprocess.run([sys.executable, "-I", SCRIPT, "--manifest", MANIFEST,
+        command = [sys.executable, "-I", "-c", driver, SCRIPT] if driver else [sys.executable, "-I", SCRIPT]
+        result = subprocess.run([*command, "--manifest", MANIFEST,
             "--validate-report" if validate else "--output", "artifacts/mvp-verification/" + output,
             "--checked-sha", self.head, *args], cwd=self.root, env=self.env, capture_output=True, timeout=20)
         assert CANARY.encode() not in result.stdout + result.stderr
@@ -400,6 +401,119 @@ def assert_ci_contract(text):
         raise AssertionError("Existing Mac or trusted hygiene policy changed")
 
 
+class VerificationProcessBoundaryTests(unittest.TestCase):
+    fixture = VerificationCollectorTests.fixture
+
+    @staticmethod
+    def driver(hook):
+        return ("import runpy,sys,json,os\nfrom pathlib import Path\n"
+                "script=sys.argv.pop(1)\nnamespace=runpy.run_path(script)\n" + hook
+                + "\nraise SystemExit(namespace['main']())\n")
+
+    @staticmethod
+    def add_control(fixture):
+        second = copy.deepcopy(fixture.case)
+        second.update(case_id="VF-D01-CONTROL", selectors=["test_control.Control.test_required"],
+                      fixture="tests/fixtures/mvp/verification/control.json")
+        value = json.loads((fixture.root / fixture.case["fixture"]).read_text())
+        value["case_id"] = second["case_id"]
+        fixture.json(second["fixture"], value)
+        fixture.write("tests/test_control.py", "import unittest\nfrom pathlib import Path\n"
+                      "class Control(unittest.TestCase):\n def test_required(self):\n"
+                      "  Path('control_effect').write_text('once')\n")
+        fixture.manifest["cases"].append(second)
+        fixture.save()
+
+    def test_manifest_initial_swap_cannot_replace_committed_selector(self):
+        fixture = self.fixture(body="Path('declared_effect').write_text('once')")
+        probe = fixture.root / "tests/test_probe.py"
+        probe.write_text(probe.read_text() + " def test_substituted(self):\n"
+                         "  Path('substituted_effect').write_text('forbidden')\n")
+        hook = ("original_read = Path.read_text\n"
+            "def swapping_read(path, *args, **kwargs):\n"
+            " if path == Path.cwd() / '" + MANIFEST + "':\n"
+            "  original = original_read(path, *args, **kwargs)\n"
+            "  changed = json.loads(original)\n"
+            "  changed['cases'][0]['selectors'] = ['test_probe.Probe.test_substituted']\n"
+            "  path.write_text(json.dumps(changed))\n"
+            "  try: return original_read(path, *args, **kwargs)\n"
+            "  finally: path.write_text(original)\n"
+            " return original_read(path, *args, **kwargs)\n"
+            "Path.read_text = swapping_read\n")
+        result = fixture.run(driver=self.driver(hook))
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse((fixture.root / "substituted_effect").exists(),
+                         "A transient live manifest changed the executed method")
+        self.assertEqual((fixture.root / "declared_effect").read_text(), "once")
+        self.assertEqual(fixture.report()["results"][0]["observed"][0]["selector"],
+                         "test_probe.Probe.test_required")
+
+    def test_selected_descriptors_cannot_write_to_public_result_channel(self):
+        control = self.fixture(body="print('private output')\nos.write(2,b'private output')")
+        self.assertEqual(control.run().returncode, 0)
+        for payload in (CANARY, CANARY * 20000):
+            with self.subTest(size=len(payload)):
+                fixture = self.fixture(body="Path('effect').write_text('once')\n"
+                    "for descriptor in range(3,32):\n"
+                    " try: os.write(descriptor, " + repr(payload.encode()) + ")\n"
+                    " except OSError: pass")
+                result = fixture.run()
+                self.assertEqual(result.stderr, b'')
+                self.assertEqual(len(result.stdout.splitlines()), 1)
+                self.assertIn(json.loads(result.stdout)["status"], {"PASS", "FAIL"})
+                self.assertEqual((fixture.root / "effect").read_text(), "once")
+
+    def test_import_system_exit_is_collection_error_without_cancelling_control(self):
+        fixture = self.fixture(extra="raise SystemExit(0)")
+        self.add_control(fixture)
+        self.assertNotEqual(fixture.run().returncode, 0)
+        rows = fixture.report()["results"]
+        self.assertEqual(rows[0]["observed"][0]["reasons"], ["collection_invalid"])
+        self.assertEqual(rows[1]["status"], "PASS")
+        self.assertEqual((fixture.root / "control_effect").read_text(), "once")
+
+    def test_worker_cannot_change_reported_interpreter_context(self):
+        fixture = self.fixture(body="Path('effect').write_text('once')\nsys.version_info=(9,9,9)")
+        self.assertNotEqual(fixture.run().returncode, 0)
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+
+    def test_caught_sigterm_stays_interrupted_and_cannot_export_pass(self):
+        fixture = self.fixture(body="import signal\nPath('effect').write_text('once')\n"
+            "try: os.kill(os.getpid(),signal.SIGTERM)\nexcept KeyboardInterrupt: pass")
+        self.add_control(fixture)
+        self.assertNotEqual(fixture.run().returncode, 0)
+        rows = fixture.report()["results"]
+        self.assertEqual(rows[0]["observed"][0]["reasons"], ["interrupted"])
+        self.assertEqual(rows[1]["status"], "NOT RUN")
+        self.assertFalse((fixture.root / "control_effect").exists())
+        self.assertEqual((fixture.root / "effect").read_text(), "once")
+
+    def test_export_finalization_failure_does_not_leave_reusable_pass(self):
+        for replace in (False, True):
+            with self.subTest(replace=replace):
+                fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once')")
+                hook = ("import stat\noriginal_sync = os.fsync\n"
+                    "def failed_directory_sync(fd):\n"
+                    " if stat.S_ISDIR(os.fstat(fd).st_mode):\n"
+                    + ("  target=Path.cwd()/'artifacts/mvp-verification/report.json'\n"
+                       "  target.unlink()\n  target.write_text('foreign evidence')\n" if replace else "")
+                    + "  raise OSError('" + CANARY + "')\n"
+                    " return original_sync(fd)\n"
+                    "os.fsync = failed_directory_sync\n")
+                result = fixture.run(driver=self.driver(hook))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["reason"], "export_failed")
+                self.assertNotEqual(fixture.run(validate=True, freeze=False).returncode, 0,
+                                    "Failed export remained reusable as PASS")
+                target = fixture.root / "artifacts/mvp-verification/report.json"
+                if replace:
+                    self.assertEqual(target.read_text(), "foreign evidence")
+                else:
+                    self.assertFalse(target.exists())
+                self.assertEqual((fixture.root / "effect").read_text(), "once")
+
+
 class VerificationCIContractTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
     def test_ci_shell_consumes_actual_collector_exit_and_separate_checked_revision(self):
@@ -517,10 +631,10 @@ class VerificationRuntimeBoundaryTests(unittest.TestCase):
 
     def test_late_background_source_write_cannot_export_pass(self):
         import time
-        body = ("import time\noriginal_read = Path.read_bytes\n"
+        hook = ("import time\noriginal_read = Path.read_bytes\n"
             "def observed_read(path):\n"
             " data = original_read(path)\n"
-            " if path == Path.cwd() / 'zz_binding_tail.txt':\n"
+            " if path == Path.cwd() / 'zz_binding_tail.txt' and Path('execution_finished').exists():\n"
             "  Path('race_go').write_text('go')\n"
             "  deadline = time.monotonic() + 6\n"
             "  while not Path('race_done').exists():\n"
@@ -536,7 +650,7 @@ class VerificationRuntimeBoundaryTests(unittest.TestCase):
             "(root/'race_done').write_text('done')\n")
         for mutate in (False, True):
             with self.subTest(mutate=mutate):
-                fixture = self.fixture(body=body)
+                fixture = self.fixture(body="Path('execution_finished').write_text('done')")
                 fixture.write("zz_binding_tail.txt", "late tracked input\n")
                 fixture.git("add", "zz_binding_tail.txt")
                 fixture.freeze()
@@ -544,7 +658,9 @@ class VerificationRuntimeBoundaryTests(unittest.TestCase):
                     str(fixture.root), 'mutate' if mutate else 'observe'],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                 try:
-                    result = fixture.run(freeze=False)
+                    # The injector is external to selected tests: isolating their
+                    # interpreter must not remove this actual source-write oracle.
+                    result = fixture.run(freeze=False, driver=VerificationProcessBoundaryTests.driver(hook))
                     self.assertEqual(child.wait(timeout=12), 0)
                 finally:
                     if child.poll() is None:

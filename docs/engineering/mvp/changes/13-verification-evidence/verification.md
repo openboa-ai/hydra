@@ -310,3 +310,66 @@ output, CI shell and versioned manifest controls. Production/source bytes and th
 unrelated checkout were preserved. This record was appended afterward. Final-head
 hosted CI, independent reviews, existing human workflow approval, protected merge
 and exact-main checks remain required; native/full-v1 limits are unchanged.
+
+
+## Pinned definitions and separated execution -- 2026-10-21
+
+Parent `94b4084cea094295b01033089d9b0016c86e454b` integrated verified main
+`7e0b570d85017f21c193248842873f55d55e6ff1` without rewriting the nine P13
+paths or five independent P09 paths. All four jobs in
+[run 39456774067](https://github.com/openboa-ai/hydra/actions/runs/39456774067)
+passed, and both real hosted artifacts passed read-only binding validation against
+the provider-verified checked merge tree, including their archive digests. Those
+selected-source results do not cover the five further code-review defects below.
+They are historical evidence rather than final evidence for this correction.
+
+The correction has three boundaries:
+
+- Definitions are parsed from the Git-only read-only snapshot before selection.
+  Manifest, fixture and requirement interpretation cannot come from transient live
+  replacements. The manifest/policy digests use those same pinned inputs, and the
+  original source is checked again before publication.
+- Only the supervisor owns public output and publication. A fresh isolated Python
+  child imports and runs tests using private stdin/stdout, closed inherited
+  descriptors, bounded JSON transport and cleanup of its owned process session.
+  The supervisor validates schema, counters, refs and interpreter context. Normal
+  test output stays discarded; corrupt or oversized private output is never
+  forwarded. This is process/output separation within one user identity, with the
+  existing filesystem/effects cwd. It is not OS sandbox or CI authority evidence.
+- A failed post-link finalization removes only this export's report inode. Prior
+  evidence and a foreign replacement remain untouched. Temporary-link cleanup and
+  visible-path read-back are part of finalization before success is reported.
+
+SIGTERM has a persistent latch in each collector process. Catching the injected
+KeyboardInterrupt in a selected method cannot turn cancellation into PASS.
+SystemExit during import is collection_invalid and allows an independent valid
+case to run; a test-method exit remains a test error through unittest.
+
+Five new behavioral cases ran against unchanged parent source and reproduced
+**six actual assertion failures, zero setup errors/skips**: transient-manifest
+selection, public descriptor writes (including oversized output), import exit
+classification, caught SIGTERM, and reuse after failed export finalization. The
+last case also confirms preservation of a foreign replacement and no effect
+replay. The initial private harness qualification counted subtest suffixes as
+distinct methods; its count was corrected against the same preserved log without
+rerunning or changing the six assertions.
+
+The initial corrected implementation passed **90 tests, zero skips/errors**:
+37 collector cases and 53 adjacent project/identity/CI regressions. Self-review
+then reproduced one additional assertion failure on that unpublished separated
+baseline: a test could change sys.version_info and report a false interpreter.
+The supervisor now requires the actual interpreter context it launched. The final
+collector suite passes **38 tests, zero failures/errors/skips**; the unaffected
+53 adjacent passing regressions are retained rather than rerun.
+
+The existing late background-writer regression keeps its actual already-scanned
+file mutation and unchanged-writer control. Its injection hook now belongs to the
+external test driver; it no longer assumes selected code can monkeypatch the
+supervisor after deliberate process separation. Both controls pass, with the
+mutated source still preventing export.
+
+P13 Revision 4 and the verification definition remain unchanged. There is no
+workflow/protection/authority expansion, new model runtime or P13-R8 activation.
+Private test logs and host paths remain outside public artifacts. Final corrected
+head CI, independent code/security reviews, scoped CODEOWNER approval, protected
+merge and exact-main checks remain required; native/full-v1 limits are unchanged.

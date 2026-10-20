@@ -24,9 +24,11 @@ import os
 from pathlib import Path
 import re
 import secrets
+import selectors
 import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -45,6 +47,8 @@ REASONS = {"passed", "test_failure", "test_error", "required_skipped", "expected
 EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_operation",
               "verify_only_command", "trusted_ci_attestation"}
 LIMITATIONS = sorted(EXCLUSIONS)
+_TERMINATION_REQUESTED = False
+_WORKER_LIMIT = 262144
 
 
 class Invalid(Exception):
@@ -82,15 +86,20 @@ def regular(root, relative):
     return current
 
 
-def read_json(path):
+def decode_json(data):
     def unique(pairs):
         result = {}
         for key, value in pairs:
             require(key not in result)
             result[key] = value
         return result
-    require(path.stat().st_size <= 262144)
-    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
+    require(len(data) <= _WORKER_LIMIT)
+    return json.loads(data, object_pairs_hook=unique)
+
+
+def read_json(path):
+    require(path.stat().st_size <= _WORKER_LIMIT)
+    return decode_json(path.read_text(encoding="utf-8"))
 
 
 def section_anchors(text):
@@ -194,7 +203,7 @@ def load_manifest(root):
     return value
 
 
-def binding(root, manifest, checked, base, source):
+def binding(root, manifest, checked, base, source, *, inputs=None):
     head = git(root, "rev-parse", "HEAD").decode("ascii").strip()
     require(SHA.fullmatch(head) and (checked is None or checked == head))
     for revision in (base, source):
@@ -238,10 +247,11 @@ def binding(root, manifest, checked, base, source):
     # imports also use a separate read-only Git snapshot, never these live files.
     git(root, "diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--")
     require(importable_paths(root) <= tracked)
+    inputs = root if inputs is None else inputs
     return {"candidate_head": head, "source_head": source or head, "base_sha": base,
             "base_reason": None if base else "not_supplied", "source_revision": "sha256:" + digest.hexdigest(),
-            "manifest_revision": sha256(regular(root, MANIFEST).read_bytes()),
-            "policy_revision": sha256(regular(root, POLICY).read_bytes())}
+            "manifest_revision": sha256(regular(inputs, MANIFEST).read_bytes()),
+            "policy_revision": sha256(regular(inputs, POLICY).read_bytes())}
 
 
 def importable_paths(root):
@@ -309,6 +319,16 @@ def quiet():
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
     return result_fd
+
+
+def install_termination_handler():
+    global _TERMINATION_REQUESTED
+    _TERMINATION_REQUESTED = False
+    def interrupted(*_):
+        global _TERMINATION_REQUESTED
+        _TERMINATION_REQUESTED = True
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, interrupted)
 
 
 class Result(unittest.TestResult):
@@ -381,12 +401,17 @@ def execute(root, manifest, pins):
                     suite = collect(root, selector)
                     collected = 1
                     suite.run(result)
-                except (KeyboardInterrupt, SystemExit):
+                except KeyboardInterrupt:
                     interrupted = True
                     reasons = ["interrupted"]
+                except SystemExit:
+                    reasons = ["collection_invalid"] if not collected else ["test_error"]
                 except Exception:
                     reasons = ["collection_invalid"] if not collected else ["test_error"]
                 reasons += result.reasons
+                if _TERMINATION_REQUESTED:
+                    interrupted = True
+                    reasons.append("interrupted")
                 if not reasons and (result.testsRun != 1 or result.completed != 1):
                     reasons = ["not_executed"]
             outcomes.append({"selector": selector, "collected": collected, "executed": result.testsRun,
@@ -405,6 +430,88 @@ def execute(root, manifest, pins):
             "limitations": LIMITATIONS, "remaining_owner": None if passed else "implementation_owner"})
     return {"schema_version": VERSION, "scope": "selected_source_d", "excluded": LIMITATIONS, "run_alias": run_alias,
             "binding": pins, "results": entries}
+
+
+def _worker_main():
+    """Private child entry: stdout here is a supervisor pipe, never public stdout."""
+    result_fd = quiet()
+    install_termination_handler()
+    sys.dont_write_bytecode = True
+    try:
+        request = decode_json(sys.stdin.buffer.read(_WORKER_LIMIT + 1))
+        require(type(request) is dict and set(request) == {"root", "pins"})
+        root = Path(request["root"]).resolve()
+        require(Path(__file__).resolve() == regular(root, SCRIPT))
+        manifest = load_manifest(root)
+        report = execute(root, manifest, request["pins"])
+    except KeyboardInterrupt:
+        report = {"worker_interrupted": True}
+    except BaseException:
+        os.close(result_fd)
+        return 2
+    with os.fdopen(result_fd, "wb") as stream:
+        stream.write(json.dumps(report, ensure_ascii=True, sort_keys=True).encode("ascii"))
+    return 0
+
+
+def isolated_execute(root, manifest, pins):
+    """Bounded private transport; selected imports never inherit public handles.
+
+    This is output/process separation, not a sandbox for same-user code. Only the
+    supervisor validates, exports, and writes the public result. Its original
+    stdout descriptor is closed in the fresh child along with other inherited fds.
+    """
+    bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
+    request = json.dumps({"root": str(root), "pins": pins}, ensure_ascii=True).encode("ascii")
+    require(len(request) <= _WORKER_LIMIT)
+    with tempfile.TemporaryFile() as channel:
+        channel.write(request)
+        channel.seek(0)
+        child = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(root / SCRIPT)],
+            stdin=channel, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            close_fds=True, start_new_session=True)
+        try:
+            data, deadline = bytearray(), time.monotonic() + 600
+            with selectors.DefaultSelector() as poller:
+                poller.register(child.stdout, selectors.EVENT_READ)
+                while True:
+                    require(time.monotonic() < deadline)
+                    if not poller.select(.1):
+                        continue
+                    chunk = os.read(child.stdout.fileno(), 65536)
+                    if not chunk:
+                        break
+                    data.extend(chunk)
+                    require(len(data) <= _WORKER_LIMIT)
+            returncode = child.wait(timeout=2)
+            if returncode in {-signal.SIGTERM, -signal.SIGINT}:
+                raise KeyboardInterrupt()
+            require(returncode == 0)
+            report = decode_json(data)
+            if report == {"worker_interrupted": True}:
+                raise KeyboardInterrupt()
+            # Validate counts and source references in the parent, never trust a
+            # status string or forward malformed/private child output.
+            validate(report, root, manifest, pins)
+            expected_environment = {"python": ".".join(map(str, sys.version_info[:3])),
+                                    "execution": "local_subprocess"}
+            require(all(row["environment"] == expected_environment for row in report["results"]))
+            return report
+        finally:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            child.wait(timeout=2)
+            child.stdout.close()
 
 
 def validate(report, root, manifest, pins):
@@ -473,7 +580,7 @@ def export(root, relative, report):
     require(len(data) <= 262144)
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     temp = ".pending-" + secrets.token_hex(8)
-    created = False
+    created, linked, identity = False, False, None
     try:
         for part in ARTIFACT.parts:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
@@ -485,15 +592,39 @@ def export(root, relative, report):
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
+            info = os.fstat(stream.fileno())
+            identity = info.st_dev, info.st_ino
         # dir_fd pins the validated parent; no-replace link preserves concurrent/old evidence.
         os.link(temp, target.name, src_dir_fd=descriptor, dst_dir_fd=descriptor, follow_symlinks=False)
+        linked = True
         os.fsync(descriptor)
+        os.unlink(temp, dir_fd=descriptor)
+        created = False
+        os.fsync(descriptor)
+        visible = artifact_path(root, relative)
+        info = visible.stat(follow_symlinks=False)
+        require((info.st_dev, info.st_ino) == identity)
+    except BaseException:
+        if linked:
+            try:
+                info = os.stat(target.name, dir_fd=descriptor, follow_symlinks=False)
+                if (info.st_dev, info.st_ino) == identity:
+                    os.unlink(target.name, dir_fd=descriptor)
+            except FileNotFoundError:
+                pass
+        raise
     finally:
         try:
             if created:
-                os.unlink(temp, dir_fd=descriptor)
+                try:
+                    os.unlink(temp, dir_fd=descriptor)
+                except OSError:
+                    pass
         finally:
-            os.close(descriptor)
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 class Parser(argparse.ArgumentParser):
@@ -505,7 +636,7 @@ def main():
     result_fd = quiet()
     reason, code = "invalid_input", 2
     try:
-        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        install_termination_handler()
         sys.dont_write_bytecode = True
         parser = Parser(description=__doc__)
         parser.add_argument("--manifest", default=MANIFEST, choices=[MANIFEST])
@@ -518,24 +649,32 @@ def main():
         require(bool(args.output) != bool(args.validate_report))
         root = Path.cwd().resolve()
         require(git(root, "rev-parse", "--show-toplevel").decode().strip() == str(root))
-        manifest = load_manifest(root)
-        pins = binding(root, manifest, args.checked_sha, args.base_sha, args.source_head)
-        if args.validate_report:
-            passed = validate(read_json(artifact_path(root, args.validate_report)), root, manifest, pins)
-        else:
-            # Fail malformed output paths before tests; filesystem failures after execution never rerun tests.
-            artifact_path(root, args.output, create=True)
-            with source_snapshot(root, pins["candidate_head"]) as snapshot:
-                report = execute(snapshot, manifest, pins)
-            require(binding(root, load_manifest(root), args.checked_sha, args.base_sha, args.source_head) == pins)
-            passed = validate(report, root, manifest, pins)
-            reason = "export_failed"
-            export(root, args.output, report)
+        head = git(root, "rev-parse", "HEAD").decode("ascii").strip()
+        require(SHA.fullmatch(head) and (args.checked_sha is None or args.checked_sha == head))
+        with source_snapshot(root, head) as snapshot:
+            # Parse every definition from pinned Git inputs before selecting or
+            # executing methods; live manifest replacement cannot select work.
+            manifest = load_manifest(snapshot)
+            pins = binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot)
+            require(pins["candidate_head"] == head)
+            if args.validate_report:
+                passed = validate(read_json(artifact_path(root, args.validate_report)), snapshot, manifest, pins)
+            else:
+                artifact_path(root, args.output, create=True)
+                report = isolated_execute(snapshot, manifest, pins)
+                require(binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot) == pins)
+                passed = validate(report, snapshot, manifest, pins)
+                reason = "export_failed"
+                export(root, args.output, report)
         reason, code = ("passed", 0) if passed else ("required_evidence_incomplete", 1)
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         reason, code = "interrupted", 2
+    except SystemExit:
+        reason, code = "invalid_input", 2
     except Exception:
         pass
+    if _TERMINATION_REQUESTED:
+        reason, code = "interrupted", 2
     os.write(result_fd, (json.dumps({"status": "PASS" if code == 0 else "FAIL", "reason": reason}, sort_keys=True) + "\n").encode("ascii"))
     os.close(result_fd)
     return code
