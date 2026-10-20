@@ -150,3 +150,80 @@ P01 및 후속 source 호환 변경은 이 후보에 포함하지 않았다.
 
 이 단계는 내부 handler와 저장 경계의 source 검증이다. 후속 transport 인증, 실제 원격
 Codex 조작, 설치·운영 수용은 포함하지 않는다. 원격 CI·보호 병합·main 확인도 아직 남아 있다.
+
+
+## 현재 main 코드와의 통합 재검증 — 2026-10-20
+
+위 931개 결과는 원래 P02 source 후보의 역사적 증거다. 이번 검증은 main 코드
+`c198a49b537fbcca5598377d3a5e33f7a64c2c7e`와 승인된 설계 문서 기준을 합친
+`a240bc1a86a969b7247b4df2f33ee1641512be35`(tree
+`da00be72c05caefcd91f864b878235b8a0d0c544`)에 위 최종 artifact의 네 source/test 파일만
+적용한 별도 격리 snapshot을 대상으로 했다. 네 파일의 bytes는 원래 검토 판본
+`29db133018dc69f60e97808d2652db8280ab380c`와 동일하다. 기존 931개 결과를 이 통합 판본의
+실행 증거로 대신하지 않았다.
+
+P02 revision 4와 CP revision 7은 수용 판본과 bytes가 같다. 현재 main의 `native.py`,
+`test_operation_integration.py`, CI workflow는 overlay에서 제외하고 원래 hash를 유지했다.
+따라서 native writable/review/stale-review retirement와 실제 concurrent Pause의 순서,
+Pause 이후 retirement 거절, ACK/read-back 유실 뒤 exact stopped recovery를 포함한 기존
+main의 경계를 함께 검사했다. P01/P03/P05와 후속 MCP source는 이 패킷에 포함하지 않았다.
+
+| 실제 통합 검증 | 결과 |
+| --- | --- |
+| focused admission·운영 경계·native·checkpoint 회귀 8개 selector | 177개 PASS, skip 0, failure/error 0, 32.292초 |
+| 같은 snapshot 전체 `python -m unittest discover -s tests -v` | 947개 수집·실행, **922 PASS, 25 skip, failure/error 0**, 253.734초, exit 0 |
+| 실행 환경 | Python 3.12.7, `mcp==2.3.0`, `mcp-types==2.3.0` |
+| 보존 검증 | snapshot 187개 파일, 네 overlay 파일, 제품 checkout 파일과 HEAD의 실행 전후 hash/identity 동일 |
+
+25개 skip은 직전 main native retirement 검증의 skip 항목 집합과 동일하며 PASS로 세지 않는다.
+focused selector는 `test_admission_cas.py`, `test_control_commands.py`, `test_operations.py`,
+`test_operation_boundary.py`, `test_operation_integration.py`, `test_native.py`,
+`test_native_wait_identity.py`, `test_checkpoint_continuation.py`다. focused 통과 뒤 전체 suite를
+한 번 실행했으며 그 후 source/test 변경은 없다. 이 문단은 관측한 결과만 추가한 검증 문서다.
+
+이 결과는 현재 main 코드와의 source 호환·격리 fixture 검증이다. 실제 배포 시 remote base와
+최종 head를 다시 대조하고, 해당 head의 필수 review/CI와 보호 병합 및 실제 merge SHA의 main
+검사를 각각 확인해야 한다. transport 인증·원격 Codex 조작·설치 runtime qualification은
+이 결과로 통과 처리하지 않는다.
+
+
+## PR #11 오류 분류·권한 갱신·관측 시각 수정 — 2026-10-20
+
+리뷰 대상 `4e2f55e9c6afdd5acd8a290c5d86026ad3c54a45`(tree
+`884c5e971283bcd6bd7daaddc16496130c33af7e`)의 네 지적을 P02 revision 4 안에서 수정했다.
+maintained spec §3.2는 아래 경계와 오류 우선순위를 명시한다. 위 947개 결과는 수정 전 증거다.
+
+- 지원하지 않는 schema/action의 object body는 common identity/container 검증 뒤 opaque하게
+  분기한다. 지원 admission의 closed fields는 유지한다.
+- 실제 replace의 성공과 실패를 구분한다. 좁은 permission 오류와 잠금 안 destination 불변이
+  함께 확인될 때만 확정 거절하고, 효과 후 오류·불명확한 오류·확인 실패는 unknown을 유지한다.
+- 성공 CAS·no-op·한 번의 unknown 복구 관측에서 snapshot/time을 같은 잠금 안에서 얻는다.
+  formatter는 새 clock/read를 호출하지 않는다. legacy dict API와 저장 schema는 유지한다.
+- repository 조회 후 current config/runtime을 관측하고 authority를 마지막에 갱신한다.
+  config 실패, current authority, repository 결과, 원 expected와 runtime 비교 순서로 판정한다.
+  설정 조회 중 철회된 grant로 쓰지 않으며 외부 원본 전체의 원자성을 주장하지 않는다.
+
+| 관측한 검증 | 실제 결과와 oracle |
+| --- | --- |
+| 수정 전 행동 RED 9개 | assertion 실패 7개, 잘못된 unsupported 분류의 business error 1개, 기존 ambiguous-error 보존 1개 PASS. import/API 부재 오류는 아님 |
+| 같은 selector 수정 후 GREEN | 9 PASS, 0 skip, 0.032초 |
+| 추가 regression 포함 focused 8개 suite | **189 PASS, 0 skip**, failure/error 0, 32.097초 |
+| 같은 최종 source/test/spec의 전체 suite | **959개 수집·실행, 934 PASS, 25 skip**, failure/error 0, 254.857초, exit 0 |
+| 독립 코드·보안 리뷰 | 아래 frozen source/test와 spec의 경계 검토 완료, 추가 material finding 없음. 정적 리뷰는 실행 결과와 별도 |
+| 실행 전후 보존 | 격리 snapshot·overlay·제품 checkout 파일 hash 및 제품 HEAD 불변 |
+
+RED/GREEN과 focused/full은 Python 3.12.7, `mcp==2.3.0`, `mcp-types==2.3.0`에서
+수행했다. 25개 skip은 수정 전 947개 suite의 항목 집합과 정확히 동일하며 PASS로 세지 않는다.
+기존 실제 process 경합·retirement 회귀와 함께, 신규 TC는 실제 replace 전후 오류, recovery
+실패, intervening writer, 잠금 내 clock, 설정 재조회 중 권한 철회 및 runtime 변경을 검증한다.
+focused/full 이후 source/test 변경은 없다. 이 문단은 관측 결과만 추가한 검증 companion이다.
+
+| 최종 source artifact | SHA-256 |
+| --- | --- |
+| `hydra_sdlc/operations.py` | `ff959755823234b44f6a7e656157ae5d69a03f4b41e7160c1fa0d6712efcc1c1` |
+| `hydra_sdlc/control_commands.py` | `b911cd7a1c2a33f93b0d760c4645468aca57247adc9a7c8c96ed49da6afc8bbc` |
+| `tests/test_admission_cas.py` | `3c733cc2206ee458c86ad34657237698f1bb33fd36b8fd519db8c00693936fd5` |
+| `tests/test_control_commands.py` | `0011630e8ed5ac055b0df6e3c3f5325409888f72652c33f3542e44987d49b41f` |
+
+새 head의 hosted CI·코드/보안 리뷰, 보호 병합 및 실제 main 검증은 별도로 확인한다.
+이 결과는 설치된 transport의 권한 활성화·실제 원격 Codex 조작·운영 수용의 증거가 아니다.

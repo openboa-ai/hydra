@@ -42,6 +42,15 @@ class OperationDenied(RuntimeError):
         super().__init__(reason)
 
 
+class OperationUncertain(OperationDenied):
+    """Replacement may have happened; current state is not a request receipt."""
+
+    def __init__(self, reason="operation_state_unknown", observation=None, observation_at=None):
+        self.observation = observation
+        self.observation_at = observation_at
+        super().__init__(reason)
+
+
 def _default():
     return {"version": 1, "revision": 0, "global_mode": "stopped", "projects": {}, "updated_at": None}
 
@@ -117,6 +126,19 @@ def _safe_file(info):
 
 def _io_reason(exc):
     return "operation_state_unsafe" if exc.errno in {errno.ELOOP, errno.ENOTDIR} else "operation_state_unavailable"
+
+
+@dataclass
+class _WriteAttempt:
+    replacement_completed: bool = False
+    replacement_unknown: bool = False
+
+
+@dataclass(frozen=True)
+class AdmissionReadback:
+    """An owned per-call snapshot paired with its locked observation time."""
+    snapshot: dict
+    observed_at: str
 
 
 @dataclass(frozen=True)
@@ -209,7 +231,7 @@ class OperatingControl:
                 raise OperationDenied("operation_state_unsafe")
 
     @contextmanager
-    def _locked(self, *, exclusive, create):
+    def _locked(self, *, exclusive, create, blocking=True):
         owner = _execution_owner()
         existing = _held_locks.get().get(self._key)
         caller_failed = False
@@ -269,8 +291,9 @@ class OperatingControl:
                     # An async caller must never block its event loop waiting
                     # for an effect that needs that same loop to finish. CLI
                     # controls can wait for the bounded admitted effect; async
-                    # callers get an explicit retryable hold instead.
-                    if owner[2] is not None:
+                    # callers and explicitly nonblocking typed commands get
+                    # a hold instead of retaining a checked grant while queued.
+                    if not blocking or owner[2] is not None:
                         lock_mode |= fcntl.LOCK_NB
                     try:
                         fcntl.flock(fd, lock_mode)
@@ -335,9 +358,19 @@ class OperatingControl:
         finally:
             os.close(fd)
 
-    def snapshot(self):
-        with self._locked(exclusive=False, create=False) as held:
-            return self._read(held)[0]
+    def snapshot(self, *, blocking=True):
+        return self.snapshot_observed(blocking=blocking).snapshot
+
+    @staticmethod
+    def _readback(snapshot):
+        return AdmissionReadback({**snapshot, "projects": dict(snapshot["projects"])},
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+
+    def snapshot_observed(self, *, blocking=True):
+        if type(blocking) is not bool:
+            raise OperationDenied("invalid_command")
+        with self._locked(exclusive=False, create=False, blocking=blocking) as held:
+            return self._readback(self._read(held)[0])
 
     @staticmethod
     def _reason(snapshot, repository):
@@ -388,55 +421,121 @@ class OperatingControl:
         except OSError as exc:
             raise OperationDenied(_io_reason(exc)) from exc
 
-    def _set_mode(self, action, repository):
+    def set_mode_if_current(self, action, repository=None, *, expected_revision, blocking=True):
+        """Separate optimistic-concurrency entry; callers retain authority checks."""
+        return self._compare_and_set(action, repository, expected_revision=expected_revision,
+                                     blocking=blocking, observed=False)
+
+    def set_mode_if_current_observed(self, action, repository=None, *, expected_revision, blocking=True):
+        """The same CAS with its exact in-lock observation, without a new store."""
+        return self._compare_and_set(action, repository, expected_revision=expected_revision,
+                                     blocking=blocking, observed=True)
+
+    def _compare_and_set(self, action, repository, *, expected_revision, blocking, observed):
+        if expected_revision is None:
+            raise OperationDenied("precondition_required")
+        if type(expected_revision) is not int or not 0 <= expected_revision <= MAX_REVISION:
+            raise OperationDenied("invalid_command")
+        if type(blocking) is not bool:
+            raise OperationDenied("invalid_command")
+        try:
+            return self._set_mode(action, repository, expected_revision=expected_revision,
+                                  blocking=blocking, observed=observed)
+        except OperationUncertain as exc:
+            # One bounded read, not a mutation retry or reconstructed receipt.
+            observation_at = None
+            try:
+                if observed:
+                    readback = self.snapshot_observed(blocking=blocking)
+                    observation, observation_at = readback.snapshot, readback.observed_at
+                else:
+                    observation = self.snapshot() if blocking else self.snapshot(blocking=False)
+            except (OperationDenied, OSError):
+                observation = None
+            raise OperationUncertain(observation=observation, observation_at=observation_at) from exc
+        except OSError as exc:
+            raise OperationDenied(_io_reason(exc)) from exc
+
+    def _set_mode(self, action, repository, *, expected_revision=None, blocking=True, observed=False):
         repository = self._target(repository)
         if not isinstance(action, str) or action not in _ACTIONS:
             raise OperationDenied("operation_state_action_invalid")
-        with self._locked(exclusive=True, create=True) as held:
-            snapshot, before = self._read(held)
-            mode = _ACTIONS[action]
-            if repository is not None and mode == "running" and snapshot["global_mode"] != "running":
-                raise OperationDenied("host_" + snapshot["global_mode"])
-            if snapshot["revision"] == MAX_REVISION:
-                raise OperationDenied("operation_state_revision_exhausted")
-            if repository is None:
-                snapshot["global_mode"] = mode
-            else:
-                snapshot["projects"][repository] = mode
-            snapshot["revision"] += 1
-            snapshot["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        attempt = _WriteAttempt()
+        try:
+            with self._locked(exclusive=True, create=True, blocking=blocking) as held:
+                snapshot, before = self._read(held)
+                mode = _ACTIONS[action]
+                if expected_revision is not None and snapshot["revision"] != expected_revision:
+                    raise OperationDenied("stale_revision")
+                if repository is not None and mode == "running" and snapshot["global_mode"] != "running":
+                    raise OperationDenied("host_" + snapshot["global_mode"])
+                if expected_revision is not None:
+                    stored = snapshot["global_mode"] if repository is None else snapshot["projects"].get(repository, "running")
+                    if stored == mode or (stored == "stopped" and mode == "paused"):
+                        return self._readback(snapshot) if observed else snapshot
+                if snapshot["revision"] == MAX_REVISION:
+                    raise OperationDenied("operation_state_revision_exhausted")
+                if repository is None:
+                    snapshot["global_mode"] = mode
+                else:
+                    snapshot["projects"][repository] = mode
+                snapshot["revision"] += 1
+                snapshot["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                snapshot = self._write_snapshot(snapshot, before, held, attempt)
+                return self._readback(snapshot) if observed else snapshot
+        except (OSError, OperationDenied) as exc:
+            # The transaction also includes lock/parent verification and descriptor
+            # cleanup on context exit, after _write_snapshot has returned.
+            if expected_revision is not None and (attempt.replacement_completed or attempt.replacement_unknown):
+                raise OperationUncertain() from exc
+            raise
+
+    def _write_snapshot(self, snapshot, before, held, attempt):
+        try:
+            _validate(snapshot)
+            payload = (json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(payload) > MAX_SETTINGS_BYTES:
+                raise ValueError("Settings too large")
+        except (ValueError, OperationDenied) as exc:
+            raise OperationDenied("operation_state_invalid") from exc
+        temporary = "." + self.settings_path.name + "." + uuid.uuid4().hex + ".tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     0o600, dir_fd=held.parent)
+        try:
+            offset = 0
+            while offset < len(payload):
+                count = os.write(fd, payload[offset:])
+                if count <= 0:
+                    raise OperationDenied("operation_state_unavailable")
+                offset += count
+            os.fsync(fd)
+            _safe_file(os.fstat(fd))
+            if self._read(held)[1] != before:
+                raise OperationDenied("operation_state_changed")
+            self._check_lock(held)
             try:
-                _validate(snapshot)
-                payload = (json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-                if len(payload) > MAX_SETTINGS_BYTES:
-                    raise ValueError("Settings too large")
-            except (ValueError, OperationDenied) as exc:
-                raise OperationDenied("operation_state_invalid") from exc
-            temporary = "." + self.settings_path.name + "." + uuid.uuid4().hex + ".tmp"
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                         0o600, dir_fd=held.parent)
-            try:
-                offset = 0
-                while offset < len(payload):
-                    count = os.write(fd, payload[offset:])
-                    if count <= 0:
-                        raise OperationDenied("operation_state_unavailable")
-                    offset += count
-                os.fsync(fd)
-                _safe_file(os.fstat(fd))
-                if self._read(held)[1] != before:
-                    raise OperationDenied("operation_state_changed")
-                self._check_lock(held)
                 os.replace(temporary, self.settings_path.name, src_dir_fd=held.parent, dst_dir_fd=held.parent)
-                os.fsync(held.parent)
-                # The returned revision is read back while the exclusive lock is held.
-                observed = self._read(held)[0]
-                if observed != snapshot:
-                    raise OperationDenied("operation_state_changed")
-                return observed
-            finally:
-                os.close(fd)
-                try:
-                    os.unlink(temporary, dir_fd=held.parent)
-                except FileNotFoundError:
-                    pass
+            except OSError as exc:
+                # Some filesystems can report an error after completing a
+                # rename. Only a narrow permission failure plus an unchanged
+                # destination is treated as a confirmed pre-effect rejection.
+                attempt.replacement_unknown = True
+                if exc.errno in {errno.EACCES, errno.EPERM, errno.EROFS}:
+                    try:
+                        if self._read(held)[1] == before:
+                            attempt.replacement_unknown = False
+                    except (OSError, OperationDenied):
+                        pass
+                raise
+            attempt.replacement_completed = True
+            os.fsync(held.parent)
+            observed = self._read(held)[0]
+            if observed != snapshot:
+                raise OperationDenied("operation_state_changed")
+            return observed
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(temporary, dir_fd=held.parent)
+            except FileNotFoundError:
+                pass
