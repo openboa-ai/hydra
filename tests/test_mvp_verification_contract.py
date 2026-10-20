@@ -405,6 +405,67 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_compact_maximum_manifest_reserves_private_worker_envelope(self):
+        fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once\\n')")
+        # Cover the fresh-exec path on every host, including hosts that can fork.
+        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() +
+                      '\ndef _fork_available(): return False\n')
+        fixture.case['selectors'] = ['test_probe.C.test_required']
+        compact = lambda: json.dumps(fixture.manifest, separators=(',', ':'))
+        name = 'C' + 'A' * (262_144 - len(compact().encode()))
+        fixture.case['selectors'] = ['test_probe.' + name + '.test_required']
+        fixture.write(MANIFEST, compact())
+        self.assertEqual((fixture.root / MANIFEST).stat().st_size, 262_144)
+        fixture.write('tests/test_probe.py', 'import unittest\nfrom pathlib import Path\nclass ' + name
+            + '(unittest.TestCase):\n def test_required(self):\n'
+              "  with Path('effect').open('a') as f: f.write('once\\n')\n")
+        result = fixture.run()
+        self.assertEqual(result.returncode, 0, 'Accepted selector was rejected by private request framing')
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+        self.assertEqual(fixture.run(validate=True).returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+
+    def test_result_counters_cannot_replace_actual_method_invocation(self):
+        for mode in ('class_override', 'import_assignment', 'double_call'):
+            with self.subTest(mode=mode):
+                fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once\\n')")
+                path = fixture.root / 'tests/test_probe.py'
+                lines = ("result.startTest(self)\n" +
+                    ("self.test_required()\nself.test_required()\n" if mode == 'double_call' else '') +
+                    "result.stopTest(self)\n")
+                if mode == 'class_override':
+                    source = '\n def run(self,result):\n' + ''.join('  ' + line + '\n' for line in lines.splitlines())
+                else:
+                    source = '\ndef counted_only(self,result):\n' + ''.join(' ' + line + '\n' for line in lines.splitlines())
+                    source += 'Probe.run=counted_only\n'
+                path.write_text(path.read_text() + source)
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'Counters certified an omitted or repeated method')
+                self.assertNotEqual(fixture.report()['results'][0]['status'], 'PASS')
+                effect = fixture.root / 'effect'
+                self.assertEqual(effect.read_text().splitlines() if effect.exists() else [],
+                                 ['once', 'once'] if mode == 'double_call' else [])
+                self.assertNotEqual(fixture.run(validate=True).returncode, 0)
+
+        # The invocation probe must preserve real async unittest execution.
+        fixture = self.fixture(extra='import asyncio', body="await asyncio.sleep(0)\nPath('effect').write_text('once')")
+        path = fixture.root / 'tests/test_probe.py'
+        path.write_text(path.read_text().replace('class Probe(unittest.TestCase):',
+            'class Probe(unittest.IsolatedAsyncioTestCase):').replace(' def test_required(self):',
+            ' async def test_required(self):'))
+        self.assertEqual(fixture.run().returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+
+    def test_selector_shutdown_effect_runs_once_and_output_stays_private(self):
+        fixture = self.fixture(extra='import atexit', body="Path('effect').write_text('once')\n"
+            "atexit.register(lambda:Path('shutdown_effect').write_text('once'))\n"
+            "atexit.register(lambda:os.write(1," + repr(CANARY.encode()) + "))")
+        self.assertEqual(fixture.run().returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+        self.assertEqual((fixture.root / 'shutdown_effect').read_text(), 'once')
+        self.assertEqual(fixture.run(validate=True).returncode, 0)
+        self.assertEqual((fixture.root / 'shutdown_effect').read_text(), 'once')
+
     def test_each_selector_uses_committed_code_after_prior_memory_patches(self):
         for target in ("same_module", "imported_dependency"):
             with self.subTest(target=target):
@@ -532,41 +593,41 @@ class VerificationProcessBoundaryTests(unittest.TestCase):
         self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
 
     def test_accepted_case_selector_matrix_exports_and_validates_without_rerun(self):
-        for cases in (32, 64):
-            with self.subTest(cases=cases):
-                fixture = self.fixture()
-                contract = '\n\n'.join('# Acceptance-' + str(n) for n in range(8)) + '\n'
-                fixture.write('docs/contract.md', contract)
-                refs = [{'path': 'docs/contract.md', 'revision': digest(contract.encode()),
-                         'section': 'acceptance-' + str(n)} for n in range(8)]
-                source = 'import unittest\nfrom pathlib import Path\nclass Probe(unittest.TestCase):\n'
-                fixture.manifest['cases'] = []
-                for n in range(cases):
-                    case = copy.deepcopy(fixture.case)
-                    case.update(case_id='VF-D-MATRIX-' + str(n), requirements=copy.deepcopy(refs),
-                        selectors=['test_probe.Probe.test_case_' + str(n) + '_method_' + str(m) for m in range(32)],
-                        fixture='tests/fixtures/mvp/verification/matrix_' + str(n) + '.json')
-                    payload = json.loads((fixture.root / fixture.case['fixture']).read_text())
-                    payload['case_id'] = case['case_id']
-                    fixture.json(case['fixture'], payload)
-                    fixture.manifest['cases'].append(case)
-                    for m in range(32):
-                        source += (' def test_case_' + str(n) + '_method_' + str(m) + '(self):\n'
-                                   "  with Path('effect').open('a') as stream: stream.write('once\\n')\n"
-                                   '  self.assertEqual(2 + 2, 4)\n')
-                fixture.write('tests/test_probe.py', source)
-                fixture.save()
-                self.assertLessEqual((fixture.root / MANIFEST).stat().st_size, 262_144)
-                result = fixture.run(timeout=240)
-                self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
-                self.assertEqual(result.returncode, 0, result.stdout)
-                report = fixture.report()
-                self.assertEqual(len(report['results']), cases)
-                self.assertEqual(sum(len(row['observed']) for row in report['results']), cases * 32)
-                self.assertTrue(all(row['status'] == 'PASS' for row in report['results']))
-                self.assertGreater((fixture.root / 'artifacts/mvp-verification/report.json').stat().st_size, 262_144)
-                self.assertEqual(fixture.run(validate=True, timeout=120).returncode, 0)
-                self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
+        # Keep the complete accepted maximum; the smaller matrix adds no new oracle.
+        cases = 64
+        fixture = self.fixture()
+        contract = '\n\n'.join('# Acceptance-' + str(n) for n in range(8)) + '\n'
+        fixture.write('docs/contract.md', contract)
+        refs = [{'path': 'docs/contract.md', 'revision': digest(contract.encode()),
+                 'section': 'acceptance-' + str(n)} for n in range(8)]
+        source = 'import unittest\nfrom pathlib import Path\nclass Probe(unittest.TestCase):\n'
+        fixture.manifest['cases'] = []
+        for n in range(cases):
+            case = copy.deepcopy(fixture.case)
+            case.update(case_id='VF-D-MATRIX-' + str(n), requirements=copy.deepcopy(refs),
+                selectors=['test_probe.Probe.test_case_' + str(n) + '_method_' + str(m) for m in range(32)],
+                fixture='tests/fixtures/mvp/verification/matrix_' + str(n) + '.json')
+            payload = json.loads((fixture.root / fixture.case['fixture']).read_text())
+            payload['case_id'] = case['case_id']
+            fixture.json(case['fixture'], payload)
+            fixture.manifest['cases'].append(case)
+            for m in range(32):
+                source += (' def test_case_' + str(n) + '_method_' + str(m) + '(self):\n'
+                           "  with Path('effect').open('a') as stream: stream.write('once\\n')\n"
+                           '  self.assertEqual(2 + 2, 4)\n')
+        fixture.write('tests/test_probe.py', source)
+        fixture.save()
+        self.assertLessEqual((fixture.root / MANIFEST).stat().st_size, 262_144)
+        result = fixture.run(timeout=240)
+        self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        report = fixture.report()
+        self.assertEqual(len(report['results']), cases)
+        self.assertEqual(sum(len(row['observed']) for row in report['results']), cases * 32)
+        self.assertTrue(all(row['status'] == 'PASS' for row in report['results']))
+        self.assertGreater((fixture.root / 'artifacts/mvp-verification/report.json').stat().st_size, 262_144)
+        self.assertEqual(fixture.run(validate=True, timeout=120).returncode, 0)
+        self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
 
     def test_valid_long_selector_fits_report_transport_export_and_consumer(self):
         fixture = self.fixture()

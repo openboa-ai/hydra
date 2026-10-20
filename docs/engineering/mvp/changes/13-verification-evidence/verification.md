@@ -489,3 +489,44 @@ export without repeating effects. No full local kernel suite was repeated.
 Accepted P13/VF pins, workflow policy, native exclusions and authority are unchanged.
 New final-head CI/reviews/artifacts, scoped CODEOWNER approval, protected merge
 and actual-main checks remain required. P13-R8/full-v1 operation are incomplete.
+
+
+## Isolated worker cost, request framing and actual invocation -- 2026-10-21
+
+Parent `80ff5ee6e4c479eafb6898637360bc42dc4b204b` exhausted the unchanged ten-minute
+[required kernel budget](https://github.com/openboa-ai/hydra/actions/runs/39485469177)
+on both Python runners. Mac/hygiene passed; the cancelled kernel jobs and absent
+standalone evidence remain incomplete. New independent code findings identified
+the expensive maximum matrices, a compact-manifest/private-envelope mismatch and
+counter-only lifecycle overrides that could omit the selected method.
+
+A fresh isolated interpreter still owns orchestration and never imports selected
+modules. On single-threaded Linux/macOS it forks a pristine child per selector,
+closes inherited private descriptors and uses the same bounded capture/reaping.
+No earlier selected heap can reach the next selector. Unsupported fork profiles
+retain fresh exec. Normal Python shutdown still runs atexit callbacks; a real
+shutdown-effect/canary regression verifies both execution and private output.
+Children remain in the supervised group. No new sandbox, provider or authority
+is claimed. The full 64x32 accepted matrix remains required; the redundant 32x32
+replay was removed after it also passed, reducing required-job cost without a
+smaller accepted manifest or a changed maximum-shape/effect oracle.
+
+Private worker input now has its own derived bound: one manifest-bounded selector
+plus a separately checked root/pins/framing envelope, at most twice 256 KiB. Public
+manifest input stays 256 KiB and report capacity is unchanged. An exact compact
+262,144-byte manifest exercises fresh-exec framing, completes once and validates
+without repeating effects. The selected callable is wrapped with a sync/async
+invocation probe: fabricated result counters cannot replace its actual one call;
+missing/repeated calls cannot pass. Ordinary async unittest remains supported.
+
+Two behavior methods reproduced four actual assertion failures on unchanged
+published parent source, with zero setup errors/skips. The corrected collector
+plus adjacent project/repository-identity/CI-policy regressions passed 102 methods
+(49 collector +53 impact), zero failures/errors/skips, on Python 3.14.4 in 218.720s.
+That run exercised both 32x32 and full 64x32 shapes. The final test edit only removes
+the smaller parameter: exact AST comparison confirms every remaining body/oracle
+is the already-executed one. Product bytes are identical to the GREEN snapshot.
+No full local kernel replay or CI-budget/required-check relaxation was performed.
+Final-head CI, actual artifact consumption, independent reviews, existing scoped
+CODEOWNER approval, protected merge and actual-main checks remain required.
+Accepted P13/VF contracts and native/verify_only/full-v1 exclusions are unchanged.

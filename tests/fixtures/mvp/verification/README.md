@@ -62,9 +62,18 @@ The kernel CI job disables bytecode caches and has a bounded ten-minute budget;
 other required checks, permissions and trusted scanning are unchanged.
 
 
-Each selector executes in a fresh isolated interpreter, preserving ordinary
+Each selector executes in a pristine isolated process, preserving ordinary
 unittest setup/teardown while excluding earlier selected methods' module patches.
 The orchestrator never imports test modules. Versioned oracle definitions require
 D kind, nonempty typed oracle/scope fields and unique S01--S30 scenario links;
 unknown fields are rejected. The read-only artifact consumer accepts only bounded
 regular UTF-8 files and rejects FIFOs, directories and final symlinks before reading.
+
+
+The isolated orchestration worker imports no selected modules. On single-threaded
+Linux/macOS, each selector forks that clean state, closes inherited channels and
+returns through normal private interpreter shutdown. Other profiles use fresh exec.
+Sync/async invocation probes require the selected callable itself exactly once;
+result counters alone cannot certify execution. Private request framing has a
+separate bound from accepted manifest bytes. The maximum 64x32 execution remains
+required while the redundant smaller matrix is retained only as historical evidence.

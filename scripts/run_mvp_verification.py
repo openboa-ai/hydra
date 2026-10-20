@@ -16,9 +16,11 @@ if __name__ == "__main__" and not sys.flags.isolated:
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import functools
 import hashlib
 import importlib
 import importlib.machinery
+import inspect
 import json
 import os
 from pathlib import Path
@@ -29,6 +31,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
@@ -50,6 +53,9 @@ EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_ope
 LIMITATIONS = sorted(EXCLUSIONS)
 _TERMINATION_REQUESTED = False
 _INPUT_LIMIT = 262144
+# One accepted selector plus a separately bounded root/pins/framing envelope.
+# The manifest limit remains unchanged; private transport is not a new input cap.
+_WORKER_INPUT_LIMIT = 2 * _INPUT_LIMIT
 _MAX_CASES = 64
 _MAX_SELECTORS = 32
 # A report repeats manifest-controlled tokens at most twice. Allow 1 KiB of
@@ -452,10 +458,24 @@ def execute_selector(root, selector):
     """One selected import/run in a fresh interpreter, with no earlier test heap."""
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "tests"))
-    result, collected, reasons = Result(), 0, []
+    result, collected, reasons, invoked = Result(), 0, [], [0]
     try:
         suite = collect(root, selector)
         collected = 1
+        test = next(flatten(suite))
+        name = selector.rsplit('.', 1)[1]
+        original = getattr(test, name)
+        if inspect.iscoroutinefunction(original):
+            @functools.wraps(original)
+            async def method(*args, **kwargs):
+                invoked[0] += 1
+                return await original(*args, **kwargs)
+        else:
+            @functools.wraps(original)
+            def method(*args, **kwargs):
+                invoked[0] += 1
+                return original(*args, **kwargs)
+        setattr(test, name, method)
         suite.run(result)
     except KeyboardInterrupt:
         reasons = ["interrupted"]
@@ -464,8 +484,8 @@ def execute_selector(root, selector):
     reasons += result.reasons
     if _TERMINATION_REQUESTED:
         reasons.append("interrupted")
-    if not reasons and (result.testsRun != 1 or result.completed != 1):
-        reasons = ["not_executed"]
+    if not reasons and (result.testsRun != 1 or result.completed != 1 or invoked[0] != 1):
+        reasons = ["test_error" if invoked[0] > 1 else "not_executed"]
     return {"selector": selector, "collected": collected, "executed": result.testsRun,
             "completed": result.completed, "subtests": result.subtests,
             "reasons": sorted(set(reasons)) or ["passed"]}
@@ -477,7 +497,7 @@ def execution_environment():
 
 def execute(root, manifest, pins):
     # This orchestrator never imports selected modules. Each selector gets its
-    # own interpreter and private pipe; prior class/helper/stdlib patches cannot
+    # own clean process and private pipe; prior class/helper/stdlib patches cannot
     # replace later committed implementations without changing checked files.
     entries, interrupted = [], False
     run_alias = "verification-" + secrets.token_hex(16)
@@ -511,13 +531,89 @@ def execute(root, manifest, pins):
             "binding": pins, "results": entries}
 
 
+class _SelectorExit(BaseException):
+    """Leave the clean fork through the outer bootstrap's normal Python exit."""
+    def __init__(self, code):
+        self.code = code
+
+
+def _fork_available():
+    # The orchestrator has loaded no selected modules and has no worker threads.
+    # Keep the fresh-exec route for platforms without this safe fork profile.
+    return (sys.platform in {'darwin', 'linux'} and hasattr(os, 'fork')
+            and Path('/dev/fd').is_dir() and threading.active_count() == 1)
+
+
+def _fork_selector_main(root, selector, write_fd):
+    try:
+        os.dup2(write_fd, 1)
+        with open(os.devnull, 'rb') as empty:
+            os.dup2(empty.fileno(), 0)
+        # Never inherit the orchestration report descriptor or other private
+        # channels. Only stdin/null and the new stdout pipe survive setup.
+        for descriptor in [int(name) for name in os.listdir('/dev/fd') if name.isdecimal()]:
+            if descriptor > 2:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        result_fd = quiet()
+        install_termination_handler()
+        sys.dont_write_bytecode = True
+        report = {'outcome': execute_selector(root, selector), 'environment': execution_environment()}
+        with os.fdopen(result_fd, 'wb') as stream:
+            stream.write(json.dumps(report, ensure_ascii=True, sort_keys=True).encode('ascii'))
+        return 0
+    except BaseException:
+        return 2
+
+
+class _ForkedSelector:
+    """Small owned-process adapter for the same bounded capture/cleanup below."""
+    def __init__(self, root, selector):
+        read_fd, write_fd = os.pipe()
+        try:
+            self.pid = os.fork()
+        except BaseException:
+            os.close(read_fd)
+            os.close(write_fd)
+            raise
+        if self.pid == 0:
+            # Returning through _worker_main lets normal interpreter shutdown
+            # run selected atexit handlers; stdout/stderr remain private.
+            raise _SelectorExit(_fork_selector_main(root, selector, write_fd))
+        os.close(write_fd)
+        self.stdout = os.fdopen(read_fd, 'rb')
+        self.returncode = None
+
+    def wait(self, timeout):
+        deadline = time.monotonic() + timeout
+        while self.returncode is None:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid:
+                self.returncode = os.waitstatus_to_exitcode(status)
+                break
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired('verification-selector', timeout)
+            time.sleep(.005)
+        return self.returncode
+
+    def terminate(self):
+        if self.returncode is None:
+            os.kill(self.pid, signal.SIGTERM)
+
+    def kill(self):
+        if self.returncode is None:
+            os.kill(self.pid, signal.SIGKILL)
+
+
 def _worker_main():
     """Private child entry: stdout here is a supervisor pipe, never public stdout."""
     result_fd = quiet()
     install_termination_handler()
     sys.dont_write_bytecode = True
     try:
-        request = decode_json(sys.stdin.buffer.read(_INPUT_LIMIT + 1))
+        request = decode_json(sys.stdin.buffer.read(_WORKER_INPUT_LIMIT + 1), limit=_WORKER_INPUT_LIMIT)
         require(type(request) is dict and set(request) == {"root", "pins", "selector"})
         root = Path(request["root"]).resolve()
         require(Path(__file__).resolve() == regular(root, SCRIPT))
@@ -528,6 +624,8 @@ def _worker_main():
         else:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
             report = {"outcome": execute_selector(root, selector), "environment": execution_environment()}
+    except _SelectorExit as ended:
+        return ended.code
     except KeyboardInterrupt:
         report = {"worker_interrupted": True}
     except BaseException:
@@ -545,51 +643,59 @@ def isolated_worker(root, pins, *, selector=None):
     supervisor validates, exports, and writes the public result. Its original
     stdout descriptor is closed in the fresh child along with other inherited fds.
     """
+    if selector is not None and _fork_available():
+        return _capture_worker(_ForkedSelector(root, selector), group=False)
     bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
+    envelope = json.dumps({'root': str(root), 'pins': pins, 'selector': None}, ensure_ascii=True).encode('ascii')
+    require(len(envelope) <= _INPUT_LIMIT)
     request = json.dumps({"root": str(root), "pins": pins, "selector": selector}, ensure_ascii=True).encode("ascii")
-    require(len(request) <= _INPUT_LIMIT)
+    require(len(request) <= _WORKER_INPUT_LIMIT)
     with tempfile.TemporaryFile() as channel:
         channel.write(request)
         channel.seek(0)
         child = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(root / SCRIPT)],
             stdin=channel, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             close_fds=True, start_new_session=selector is None)
+        return _capture_worker(child, group=selector is None)
+
+
+def _capture_worker(child, *, group):
+    try:
+        data, deadline = bytearray(), time.monotonic() + 600
+        with selectors.DefaultSelector() as poller:
+            poller.register(child.stdout, selectors.EVENT_READ)
+            while True:
+                require(time.monotonic() < deadline)
+                if not poller.select(.1):
+                    continue
+                chunk = os.read(child.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                data.extend(chunk)
+                require(len(data) <= _REPORT_LIMIT)
+        returncode = child.wait(timeout=2)
+        if returncode in {-signal.SIGTERM, -signal.SIGINT}:
+            raise KeyboardInterrupt()
+        require(returncode == 0)
+        report = decode_json(data, limit=_REPORT_LIMIT)
+        if report == {"worker_interrupted": True}:
+            raise KeyboardInterrupt()
+        return report
+    finally:
         try:
-            data, deadline = bytearray(), time.monotonic() + 600
-            with selectors.DefaultSelector() as poller:
-                poller.register(child.stdout, selectors.EVENT_READ)
-                while True:
-                    require(time.monotonic() < deadline)
-                    if not poller.select(.1):
-                        continue
-                    chunk = os.read(child.stdout.fileno(), 65536)
-                    if not chunk:
-                        break
-                    data.extend(chunk)
-                    require(len(data) <= _REPORT_LIMIT)
-            returncode = child.wait(timeout=2)
-            if returncode in {-signal.SIGTERM, -signal.SIGINT}:
-                raise KeyboardInterrupt()
-            require(returncode == 0)
-            report = decode_json(data, limit=_REPORT_LIMIT)
-            if report == {"worker_interrupted": True}:
-                raise KeyboardInterrupt()
-            return report
-        finally:
-            try:
-                os.killpg(child.pid, signal.SIGTERM) if selector is None else child.terminate()
-            except ProcessLookupError:
-                pass
-            try:
-                child.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                os.killpg(child.pid, signal.SIGKILL) if selector is None else child.kill()
-            except ProcessLookupError:
-                pass
-            child.wait(timeout=2)
-            child.stdout.close()
+            os.killpg(child.pid, signal.SIGTERM) if group else child.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(child.pid, signal.SIGKILL) if group else child.kill()
+        except ProcessLookupError:
+            pass
+        child.wait(timeout=2)
+        child.stdout.close()
 
 
 def isolated_execute(root, manifest, pins):
