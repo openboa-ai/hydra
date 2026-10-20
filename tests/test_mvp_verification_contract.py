@@ -80,13 +80,13 @@ class Fixture:
         self.git("commit", "--quiet", "--allow-empty", "-m", "Freeze synthetic candidate")
         self.head = self.git("rev-parse", "HEAD")
 
-    def run(self, *, output="report.json", validate=False, args=(), freeze=True, driver=None):
+    def run(self, *, output="report.json", validate=False, args=(), freeze=True, driver=None, timeout=20):
         if freeze and not validate:
             self.freeze()
         command = [sys.executable, "-I", "-c", driver, SCRIPT] if driver else [sys.executable, "-I", SCRIPT]
         result = subprocess.run([*command, "--manifest", MANIFEST,
             "--validate-report" if validate else "--output", "artifacts/mvp-verification/" + output,
-            "--checked-sha", self.head, *args], cwd=self.root, env=self.env, capture_output=True, timeout=20)
+            "--checked-sha", self.head, *args], cwd=self.root, env=self.env, capture_output=True, timeout=timeout)
         assert CANARY.encode() not in result.stdout + result.stderr
         assert b"Traceback" not in result.stdout + result.stderr
         assert str(self.root).encode() not in result.stdout + result.stderr
@@ -423,6 +423,99 @@ class VerificationProcessBoundaryTests(unittest.TestCase):
                       "  Path('control_effect').write_text('once')\n")
         fixture.manifest["cases"].append(second)
         fixture.save()
+
+    def test_selected_test_cannot_rewrite_a_later_snapshot_module(self):
+        replacement = ("import unittest\nfrom pathlib import Path\nclass Control(unittest.TestCase):\n"
+                       " def test_required(self):\n  Path('control_effect').write_text('substituted')\n")
+        fixture = self.fixture(body="target = Path(__file__).parent / 'test_control.py'\n"
+            "target.chmod(0o644)\ntarget.write_text(" + repr(replacement) + ")\n"
+            "with Path('effect').open('a') as stream: stream.write('once\\n')")
+        self.add_control(fixture)
+        path = fixture.root / 'tests/test_control.py'
+        path.write_text(path.read_text() + "  self.fail('original required failure')\n")
+        original = path.read_bytes()
+        result = fixture.run()
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+        self.assertEqual(path.read_bytes(), original)
+        if result.returncode == 0:
+            self.assertEqual(fixture.run(validate=True).returncode, 0,
+                             'The reproduced snapshot substitution no longer validates')
+        self.assertNotEqual(result.returncode, 0, 'A substituted later test was exported as committed PASS')
+        self.assertFalse((fixture.root / 'control_effect').exists(), 'Later substituted code executed')
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
+    def test_snapshot_mutation_after_worker_is_rejected_before_publication(self):
+        fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once\\n')")
+        hook = ("scope=namespace['main'].__globals__\noriginal=scope['isolated_execute']\n"
+                "def changed(snapshot,*args,**kwargs):\n"
+                " report=original(snapshot,*args,**kwargs)\n"
+                " target=snapshot/'tests/test_probe.py'\n target.chmod(0o644)\n"
+                " target.write_bytes(target.read_bytes()+b'\\n# changed after execution\\n')\n"
+                " return report\nscope['isolated_execute']=changed\n")
+        original = (fixture.root / 'tests/test_probe.py').read_bytes()
+        result = fixture.run(driver=self.driver(hook))
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+        self.assertEqual((fixture.root / 'tests/test_probe.py').read_bytes(), original)
+        if result.returncode == 0:
+            self.assertEqual(fixture.run(validate=True).returncode, 0)
+        self.assertNotEqual(result.returncode, 0, 'Changed snapshot bytes remained reusable as PASS')
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
+    def test_accepted_case_selector_matrix_exports_and_validates_without_rerun(self):
+        for cases in (32, 64):
+            with self.subTest(cases=cases):
+                fixture = self.fixture()
+                contract = '\n\n'.join('# Acceptance-' + str(n) for n in range(8)) + '\n'
+                fixture.write('docs/contract.md', contract)
+                refs = [{'path': 'docs/contract.md', 'revision': digest(contract.encode()),
+                         'section': 'acceptance-' + str(n)} for n in range(8)]
+                source = 'import unittest\nfrom pathlib import Path\nclass Probe(unittest.TestCase):\n'
+                fixture.manifest['cases'] = []
+                for n in range(cases):
+                    case = copy.deepcopy(fixture.case)
+                    case.update(case_id='VF-D-MATRIX-' + str(n), requirements=copy.deepcopy(refs),
+                        selectors=['test_probe.Probe.test_case_' + str(n) + '_method_' + str(m) for m in range(32)],
+                        fixture='tests/fixtures/mvp/verification/matrix_' + str(n) + '.json')
+                    payload = json.loads((fixture.root / fixture.case['fixture']).read_text())
+                    payload['case_id'] = case['case_id']
+                    fixture.json(case['fixture'], payload)
+                    fixture.manifest['cases'].append(case)
+                    for m in range(32):
+                        source += (' def test_case_' + str(n) + '_method_' + str(m) + '(self):\n'
+                                   "  with Path('effect').open('a') as stream: stream.write('once\\n')\n"
+                                   '  self.assertEqual(2 + 2, 4)\n')
+                fixture.write('tests/test_probe.py', source)
+                fixture.save()
+                self.assertLessEqual((fixture.root / MANIFEST).stat().st_size, 262_144)
+                result = fixture.run(timeout=120)
+                self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                report = fixture.report()
+                self.assertEqual(len(report['results']), cases)
+                self.assertEqual(sum(len(row['observed']) for row in report['results']), cases * 32)
+                self.assertTrue(all(row['status'] == 'PASS' for row in report['results']))
+                self.assertGreater((fixture.root / 'artifacts/mvp-verification/report.json').stat().st_size, 262_144)
+                self.assertEqual(fixture.run(validate=True, timeout=120).returncode, 0)
+                self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
+
+    def test_valid_long_selector_fits_report_transport_export_and_consumer(self):
+        fixture = self.fixture()
+        name = 'C' + 'A' * 180_000
+        fixture.write('tests/test_probe.py', 'import unittest\nfrom pathlib import Path\nclass ' + name
+            + '(unittest.TestCase):\n def test_required(self):\n'
+              "  with Path('effect').open('a') as stream: stream.write('once\\n')\n")
+        selector = 'test_probe.' + name + '.test_required'
+        fixture.case['selectors'] = [selector]
+        fixture.save()
+        self.assertLessEqual((fixture.root / MANIFEST).stat().st_size, 262_144)
+        result = fixture.run(timeout=120)
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+        self.assertEqual(result.returncode, 0, result.stdout)
+        report = fixture.report()
+        self.assertEqual(report['results'][0]['observed'][0]['selector'], selector)
+        self.assertGreater((fixture.root / 'artifacts/mvp-verification/report.json').stat().st_size, 262_144)
+        self.assertEqual(fixture.run(validate=True, timeout=120).returncode, 0)
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
 
     def test_manifest_initial_swap_cannot_replace_committed_selector(self):
         fixture = self.fixture(body="Path('declared_effect').write_text('once')")

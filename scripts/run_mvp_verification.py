@@ -48,7 +48,14 @@ EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_ope
               "verify_only_command", "trusted_ci_attestation"}
 LIMITATIONS = sorted(EXCLUSIONS)
 _TERMINATION_REQUESTED = False
-_WORKER_LIMIT = 262144
+_INPUT_LIMIT = 262144
+_MAX_CASES = 64
+_MAX_SELECTORS = 32
+# A report repeats manifest-controlled tokens at most twice. Allow 1 KiB of
+# fixed outcome/count/reason formatting per method, 8 KiB per case and 4 KiB
+# for the root envelope. This covers the full accepted manifest, including
+# indented export, without relaxing the separate manifest/request input bound.
+_REPORT_LIMIT = 2 * _INPUT_LIMIT + _MAX_CASES * (_MAX_SELECTORS * 1024 + 8192) + 4096
 
 
 class Invalid(Exception):
@@ -86,20 +93,20 @@ def regular(root, relative):
     return current
 
 
-def decode_json(data):
+def decode_json(data, *, limit=_INPUT_LIMIT):
     def unique(pairs):
         result = {}
         for key, value in pairs:
             require(key not in result)
             result[key] = value
         return result
-    require(len(data) <= _WORKER_LIMIT)
+    require(len(data.encode('utf-8') if isinstance(data, str) else data) <= limit)
     return json.loads(data, object_pairs_hook=unique)
 
 
-def read_json(path):
-    require(path.stat().st_size <= _WORKER_LIMIT)
-    return decode_json(path.read_text(encoding="utf-8"))
+def read_json(path, *, limit=_INPUT_LIMIT):
+    require(path.stat().st_size <= limit)
+    return decode_json(path.read_text(encoding="utf-8"), limit=limit)
 
 
 def section_anchors(text):
@@ -173,7 +180,7 @@ def load_manifest(root):
     require(type(value["schema_version"]) is int and value["schema_version"] == VERSION)
     require(value["scope"] == "selected_source_d" and value["excluded"] == LIMITATIONS)
     cases = value["cases"]
-    require(type(cases) is list and 0 < len(cases) <= 64)
+    require(type(cases) is list and 0 < len(cases) <= _MAX_CASES)
     ids, selectors = set(), set()
     for case in cases:
         require(type(case) is dict and set(case) == {"case_id", "requirements", "selectors", "fixture"})
@@ -189,7 +196,7 @@ def load_manifest(root):
             document = regular(root, ref["path"]).read_bytes()
             require(sha256(document) == ref["revision"])
             require(ref["section"] in section_anchors(document.decode("utf-8")))
-        require(type(case["selectors"]) is list and 0 < len(case["selectors"]) <= 32)
+        require(type(case["selectors"]) is list and 0 < len(case["selectors"]) <= _MAX_SELECTORS)
         for selector in case["selectors"]:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
             require(selector not in selectors)
@@ -273,7 +280,7 @@ def importable_paths(root):
 
 @contextmanager
 def source_snapshot(root, head):
-    """Materialize immutable Git objects as read-only test inputs, not a sandbox."""
+    """Materialize Git objects as read-only inputs, not immutable same-user files."""
     with tempfile.TemporaryDirectory(prefix="hydra-source-") as temp:
         snapshot, directories, links = Path(temp), set(), []
         directories.add(snapshot)
@@ -308,6 +315,45 @@ def source_snapshot(root, head):
             for directory in sorted(directories, key=lambda path: len(path.parts)):
                 if not directory.is_symlink():
                     directory.chmod(0o700)
+
+
+def verify_snapshot(root, revision):
+    """Check the actual input tree against the pinned canonical Git stream.
+
+    Mode bits alone cannot prevent its owner from rewriting a file. Check bytes,
+    executable modes, links, extra files and directory structure at import/run
+    boundaries, and independently in the supervisor before publication.
+    This is source-drift detection, not isolation from arbitrary same-user code.
+    """
+    require(root.is_dir() and not root.is_symlink())
+    paths, folders = [], set()
+    for directory, children, files in os.walk(root, followlinks=False):
+        folder = Path(directory)
+        require(not folder.is_symlink() and not folder.stat().st_mode & 0o222)
+        folders.add(folder.relative_to(root))
+        for name in children[:]:
+            if (folder / name).is_symlink():
+                children.remove(name)
+                files.append(name)
+        paths.extend((folder / name).relative_to(root) for name in files)
+    expected_folders = {Path('.')}
+    for path in paths:
+        expected_folders.update(path.parents)
+    require(folders == expected_folders)
+    digest = hashlib.sha256()
+    for relative in sorted(paths, key=lambda path: path.as_posix()):
+        path = root / relative
+        if path.is_symlink():
+            require(path.resolve().is_relative_to(root))
+            mode, data = '120000', os.readlink(path).encode('utf-8')
+        else:
+            info = path.stat()
+            require(not info.st_mode & 0o222)
+            mode = '100755' if info.st_mode & 0o111 else '100644'
+            data = regular(root, relative.as_posix()).read_bytes()
+        digest.update(relative.as_posix().encode('utf-8') + b'\0')
+        digest.update(mode.encode('ascii') + b'\0' + data + b'\0')
+    require('sha256:' + digest.hexdigest() == revision)
 
 
 def quiet():
@@ -394,6 +440,7 @@ def execute(root, manifest, pins):
     for case in manifest["cases"]:
         started, outcomes = now(), []
         for selector in case["selectors"]:
+            verify_snapshot(root, pins['source_revision'])
             result, collected, reasons = Result(), 0, []
             if interrupted:
                 reasons = ["not_executed"]
@@ -415,6 +462,7 @@ def execute(root, manifest, pins):
                     reasons.append("interrupted")
                 if not reasons and (result.testsRun != 1 or result.completed != 1):
                     reasons = ["not_executed"]
+            verify_snapshot(root, pins['source_revision'])
             outcomes.append({"selector": selector, "collected": collected, "executed": result.testsRun,
                              "completed": result.completed, "subtests": result.subtests,
                              "reasons": sorted(set(reasons)) or ["passed"]})
@@ -439,7 +487,7 @@ def _worker_main():
     install_termination_handler()
     sys.dont_write_bytecode = True
     try:
-        request = decode_json(sys.stdin.buffer.read(_WORKER_LIMIT + 1))
+        request = decode_json(sys.stdin.buffer.read(_INPUT_LIMIT + 1))
         require(type(request) is dict and set(request) == {"root", "pins"})
         root = Path(request["root"]).resolve()
         require(Path(__file__).resolve() == regular(root, SCRIPT))
@@ -464,7 +512,7 @@ def isolated_execute(root, manifest, pins):
     """
     bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
     request = json.dumps({"root": str(root), "pins": pins}, ensure_ascii=True).encode("ascii")
-    require(len(request) <= _WORKER_LIMIT)
+    require(len(request) <= _INPUT_LIMIT)
     with tempfile.TemporaryFile() as channel:
         channel.write(request)
         channel.seek(0)
@@ -483,12 +531,12 @@ def isolated_execute(root, manifest, pins):
                     if not chunk:
                         break
                     data.extend(chunk)
-                    require(len(data) <= _WORKER_LIMIT)
+                    require(len(data) <= _REPORT_LIMIT)
             returncode = child.wait(timeout=2)
             if returncode in {-signal.SIGTERM, -signal.SIGINT}:
                 raise KeyboardInterrupt()
             require(returncode == 0)
-            report = decode_json(data)
+            report = decode_json(data, limit=_REPORT_LIMIT)
             if report == {"worker_interrupted": True}:
                 raise KeyboardInterrupt()
             # Validate counts and source references in the parent, never trust a
@@ -578,7 +626,7 @@ def export(root, relative, report, *, publication=None, outcome=None):
     # Each execution gets a new artifact. Never replace earlier evidence, even on failure.
     require(not target.exists())
     data = (json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode("ascii")
-    require(len(data) <= 262144)
+    require(len(data) <= _REPORT_LIMIT)
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     temp = ".pending-" + secrets.token_hex(8)
     created, linked, identity = False, False, None
@@ -664,12 +712,14 @@ def main():
             manifest = load_manifest(snapshot)
             pins = binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot)
             require(pins["candidate_head"] == head)
+            verify_snapshot(snapshot, pins['source_revision'])
             if args.validate_report:
-                passed = validate(read_json(artifact_path(root, args.validate_report)), snapshot, manifest, pins)
+                passed = validate(read_json(artifact_path(root, args.validate_report), limit=_REPORT_LIMIT), snapshot, manifest, pins)
             else:
                 artifact_path(root, args.output, create=True)
                 report = isolated_execute(snapshot, manifest, pins)
                 require(binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot) == pins)
+                verify_snapshot(snapshot, pins['source_revision'])
                 passed = validate(report, snapshot, manifest, pins)
                 reason = "export_failed"
                 outcome = ("passed", 0) if passed else ("required_evidence_incomplete", 1)

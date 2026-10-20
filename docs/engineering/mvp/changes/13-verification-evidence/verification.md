@@ -404,3 +404,48 @@ unaffected adjacent passing regressions are retained; full local suites were not
 repeated. P13/VF pins, workflow policy, authority and native exclusions are unchanged.
 New final-head CI/reviews, scoped human approval, protected merge and actual-main
 checks remain required. This is source evidence recovery, not full v1 acceptance.
+
+
+## Snapshot input drift and full report capacity -- 2026-10-21
+
+Integrated parent `cf0899fea8081603dcd836e64a306d1336c913e5` passed all four
+[CI jobs](https://github.com/openboa-ai/hydra/actions/runs/39475236613). Each Python
+suite collected 1,226 tests: 1,218 passed, eight explicit skips. Both actual hosted
+reports passed independent source/checked/base and provider archive-digest
+validation without reexecuting tests. Code review then found two additional
+defects in snapshot integrity and report capacity; the earlier green is retained
+as historical evidence rather than final qualification.
+
+Read-only modes do not make a same-owner snapshot immutable. The actual snapshot
+now has its full file/symlink stream checked against the pinned source_revision
+before each selected import, after selected execution, and independently by the
+supervisor before publication. Executable modes, read-only inputs, extra files and
+Git-derived directory structure are checked. A selected test cannot chmod/rewrite
+a later snapshot module and silently export it as committed PASS. An external
+post-worker snapshot change also prevents publication while retaining its one
+original effect and the untouched original checkout. This remains source-drift
+detection at the checked boundaries, not an OS sandbox or new execution owner.
+
+The 256-KiB manifest/request budget and accepted 64 cases / 32 selectors / eight
+references remain unchanged. Report capacity is separately bounded from at most
+two copies of manifest-controlled data, fixed per-method/per-case envelope
+overhead and the root header (3,149,824 bytes). Private capture, report decoding,
+indented export and read-only consumption use this same report bound. No valid
+manifest is narrowed to fit the former 256-KiB output limit.
+
+Four new regression methods reproduced **five actual assertion failures** on
+unchanged published parent source, with zero setup errors/skips. The two snapshot
+substitutions formerly produced PASS artifacts that the ordinary read-only
+consumer accepted. Passing 32x32 and 64x32 selector matrices, each with eight
+requirement refs per case, previously executed all effects but failed report
+transport/export. A valid 180,000-character class identifier exposed the same
+duplicated-selector budget error. After correction these cases export and validate
+the same report without repeating effects. Stress-fixture deadlines are explicit
+and bounded; existing default deadlines and the product worker budget are retained.
+
+The changed collector plus project, repository-identity and CI-policy impact
+regressions pass **96 tests with zero failures/errors/skips** (43 collector and
+53 adjacent cases). No full local suite was repeated. Accepted P13/VF pins,
+workflow policy, authority and native exclusions are unchanged. New final-head
+CI/reviews/artifacts, scoped human approval, protected merge and actual-main
+checks remain required. P13-R8 and full-v1 operation remain incomplete.
