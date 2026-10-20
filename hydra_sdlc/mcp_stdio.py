@@ -167,7 +167,10 @@ class ValidatedLines:
 
 
 def _identity(fd):
-    value = os.fstat(fd)
+    try:
+        value = os.fstat(fd)
+    except (OSError, ValueError):
+        raise StdioUnavailable() from None
     return value.st_dev, value.st_ino, value.st_mode
 
 
@@ -185,22 +188,23 @@ def claimed_stdin():
         raise StdioUnavailable()
     owned, flags, attempted, restored = None, None, False, False
     try:
-        if sys.stdin.fileno() != 0 or not stat.S_ISFIFO(os.fstat(0).st_mode):
-            raise StdioUnavailable()
-        owned = fcntl.fcntl(0, fcntl.F_DUPFD_CLOEXEC, 3)
-        flags = fcntl.fcntl(owned, fcntl.F_GETFL)
-        null = os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)
         try:
-            attempted = True
-            os.dup2(null, 0)
-            if _identity(0) != _identity(null):
+            if sys.stdin.fileno() != 0 or not stat.S_ISFIFO(os.fstat(0).st_mode):
                 raise StdioUnavailable()
-        finally:
-            os.close(null)
-        fcntl.fcntl(owned, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            owned = fcntl.fcntl(0, fcntl.F_DUPFD_CLOEXEC, 3)
+            flags = fcntl.fcntl(owned, fcntl.F_GETFL)
+            null = os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                attempted = True
+                os.dup2(null, 0)
+                if _identity(0) != _identity(null):
+                    raise StdioUnavailable()
+            finally:
+                os.close(null)
+            fcntl.fcntl(owned, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except (OSError, ValueError):
+            raise StdioUnavailable() from None
         yield ValidatedLines(owned)
-    except (OSError, ValueError):
-        raise StdioUnavailable() from None
     finally:
         try:
             if owned is not None:
@@ -209,12 +213,15 @@ def claimed_stdin():
                 if attempted:
                     os.dup2(owned, 0)
                 restored = True
-        except OSError:
+        except (OSError, ValueError):
             raise StdioUnavailable() from None
         finally:
             if owned is None or restored:
-                if owned is not None:
-                    os.close(owned)
+                try:
+                    if owned is not None:
+                        os.close(owned)
+                except (OSError, ValueError):
+                    raise StdioUnavailable() from None
                 _owner.release()
 
 
@@ -288,9 +295,7 @@ async def compose_server(high, subscriptions):
 async def serve_stdio(high, subscriptions):
     """Serve one dedicated process; only the official SDK writes protocol output."""
     from mcp.server.stdio import stdio_server
-    original_stdout = _identity(1)
-    if not stat.S_ISFIFO(original_stdout[2]) or original_stdout == _identity(2):
-        raise StdioUnavailable()
+    original_stdout = _checked_stdout()
     low = await compose_server(high, subscriptions)
     with claimed_stdin() as stdin:
         async with stdio_server(stdin=stdin) as (reader, writer):
@@ -301,9 +306,19 @@ async def serve_stdio(high, subscriptions):
         raise StdioUnavailable()
 
 
+def _checked_stdout():
+    original = _identity(1)
+    if not stat.S_ISFIFO(original[2]) or original == _identity(2):
+        raise StdioUnavailable()
+    return original
+
+
 def run_stdio(high, subscriptions):
-    import anyio
     try:
+        # Check before event-loop descriptors can reuse a closed standard fd.
+        _identity(0)
+        _checked_stdout()
+        import anyio
         anyio.run(serve_stdio, high, subscriptions)
     except (StdioUnavailable, BaseExceptionGroup) as exc:
         # SDK task groups wrap transport failures, including nested groups.
@@ -312,5 +327,11 @@ def run_stdio(high, subscriptions):
             _, unrelated = exc.split(StdioUnavailable)
             if unrelated is not None:
                 raise
-        print('stdio_unavailable', file=sys.stderr)
+        # Diagnostics must not use a closed sink or the protocol wire. Direct
+        # fd output also avoids a failed TextIO flush changing exit 2 at shutdown.
+        try:
+            if _identity(2) != _identity(1):
+                os.write(2, b'stdio_unavailable\n')
+        except (StdioUnavailable, OSError, ValueError):
+            pass
         raise SystemExit(2) from None

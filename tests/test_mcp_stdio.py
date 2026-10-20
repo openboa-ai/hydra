@@ -484,25 +484,82 @@ finally:
                 self.assertEqual(result.stderr, b'stdio_unavailable\n')
 
     def test_only_stdio_failures_are_relabelled_in_nested_groups(self):
-        import io
-        from contextlib import redirect_stderr
         from hydra_sdlc.mcp_stdio import run_stdio
         failures = [StdioUnavailable(), ExceptionGroup('outer', [
             StdioUnavailable(), ExceptionGroup('inner', [StdioUnavailable()])])]
         for error in failures:
             with self.subTest(kind=type(error).__name__):
-                output = io.StringIO()
-                with patch('anyio.run', side_effect=error), redirect_stderr(output):
+                with patch('anyio.run', side_effect=error), \
+                     patch('hydra_sdlc.mcp_stdio._identity', side_effect=lambda fd: (fd, 0, stat.S_IFIFO)), \
+                     patch('hydra_sdlc.mcp_stdio.os.write') as output:
                     with self.assertRaises(SystemExit) as result:
                         run_stdio(None, None)
                 self.assertEqual(result.exception.code, 2)
-                self.assertEqual(output.getvalue(), 'stdio_unavailable\n')
+                output.assert_called_once_with(2, b'stdio_unavailable\n')
         failures = [RuntimeError('unrelated'), ExceptionGroup('outer', [
             ExceptionGroup('inner', [RuntimeError('unrelated')])]),
             ExceptionGroup('mixed', [StdioUnavailable(), RuntimeError('unrelated')])]
         for error in failures:
             with self.subTest(kind=str(error)):
-                with patch('anyio.run', side_effect=error):
+                with patch('anyio.run', side_effect=error), \
+                     patch('hydra_sdlc.mcp_stdio._identity', side_effect=lambda fd: (fd, 0, stat.S_IFIFO)):
                     with self.assertRaises(type(error)) as result:
                         run_stdio(None, None)
                 self.assertIs(result.exception, error)
+
+
+@unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional pinned MCP SDK not installed')
+class StdioDescriptorTests(unittest.TestCase):
+    def test_descriptor_inspection_failure_never_uses_protocol_output_for_diagnostic(self):
+        import subprocess
+        script = '''import os, sys
+sys.path.insert(0, ROOT)
+from mcp.server import MCPServer
+from mcp.server.subscriptions import InMemorySubscriptionBus
+from hydra_sdlc.mcp_stdio import run_stdio
+server, bus = MCPServer('descriptor-failure-fixture'), InMemorySubscriptionBus()
+if FAULT == 'stderr_closed':
+    os.close(2)
+elif FAULT == 'stdout_closed':
+    os.close(1)
+else:
+    os.dup2(1, 2)
+run_stdio(server, bus)
+'''
+        for fault in ('stderr_closed', 'stdout_closed', 'same_wire'):
+            with self.subTest(fault=fault):
+                code = script.replace('ROOT', repr(str(ROOT))).replace('FAULT', repr(fault))
+                result = subprocess.run([sys.executable, '-I', '-c', code], input=b'',
+                    capture_output=True, timeout=15,
+                    env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b'')
+                self.assertEqual(result.stderr, b'')
+
+    def test_claim_restores_descriptors_without_rewriting_server_body_errors(self):
+        import subprocess
+        script = '''import os, sys
+sys.path.insert(0, ROOT)
+from hydra_sdlc.mcp_stdio import claimed_stdin, _owner
+def identities():
+    return [(os.fstat(fd).st_dev, os.fstat(fd).st_ino) for fd in (0, 1)]
+before = identities()
+error = ERROR('SYNTHETIC_RAW_PRIVATE_CANARY')
+caught = None
+try:
+    with claimed_stdin():
+        raise error
+except BaseException as actual:
+    caught = actual
+assert caught is error, 'server body error was rewritten'
+assert identities() == before, 'standard descriptors were not restored'
+assert not _owner.locked(), 'restored stdin claim was retained'
+'''
+        for error in ('OSError', 'ValueError'):
+            with self.subTest(error=error):
+                code = script.replace('ROOT', repr(str(ROOT))).replace('ERROR', error)
+                result = subprocess.run([sys.executable, '-I', '-c', code], input=b'',
+                    capture_output=True, timeout=15,
+                    env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout + result.stderr, b'')

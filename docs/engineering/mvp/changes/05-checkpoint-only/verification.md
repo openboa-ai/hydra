@@ -232,3 +232,42 @@ Source bytes and unrelated implementation work were preserved during verificatio
 Only this record was appended afterward. Full final-head checks remain hosted CI;
 independent code/security review, protected merge and exact-main evidence remain
 separate gates. Installed native authority and the full remote flow remain unqualified.
+
+
+## Descriptor inspection and server-error correction — 2026-10-20
+
+The next PR #15 review identified descriptor lookup failures escaping the bounded
+transport error and unrelated OSError/ValueError from the server body being
+rewritten by the stdin context manager's broad setup handler.
+
+Descriptor inspection now maps known lookup failures to StdioUnavailable. The
+entry validates standard descriptors before creating an event loop, which can
+otherwise recycle a closed standard descriptor. The asynchronous entry repeats
+its existing stdout ownership checks. Stdin normalization is limited to setup
+and restoration operations; errors injected at the server-body yield propagate
+unchanged when cleanup succeeds. Failed restoration still retains the claim and
+recoverable duplicate rather than allowing a successor to reuse it.
+
+The fixed diagnostic uses fd2 only after confirming it is valid and distinct
+from the protocol output. An unavailable or aliased diagnostic sink produces
+exit 2 without writing to the protocol wire or triggering a buffered shutdown
+flush error. Valid stderr retains exactly stdio_unavailable plus newline. This
+changes no command grant, protocol format, fallback or host control.
+
+Two regression methods produced **five assertion failures** on original head
+`36ecf35973107e477aab47b5700ba70ef35f0921`: closed stderr, closed stdout, aliased stdout/stderr and direct server
+OSError/ValueError. All ran in actual isolated subprocesses. An intermediate run
+exposed event-loop fd reuse in the two closed-descriptor cases; the early check
+corrects that behavior rather than weakening the exit oracle.
+
+Final GREEN: **40 tests passed with zero skips/failures/errors, 38.197 seconds**:
+raw stdio 16, decoded MCP command 14 and existing MCP 10. Actual descriptor/body
+cases now assert safe exit/output, preserved original errors, restored descriptor
+identities and released restored claims. Prior grouped-failure, setup/restoration,
+framing, active cancellation, subscription, CAS and Git controls remain passing.
+
+Accepted specifications and unrelated source are unchanged. Source bytes and the
+existing checkout were preserved during testing; this record was appended later.
+Full candidate CI, final-head independent code/security review, normal protected
+merge and exact-main checks remain required. No installed native authority or
+full remote-operation qualification is claimed.
