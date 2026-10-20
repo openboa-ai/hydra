@@ -183,3 +183,46 @@ This verification record was updated afterward. Full final-candidate checks belo
 to hosted CI, followed by independent code/security review, normal protected merge
 and exact-main checks. Existing scoped human review of workflow controls remains
 required. P13-R8 and the native/live limits above remain incomplete.
+
+
+## Requirement-reference and classification corrections — 2026-10-20
+
+PR #16 review identified three first-stage evidence defects. A syntactically valid
+section slug was accepted even when the referenced heading did not exist; subtest
+execution exceptions were labelled assertion failures; the repository-identity
+fixture named S01 instead of canonical scenario S25.
+
+The manifest now resolves requirement sections before collecting or executing
+selected tests. Supported ATX and single-line Setext headings include ordinary
+inline code/emphasis and duplicate suffixes. Fenced/indented code and raw HTML do
+not create headings; ambiguous inline markup does not manufacture an anchor.
+The basic anchor rules follow [GitHub's section-link documentation](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#section-links).
+The synthetic positive fixture now includes its actual acceptance heading.
+
+`addSubTest` distinguishes the test's failureException from other exception types,
+retaining the fixed test_failure/test_error codes without exporting exception text.
+The versioned identity fixture now names S25; its regression derives the expected
+scenario from the unchanged canonical verification matrix.
+
+Three collected regression methods produced **eight failing assertions** against
+original head `7856c7782a3a795e7387af635345f93088cae6e2`, with no import/collection
+errors or skips. These reproduce renamed/mistyped/missing headings including code
+examples, the wrong subtest reason and the incorrect scenario connection.
+
+Initial GREEN: **79 passed, zero skips/failures/errors**: collector 26, project 33,
+repository identity 7 and whitespace 13. A final focused collector run after adding
+raw-HTML controls and tightening that exclusion passed all **26 collector tests**.
+The adjacent 53 checks' source and workflow are unchanged; the full candidate runs
+in hosted CI. Normal headings, formatting, duplicate anchors and Setext controls
+still execute and export PASS; unresolved references execute no selected effects.
+
+The original candidate's two actual hosted Python artifacts were also consumed
+read-only against independently reconstructed candidate/source/base/spec/policy/
+fixture bindings and the provider's exact checked merge tree. Both contain two
+cases/five passing methods. This is historical evidence for the original head,
+not final-head CI for these corrections. Tests were not rerun to inspect artifacts.
+
+Accepted P13/VF specifications, existing CI controls and native authority are
+unchanged. Final-head CI, independent reviews, scoped human workflow approval,
+protected merge and exact-main checks remain required. P13-R8 and live L/O remain
+outside this stage's completion.

@@ -34,7 +34,7 @@ class Fixture:
                         GIT_AUTHOR_EMAIL="fixture@example.invalid", GIT_COMMITTER_EMAIL="fixture@example.invalid",
                         PYTHONDONTWRITEBYTECODE="1")
         self.write(SCRIPT, (ROOT / SCRIPT).read_text())
-        self.write("docs/contract.md", "Public fixture contract.\n")
+        self.write("docs/contract.md", "# Acceptance\n\nPublic fixture contract.\n")
         self.write(".github/workflows/ci.yml", "name: Synthetic policy\n")
         self.write("tests/test_probe.py", "import unittest, os, subprocess, sys\nfrom pathlib import Path\n"
                    + extra + "\nclass Probe(unittest.TestCase):\n"
@@ -428,6 +428,63 @@ class VerificationCIContractTests(unittest.TestCase):
                 self.assertTrue(changed != text, "Defect injection must alter the workflow")
                 with self.assertRaises(AssertionError):
                     assert_ci_contract(changed)
+
+
+class VerificationEvidenceReferenceTests(unittest.TestCase):
+    fixture = VerificationCollectorTests.fixture
+
+    def test_requirement_section_resolves_before_selected_test_effect(self):
+        cases = [
+            ("## Acceptance\n", "acceptance", True),
+            ("## Renamed\n", "acceptance", False),
+            ("## Acceptance\n", "acceptance-typo", False),
+            ("```markdown\n## Acceptance\n```\n", "acceptance", False),
+            ("~~~markdown\n## Acceptance\n~~~\n", "acceptance", False),
+            ("    ## Acceptance\n", "acceptance", False),
+            ("<div>\nblock\n## Acceptance\n</div>\n", "acceptance", False),
+            ("<pre>\n\n## Acceptance\n</pre>\n", "acceptance", False),
+            ("## Other\nAcceptance is only prose.\n", "acceptance", False),
+            ("## Acceptance\n## Acceptance\n", "acceptance-1", True),
+            ("Acceptance\n==========\n", "acceptance", True),
+            ("## **Acceptance**\n", "acceptance", True),
+            ("## `Acceptance` ###\n", "acceptance", True),
+        ]
+        for document, section, valid in cases:
+            with self.subTest(document=document, section=section):
+                fixture = self.fixture(body="Path('effect').write_text('once')")
+                fixture.write("docs/contract.md", document)
+                reference = fixture.case["requirements"][0]
+                reference.update(revision=digest(document.encode()), section=section)
+                fixture.save()
+                result = fixture.run()
+                self.assertEqual(result.returncode == 0, valid, result.stdout)
+                self.assertEqual((fixture.root / "effect").exists(), valid)
+                if valid:
+                    self.assertEqual(fixture.report()["results"][0]["status"], "PASS")
+                else:
+                    self.assertFalse((fixture.root / "artifacts/mvp-verification/report.json").exists())
+
+    def test_subtest_exception_and_assertion_have_distinct_safe_reasons(self):
+        for body, reason in [("raise RuntimeError('" + CANARY + "')", "test_error"),
+                             ("self.fail('" + CANARY + "')", "test_failure")]:
+            with self.subTest(reason=reason):
+                fixture = self.fixture(body="with self.subTest(secret='" + CANARY + "'):\n " + body)
+                self.assertNotEqual(fixture.run().returncode, 0)
+                row = fixture.report()["results"][0]
+                self.assertEqual(row["status"], "FAIL")
+                outcome = row["observed"][0]
+                self.assertEqual(outcome["reasons"], [reason])
+                self.assertEqual((outcome["collected"], outcome["executed"], outcome["completed"]), (1, 1, 1))
+                self.assertEqual(outcome["subtests"], 1)
+                self.assertNotIn(CANARY, json.dumps(fixture.report()))
+
+    def test_versioned_identity_fixture_matches_canonical_scenario_mapping(self):
+        matrix = (ROOT / "docs/engineering/mvp/verification.md").read_text()
+        expected = [scenario for scenario, row in re.findall(r"^\| (S\d{2}) \| (.+)$", matrix, re.MULTILINE)
+                    if re.search(r"\bVF-D23\b", row)]
+        self.assertEqual(expected, ["S25"])
+        fixture = json.loads((ROOT / "tests/fixtures/mvp/verification/repository_identity.json").read_text())
+        self.assertEqual(fixture["scenarios"], expected)
 
 
 if __name__ == "__main__":

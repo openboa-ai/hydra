@@ -90,6 +90,70 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
 
 
+def section_anchors(text):
+    """Resolve ATX/single-line Setext headings; code and raw HTML are not headings.
+
+    Ambiguous inline markup is ignored rather than inventing a requirement anchor.
+    """
+    anchors, paragraph, fence, raw_html = set(), [], None, None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if fence:
+            if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(fence[1]) + r",}[ \t]*", line):
+                fence = None
+            continue
+        if raw_html:
+            if ((raw_html == "block" and not stripped) or
+                    (raw_html != "block" and raw_html in line.lower())):
+                raw_html = None
+            continue
+        opening = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        if opening:
+            marker = opening[1]
+            fence, paragraph = (marker[0], len(marker)), []
+            continue
+        if line.startswith(("    ", "\t")):
+            paragraph = []
+            continue
+        if stripped.startswith("<!--"):
+            raw_html = None if "-->" in stripped else "-->"
+            paragraph = []
+            continue
+        html = re.match(r" {0,3}<(script|pre|style|textarea)(?:\s|>)", line, re.IGNORECASE)
+        if html:
+            end = "</" + html[1].lower() + ">"
+            raw_html, paragraph = (None if end in line.lower() else end), []
+            continue
+        if re.match(r" {0,3}<[A-Za-z/!?]", line):
+            raw_html, paragraph = "block", []
+            continue
+        atx = re.fullmatch(r" {0,3}#{1,6}(?:[ \t]+(.*?))?[ \t]*", line)
+        heading = atx[1] or "" if atx else None
+        if atx:
+            heading = re.sub(r"[ \t]+#+[ \t]*$", "", heading)
+        elif re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", line) and len(paragraph) == 1:
+            heading = paragraph[0]
+        if heading is None:
+            if stripped and not re.match(r"[#>*+\-]", stripped):
+                paragraph.append(stripped)
+            else:
+                paragraph = []
+            continue
+        paragraph = []
+        heading = re.sub(r"!?\[([^\[\]]*)\]\([^()]*\)", r"\1", heading)
+        heading = re.sub(r"(`+)([^`]*?)\1", r"\2", heading)
+        heading = re.sub(r"(\*\*?|__?|~~)(.+?)\1", r"\2", heading)
+        if re.search(r"[\\<>&\[\]`*~]", heading):
+            continue
+        slug = re.sub(r"[^\w -]", "", heading.strip().lower()).replace(" ", "-")
+        candidate, suffix = slug, 0
+        while candidate in anchors:
+            suffix += 1
+            candidate = slug + "-" + str(suffix)
+        anchors.add(candidate)
+    return anchors
+
+
 def load_manifest(root):
     value = read_json(regular(root, MANIFEST))
     require(type(value) is dict and set(value) == {"schema_version", "scope", "excluded", "cases"})
@@ -109,7 +173,9 @@ def load_manifest(root):
             require(isinstance(ref["path"], str) and re.fullmatch(r"docs/[a-z0-9_/-]+\.md", ref["path"]))
             require(isinstance(ref["section"], str) and re.fullmatch(r"[a-z0-9-]{1,96}", ref["section"]))
             require(isinstance(ref["revision"], str) and DIGEST.fullmatch(ref["revision"]))
-            require(sha256(regular(root, ref["path"]).read_bytes()) == ref["revision"])
+            document = regular(root, ref["path"]).read_bytes()
+            require(sha256(document) == ref["revision"])
+            require(ref["section"] in section_anchors(document.decode("utf-8")))
         require(type(case["selectors"]) is list and 0 < len(case["selectors"]) <= 32)
         for selector in case["selectors"]:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
@@ -212,7 +278,7 @@ class Result(unittest.TestResult):
     def addSubTest(self, test, subtest, err):
         self.subtests += 1
         if err is not None:
-            self.reasons.append("test_failure")
+            self.reasons.append("test_failure" if issubclass(err[0], test.failureException) else "test_error")
 
 
 def flatten(suite):
