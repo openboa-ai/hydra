@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -85,9 +86,24 @@ class Fixture:
         if freeze and not validate:
             self.freeze()
         command = [sys.executable, "-I", "-c", driver, SCRIPT] if driver else [sys.executable, "-I", SCRIPT]
-        result = subprocess.run([*command, "--manifest", MANIFEST,
+        argv = [*command, "--manifest", MANIFEST,
             "--validate-report" if validate else "--output", "artifacts/mvp-verification/" + output,
-            "--checked-sha", self.head, *args], cwd=self.root, env=self.env, capture_output=True, timeout=timeout)
+            "--checked-sha", self.head, *args]
+        process = subprocess.Popen(argv, cwd=self.root, env=self.env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Let the collector's existing supervisor reap its separate group
+            # before the test fixture removes files. Retain the timeout failure.
+            process.send_signal(signal.SIGTERM)
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate(timeout=5)
+            raise
+        result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
         assert CANARY.encode() not in result.stdout + result.stderr
         assert b"Traceback" not in result.stdout + result.stderr
         assert str(self.root).encode() not in result.stdout + result.stderr
@@ -727,6 +743,56 @@ class VerificationProcessBoundaryTests(unittest.TestCase):
         self.assertGreater((fixture.root / 'artifacts/mvp-verification/report.json').stat().st_size, 262_144)
         self.assertEqual(fixture.run(validate=True, timeout=120).returncode, 0)
         self.assertEqual(len((fixture.root / 'effect').read_text().splitlines()), cases * 32)
+
+    def test_deferred_and_other_non_none_returns_never_certify_unexecuted_work(self):
+        for returned in ('map', 'filter', 'custom_iterator'):
+            with self.subTest(returned=returned):
+                fixture = self.fixture()
+                definitions = ("import unittest\nfrom pathlib import Path\n"
+                    "class Probe(unittest.TestCase):\n def test_required(self):\n"
+                    "  def fail_later(_):\n   Path('deferred_effect').write_text('forbidden')\n"
+                    "   self.fail('deferred assertion')\n")
+                if returned == 'custom_iterator':
+                    definitions += ("  class Deferred:\n   def __iter__(self): return self\n"
+                                    "   def __next__(self): return fail_later(None)\n  return Deferred()\n")
+                else:
+                    definitions += '  return ' + returned + '(fail_later,[1])\n'
+                fixture.write('tests/test_probe.py', definitions)
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'A deferred return was certified without evaluating its assertions')
+                self.assertFalse((fixture.root / 'deferred_effect').exists())
+                self.assertEqual(fixture.report()['results'][0]['status'], 'FAIL')
+
+    def test_import_patched_loader_cannot_replace_the_exact_selected_class(self):
+        for changed in ('class', 'method'):
+            with self.subTest(changed=changed):
+                fixture = self.fixture(body="Path('selected_effect').write_text('once')\nself.fail('actual selected failure')")
+                path = fixture.root / 'tests/test_probe.py'
+                extra = ("\nclass Substitute(unittest.TestCase):\n"
+                         " def id(self): return 'test_probe.Probe.test_required'\n"
+                         " def test_required(self): Path('substitute_effect').write_text('forbidden')\n"
+                         "class ReplacementLoader(unittest.TestLoader):\n"
+                         " def loadTestsFromName(self,*args,**kwargs):\n"
+                         "  return unittest.TestSuite([Substitute('test_required')])\n")
+                extra += ("unittest.TestLoader=ReplacementLoader\n" if changed == 'class' else
+                          "unittest.TestLoader.loadTestsFromName=ReplacementLoader.loadTestsFromName\n")
+                path.write_text(path.read_text() + extra)
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'A different class forged the selected string id')
+                self.assertFalse((fixture.root / 'substitute_effect').exists())
+                self.assertEqual((fixture.root / 'selected_effect').read_text(), 'once')
+
+    def test_compile_only_reuse_never_executes_selected_modules_in_the_orchestrator(self):
+        fixture = self.fixture(body="Path('effect').write_text('once')")
+        path = fixture.root / 'tests/test_probe.py'
+        path.write_text(path.read_text() + "\n def test_second(self):\n  Path('second_effect').write_text('once')\n"
+                        "\nwith Path('imports').open('a') as log: log.write('once\\n')\n")
+        fixture.case['selectors'].append('test_probe.Probe.test_second')
+        fixture.save()
+        self.assertEqual(fixture.run().returncode, 0)
+        self.assertEqual((fixture.root / 'imports').read_text().splitlines(), ['once', 'once'])
+        self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+        self.assertEqual((fixture.root / 'second_effect').read_text(), 'once')
 
     def test_valid_long_selector_fits_report_transport_export_and_consumer(self):
         fixture = self.fixture()

@@ -85,3 +85,19 @@ A fixed, bounded primitive packet goes to the pristine orchestrator, which check
 the completion/reason counts and creates JSON. Snapshot boundaries compare actual
 bytes and directory names using pinned per-file hashes; timestamps do not replace
 content checks. Initial/final canonical source checks remain independently pinned.
+
+
+The selected callable must return None. Other returns, including map/filter/custom
+iterators, do not prove deferred assertions ran. Collection binds the pristine
+unittest loader before selected import and requires the exact selected class.
+
+For repeated modules, the clean orchestrator may compile at most 8 MB of pinned
+source once without executing it. Fresh forks inherit immutable code objects;
+every selector still executes its own module namespace and setup/teardown. No
+selected heap or pyc file is shared, and every source-byte boundary check remains.
+The optimization is optional; larger inputs retain ordinary compilation.
+
+Selected programs retain their ordinary OS and assertion authority. Deliberately
+forging descriptors, replacing assertions or manufacturing verdicts is outside this
+reviewed-test boundary. Packet framing and a public alias do not authenticate
+hostile programs. Trusted hosted producer/run evidence remains a separate check.

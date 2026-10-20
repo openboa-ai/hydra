@@ -20,6 +20,7 @@ import functools
 import hashlib
 import importlib
 import importlib.machinery
+import importlib.util
 import inspect
 import json
 import os
@@ -34,7 +35,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import types
 import unittest
 
 
@@ -52,7 +52,6 @@ REASONS = {"passed", "test_failure", "test_error", "required_skipped", "expected
            "unexpected_success", "interrupted", "not_executed", "collection_invalid"}
 _REASON_CODES = tuple(sorted(REASONS))
 _SELECTOR_PACKET = struct.Struct('!4s10I')
-_LAZY_RETURNS = (types.GeneratorType, types.AsyncGeneratorType, types.CoroutineType)
 EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_operation",
               "verify_only_command", "trusted_ci_attestation"}
 LIMITATIONS = sorted(EXCLUSIONS)
@@ -492,15 +491,19 @@ def flatten(suite):
 
 def collect(root, selector):
     module_name, class_name, method_name = selector.split(".")
+    # Bind ordinary collection before selected import can patch unittest globals.
+    loader = unittest.TestLoader()
+    load = loader.loadTestsFromName
+    case_type = unittest.TestCase
     module = importlib.import_module(module_name)
     require(Path(module.__file__).resolve() == regular(root, "tests/" + module_name + ".py"))
     cls = getattr(module, class_name, None)
-    require(isinstance(cls, type) and issubclass(cls, unittest.TestCase))
+    require(isinstance(cls, type) and issubclass(cls, case_type))
     require(callable(getattr(cls, method_name, None)))
-    loader = unittest.TestLoader()
-    suite = loader.loadTestsFromName(selector)
+    suite = load(selector)
     tests = list(flatten(suite))
-    require(not loader.errors and len(tests) == 1 and tests[0].id() == selector and suite.countTestCases() == 1)
+    require(not loader.errors and len(tests) == 1 and type(tests[0]) is cls
+            and tests[0].id() == selector and suite.countTestCases() == 1)
     return suite
 
 
@@ -510,7 +513,6 @@ def execute_selector(root, selector):
     sys.path.insert(0, str(root / "tests"))
     result, collected, reasons, invoked, finished, method_reasons = Result(), 0, [], [0], [0], []
     is_instance = isinstance
-    lazy_returns = _LAZY_RETURNS
     def failed(error, failure_type):
         if is_instance(error, KeyboardInterrupt):
             method_reasons.append('interrupted')
@@ -519,7 +521,7 @@ def execute_selector(root, selector):
         else:
             method_reasons.append('test_failure' if is_instance(error, failure_type) else 'test_error')
     def returned(value):
-        if is_instance(value, lazy_returns):
+        if value is not None:
             method_reasons.append('not_executed')
         return value
     try:
@@ -581,6 +583,7 @@ def execute(root, manifest, pins):
     # replace later committed implementations without changing checked files.
     entries, interrupted = [], False
     signatures = verify_snapshot(root, pins['source_revision'], remember=True)
+    compiled = _compile_selected(root, manifest) if _fork_available() else {}
     run_alias = "verification-" + secrets.token_hex(16)
     for case in manifest["cases"]:
         started, outcomes = now(), []
@@ -590,7 +593,7 @@ def execute(root, manifest, pins):
                 outcome = {"selector": selector, "collected": 0, "executed": 0,
                            "completed": 0, "subtests": 0, "reasons": ["not_executed"]}
             else:
-                selected = isolated_worker(root, pins, selector=selector)
+                selected = isolated_worker(root, pins, selector=selector, compiled=compiled)
                 require(type(selected) is dict and set(selected) == {"outcome", "environment"})
                 require(selected["environment"] == execution_environment())
                 outcome = selected["outcome"]
@@ -617,6 +620,60 @@ class _SelectorExit(BaseException):
     """Leave the clean fork through the outer bootstrap's normal Python exit."""
     def __init__(self, code):
         self.code = code
+
+
+class _CompiledLoader(importlib.machinery.SourceFileLoader):
+    def __init__(self, name, path, code):
+        super().__init__(name, path)
+        self.code = code
+
+    def get_code(self, fullname):
+        require(fullname == self.name)
+        return self.code
+
+
+class _CompiledFinder:
+    def __init__(self, compiled):
+        self.compiled = compiled
+
+    def find_spec(self, fullname, path=None, target=None):
+        entry = self.compiled.get(fullname)
+        if entry is None:
+            return None
+        path, code = entry
+        return importlib.util.spec_from_loader(fullname, _CompiledLoader(fullname, path, code))
+
+
+def _compile_selected(root, manifest):
+    """Compile bounded repeated inputs once; never execute/import selected code.
+
+    Forks inherit immutable code objects, while every module namespace and test
+    fixture remains private to its fresh selector. No pyc files or selected heap
+    are reused. Actual source-byte checks still run at every selector boundary.
+    """
+    counts = {}
+    for case in manifest['cases']:
+        for selector in case['selectors']:
+            name = selector.split('.')[0]
+            counts[name] = counts.get(name, 0) + 1
+    compiled, retained = {}, 0
+    for name in sorted(counts, key=counts.get, reverse=True):
+        if counts[name] < 2:
+            continue
+        path = regular(root, 'tests/' + name + '.py')
+        size = path.stat().st_size
+        if size > 8_000_000 - retained:
+            continue
+        data = path.read_bytes()
+        require(len(data) == size)
+        try:
+            code = compile(data, str(path), 'exec', dont_inherit=True, optimize=sys.flags.optimize)
+        except SyntaxError:
+            # Preserve the ordinary per-selector collection failure protocol.
+            continue
+        compiled[name] = str(path), code
+        retained += size
+    return compiled
 
 
 def _fork_available():
@@ -664,7 +721,7 @@ def _selector_result(data, selector):
             'environment': {'python': '.'.join(map(str, (major, minor, micro))), 'execution': 'local_subprocess'}}
 
 
-def _fork_selector_main(root, selector, write_fd):
+def _fork_selector_main(root, selector, write_fd, compiled):
     try:
         os.dup2(write_fd, 1)
         with open(os.devnull, 'rb') as empty:
@@ -680,6 +737,8 @@ def _fork_selector_main(root, selector, write_fd):
         result_fd = quiet()
         install_termination_handler()
         sys.dont_write_bytecode = True
+        if compiled:
+            sys.meta_path.insert(0, _CompiledFinder(compiled))
         _emit_selector(root, selector, result_fd)
         return 0
     except BaseException:
@@ -688,7 +747,7 @@ def _fork_selector_main(root, selector, write_fd):
 
 class _ForkedSelector:
     """Small owned-process adapter for the same bounded capture/cleanup below."""
-    def __init__(self, root, selector):
+    def __init__(self, root, selector, compiled):
         read_fd, write_fd = os.pipe()
         try:
             self.pid = os.fork()
@@ -699,7 +758,7 @@ class _ForkedSelector:
         if self.pid == 0:
             # Returning through _worker_main lets normal interpreter shutdown
             # run selected atexit handlers; stdout/stderr remain private.
-            raise _SelectorExit(_fork_selector_main(root, selector, write_fd))
+            raise _SelectorExit(_fork_selector_main(root, selector, write_fd, compiled))
         os.close(write_fd)
         self.stdout = os.fdopen(read_fd, 'rb')
         self.returncode = None
@@ -755,7 +814,7 @@ def _worker_main():
     return 0
 
 
-def isolated_worker(root, pins, *, selector=None):
+def isolated_worker(root, pins, *, selector=None, compiled=None):
     """Bounded private transport; selected imports never inherit public handles.
 
     This is output/process separation, not a sandbox for same-user code. Only the
@@ -763,7 +822,7 @@ def isolated_worker(root, pins, *, selector=None):
     stdout descriptor is closed in the fresh child along with other inherited fds.
     """
     if selector is not None and _fork_available():
-        return _capture_worker(_ForkedSelector(root, selector), group=False, selector=selector)
+        return _capture_worker(_ForkedSelector(root, selector, compiled or {}), group=False, selector=selector)
     bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
     envelope = json.dumps({'root': str(root), 'pins': pins, 'selector': None}, ensure_ascii=True).encode('ascii')
     require(len(envelope) <= _INPUT_LIMIT)

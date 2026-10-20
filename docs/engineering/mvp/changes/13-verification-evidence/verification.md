@@ -570,3 +570,41 @@ and no full local kernel suite was repeated. Accepted P13 Rev4/VF Rev11 pins are
 unchanged. Final-head CI, actual hosted artifact consumption, independent reviews,
 existing scoped CODEOWNER approval, protected merge and actual-main checks remain
 required. This does not complete P13-R8 or qualify native/full-v1 operation.
+
+
+## Exact collection, ordinary returns and compile-only reuse -- 2026-10-21
+
+Parent cf84505 passed Python 3.11, Mac and hygiene in
+[run 39496243222](https://github.com/openboa-ai/hydra/actions/runs/39496243222).
+Python 3.14 still failed: 1,242 collected, eight skipped, a 240-second full-matrix
+timeout and a second cleanup error when the surviving worker raced with temporary
+directory removal. A single Python report is not whole-run or final-head success.
+Security review completed without findings; two in-scope code findings required
+the changes below. Deliberate same-user descriptor forgery was triaged outside the
+already documented reviewed-test boundary. No hostile-code sandbox is claimed.
+
+The callable must return None, so map/filter/custom iterators cannot certify
+deferred work. Collection captures the pristine loader method before importing
+selected code and requires the returned test to have the exact selected class,
+in addition to the existing method id/count and actual invocation/completion checks.
+Two behavioral methods reproduced five actual assertion failures against unchanged
+published parent source, with zero setup errors/skips; their exact assertion ASTs
+are retained in the GREEN candidate.
+
+The maximum fixture places all 2,048 methods in one module. The clean orchestrator
+now compiles bounded repeated module input once, without importing or executing it.
+Each fresh fork receives immutable code objects and executes a fresh module heap.
+The 8-MB source-cache budget changes no accepted input: uncached modules retain
+ordinary compilation. No pyc cache, selected heap, weaker byte checks, reduced
+matrix or longer product/fixture/CI timeout is introduced. A module-import effect
+test verifies no extra selected import occurs in the orchestrator. Existing
+cross-selector mutation/source-drift tests still cover independent execution.
+
+On fixture timeout the test runner sends SIGTERM and waits for the collector's
+existing supervisor cleanup before removing files; the timeout still fails.
+The exact final source/test bytes pass 111 focused/impact methods (58 collector
++53 adjacent cases), zero failures/errors/skips, Python 3.14.4 in 93.050 seconds.
+No full local kernel suite was repeated. Accepted P13 Rev4/VF Rev11 and all native,
+verify_only and full-v1 exclusions are unchanged. Final-head CI, actual hosted
+artifact consumption, independent reviews, existing scoped CODEOWNER approval,
+protected merge and actual-main checks remain required.
