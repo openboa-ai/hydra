@@ -2,8 +2,8 @@
 
 These values establish structure and source identity, never independent design
 acceptance, delegation, dependency satisfaction, or permission to dispatch work.
-Reference input contracts remain references until a qualified resolver reads the
-accepted file revision. No model, transport, persistence, or effect is used here.
+Reference input contracts remain references here; work_inputs normalizes the
+explicit file read. No model, transport, persistence, or effect is used here.
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -124,6 +124,24 @@ def _input_contract(value, issue):
     _require(keys == sorted(set(keys)))
 
 
+def _json_object(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate')
+            result[key] = value
+        return result
+    def nonfinite(_):
+        raise ValueError('nonfinite')
+    try:
+        value = json.loads(raw, object_pairs_hook=unique, parse_constant=nonfinite)
+    except (ValueError, RecursionError) as exc:
+        raise WorkRecordError('invalid_json') from exc
+    _require(type(value) is dict, 'invalid_schema')
+    return value
+
+
 def _decode_marker(body, name, version, limit):
     _require(type(body) is str and len(body) <= 8_000_000, 'invalid_marker')
     prefix = '<!-- ' + name + ':'
@@ -138,21 +156,7 @@ def _decode_marker(body, name, version, limit):
         raise WorkRecordError('invalid_json') from exc
     expected = prefix + version + ' '
     _require(raw.startswith(expected), 'unsupported_version')
-    def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError('duplicate')
-            result[key] = value
-        return result
-    def nonfinite(_):
-        raise ValueError('nonfinite')
-    try:
-        value = json.loads(raw[len(expected):-4], object_pairs_hook=unique, parse_constant=nonfinite)
-    except (ValueError, RecursionError) as exc:
-        raise WorkRecordError('invalid_json') from exc
-    _require(type(value) is dict, 'invalid_schema')
-    return value
+    return _json_object(raw[len(expected):-4])
 
 
 @dataclass(frozen=True)

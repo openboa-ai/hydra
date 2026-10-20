@@ -75,3 +75,47 @@ numeric identity and exact comment/source guards remain unchanged. The final
 focused suite passes **23 tests with no skips/failures/errors**, including this
 actual API-path control. No file/authority/dispatch scope was added. Original CI
 and reviews are not treated as final-head evidence for this correction.
+
+
+## Exact reference input conditions -- 2026-10-21
+
+This follow-up to verified main `7e0b570` implements P09-R01/R05/R06 and the
+WR-D53/D55 read boundary. It keeps the accepted P09 Rev1 / WR Rev5 contracts.
+Adopted and reference inputs normalize to one immutable canonical clauses payload
+and digest. Missing input meaning does not become an empty dependency list.
+
+Reference reading verifies the supplied source repository's numeric identity,
+the exact commit and every non-recursive Git tree segment, allowing only regular
+file modes at the leaf. It never uses a Contents response that may follow a
+symlink. Blob identity, size, base64 and UTF-8 must match before parsing; the
+existing nested read budget limits reads to 15 seconds / 32 requests. Documents
+are bounded to 1 MiB for this reader; larger input stays explicitly limited.
+
+Pinned CommonMark syntax tokens select one top-level heading's exact literal
+title or leading requirement ID. Setext headings, fenced code, HTML comments and
+nested section endings are structural rather than flat text searches. Exactly
+one standalone JSON object must satisfy the same closed RequiredInput schema and
+canonical ordering as adopted inputs. Ambiguous sections/objects are invalid;
+missing or unsupported meaning is unavailable. Provider-generated heading slugs
+and prose are not guessed. Explicit adopted conditions remain available for an
+existing design in another format. No document rendering or executable extension
+is involved, and the returned value contains conditions rather than raw prose.
+
+Two acceptance-interface assertions failed on unchanged main because these read
+interfaces were absent. The first implementation passed **169 new/affected
+regressions**, without skips/errors/failures. Self-review then reproduced one
+actual assertion failure for a non-string provider file mode escaping the typed
+source-error boundary. A second assertion failure reproduced an additional JSON
+object hidden in an unsupported code fence being ignored as ambiguity. The
+corrections passed the final **28 new input/read
+tests**, without skips/errors/failures; the unaffected 143 passing regressions
+are retained. Fixed digest vectors, adopted/reference equivalence, fresh reads,
+symlink/submodule rejection, edited provider shapes, duplicate/partial paths,
+resource budgets and invalid JSON/schema/content are covered. Local dependency
+installation left existing tooling and the installed service unchanged.
+
+Actual provider-file observation, final-head CI, independent code/security
+reviews, protected merge and actual-main verification remain separate evidence.
+This parser/read adapter does not grant design acceptance, delegation, project
+registration, dependency satisfaction, native assignment or dispatch. P10/P11
+and actual v1 operation remain incomplete; the reader stores no durable copy.

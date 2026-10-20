@@ -341,8 +341,8 @@ class GitHub:
 
         Explicit adoption reads the exact ID/digest supplied by its reviewer.
         Recovery reads authenticated existing progress, then its attempt anchor.
-        Accepted reference payloads, delegation and native relations still require
-        their own qualified resolvers before a future dispatch consumer can run.
+        Reference payloads use work_input_source; acceptance, delegation and native
+        relations still require their own guards before a dispatch consumer can run.
         """
         from .work_records import WorkRecordError, recover_binding, select_binding
 
@@ -376,6 +376,70 @@ class GitHub:
                 return recover_binding(rows, progress=progress, **arguments)
             return select_binding(rows, selected_comment_id=selected_comment_id,
                                   selected_digest=selected_digest, **arguments)
+
+    def work_input_source(self, repo, binding):
+        """Read explicit input conditions without granting acceptance or execution.
+
+        The caller supplies an allowed source repository. A reference must match
+        its numeric identity; this does not discover/register other repositories.
+        Git trees prove each path component rather than following Contents symlinks.
+        No raw document, persistent copy, model call or provider write is returned.
+        """
+        from .work_inputs import MAX_REFERENCE_BYTES, input_conditions, input_reference
+        from .work_records import WorkRecordError, _hex, _require
+
+        ref = input_reference(binding)
+        if ref is None:
+            return input_conditions(binding)
+        try:
+            with self.read_budget(seconds=15, requests=32):
+                repository = self.repository(repo)
+                _require(repository['id'] == ref['repository_id'], 'identity_mismatch')
+                root = f"/repos/{_repo(repository['full_name'])}/git"
+                commit = self.api('GET', root + '/commits/' + ref['revision'])
+                _require(type(commit) is dict and commit.get('sha') == ref['revision']
+                         and type(commit.get('tree')) is dict
+                         and _hex(commit['tree'].get('sha'), 40), 'unknown')
+                tree_sha = commit['tree']['sha']
+                parts = ref['path'].split('/')
+                for index, part in enumerate(parts):
+                    tree = self.api('GET', root + '/trees/' + tree_sha)
+                    _require(type(tree) is dict and tree.get('sha') == tree_sha
+                             and tree.get('truncated') is False and type(tree.get('tree')) is list
+                             and all(type(row) is dict and type(row.get('path')) is str
+                                     for row in tree['tree']), 'unknown')
+                    rows = [row for row in tree['tree'] if row['path'] == part]
+                    _require(bool(rows), 'accepted_meaning_unavailable')
+                    _require(len(rows) == 1, 'conflict')
+                    entry = rows[0]
+                    leaf = index == len(parts) - 1
+                    _require((type(entry.get('mode')) is str and entry['mode'] in {'100644', '100755'}
+                              and entry.get('type') == 'blob')
+                             if leaf else (entry.get('mode') == '040000' and entry.get('type') == 'tree'),
+                             'invalid_reference_path')
+                    _require(_hex(entry.get('sha'), 40), 'unknown')
+                    tree_sha = entry['sha']
+                declared = entry.get('size')
+                _require(type(declared) is int and declared >= 0, 'unknown')
+                _require(declared <= MAX_REFERENCE_BYTES, 'reference_limit')
+                blob = self.api('GET', root + '/blobs/' + tree_sha)
+                _require(type(blob) is dict and blob.get('sha') == tree_sha
+                         and type(blob.get('size')) is int and blob['size'] == declared
+                         and blob.get('encoding') == 'base64' and type(blob.get('content')) is str,
+                         'invalid_reference')
+                _require(len(blob['content']) <= 2 * MAX_REFERENCE_BYTES, 'reference_limit')
+                try:
+                    encoded = blob['content'].replace('\r\n', '\n').replace('\n', '')
+                    data = base64.b64decode(encoded, validate=True)
+                    content = data.decode('utf-8')
+                except (ValueError, UnicodeError) as exc:
+                    raise WorkRecordError('invalid_reference') from exc
+                _require(len(data) == declared and hashlib.sha1(
+                    b'blob ' + str(len(data)).encode('ascii') + b'\0' + data,
+                    usedforsecurity=False).hexdigest() == tree_sha, 'invalid_reference')
+                return input_conditions(binding, content=content)
+        except GitHubError as exc:
+            raise WorkRecordError('unknown') from exc
 
     def _progress_value(self, repo, n, comment):
         value = _marker(comment.get("body"), "hydra-progress")
