@@ -353,6 +353,7 @@ class GitHub:
         with self.read_budget(seconds=15, requests=32):
             identity = self._identity()
             repository = self.repository(repo)
+            repo = repository['full_name']
             issue = self.issue(repo, n)
             if issue.get('url') != f'https://api.github.com/repos/{repo}/issues/{n}':
                 raise WorkRecordError('identity_mismatch')

@@ -62,3 +62,16 @@ unsupported. Live GitHub binding adoption/recovery, reference resolution, P09 un
 completion, installation and full-v1 operation are NOT RUN here. Independent code
 and security review, final-head CI, protected merge and exact-main checks are
 separate required delivery evidence.
+
+
+## Canonical repository casing follow-up
+
+Self-review reproduced a valid-input regression at original head `5356ad1`: the
+provider confirmed the same numeric repository with canonical lowercase display
+name, but the read resolver compared its Issue URL with caller-supplied uppercase
+casing. That positive control failed an assertion before correction. The resolver
+now takes subsequent read paths from the authenticated repository full_name;
+numeric identity and exact comment/source guards remain unchanged. The final
+focused suite passes **23 tests with no skips/failures/errors**, including this
+actual API-path control. No file/authority/dispatch scope was added. Original CI
+and reviews are not treated as final-head evidence for this correction.

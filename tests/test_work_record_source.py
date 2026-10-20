@@ -47,6 +47,20 @@ class ReadSourceTests(unittest.TestCase):
                 self.read(github, **changes)
             self.assertEqual(calls, [])
 
+    def test_repository_case_alias_uses_authenticated_canonical_source(self):
+        github, calls, values = self.client()
+        for path, value in list(values.items()):
+            if REPO in path:
+                values[path.replace(REPO, REPO.upper())] = value
+        try:
+            result = github.work_binding_source(REPO.upper(), 11, spec_directory='docs',
+                selected_comment_id=71,
+                selected_digest=parse_binding(marker(binding()), spec_directory='docs').digest)
+        except WorkRecordError as exc:
+            self.fail('A stable numeric repository identity was rejected for display casing: ' + exc.reason)
+        self.assertEqual(result.comment_id, 71)
+        self.assertIn(('GET', LISTING, None), calls)
+
     def test_partial_or_repeated_collection_never_becomes_a_selection(self):
         first = [comment(n, 'unrelated', user={'id': 999, 'login': 'external'}) for n in range(1, 101)]
         for tail in [GitHubError('read failed'), [first[-1]]]:
