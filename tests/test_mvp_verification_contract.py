@@ -421,6 +421,24 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_shutdown_signal_cannot_certify_an_already_written_pass_packet(self):
+        for fresh_exec in (False, True):
+            for signum in ('SIGTERM', 'SIGINT'):
+                with self.subTest(fresh_exec=fresh_exec, signal=signum):
+                    fixture = self.fixture(extra='import atexit, signal', body=
+                        "with Path('effect').open('a') as f: f.write('once')\n"
+                        "atexit.register(lambda: os.kill(os.getpid(), signal." + signum + "))")
+                    if fresh_exec:
+                        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() +
+                                      '\ndef _fork_available(): return False\n')
+                    self.add_control(fixture)
+                    result = fixture.run()
+                    self.assertNotEqual(result.returncode, 0, 'Interrupted selector shutdown exported PASS')
+                    self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'interrupted'})
+                    self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+                    self.assertFalse((fixture.root / 'control_effect').exists())
+                    self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
     def test_selected_json_patch_cannot_serialize_failure_as_pass(self):
         for target in ('dumps', 'encoder'):
             with self.subTest(target=target):

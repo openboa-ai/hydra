@@ -628,3 +628,32 @@ observations of that head, not evidence for a subsequent revision.
 This correction changes only documentation. Product/test blobs and accepted
 specification pins are unchanged. Final-head CI/reviews, the existing scoped
 CODEOWNER approval, protected merge and main checks remain separate gates.
+
+
+## Selector shutdown interruption -- 2026-10-21
+
+Review found a valid late-interruption gap: after the private outcome packet was
+written, a selected atexit callback could deliver SIGTERM, Python could ignore the
+handler's KeyboardInterrupt during shutdown, and the selector could still exit zero.
+The test body having passed did not establish successful process completion.
+
+The child now marks its shutdown boundary before emitting the packet. Its pristine
+signal handler terminates late SIGTERM/SIGINT with a nonzero child status instead
+of raising an exception Python can ignore. The clean supervisor waits for and
+checks that status before accepting the packet, classifies the interruption and
+does not export PASS. Ordinary shutdown callbacks and output privacy are retained.
+The parent publication commit point is unchanged; this creates no hostile-program
+authentication claim and does not move selected code into a sandbox.
+
+The unchanged published parent cc4b86a reproduced four assertion failures: SIGTERM
+and SIGINT in both ordinary fork and forced fresh-exec profiles. The same regression
+assertions pass in the correction. Six focused interruption/shutdown/publication
+methods pass with zero failures/errors/skips on Python 3.14.2 in 5.573 seconds.
+They preserve exactly one completed method effect, prevent the next selector effect
+and reject a PASS export after shutdown interruption. An initial misspelled test
+class was a selection setup error, separately retained; it was corrected before
+the successful run. No full local kernel or unrelated test bundle was repeated.
+
+Accepted P13 Rev4/VF Rev11, selected-source limits and native/full-v1 exclusions
+are unchanged. Final-head CI, actual hosted reports, code/security review, the
+existing scoped CODEOWNER approval, protected merge and main checks remain required.

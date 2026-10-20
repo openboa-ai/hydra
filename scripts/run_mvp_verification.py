@@ -56,6 +56,7 @@ EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_ope
               "verify_only_command", "trusted_ci_attestation"}
 LIMITATIONS = sorted(EXCLUSIONS)
 _TERMINATION_REQUESTED = False
+_SELECTOR_SHUTDOWN_STARTED = False
 _INPUT_LIMIT = 262144
 # One accepted selector plus a separately bounded root/pins/framing envelope.
 # The manifest limit remains unchanged; private transport is not a new input cap.
@@ -439,14 +440,22 @@ def quiet():
 
 
 def install_termination_handler(publication=None):
-    global _TERMINATION_REQUESTED
+    global _TERMINATION_REQUESTED, _SELECTOR_SHUTDOWN_STARTED
     _TERMINATION_REQUESTED = False
-    def interrupted(*_):
+    _SELECTOR_SHUTDOWN_STARTED = False
+    exit_child = os._exit
+    def interrupted(signum, *_):
         global _TERMINATION_REQUESTED
         _TERMINATION_REQUESTED = True
+        if publication is None and _SELECTOR_SHUTDOWN_STARTED:
+            # Python ignores exceptions from atexit. Preserve a terminal signal
+            # as a nonzero child status, which the pristine supervisor checks.
+            exit_child(128 + signum)
         if publication is None or publication["result"] is None:
             raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
+    if publication is None:
+        signal.signal(signal.SIGINT, interrupted)
 
 
 class Result(unittest.TestResult):
@@ -687,10 +696,12 @@ def _emit_selector(root, selector, descriptor):
     # Capture immutable C operations before any selected import. Selected tests
     # may legitimately patch json.dumps/JSONEncoder; they never serialize their
     # own verdict. The pristine orchestrator constructs all JSON.
+    global _SELECTOR_SHUTDOWN_STARTED
     pack, write, close = _SELECTOR_PACKET.pack, os.write, os.close
     codes = _REASON_CODES
     try:
         outcome, invoked, finished = execute_selector(root, selector)
+        _SELECTOR_SHUTDOWN_STARTED = True
         mask = 0
         for bit, reason in enumerate(codes):
             if reason in outcome['reasons']:
@@ -852,7 +863,7 @@ def _capture_worker(child, *, group, selector=None):
                 data.extend(chunk)
                 require(len(data) <= (_SELECTOR_PACKET.size if selector is not None else _REPORT_LIMIT))
         returncode = child.wait(timeout=2)
-        if returncode in {-signal.SIGTERM, -signal.SIGINT}:
+        if returncode in {-signal.SIGTERM, -signal.SIGINT, 128 + signal.SIGTERM, 128 + signal.SIGINT}:
             raise KeyboardInterrupt()
         require(returncode == 0)
         if selector is not None:
