@@ -657,3 +657,29 @@ the successful run. No full local kernel or unrelated test bundle was repeated.
 Accepted P13 Rev4/VF Rev11, selected-source limits and native/full-v1 exclusions
 are unchanged. Final-head CI, actual hosted reports, code/security review, the
 existing scoped CODEOWNER approval, protected merge and main checks remain required.
+
+
+## Normal shutdown shares the worker deadline -- 2026-10-21
+
+Review found that the packet pipe closes before normal interpreter cleanup ends.
+The supervisor then used a separate two-second wait even though its existing
+worker deadline had time remaining. A legitimate three-second atexit cleanup was
+terminated and incorrectly prevented an otherwise valid export.
+
+After EOF the supervisor now requires positive remaining time and waits only
+within that same original worker deadline. The 600-second limit, input bounds,
+signal handling, cleanup-on-timeout and publication commit point are unchanged.
+No timeout or accepted maximum was increased.
+
+The unchanged published parent 936beb1 reproduced two actual assertion failures,
+one for ordinary fork and one for forced fresh-exec. Both now finish their real
+three-second cleanup, preserve exactly one method/cleanup/control effect and pass
+read-only report validation. Seven focused shutdown/interruption/publication
+methods pass with zero failures/errors/skips on Python 3.14.2 in 12.846 seconds.
+No full local kernel or unrelated test bundle was repeated. The prior head passed
+all four jobs in [run 39511106111](https://github.com/openboa-ai/hydra/actions/runs/39511106111);
+that run does not qualify this later correction.
+
+P13 Rev4/VF Rev11 and native/full-v1 exclusions are unchanged. Final-head CI and
+actual artifacts, independent code/security review, the existing scoped CODEOWNER
+approval, protected merge and main checks remain required.

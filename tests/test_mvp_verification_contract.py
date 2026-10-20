@@ -421,6 +421,24 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_normal_shutdown_uses_remaining_worker_deadline(self):
+        for fresh_exec in (False, True):
+            with self.subTest(fresh_exec=fresh_exec):
+                fixture = self.fixture(extra='import atexit, time', body=
+                    "with Path('effect').open('a') as f: f.write('once')\n"
+                    "atexit.register(lambda: (time.sleep(3), Path('shutdown_effect').write_text('once')))")
+                if fresh_exec:
+                    fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() +
+                                  '\ndef _fork_available(): return False\n')
+                self.add_control(fixture)
+                result = fixture.run()
+                self.assertEqual(result.returncode, 0, 'Normal shutdown was killed by an unrelated two-second wait')
+                self.assertEqual((fixture.root / 'effect').read_text(), 'once')
+                self.assertEqual((fixture.root / 'shutdown_effect').read_text(), 'once')
+                self.assertEqual((fixture.root / 'control_effect').read_text(), 'once')
+                self.assertEqual([row['status'] for row in fixture.report()['results']], ['PASS', 'PASS'])
+                self.assertEqual(fixture.run(validate=True).returncode, 0)
+
     def test_shutdown_signal_cannot_certify_an_already_written_pass_packet(self):
         for fresh_exec in (False, True):
             for signum in ('SIGTERM', 'SIGINT'):

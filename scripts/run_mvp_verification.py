@@ -862,7 +862,9 @@ def _capture_worker(child, *, group, selector=None):
                     break
                 data.extend(chunk)
                 require(len(data) <= (_SELECTOR_PACKET.size if selector is not None else _REPORT_LIMIT))
-        returncode = child.wait(timeout=2)
+        remaining = deadline - time.monotonic()
+        require(remaining > 0)
+        returncode = child.wait(timeout=remaining)
         if returncode in {-signal.SIGTERM, -signal.SIGINT, 128 + signal.SIGTERM, 128 + signal.SIGINT}:
             raise KeyboardInterrupt()
         require(returncode == 0)
