@@ -395,37 +395,12 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     repos = [repository] if repository else cfg['repos'][start_project:]
     control = control_from_config(cfg)
     at = _now()
-    try:
-        snapshot = control.snapshot()
-        admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
-            'project_overrides': snapshot['projects'],
-            'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
-        p.source_value('admission', admission_value)
-        admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
-            'resource:host:admission', admission_value, at,
-            revision={'kind': 'monotonic', 'value': str(snapshot['revision'])})
-    except (OperationDenied, ValueError, KeyError, TypeError, OSError):
-        snapshot = None
-        admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
-            'resource:host:admission', None, at, reason='admission_unavailable')
-    try:
-        owner = observe_coordinator(cfg['lock_path'])
-        p.require(type(owner) is dict)
-        owner_value = {key: None for key in p.SOURCE_FIELDS['ownership'].split()}
-        owner_value['state'] = owner.get('state')
-        for source, target, validator in [('scope_digest', 'scope_digest', p.digest),
-                                           ('nonce', 'step_nonce', p.uid)]:
-            try:
-                p.nullable(owner.get(source), validator)
-                owner_value[target] = owner.get(source)
-            except (ValueError, TypeError):
-                pass
-        p.source_value('ownership', owner_value)
-    except (ValueError, TypeError, RuntimeError, OSError):
-        owner_value = None
-    ownership = _observation('hydra:host:ownership', _ref('hydra', 'ownership', 'host'),
-        'resource:host:ownership', owner_value, at, reason=None if owner_value else 'ownership_unavailable')
-    observations = {item['key']: item for item in (admission, ownership)}
+    # Remote collection does not hold a local admission snapshot fresh. These
+    # placeholder facts are rebound to one final local read before encoding.
+    snapshot = None
+    admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
+        'resource:host:admission', None, at, reason='not_requested')
+    observations = {}
     frame = {'schema_version': 3, 'runtime': capture_runtime_identity(cfg, control),
         'binding_epoch': binding_epoch, 'request_id': request_id, 'assembled_at': at,
         'observations': [], 'projects': [], 'work': [], 'relations': [],
@@ -520,6 +495,58 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             observations[repo_observation['key']] = repo_observation
     if client.context_changed:
         raise GitHubError('Read credential context changed')
+    at = _now()
+    try:
+        snapshot = control.snapshot()
+        admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
+            'project_overrides': snapshot['projects'],
+            'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
+        p.source_value('admission', admission_value)
+        admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
+            'resource:host:admission', admission_value, at,
+            revision={'kind': 'monotonic', 'value': str(snapshot['revision'])})
+    except (OperationDenied, ValueError, KeyError, TypeError, OSError):
+        snapshot = None
+        admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
+            'resource:host:admission', None, at, reason='admission_unavailable')
+    ownership_reason = 'ownership_unavailable'
+    try:
+        owner = observe_coordinator(cfg['lock_path'])
+        p.require(type(owner) is dict)
+        if owner.get('reason') in {'ownership_file_unsafe', 'ownership_file_changed',
+                                 'ownership_changed_during_observation', 'ownership_observation_unavailable'}:
+            ownership_reason = owner['reason']
+        p.require(owner.get('state') != 'unknown' and owner.get('reason') is None)
+        owner_value = {key: None for key in p.SOURCE_FIELDS['ownership'].split()}
+        owner_value['state'] = owner.get('state')
+        for source, target, validator in [('scope_digest', 'scope_digest', p.digest),
+                                           ('nonce', 'step_nonce', p.uid)]:
+            try:
+                p.nullable(owner.get(source), validator)
+                owner_value[target] = owner.get(source)
+            except (ValueError, TypeError):
+                pass
+        p.source_value('ownership', owner_value)
+    except (ValueError, TypeError, RuntimeError, OSError):
+        owner_value = None
+    ownership = _observation('hydra:host:ownership', _ref('hydra', 'ownership', 'host'),
+        'resource:host:ownership', owner_value, at, reason=None if owner_value else ownership_reason)
+    observations.update({item['key']: item for item in (admission, ownership)})
+    gates = {}
+    if snapshot is not None:
+        for address, context in contexts.items():
+            gates.setdefault(p.canonical(context['resource']), set()).add(_effective(snapshot, address))
+    for project in projects.values():
+        values = gates.get(p.canonical(project['repository_ref']), set())
+        if snapshot is None:
+            gate = p.unknown('admission_unavailable', [admission])
+        elif len(values) != 1:
+            gate = p.unknown('repository_binding_conflict', [admission])
+        else:
+            gate = p.known(next(iter(values)), [admission])
+        project['admission'] = gate
+        for ref in project['work_refs']:
+            work[p.canonical(ref)]['admission'] = gate
     scope = client.read_scope
     for note in client.notes:
         context = contexts[note['context']]

@@ -24,7 +24,7 @@ def standard(frame):
     command = {'request_id': frame['request_id'], 'action': 'admission_set',
                'target': {'kind': 'repository', 'repository_id': 101}}
     observation = _observation(command, frame['runtime'],
-        {'revision': 7, 'global_mode': 'paused', 'projects': {'example/alpha': 'running'}},
+        {'revision': 7, 'global_mode': 'paused', 'projects': {'example/alpha': 'paused'}},
         'example/alpha', 'readback', frame['assembled_at'])
     return _reply(command, frame['runtime'], frame['binding_epoch'], 'applied', None,
                   observation=observation)

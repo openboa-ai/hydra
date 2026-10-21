@@ -65,9 +65,10 @@ fn uuid(value:&str)->bool {
 fn runtime_key(payload:&ReadPayload)->Result<Value,&'static str> {
     let value=serde_json::to_value(payload).map_err(|_|"invalid_response")?;
     let identity:RuntimeIdentity=serde_json::from_value(value["runtime"].clone()).map_err(|_|"invalid_response")?;
-    if !identity.known() {return Err("runtime_identity_unavailable");}
+    if !identity.valid() {return Err("runtime_identity_unavailable");}
     Ok(serde_json::json!({"version":identity.version,"code_digest":identity.code_digest,
-        "config_digest":identity.config_digest,"control_binding_digest":identity.control_binding_digest}))
+        "config_digest":identity.config_digest,"control_binding_digest":identity.control_binding_digest,
+        "identity_reason":identity.identity_reason}))
 }
 impl ReadCache {
     pub fn new(epoch:String)->Result<Self,&'static str> {
@@ -638,4 +639,45 @@ mod tests {
         let retained=serde_json::to_value(cache.get("local",true,now).unwrap().payload.as_ref()).unwrap();
         assert_eq!(retained["runtime"]["code_digest"],"f".repeat(64));
     }
+    #[test]
+    fn p12_review_cache_retains_valid_incomplete_runtime_observations() {
+        let now=Instant::now();
+        for missing in ["code_digest","config_digest","control_binding_digest","version"] {
+            let mut cache=test_cache();let ticket=cache.issue("local:overview:".into(),request(930),false).unwrap();
+            let mut frame:Value=serde_json::from_slice(&fixture(&request(930))).unwrap();
+            frame["runtime"][missing]=Value::Null;
+            frame["runtime"]["identity_reason"]=Value::String("runtime_source_unavailable".into());
+            let identity:RuntimeIdentity=serde_json::from_value(frame["runtime"].clone()).unwrap();
+            assert!(identity.valid());assert!(!identity.known());
+            let bytes=serde_json::to_vec(&frame).unwrap();
+            let result=cache.accept(&ticket,&bytes,now);
+            assert!(result.is_ok(),"valid incomplete runtime discarded: {missing}");
+            let accepted=result.unwrap();let retained=serde_json::to_value(&accepted).unwrap();
+            assert_eq!(retained["payload"],frame);assert!(!frame["projects"].as_array().unwrap().is_empty());
+            let cached=cache.get("local:overview:",true,now+Duration::from_secs(2)).unwrap();
+            assert_eq!(serde_json::to_value(cached).unwrap()["payload"],frame);
+        }
+    }
+    #[test]
+    fn p12_review_incomplete_runtime_preserves_generation_and_validation_fences() {
+        let now=Instant::now();let mut cache=test_cache();
+        let first=cache.issue("local:first:".into(),request(931),false).unwrap();
+        let late=cache.issue("local:late:".into(),request(932),false).unwrap();
+        let mut incomplete:Value=serde_json::from_slice(&fixture(&request(931))).unwrap();
+        incomplete["runtime"]["code_digest"]=Value::Null;
+        incomplete["runtime"]["identity_reason"]=Value::String("runtime_source_unavailable".into());
+        assert!(cache.accept(&first,&serde_json::to_vec(&incomplete).unwrap(),now).is_ok());
+        let next=cache.issue("local:next:".into(),request(933),false).unwrap();
+        assert!(cache.accept(&next,&fixture(&request(933)),now).is_ok());
+        assert!(cache.get("local:first:",true,now).is_none());
+        incomplete["request_id"]=Value::String(request(932));
+        assert_eq!(cache.accept(&late,&serde_json::to_vec(&incomplete).unwrap(),now).unwrap_err(),"stale_read");
+        assert!(cache.get("local:next:",true,now).is_some());
+        let bad=cache.issue("local:bad:".into(),request(934),false).unwrap();
+        let mut malformed:Value=serde_json::from_slice(&fixture(&request(934))).unwrap();
+        malformed["runtime"]["code_digest"]=Value::String("invalid".into());
+        assert!(cache.accept(&bad,&serde_json::to_vec(&malformed).unwrap(),now).is_err());
+        assert!(cache.get("local:next:",true,now).is_some());
+    }
+
 }

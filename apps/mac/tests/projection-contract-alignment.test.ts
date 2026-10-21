@@ -16,10 +16,16 @@ for(const row of data.cases) test("CP8 receipt state "+row.name,()=>{
 for(const row of data.commands) test("real typed tracking metadata "+row.name,()=>{
   const c=structuredClone(row);parseStandardReply(c.reply);
   let state=projectionState(frame.binding_epoch);
+  if(c.event.action==="admission_set"){
+    state=reduceProjection(state,{type:"read_started",scope:"overview",sequence:1,request_id:frame.request_id});
+    state=reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:1,now:1000,
+      response:{payload:frame,age_ms:0,cached:false,stale:false,sequence:1,read_context:{scope:"fixture:read",sequence:1}}});
+  }
+  const before=structuredClone(state.view);
   assert.doesNotThrow(()=>{state=reduceProjection(state,c.event);});
   state=reduceProjection(state,{type:"command_result",request_id:c.event.request_id,reply:c.reply});
   assert.equal(state.feedback.get(c.event.request_id)?.outcome,"applied");
-  assert.equal(state.view,null,"Command feedback invented source facts");
+  assert.deepEqual(state.view,before,"Command feedback invented source facts");
   assert.equal(JSON.stringify([...state.feedback.values()]).includes("PRIVATE_CORRELATION_CANARY"),false);
 });
 for(const changed of ["none","attempt_id","head","contract_revision","missing","null"])

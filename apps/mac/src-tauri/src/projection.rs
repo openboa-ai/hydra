@@ -398,6 +398,7 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
         one(&v["post_merge"],"pending success failed unknown")?; optional(&v["issue_closed"],boolean)?;
     }
     if kind=="cleanup" {
+        need(v["evidence_refs"].as_array().is_some_and(|refs|!refs.is_empty()))?;
         reference(&v["resource"])?; one(&v["operation"],"preserve archive retire remove_schedule")?;
         let result=match string(&v["operation"])? {"preserve"=>"preserved","archive"=>"archived","retire"=>"retired","remove_schedule"=>"schedule_removed",_=>return Err(INVALID)};
         need(v["result"]==result)?;
@@ -651,4 +652,19 @@ mod tests {
         }
         assert!(failures.is_empty(),"CP8 receipt state mismatches: {:?}",failures);
     }
+    #[test]
+    fn p12_review_cleanup_receipts_require_readback_in_both_profiles() {
+        let data:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/cleanup-receipts.json")).unwrap()).unwrap();
+        let inputs:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/inputs.json")).unwrap()).unwrap();
+        let cases=data["cases"].as_array().unwrap();assert_eq!(cases.len(),32);
+        let mut failures=Vec::new();
+        for case in cases {
+            let raw=case["wire"].as_str().unwrap();let expected=case["accepted"].as_bool().unwrap();
+            if StandardReply::parse(raw.as_bytes()).is_ok()!=expected {failures.push(format!("{}:standard",case["name"]));}
+            let reply:Value=serde_json::from_str(raw).unwrap();let mut frame=inputs["frame"].clone();frame["request"]=reply["request"].clone();
+            if Projection::parse(&serde_json::to_vec(&frame).unwrap()).is_ok()!=expected {failures.push(format!("{}:projection",case["name"]));}
+        }
+        assert!(failures.is_empty(),"cleanup proof mismatches: {:?}",failures);
+    }
+
 }

@@ -447,6 +447,7 @@ function receipt(value: unknown, index: Index): void {
   if (v.kind === "cleanup") {
     ref(v.resource); one(v.operation, "preserve archive retire remove_schedule");
     requireValue(v.result === ({ preserve: "preserved", archive: "archived", retire: "retired", remove_schedule: "schedule_removed" } as ObjectValue)[v.operation]);
+    requireValue(Array.isArray(v.evidence_refs) && v.evidence_refs.length > 0);
   }
   if (Object.hasOwn(v, "evidence_refs")) refs(v.evidence_refs);
   if (Object.hasOwn(v, "progress_ref")) ref(v.progress_ref);

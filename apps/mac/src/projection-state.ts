@@ -9,7 +9,7 @@ type Slot = { latest_issued_seq: number; latest_settled_seq: number; observation
 type Query = { sequence: number; request_id: string; keys: Set<string> };
 type Command = { request_id: string; effect_key: string | null; action: string; target: Record<string, unknown>;
   operation?: "preserve" | "archive" | "retire" | "remove_schedule";
-  parameters?: Record<string, unknown>; assignment?: Record<string, unknown> | null };
+  parameters?: Record<string, unknown>; assignment?: Record<string, unknown> | null; repository_name?: string };
 type RetryWindow = { received_at: number; after_seconds: number; basis: "provider" | "fallback"; failures: Map<string, { count: number; frame: string }> };
 type Feedback = Command & { outcome: CommandResult["outcome"]; reason: string | null; receipt: unknown };
 export interface ProjectionState {
@@ -42,6 +42,23 @@ const runtime = (view: Pick<ProjectionV3,"runtime">) => json([view.runtime.versi
   view.runtime.config_digest, view.runtime.control_binding_digest]);
 const unknown = (reason: string): Fact<never> => ({ value: null, evidence: [], reason });
 function valid(condition: unknown): asserts condition { if (!condition) throw new ProjectionError(); }
+function admissionReceipt(pending:Command,result:CommandResult,observations:Observation[]) {
+  const desired=pending.parameters?.mode;
+  valid(typeof desired==="string" && ["running","paused","stopped"].includes(desired));
+  const receipt=result.receipt as {kind:string;readback:{observation_key:string}};
+  valid(receipt.kind==="admission");
+  const observation=observations.find(o=>o.key===receipt.readback.observation_key);
+  valid(observation?.value && observation.resource.source==="hydra");
+  const value=observation.value;
+  let actual=value.global_mode;
+  if (pending.target.kind==="repository") {
+    valid(pending.repository_name!==undefined);
+    const overrides=value.project_overrides as Record<string,unknown>;
+    actual=Object.hasOwn(overrides,pending.repository_name)?overrides[pending.repository_name]:"running";
+    if (desired==="running") valid(value.global_mode==="running");
+  } else valid(pending.target.kind==="host");
+  valid(actual===desired || desired==="paused" && actual==="stopped");
+}
 function workflowReceipt(pending:Command,result:CommandResult) {
   const p=pending.parameters,r=result.receipt as Record<string,unknown>;
   valid(p && typeof p.operation==="string");
@@ -71,7 +88,13 @@ function workflowReceipt(pending:Command,result:CommandResult) {
     }
   }
   if (kind==="publication") valid(r.branch===p.branch);
-  if (kind==="delivery") valid(r.integration_base===p.integration_base);
+  if (kind==="delivery") {
+    valid(r.integration_base===p.integration_base);
+    valid(typeof p.pr_number==="number" && Number.isSafeInteger(p.pr_number) && p.pr_number>0);
+    const ref=r.pr_ref as ResourceRef;
+    valid(ref.source==="github" && ref.kind==="pull_request" &&
+      ref.id===String(pending.target.repository_id)+":"+String(p.pr_number));
+  }
 }
 function uint(n: number) { valid(Number.isSafeInteger(n) && n >= 0); }
 export function compareRevisions(left:Revision|null,right:Revision|null):number|null {
@@ -467,12 +490,26 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       valid(state.pending_commands.size + state.feedback.size < 16);
       if (event.action==="cleanup") valid(["preserve","archive","retire","remove_schedule"].includes(event.operation ?? ""));
       else valid(event.operation===undefined);
-      let workflow:Pick<Command,"parameters"|"assignment">={};
+      let workflow:Pick<Command,"parameters"|"assignment"|"repository_name">={};
+      if (event.action==="admission_set") {
+        const input=event.parameters;
+        valid(input===undefined || (input!==null && typeof input==="object" && !Array.isArray(input)));
+        const parameters=input && Object.hasOwn(input,"mode")?{mode:input.mode}:{};
+        valid(!Object.hasOwn(parameters,"mode") || typeof parameters.mode==="string" &&
+          ["running","paused","stopped"].includes(parameters.mode));
+        valid(size(parameters)<=4096);
+        const names=new Set([...state.source_slots.values()].filter(({observation:o,stale})=>
+          !stale && o.availability==="current" && o.coverage.state==="complete" &&
+          o.resource.source==="github" && o.resource.kind==="repository" &&
+          o.resource.id===String(event.target.repository_id) && o.value?.numeric_id===event.target.repository_id &&
+          typeof o.value?.full_name==="string").map(({observation:o})=>(o.value!.full_name as string).toLowerCase()));
+        workflow={parameters:structuredClone(parameters),...(names.size===1?{repository_name:[...names][0]!}:{})};
+      }
       if (event.action==="workflow_step") {
         const input=event.parameters;
         valid(input===undefined || (input!==null && typeof input==="object" && !Array.isArray(input)));
         const parameters=input===undefined?undefined:Object.fromEntries(
-          ["operation","stage","outcome","candidate","progress","source_attempt","round","branch","integration_base"]
+          ["operation","stage","outcome","candidate","progress","source_attempt","round","branch","integration_base","pr_number"]
             .filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
         if (parameters?.progress!==undefined && parameters.progress!==null) {
           const pin=parameters.progress;
@@ -501,6 +538,8 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
           valid(json(receipt.resource)===json(pending.target.resource) && receipt.operation===pending.operation);
         }
         if (pending.action==="workflow_step" && r.receipt!==null) workflowReceipt(pending,r);
+        if (pending.action==="admission_set" && r.receipt!==null)
+          admissionReceipt(pending,r,reply.observations as Observation[]);
         result = r;
       } catch { /* A bad/lost receipt cannot become a failure-to-send or an applied Fact. */ }
       state.pending_commands.delete(event.request_id);

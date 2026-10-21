@@ -797,6 +797,9 @@
         "target": {
           "kind": "repository",
           "repository_id": 101
+        },
+        "parameters": {
+          "mode": "paused"
         }
       },
       "reply": {
@@ -877,7 +880,7 @@
               "revision": 7,
               "global_mode": "paused",
               "project_overrides": {
-                "example/alpha": "running"
+                "example/alpha": "paused"
               },
               "gate_reason": "host_paused"
             }
@@ -946,7 +949,13 @@
             },
             "operation": "archive",
             "result": "archived",
-            "evidence_refs": []
+            "evidence_refs": [
+              {
+                "source": "resource_provider",
+                "kind": "receipt",
+                "id": "fixture-exact-readback"
+              }
+            ]
           },
           "required_next": "none"
         }

@@ -1278,7 +1278,13 @@
               },
               "operation": "archive",
               "result": "archived",
-              "evidence_refs": []
+              "evidence_refs": [
+                {
+                  "source": "resource_provider",
+                  "kind": "receipt",
+                  "id": "fixture-exact-readback"
+                }
+              ]
             }
           }
         }
@@ -1324,7 +1330,13 @@
               },
               "operation": "archive",
               "result": "archived",
-              "evidence_refs": []
+              "evidence_refs": [
+                {
+                  "source": "resource_provider",
+                  "kind": "receipt",
+                  "id": "fixture-exact-readback"
+                }
+              ]
             }
           }
         }

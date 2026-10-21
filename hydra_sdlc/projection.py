@@ -638,6 +638,7 @@ def receipt(value, observations):
         one(value['operation'], {'preserve', 'archive', 'retire', 'remove_schedule'})
         require(value['result'] == {'preserve': 'preserved', 'archive': 'archived',
                 'retire': 'retired', 'remove_schedule': 'schedule_removed'}[value['operation']])
+        require(bool(value['evidence_refs']))
     if 'evidence_refs' in value:
         array(value['evidence_refs'], ref)
     if 'progress_ref' in value:

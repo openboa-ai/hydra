@@ -6,7 +6,56 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: CP8 receipt, request and coverage boundaries
+## Current correction: exact receipts and final local observations
+
+This increment corrects six code-review findings on published parent
+9296d4119229cc3f527b0c78dca0346b35a00b7b under unchanged P12 Rev4 / CP8 / NC8.
+It adds no wire version, capability, command authority, installation or effect.
+
+- Admission tracking snapshots its requested mode. Repository tracking resolves
+  the numeric target from a unique existing current repository observation and
+  retains that name for the receipt comparison; missing/ambiguous mapping stays
+  unknown. The receipt must prove the stored requested mode, or retained Stop
+  for Pause. A restrictive host gate cannot substitute for a project's stored
+  override. Project Resume also requires the host gate to be running.
+- Deliver tracking snapshots the PR number and compares the receipt's GitHub
+  repository:PR identity alongside candidate and integration base. A different
+  PR or a generic placeholder cannot satisfy that request.
+- Every cleanup receipt needs a nonempty provider read-back reference list in
+  Python, Rust and TypeScript. One literal 32-case corpus covers the four
+  operations, four outcomes and empty/present evidence in both wire profiles.
+- The read cache retains valid incomplete runtime identities and independent
+  facts. Runtime changes still fence older generations, malformed frames still
+  fail, and RuntimeIdentity.known plus enabling-command guards are unchanged.
+- Failure-shaped coordinator results are unavailable observations with safe
+  fixed reasons. Valid absent/free/busy/owned/native reads remain observable;
+  no ownership observation proves native termination.
+- Local admission and ownership are sampled after remote collection. Project
+  and work gates reference the final local snapshot; concurrent Pause/Stop and
+  a final local read failure cannot be replaced by an earlier allowed gate.
+  Independent GitHub membership and work facts remain available.
+
+On the actual published parent's production logic, the same new tests reproduce
+43 Python assertion failures across four methods, 50 failing frontend methods
+with 32 normal controls passing, and three Rust assertion failures. The normal
+locked frontend build completed before Rust RED. These behavioral runs have no
+setup errors, skips or cancellations. Final new test bytes and corpus oracles
+are unchanged from that RED run.
+
+Final local Python 3.14.2 impact checks pass all 243 methods, frontend all 291
+methods, Rust 1.94.1 all 49 methods, plus locked TypeScript/Vite build under Node
+24.5.0. All final selected runs have zero failures/errors/skips/cancellations.
+Earlier regression setup failures came from old positive cleanup fixtures with
+empty evidence and an admission capacity fixture missing its requested mode;
+their valid prerequisites were corrected without changing acceptance oracles.
+Healthy fixtures now identify PR 9 and its stored Pause/read-back context.
+
+These are source and consumer tests. P16 action wiring, native Q/A attribution,
+actual remote control, installed migration and the full v1 operating flow remain
+unqualified. Exact new-head hosted CI, independent code/security reviews,
+protected merge and actual-main checks remain separate delivery gates.
+
+## Earlier CP8 receipt, request and coverage correction
 
 This follow-up preserves P12 revision 4 / CP8 / NC8 and corrects four findings on
 published parent a7f59fcd1bcfde3c5d4eea1cf795b44b986aeb47. It changes no wire

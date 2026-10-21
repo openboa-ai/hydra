@@ -64,7 +64,7 @@ test(`cleanup feedback matches the requested resource and operation (${mismatch}
   const target={kind:"owned_resource",repository_id:101,issue_number:7,source_attempt:base.binding_epoch,resource};
   reply.request={request_id:id(950),action:"cleanup",target,outcome:"applied",reason:null,
     effect_refs:[],observed_refs:[],required_next:"none",receipt:{kind:"cleanup",resource:structuredClone(resource),
-      operation:"archive",result:"archived",evidence_refs:[]}};
+      operation:"archive",result:"archived",evidence_refs:[{source:"resource_provider",kind:"receipt",id:"fixture-exact-readback"}]}};
   let s=reduceProjection(projectionState(base.binding_epoch),{type:"command_started",request_id:id(950),
     effect_key:null,action:"cleanup",target,operation:"archive"} as Parameters<typeof reduceProjection>[1]);
   if (mismatch==="resource") reply.request.receipt.resource.id="fixture-b";
@@ -381,7 +381,8 @@ test("bounded command feedback cannot evict an otherwise valid producer prefix o
   const reply=JSON.parse(vectors.find(v=>v.accepted && v.profile==="standard")!.wire);
   let s=read(projectionState(base.binding_epoch),1,frame);
   const count=s.view!.work.length,cursor=s.view!.page.next_cursor;
-  s=reduceProjection(s,{type:"command_started",request_id:reply.request.request_id,effect_key:"e".repeat(512),action:reply.request.action,target:reply.request.target});
+  s=reduceProjection(s,{type:"command_started",request_id:reply.request.request_id,effect_key:null,
+    action:reply.request.action,target:reply.request.target,parameters:{mode:"paused"}});
   s=reduceProjection(s,{type:"command_result",request_id:reply.request.request_id,reply});
   assert.equal(s.feedback.get(reply.request.request_id)!.outcome,"applied");
   assert.equal(s.view!.work.length,count,"Command feedback silently evicted valid source work");
@@ -446,7 +447,7 @@ function workflowReply(operation:string) {
       pr_ref:{source:"github",kind:"pull_request",id:"101:9"},review_request_refs:[],progress_ref,stage:"publication_ready"};
   } else {
     Object.assign(parameters,{candidate:structuredClone(candidate),pr_number:9,integration_base:"d".repeat(40)});
-    receipt={kind:"delivery",candidate,pr_ref:{source:"github",kind:"pull_request",id:"fixture-pr"},
+    receipt={kind:"delivery",candidate,pr_ref:{source:"github",kind:"pull_request",id:"101:9"},
       integration_base:"d".repeat(40),merge_commit:"e".repeat(40),post_merge:"success",issue_closed:true,progress_ref};
   }
   reply.observations=[];

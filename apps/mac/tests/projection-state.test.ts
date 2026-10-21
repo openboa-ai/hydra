@@ -89,7 +89,7 @@ test("real P02 receipt is kept apart from current admission and actual execution
   let s=read(projectionState(base.binding_epoch),1);
   const before=structuredClone(s.view);
   s=reduceProjection(s,{type:"command_started",request_id:reply.request.request_id,effect_key:null,
-    action:reply.request.action,target:reply.request.target});
+    action:reply.request.action,target:reply.request.target,parameters:{mode:"paused"}});
   s=reduceProjection(s,{type:"command_result",request_id:reply.request.request_id,reply});
   assert.equal(s.feedback.get(reply.request.request_id)?.outcome,"applied");
   assert.deepEqual(s.view,before);
