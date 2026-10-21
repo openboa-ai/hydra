@@ -262,3 +262,47 @@ that evidence does not qualify this correction. Final-head CI and completed
 independent code/security review, protected merge and main checks are required.
 P16 still owns screen/action integration. No runtime or authority was activated
 and no full local kernel was repeated.
+
+
+## Exact output, required proof and partial-frame pressure -- 2026-10-21
+
+The synchronous CLI and default async stdout emitter now write v3 bytes without
+an extra newline. A valid maximum-size UTF-8 frame reaches exactly 1,048,576
+stdout bytes; v2 and caller-supplied emit callbacks retain their own behavior.
+
+Python, Rust and TypeScript require typed receipts when workflow_step or cleanup
+reports applied. Existing receipt-kind/action validation remains in force;
+waiting without a receipt is still valid. Four deliberate bad-wire cases extend
+the shared actual-producer/consumer fixture to 23 vectors. A receiptless applied
+command cannot become accepted applied feedback through these consumers.
+
+The renderer replaces a retained view only with a complete query result or a
+whole bounded prefix/continuation page backed by current repository identity.
+Local-only and failed/incomplete source frames cannot replace healthy retained
+work. Under their byte pressure it removes unreferenced provenance, then stale
+and cached non-Hydra values as needed, exposing renderer_limit/unavailable while
+retaining work identities, current local gates and independent feedback. Known
+provider-hint anchors remain protected; cache eviction never ends or retires work.
+
+Unchanged 0c00d12 reproduces thirteen actual assertions: six Python stdout/proof,
+six TypeScript proof/partial-view and one Rust proof failure. The two actual
+producer partial cases lose 55 retained work identities on the old model. Their
+first draft was underfilled after decision normalization; the final fixture
+normalizes prerequisites and asserts the retained view is eight bytes below the
+bound before applying pressure. Only the actual final work-loss assertions count.
+Final regression test bytes are identical in RED/GREEN; no compiler/setup error
+or repeated run is counted as another failure.
+
+Local Python projection58, GitHub71, frontend101 and Rust39 pass with zero
+failures/errors/skips/ignored cases, plus typecheck/Vite build and the shared
+23-vector Python/Rust/TS wire. Python selections overlap. Cost fixtures remain
+small 4 GET/8,444 bytes; 128 records 5 GET/324,434 bytes; UTF-8 prefix 5 GET/
+1,038,843 bytes with 55 whole records and a usable cursor.
+
+The previous 0c00d12 passed all four jobs in
+[run 39527627409](https://github.com/openboa-ai/hydra/actions/runs/39527627409);
+that result does not qualify this later correction. P12 Rev4/CP8/NC8 remain
+pinned. Final-head CI, completed independent code/security reviews, protected
+merge and actual-main checks are required. P16 still owns screen/action and
+actual running-screen integration. No runtime/authority was activated and no
+full local kernel was repeated.

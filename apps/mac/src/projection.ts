@@ -454,6 +454,8 @@ function commandResult(value: unknown, index: Index): void {
   refs(v.effect_refs); list(v.observed_refs, e => { evidenceIn(e, index); });
   one(v.required_next, "none refresh reconcile open_source"); nullable(v.receipt, r => receipt(r, index));
   const kind = v.receipt === null ? null : plain(v.receipt).kind;
+  if (v.outcome === "applied" && ["workflow_step", "cleanup"].includes(v.action))
+    requireValue(v.receipt !== null);
   if (v.action === "admission_set" || ["checkpoint", "decision"].includes(String(kind)))
     requireValue((v.receipt !== null) === (v.outcome === "applied"));
   if (kind !== null) requireValue(

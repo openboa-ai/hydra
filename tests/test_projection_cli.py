@@ -1,7 +1,10 @@
 """The explicit v3 read profile has no mutation or legacy fallback."""
 import asyncio
 import copy
+import io
+import json
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from hydra_sdlc.cli import main, operate, operate_control, parser
@@ -10,6 +13,41 @@ from test_control_projection import minimal as frame, EPOCH, REQUEST
 
 
 class ProjectionCliTests(unittest.TestCase):
+    def test_maximum_utf8_frame_crosses_sync_and_default_async_stdout_without_extra_bytes(self):
+        from test_projection_read import ReadFixture, issue
+        value = ReadFixture({('example/alpha', 'open', False): [issue()]}).read(repository='example/alpha')
+        source = next(o for o in value['observations'] if o['resource']['kind'] == 'issue')
+        source['value'].update(title='🚀', description_excerpt='', description_truncated=False)
+        size = lambda: len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode())
+        n = 0
+        while p.MAX_BYTES - size() > 4096:
+            n += 1
+            value['observations'].append({'key': 'github:check:max:' + str(n),
+                'resource': {'source': 'github', 'kind': 'check', 'id': 'max:' + str(n)},
+                'revision': None, 'observed_at': value['assembled_at'], 'last_attempt_at': value['assembled_at'],
+                'availability': 'current', 'reason': None,
+                'coverage': {'state': 'complete', 'scope': 'max:' + str(n), 'returned_count': 1,
+                    'total_count': 1, 'next_cursor': None, 'reason': None},
+                'value': {'producer': None, 'name': 'fixture', 'head': 'a' * 40, 'status': 'completed',
+                    'conclusion': 'success', 'url': 'https://github.com/example/alpha/actions/runs/1?padding=' + 'x' * 1800}})
+        padding = p.MAX_BYTES - size()
+        self.assertTrue(0 <= padding <= 4096)
+        source['value']['description_excerpt'] = 'x' * padding
+        encoded = p.encode(value)
+        self.assertEqual(len(encoded), p.MAX_BYTES)
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                output = io.StringIO()
+                with patch('hydra_sdlc.control.load_host_config', return_value={'repos': ['example/alpha']}), \
+                     patch('hydra_sdlc.projection_read.read_projection', return_value=value), redirect_stdout(output):
+                    if asynchronous:
+                        asyncio.run(operate(self.args()))
+                    else:
+                        self.assertEqual(main(['control','status','--config','/example/host.toml',
+                            '--projection-schema','3','--binding-epoch',EPOCH,'--request-id',REQUEST]), 0)
+                self.assertEqual(len(output.getvalue().encode()), p.MAX_BYTES)
+                self.assertEqual(output.getvalue().encode(), encoded)
+
     def args(self, *extra):
         return parser().parse_args(['control', 'status', '--config', '/example/host.toml',
             '--projection-schema', '3', '--binding-epoch', EPOCH, '--request-id', REQUEST, *extra])

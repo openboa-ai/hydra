@@ -131,6 +131,13 @@ function pruneUnusedSources(state: ProjectionState) {
   }
   refreshFacts(state,new Set(),new Set(),Number.MAX_SAFE_INTEGER);
 }
+function replaceablePage(frame:ProjectionV3):boolean {
+  const prefixes=new Set(["record_limit","page_limit","response_limit","continuation_slice"]);
+  return (frame.projects.length>0 || frame.page.state==="complete") && frame.projects.every(p=>
+    p.coverage.state==="complete" || (p.coverage.state==="partial" && prefixes.has(p.coverage.reason ?? "") &&
+      frame.observations.some(o=>key(o.resource)===key(p.repository_ref) && o.resource.source==="github" &&
+        o.availability==="current" && o.coverage.state==="complete")));
+}
 function bound(state: ProjectionState, window?: ReadWindow) {
   const feedbackSize = () => size([...state.feedback.values()]);
   if (feedbackSize() > 131_072) {
@@ -145,8 +152,10 @@ function bound(state: ProjectionState, window?: ReadWindow) {
   // Failure metadata can grow a previously full page. Evict stale cached values
   // before any known work identity; this never marks a source current or ended.
   const hints = new Set(state.view.retry_hints.map(h => h.observation_key));
-  const staleValues = [...state.source_slots].filter(([k,s]) => s.stale && s.observation.value !== null && !hints.has(k))
-    .sort(([,a],[,b]) => size(b.observation.value)-size(a.observation.value));
+  const rotate=window!==undefined && replaceablePage(window.frame);
+  const staleValues = [...state.source_slots].filter(([k,s]) => s.observation.value !== null && !hints.has(k) &&
+    (s.stale || (!rotate && s.observation.resource.source!=="hydra")))
+    .sort(([,a],[,b]) => Number(b.stale)-Number(a.stale) || size(b.observation.value)-size(a.observation.value));
   for (const [k,s] of staleValues) {
     const o = s.observation;
     state.source_slots.set(k,{...s,stale:true,observation:{...o,value:null,availability:"unavailable",observed_at:null,
@@ -154,7 +163,7 @@ function bound(state: ProjectionState, window?: ReadWindow) {
     refreshFacts(state,new Set([k]),new Set(),Number.MAX_SAFE_INTEGER);
     if (fits(state.view)) return;
   }
-  if (window) {
+  if (window && rotate) {
     // Pages are individually bounded. Rotate to the complete incoming page
     // when their union no longer fits; never manufacture an intra-page cursor
     // or silently discard part of the page behind its real next-record cursor.

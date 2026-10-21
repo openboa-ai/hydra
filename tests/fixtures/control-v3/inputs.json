@@ -1110,6 +1110,136 @@
           "value": null
         }
       ]
+    },
+    {
+      "name": "applied-workflow_step-requires-proof-standard",
+      "profile": "standard",
+      "accepted": false,
+      "changes": [
+        {
+          "path": [
+            "request"
+          ],
+          "value": {
+            "request_id": "00000000-0000-4000-8000-000000000002",
+            "action": "workflow_step",
+            "target": {
+              "repository_id": 101,
+              "issue_number": 7
+            },
+            "outcome": "applied",
+            "reason": null,
+            "effect_refs": [],
+            "observed_refs": [],
+            "receipt": null,
+            "required_next": "none"
+          }
+        }
+      ],
+      "delete": [],
+      "expected": [],
+      "duplicate": null
+    },
+    {
+      "name": "applied-workflow_step-requires-proof-projection",
+      "profile": "projection",
+      "accepted": false,
+      "changes": [
+        {
+          "path": [
+            "request"
+          ],
+          "value": {
+            "request_id": "00000000-0000-4000-8000-000000000002",
+            "action": "workflow_step",
+            "target": {
+              "repository_id": 101,
+              "issue_number": 7
+            },
+            "outcome": "applied",
+            "reason": null,
+            "effect_refs": [],
+            "observed_refs": [],
+            "receipt": null,
+            "required_next": "none"
+          }
+        }
+      ],
+      "delete": [],
+      "expected": [],
+      "duplicate": null
+    },
+    {
+      "name": "applied-cleanup-requires-proof-standard",
+      "profile": "standard",
+      "accepted": false,
+      "changes": [
+        {
+          "path": [
+            "request"
+          ],
+          "value": {
+            "request_id": "00000000-0000-4000-8000-000000000002",
+            "action": "cleanup",
+            "target": {
+              "kind": "owned_resource",
+              "repository_id": 101,
+              "issue_number": 7,
+              "source_attempt": "00000000-0000-4000-8000-000000000001",
+              "resource": {
+                "source": "resource_provider",
+                "kind": "workspace",
+                "id": "fixture"
+              }
+            },
+            "outcome": "applied",
+            "reason": null,
+            "effect_refs": [],
+            "observed_refs": [],
+            "receipt": null,
+            "required_next": "none"
+          }
+        }
+      ],
+      "delete": [],
+      "expected": [],
+      "duplicate": null
+    },
+    {
+      "name": "applied-cleanup-requires-proof-projection",
+      "profile": "projection",
+      "accepted": false,
+      "changes": [
+        {
+          "path": [
+            "request"
+          ],
+          "value": {
+            "request_id": "00000000-0000-4000-8000-000000000002",
+            "action": "cleanup",
+            "target": {
+              "kind": "owned_resource",
+              "repository_id": 101,
+              "issue_number": 7,
+              "source_attempt": "00000000-0000-4000-8000-000000000001",
+              "resource": {
+                "source": "resource_provider",
+                "kind": "workspace",
+                "id": "fixture"
+              }
+            },
+            "outcome": "applied",
+            "reason": null,
+            "effect_refs": [],
+            "observed_refs": [],
+            "receipt": null,
+            "required_next": "none"
+          }
+        }
+      ],
+      "delete": [],
+      "expected": [],
+      "duplicate": null
     }
   ],
   "reader": {

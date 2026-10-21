@@ -102,7 +102,10 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
         return result
     if args.command == "control":
         result = operate_control(args)
-        emit(_control_json(args, result))
+        if getattr(args, "projection_schema", 2) == 3 and emit is print:
+            emit(_control_json(args, result), end="")
+        else:
+            emit(_control_json(args, result))
         return result
     if args.command != "status" and args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
         raise ValueError("Timeout must be finite and positive")
@@ -234,7 +237,8 @@ def main(argv=None):
         if args.command == "control":
             # Exclusive mode changes can wait for an admitted bounded call.
             # Keep this synchronous and outside the async worker event loop.
-            print(_control_json(args, operate_control(args)))
+            print(_control_json(args, operate_control(args)),
+                  end="" if getattr(args, "projection_schema", 2) == 3 else "\n")
         else:
             asyncio.run(operate(args))
         return 0

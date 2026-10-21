@@ -406,6 +406,9 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
     list(&v["observed_refs"],|e| evidence_in(e,index).map(|_|()),4096)?;
     one(&v["required_next"],"none refresh reconcile open_source")?; optional(&v["receipt"],|r| receipt(r,index))?;
     let kind=v["receipt"].get("kind").and_then(Value::as_str);
+    if v["outcome"]=="applied" && ["workflow_step","cleanup"].contains(&string(&v["action"])?) {
+        need(!v["receipt"].is_null())?;
+    }
     if v["action"]=="admission_set" || matches!(kind,Some("checkpoint"|"decision")) {
         need((!v["receipt"].is_null())==(v["outcome"]=="applied"))?;
     }
@@ -590,6 +593,25 @@ mod tests {
         let summary:Value=serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(summary["passed"].as_u64(),Some(vectors.iter().filter(|v|v["accepted"]==true).count() as u64));
         assert_eq!(summary["rejected"].as_u64(),Some(vectors.iter().filter(|v|v["accepted"]==false).count() as u64));
+    }
+    #[test]
+    fn applied_receipt_bearing_results_cannot_omit_readback_proof() {
+        let emitted=Command::new("python3").arg("-I").arg(root().join("tests/fixtures/control-v3/emit_wire.py")).output().unwrap();
+        assert!(emitted.status.success());let vectors:Value=serde_json::from_slice(&emitted.stdout).unwrap();
+        let original:Value=serde_json::from_str(vectors.as_array().unwrap().iter()
+            .find(|v|v["profile"]=="standard" && v["accepted"]==true).unwrap()["wire"].as_str().unwrap()).unwrap();
+        for (action,target) in [("workflow_step",serde_json::json!({"repository_id":101,"issue_number":7})),
+            ("cleanup",serde_json::json!({"kind":"owned_resource","repository_id":101,"issue_number":7,
+             "source_attempt":"00000000-0000-4000-8000-000000000001",
+             "resource":{"source":"resource_provider","kind":"workspace","id":"fixture"}}))] {
+            let mut value=original.clone();let result=&mut value["request"];
+            result["action"]=action.into();result["target"]=target;result["receipt"]=Value::Null;
+            result["effect_refs"]=serde_json::json!([]);result["observed_refs"]=serde_json::json!([]);
+            result["outcome"]="waiting".into();
+            assert!(StandardReply::parse(&serde_json::to_vec(&value).unwrap()).is_ok());
+            value["request"]["outcome"]="applied".into();
+            assert!(StandardReply::parse(&serde_json::to_vec(&value).unwrap()).is_err(),"Receiptless applied {action}");
+        }
     }
     #[test]
     fn unique_bounded_integer_json_is_required_before_assignment() {

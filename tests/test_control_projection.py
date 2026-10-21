@@ -40,6 +40,29 @@ def minimal():
 
 
 class ProjectionPrimitiveTests(unittest.TestCase):
+    def test_applied_workflow_and_cleanup_require_receipts_in_both_wire_profiles(self):
+        from hydra_sdlc.control_commands import _observation, _reply
+        command = {'request_id': REQUEST, 'action': 'admission_set',
+                   'target': {'kind': 'repository', 'repository_id': 101}}
+        observation = _observation(command, runtime(), {'revision': 7, 'global_mode': 'paused',
+            'projects': {'example/alpha': 'running'}}, 'example/alpha', 'readback', AT)
+        base = _reply(command, runtime(), EPOCH, 'applied', None, observation=observation)
+        targets = [('workflow_step', {'repository_id': 101, 'issue_number': 7}),
+                   ('cleanup', {'kind': 'owned_resource', 'repository_id': 101, 'issue_number': 7,
+                    'source_attempt': EPOCH, 'resource': {'source': 'resource_provider', 'kind': 'workspace', 'id': 'fixture'}})]
+        for action, target in targets:
+            for profile in ('standard', 'projection'):
+                with self.subTest(action=action, profile=profile):
+                    result = dict(base['request'], action=action, target=target, receipt=None,
+                                  effect_refs=[], observed_refs=[], outcome='waiting')
+                    value = copy.deepcopy(base) if profile == 'standard' else minimal()
+                    value['request'] = result
+                    consume = p.standard_reply if profile == 'standard' else p.encode
+                    consume(value)
+                    result['outcome'] = 'applied'
+                    with self.assertRaises(p.ProjectionError):
+                        consume(value)
+
     def test_retry_hints_keep_provider_zero_distinct_from_fallback_and_unknown(self):
         value = minimal()
         source = value['observations'][0]

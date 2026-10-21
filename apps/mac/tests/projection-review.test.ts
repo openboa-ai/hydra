@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 import test from "node:test";
-import {MAX_PROJECTION_BYTES,parseProjection,type ProjectionV3} from "../src/projection.ts";
+import {MAX_PROJECTION_BYTES,parseProjection,parseStandardReply,type ProjectionV3} from "../src/projection.ts";
 import {projectionState,reduceProjection,type ProjectionState} from "../src/projection-state.ts";
 const emitter=fileURLToPath(new URL("../../../tests/fixtures/control-v3/emit_wire.py",import.meta.url));
 const result=spawnSync("python3",["-I",emitter],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
@@ -16,6 +16,63 @@ function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
     response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
+for (const [action,target] of [
+  ["workflow_step",{repository_id:101,issue_number:7}],
+  ["cleanup",{kind:"owned_resource",repository_id:101,issue_number:7,source_attempt:base.binding_epoch,
+    resource:{source:"resource_provider",kind:"workspace",id:"fixture"}}],
+] as const) for (const profile of ["standard","projection"] as const)
+test(`applied ${action} in ${profile} cannot omit its receipt`,()=>{
+  const value=profile==="standard" ? JSON.parse(vectors.find(v=>v.accepted && v.profile==="standard")!.wire) : structuredClone(base);
+  value.request={request_id:base.request_id,action,target:structuredClone(target),outcome:"waiting",reason:null,
+    effect_refs:[],observed_refs:[],receipt:null,required_next:"none"};
+  const consume=profile==="standard" ? parseStandardReply : parseProjection;
+  consume(value);value.request.outcome="applied";
+  assert.throws(()=>consume(value));
+});
+for (const mode of ["local","failed"] as const)
+test(`a near-limit ${mode} partial read preserves known work and current local admission`,()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nrows={('example/alpha','open',False):[issue(n,'🚀'*5000) for n in range(1,151)]}\nfirst=ReadFixture(rows).read(repository='example/alpha')\nsnapshot={'revision':8,'global_mode':'stopped','projects':{}}\nlocal=ReadFixture().read(refresh=False,admission_snapshot=snapshot)\nfailed=ReadFixture(fail=lambda path: RuntimeError('fixture unavailable') if '/issues?' in path else None).read(repository='example/alpha',admission_snapshot=snapshot)\nprint(json.dumps([first,local,failed],ensure_ascii=False))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
+  assert.equal(r.status,0,r.stderr);
+  const frames=(JSON.parse(r.stdout) as ProjectionV3[]).map(parseProjection),frame=frames[0]!;
+  // Measure the retained view's actual budget, including dependency invalidation.
+  for (const w of frame.work) for (const axis of ["answer","acceptance","application"] as const)
+    w.decision[axis]={value:null,evidence:[],reason:"question_unavailable"};
+  const first=frame.work[0]!,checks:Array<{value:{name:string;url:string};coverage:{scope:string}}>=[];
+  for (const o of frame.observations) if (o.key.startsWith("github:query:"))
+    first.evidence_refs.push({observation_key:o.key,revision:o.revision});
+  const bytes=()=>new TextEncoder().encode(JSON.stringify(frame)).length;
+  for (let n=0;n<20;n++) {
+    const o={key:"github:capacity:"+n,resource:{source:"github" as const,kind:"check",id:"capacity:"+n},
+      revision:null,observed_at:frame.assembled_at,last_attempt_at:frame.assembled_at,availability:"current" as const,reason:null,
+      coverage:{state:"complete" as const,scope:"capacity:"+n,returned_count:1,total_count:1,next_cursor:null,reason:null},
+      value:{producer:null,name:"fixture",head:"a".repeat(40),status:"completed",conclusion:"success",
+        url:"https://github.com/example/alpha/actions/runs/1?padding="+"x".repeat(1800)}};
+    frame.observations.push(o);first.evidence_refs.push({observation_key:o.key,revision:null});
+    if (bytes()>MAX_PROJECTION_BYTES-8) {frame.observations.pop();first.evidence_refs.pop();break;}
+    checks.push(o);
+  }
+  let padding=MAX_PROJECTION_BYTES-8-bytes();
+  const fill=(value:string,limit:number,assign:(next:string)=>void)=>{
+    const count=Math.min(padding,limit-value.length);assign(value+"x".repeat(count));padding-=count;
+  };
+  for (const o of checks) {
+    fill(o.value.name,512,value=>{o.value.name=value;});
+    fill(o.coverage.scope,512,value=>{o.coverage.scope=value;});
+    fill(o.value.url,2048,value=>{o.value.url=value;});
+  }
+  assert.equal(padding,0);parseProjection(frame);assert.equal(bytes(),MAX_PROJECTION_BYTES-8);
+  let s=read(projectionState(frame.binding_epoch),1,frame);
+  assert.equal(new TextEncoder().encode(JSON.stringify(s.view)).length,MAX_PROJECTION_BYTES-8,
+    "Precondition: the retained view must reach the declared byte boundary");
+  const ids=s.view!.work.map(w=>w.issue_ref.id).sort();
+  s=read(s,2,frames[mode==="local" ? 1 : 2]!);
+  assert.ok(s.view,"A partial refresh erased the recoverable read model");
+  assert.deepEqual(s.view.work.map(w=>w.issue_ref.id).sort(),ids,"A partial frame replaced known remote work");
+  assert.ok(s.view.work.every(w=>w.admission.value==="stopped" && w.execution.value===null && w.cleanup.value===null));
+  assert.ok(new TextEncoder().encode(JSON.stringify(s.view)).length<=MAX_PROJECTION_BYTES);
+  parseProjection(s.view);
+});
 test("local admission reads refresh retained work without refreshing independent GitHub or execution",()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nfirst=ReadFixture({('example/alpha','open',False):[issue()]}).read()\nframes=[first]\nfor revision,mode in [(8,'stopped'),(9,'running'),(6,'paused')]:\n fixture=ReadFixture()\n frame=fixture.read(refresh=False,admission_snapshot={'revision':revision,'global_mode':mode,'projects':{}})\n assert not fixture.calls\n frames.append(frame)\nprint(json.dumps(frames))\n";
   const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});

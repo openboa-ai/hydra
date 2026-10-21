@@ -548,6 +548,8 @@ def command_result(value, observations):
     one(value['required_next'], {'none', 'refresh', 'reconcile', 'open_source'})
     if value['receipt'] is not None:
         receipt(value['receipt'], observations)
+    if value['outcome'] == 'applied' and value['action'] in {'workflow_step', 'cleanup'}:
+        require(value['receipt'] is not None)
     if value['action'] == 'admission_set' or (
             value['receipt'] is not None and value['receipt']['kind'] in {'checkpoint', 'decision'}):
         require((value['receipt'] is not None) == (value['outcome'] == 'applied'))
