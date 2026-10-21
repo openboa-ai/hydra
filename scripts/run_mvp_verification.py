@@ -580,7 +580,8 @@ def execute(root, manifest, pins):
                 outcome = {"selector": selector, "collected": 0, "executed": 0,
                            "completed": 0, "subtests": 0, "reasons": ["not_executed"]}
             else:
-                selected = isolated_worker(root, pins, selector=selector, compiled=compiled)
+                selected = isolated_worker(root, pins, selector=selector, compiled=compiled,
+                                           source_files=signatures[1])
                 require(type(selected) is dict and set(selected) == {"outcome", "environment"})
                 require(selected["environment"] == execution_environment())
                 outcome = selected["outcome"]
@@ -607,6 +608,70 @@ class _SelectorExit(BaseException):
     """Leave the clean fork through the outer bootstrap's normal Python exit."""
     def __init__(self, code):
         self.code = code
+
+
+def _import_entries(root, files):
+    return [[str(Path(path).relative_to(root)), list(identity), size, digest.hex(), link]
+            for path, identity, size, digest, link in files
+            if link or Path(path).suffix == '.py']
+
+
+def _install_source_reader(root, entries):
+    """Bind default repository imports to the bytes pinned by the supervisor.
+
+    This is child-local drift detection, not a sandbox for hostile Python code.
+    Runtime/dependency imports outside the snapshot keep their normal loader.
+    """
+    require(type(entries) is list)
+    pinned = {}
+    for entry in entries:
+        require(type(entry) is list and len(entry) == 5)
+        relative, identity, size, digest, link = entry
+        require(isinstance(relative, str))
+        path = Path(relative)
+        require(not path.is_absolute() and path.parts and '..' not in path.parts)
+        require(str(path) == relative and relative not in pinned)
+        require(type(identity) is list and len(identity) == 6
+                and all(type(value) is int and value >= 0 for value in identity))
+        require(type(size) is int and size >= 0 and type(link) is bool)
+        require(isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest))
+        require(link or path.suffix == '.py')
+        pinned[relative] = (str(root / path), tuple(identity), size, bytes.fromhex(digest), link)
+
+    def source_path(path):
+        # Resolve only verified link text; mutable resolve() would select bytes
+        # through an unchecked directory link before reaching the pinned file.
+        for _ in range(64):
+            relative = path.relative_to(root)
+            for index in range(1, len(relative.parts) + 1):
+                prefix = Path(*relative.parts[:index])
+                entry = pinned.get(str(prefix))
+                if entry is not None and entry[-1]:
+                    target = _read_snapshot_file(*entry).decode('utf-8')
+                    path = Path(os.path.abspath(root / prefix.parent / target /
+                                Path(*relative.parts[index:])))
+                    require(path.is_relative_to(root))
+                    break
+            else:
+                entry = pinned.get(str(relative))
+                require(entry is not None and not entry[-1])
+                return entry
+        raise Invalid()
+
+    original = importlib.machinery.SourceFileLoader.get_data
+
+    def get_data(loader, path):
+        path = Path(os.path.abspath(path))
+        if not path.is_relative_to(root):
+            return original(loader, str(path))
+        if path.suffix in {'.pyc', '.pyo'}:
+            # Force SourceFileLoader to consume verified source, never cache.
+            raise OSError('repository bytecode unavailable')
+        if path.suffix == '.py':
+            return _read_snapshot_file(*source_path(path))
+        return original(loader, str(path))
+
+    importlib.machinery.SourceFileLoader.get_data = get_data
 
 
 class _CompiledLoader(importlib.machinery.SourceFileLoader):
@@ -712,7 +777,7 @@ def _selector_result(data, selector):
             'environment': {'python': '.'.join(map(str, (major, minor, micro))), 'execution': 'local_subprocess'}}
 
 
-def _fork_selector_main(root, selector, write_fd, compiled):
+def _fork_selector_main(root, selector, write_fd, compiled, source_files):
     try:
         os.dup2(write_fd, 1)
         with open(os.devnull, 'rb') as empty:
@@ -728,6 +793,7 @@ def _fork_selector_main(root, selector, write_fd, compiled):
         result_fd = quiet()
         install_termination_handler()
         sys.dont_write_bytecode = True
+        _install_source_reader(root, _import_entries(root, source_files))
         if compiled:
             sys.meta_path.insert(0, _CompiledFinder(compiled))
         _emit_selector(root, selector, result_fd)
@@ -742,7 +808,7 @@ def _fork_selector_main(root, selector, write_fd, compiled):
 
 class _ForkedSelector:
     """Small owned-process adapter for the same bounded capture/cleanup below."""
-    def __init__(self, root, selector, compiled):
+    def __init__(self, root, selector, compiled, source_files):
         read_fd, write_fd = os.pipe()
         try:
             self.pid = os.fork()
@@ -753,7 +819,7 @@ class _ForkedSelector:
         if self.pid == 0:
             # Returning through _worker_main lets normal interpreter shutdown
             # run selected atexit handlers; stdout/stderr remain private.
-            raise _SelectorExit(_fork_selector_main(root, selector, write_fd, compiled))
+            raise _SelectorExit(_fork_selector_main(root, selector, write_fd, compiled, source_files))
         os.close(write_fd)
         self.stdout = os.fdopen(read_fd, 'rb')
         self.returncode = None
@@ -792,15 +858,17 @@ def _worker_main():
     selector = None
     try:
         request = decode_json(sys.stdin.buffer.read(_WORKER_INPUT_LIMIT + 1), limit=_WORKER_INPUT_LIMIT)
-        require(type(request) is dict and set(request) == {"root", "pins", "selector"})
+        require(type(request) is dict and set(request) == {"root", "pins", "selector", "source_files"})
         root = Path(request["root"]).resolve()
         require(Path(__file__).resolve() == regular(root, SCRIPT))
         selector = request["selector"]
         if selector is None:
+            require(request['source_files'] is None)
             manifest = load_manifest(root)
             report = execute(root, manifest, request["pins"])
         else:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
+            _install_source_reader(root, request['source_files'])
             _emit_selector(root, selector, result_fd)
             return 0
     except _SelectorExit as ended:
@@ -821,7 +889,7 @@ def _worker_main():
     return 0
 
 
-def isolated_worker(root, pins, *, selector=None, compiled=None):
+def isolated_worker(root, pins, *, selector=None, compiled=None, source_files=None):
     """Bounded private transport; selected imports never inherit public handles.
 
     This is output/process separation, not a sandbox for same-user code. Only the
@@ -829,11 +897,15 @@ def isolated_worker(root, pins, *, selector=None, compiled=None):
     stdout descriptor is closed in the fresh child along with other inherited fds.
     """
     if selector is not None and _fork_available():
-        return _capture_worker(_ForkedSelector(root, selector, compiled or {}), group=False, selector=selector)
+        require(source_files is not None)
+        return _capture_worker(_ForkedSelector(root, selector, compiled or {}, source_files),
+                               group=False, selector=selector)
     bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
     envelope = json.dumps({'root': str(root), 'pins': pins, 'selector': None}, ensure_ascii=True).encode('ascii')
     require(len(envelope) <= _INPUT_LIMIT)
-    request = json.dumps({"root": str(root), "pins": pins, "selector": selector}, ensure_ascii=True).encode("ascii")
+    request = json.dumps({"root": str(root), "pins": pins, "selector": selector,
+        "source_files": _import_entries(root, source_files) if source_files is not None else None},
+        ensure_ascii=True).encode("ascii")
     require(len(request) <= _WORKER_INPUT_LIMIT)
     with tempfile.TemporaryFile() as channel:
         channel.write(request)

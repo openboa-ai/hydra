@@ -85,7 +85,7 @@ class CapabilityCompletionTests(unittest.IsolatedAsyncioTestCase):
         boot.start()
         self.addCleanup(boot.stop)
 
-    async def probe(self, *, scenario="normal", payload=None, exitcode=0):
+    async def probe(self, *, scenario="normal", payload=None, exitcode=0, start_delay=0):
         self.sequence += 1
         root = self.root / str(self.sequence)
         root.mkdir()
@@ -104,6 +104,8 @@ class CapabilityCompletionTests(unittest.IsolatedAsyncioTestCase):
             async def start(self, deadline):
                 self.probe_deadline = deadline
                 handles.append(self)
+                if start_delay:
+                    await asyncio.sleep(start_delay)
                 await super().start(deadline)
                 events.append(("started", asyncio.get_running_loop().time()))
 
@@ -156,10 +158,14 @@ class CapabilityCompletionTests(unittest.IsolatedAsyncioTestCase):
                                asyncio.get_running_loop().time()))
                 return False if scenario == "cleanup_unknown" else clean
 
+        # Only deadline scenarios need a short clock. Other scenarios verify
+        # report/retirement semantics and retain the real startup budget.
+        timeout = (1.0 if scenario in {"slow_completion", "open_stdout", "late_eof"}
+                   else codex.CAPABILITIES_TIMEOUT_SECONDS)
         with coordinator.coordinator_lock(lock), patch.object(
             codex, "_capability_command", return_value=command,
         ), patch.object(boundary, "OwnedProcess", ObservedProcess), patch.object(
-            codex, "CAPABILITIES_TIMEOUT_SECONDS", 1.0,
+            codex, "CAPABILITIES_TIMEOUT_SECONDS", timeout,
         ):
             result = await codex.capabilities(str(root))
             marker = lock.read_bytes()
@@ -266,7 +272,9 @@ class CapabilityCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marker, b"")
 
     async def test_durable_ticket_clear_failure_keeps_report_unavailable_and_restart_held(self):
-        result, _, lock, marker, handle, events = await self.probe(scenario="ticket_failure")
+        result, _, lock, marker, handle, events = await self.probe(
+            scenario="ticket_failure", start_delay=1.05,
+        )
         self.assertFalse(result["available"])
         self.assertEqual(result["cleanup"], "unknown")
         self.assertEqual(handle.returncode, 0)

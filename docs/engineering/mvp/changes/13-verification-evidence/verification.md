@@ -830,3 +830,42 @@ manifest/policy pins. That result does not qualify this later correction.
 P13 Rev4/VF Rev11 and their native/full-v1 exclusions stay unchanged. Final-head
 CI/artifacts, completed independent code/security reviews, scoped CODEOWNER
 approval, protected merge and actual-main checks remain required.
+
+## Default-import byte binding and CI fixture recovery
+
+The selected-source collector now checks the actual bytes consumed by every
+ordinary repository Python source import against the parent-pinned snapshot.
+This includes single-use selected modules and imported helpers in both the fork
+and fresh-exec profiles. The repeated-module cache retains its verified immutable
+code objects and 8 MB budget. Child-local source reads bypass repository bytecode;
+tracked directory links are followed only through verified link text. Runtime
+and declared dependency imports keep their existing loader. Existing preflight
+restrictions, the private request bound and process/result boundaries remain.
+This is source drift detection for reviewed tests, not an OS sandbox or hostile
+program authentication. No manifest, CI permission or execution policy changed.
+
+Four actual transient-substitution assertions failed on published 28f20da:
+single-use modules and helpers in both profiles incorrectly became committed PASS.
+The unchanged finalized tests now pass, along with regular-helper and supported
+internal directory-link controls. The initial probe also attempted an unsupported
+file-symlink layout; preflight already rejects that layout and it was removed from
+the positive control before the final parent RED and GREEN runs. It was not counted
+as a repaired behavior, and the existing preflight boundary was not expanded.
+
+Hosted run 39529998382 failed its Python 3.14.2 capability-retirement fixture:
+the probe never reached its startup-completed event before a synthetic 1-second
+budget expired. The report and durable-ticket assertions were not reached under
+the intended condition. Non-deadline fixtures now retain the existing production
+startup budget; the three actual deadline scenarios retain their short clock.
+The ticket-clear-failure case deliberately delays startup beyond one second and
+still requires the actual report, worker exit, failed retirement and held restart.
+Production deadlines and test outcome oracles are unchanged.
+
+Final local validation: Python 3.14.2, 74 collector contract methods plus 9 actual
+capability-completion methods, all 83 passed in 137.487 seconds, zero errors,
+failures or skips. The maximum manifest, source substitution, signals, shutdown,
+export, anchor parsing and public non-disclosure regressions remain included.
+No full local kernel or native qualification is claimed. P13 Rev4/VF11 and the
+selected-source scope are unchanged. Final-head CI, actual hosted artifacts,
+independent code/security review, scoped CODEOWNER approval, protected merge
+and main checks remain required.

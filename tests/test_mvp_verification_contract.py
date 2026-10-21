@@ -421,6 +421,67 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_single_use_and_helper_imports_read_pinned_bytes(self):
+        for fresh_exec in (False, True):
+            for helper in (False, True):
+                with self.subTest(fresh_exec=fresh_exec, helper=helper):
+                    body = ("import helper\nself.assertTrue(helper.VALUE)" if helper
+                            else "self.fail('committed')")
+                    fixture = self.fixture(body=body + "\nPath('import_effect').touch()")
+                    if helper:
+                        fixture.write('tests/helper.py', 'VALUE = False\n')
+                    hook = '''
+original_emit=_emit_selector
+def swapped_emit(root,selector,descriptor):
+    target=root/TARGET
+    original=target.read_bytes()
+    changed=original.replace(BEFORE,AFTER)
+    assert changed!=original and len(changed)==len(original)
+    mode=target.stat().st_mode & 0o777
+    original_get_data=importlib.machinery.SourceFileLoader.get_data
+    def get_data(loader,path):
+        if Path(path)!=target: return original_get_data(loader,path)
+        os.chmod(target,mode|0o200)
+        target.write_bytes(changed)
+        os.chmod(target,mode)
+        try: return original_get_data(loader,path)
+        finally:
+            os.chmod(target,mode|0o200)
+            target.write_bytes(original)
+            os.chmod(target,mode)
+    importlib.machinery.SourceFileLoader.get_data=get_data
+    return original_emit(root,selector,descriptor)
+_emit_selector=swapped_emit
+'''
+                    before = b'VALUE = False' if helper else b"self.fail('committed')"
+                    after = b'VALUE = True ' if helper else b'pass' + b' ' * (len(before) - 4)
+                    hook = ("\nTARGET=" + repr('tests/helper.py' if helper else 'tests/test_probe.py') +
+                            "\nBEFORE=" + repr(before) + "\nAFTER=" + repr(after) + "\n" + hook)
+                    if fresh_exec:
+                        hook += '\ndef _fork_available(): return False\n'
+                    fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + hook)
+                    result = fixture.run()
+                    self.assertNotEqual(result.returncode, 0, 'Transient import bytes became committed PASS')
+                    self.assertFalse((fixture.root / 'import_effect').exists(), 'Substituted import executed')
+
+    def test_pinned_imports_preserve_normal_helpers_and_internal_symlinks(self):
+        for fresh_exec in (False, True):
+            for layout in ('regular', 'directory_link'):
+                with self.subTest(fresh_exec=fresh_exec, layout=layout):
+                    fixture = self.fixture(body="from helper import VALUE\nself.assertTrue(VALUE)\nPath('import_effect').touch()")
+                    if layout == 'directory_link':
+                        fixture.write('tests/pkg/__init__.py', '')
+                        fixture.write('tests/pkg/value.py', 'VALUE = True\n')
+                        (fixture.root / 'tests/linked').symlink_to('pkg', target_is_directory=True)
+                        fixture.write('tests/helper.py', 'from linked.value import VALUE\n')
+                    else:
+                        fixture.write('tests/helper.py', 'VALUE = True\n')
+                    if fresh_exec:
+                        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + '\ndef _fork_available(): return False\n')
+                    self.assertEqual(fixture.run().returncode, 0)
+                    self.assertTrue((fixture.root / 'import_effect').exists())
+                    self.assertEqual(fixture.run(validate=True).returncode, 0)
+
     def test_compiled_selector_bytes_cannot_be_substituted_between_snapshot_checks(self):
         def repeated(body):
             fixture = self.fixture(body=body)
