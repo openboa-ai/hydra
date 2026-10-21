@@ -236,6 +236,13 @@ class GitHub:
             return json.loads(result.stdout) if result.stdout.strip() else None
         except GitHubError:
             raise
+        except subprocess.CalledProcessError as exc:
+            # Preserve a known authentication-phase HTTP status. Missing headers
+            # stay unknown; the read adapter supplies its bounded fallback policy.
+            match = re.search(r"HTTP (\d{3})", exc.stderr or "")
+            raise GitHubError("GitHub authentication unavailable",
+                              status=int(match[1]) if match else None,
+                              uncertain=method != "GET") from exc
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             raise GitHubError("GitHub transport unavailable", uncertain=method != "GET") from exc
 

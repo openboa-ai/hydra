@@ -15,6 +15,36 @@ OWNERS = json.loads((ROOT / 'tests/fixtures/control-v3/source-owners.json').read
 
 
 class ProjectionContextTests(unittest.TestCase):
+    def test_identity_rate_limit_stops_later_gets_and_keeps_unknown_headers_as_fallback(self):
+        fixture = ReadFixture()
+        fixture.client = ProjectionClient()
+        calls = []
+        def process(argv, **kwargs):
+            if argv[1:3] == ['auth', 'token']:
+                return subprocess.CompletedProcess(argv, 0, 'synthetic-auth-limit-credential\n', '')
+            calls.append(argv[:])
+            raise subprocess.CalledProcessError(1, argv, output='{}', stderr='gh: limited (HTTP 429)')
+        with patch('hydra_sdlc.github.subprocess.run', side_effect=process):
+            frame = fixture.read()
+        self.assertTrue(frame['retry_hints'], 'A known authentication-phase429 lost its retry policy')
+        self.assertEqual(len(calls), 1, 'A known limit permitted another identity GET')
+        self.assertTrue(all(h['basis'] == 'fallback' and h['after_seconds'] == 60 for h in frame['retry_hints']))
+        self.assertTrue(all('repos/' not in ' '.join(call) for call in calls))
+        control = ReadFixture()
+        control.client = ProjectionClient()
+        def healthy(argv, **kwargs):
+            if argv[1:3] == ['auth', 'token']:
+                return subprocess.CompletedProcess(argv, 0, 'synthetic-auth-limit-credential\n', '')
+            if argv[-1] == 'user':
+                return subprocess.CompletedProcess(argv, 0, json.dumps({'login': 'openboa'}), '')
+            path = next(arg for arg in argv if arg.startswith('repos/'))
+            value = control.transport('GET', '/' + path, None)
+            return subprocess.CompletedProcess(argv, 0, 'HTTP/2.0 200 OK\r\n\r\n' + json.dumps(value), '')
+        with patch('hydra_sdlc.github.subprocess.run', side_effect=healthy):
+            fresh = control.read()
+        self.assertEqual(fresh['retry_hints'], [])
+        self.assertTrue(all(row['coverage']['state'] == 'complete' for row in fresh['projects']))
+
     def test_cleanup_wire_requires_the_exact_receipt_resource(self):
         inputs = json.loads((ROOT / 'tests/fixtures/control-v3/inputs.json').read_text())
         cases = {case['name']: case for case in inputs['cases']}

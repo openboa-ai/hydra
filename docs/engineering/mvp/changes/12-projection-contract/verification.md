@@ -410,3 +410,20 @@ Local source tests do not establish installed operation, native question/answer 
 The initial scoped Python run used the shell-selected Python 3.12.7. The preceding version label is corrected; its 286-method result and log digest remain historical evidence. The same published source/test bytes were subsequently checked in the declared isolated Python 3.14.2 runtime, with child `python3` pinned to that same runtime: 286 methods passed, zero failures/errors/skips, in 9.972 seconds. Log SHA-256 `e81992d7d309330fece5d3387c55e98608ef439cd2bb2b0f8e25390210ff9e04`.
 
 No implementation, oracle, requirement pin or protected check changes for this correction. The exact f3e4cb0 hosted run 39544070488 also passed all four jobs, including Python 3.11 and 3.14.2; that hosted result is distinct from the local run and does not qualify a later head automatically.
+
+
+### Identity-request rate-limit classification
+
+A known HTTP429 during the built-in credential identity check is now preserved as
+a known status, instead of being collapsed into an unknown transport error. The
+existing read adapter then holds subsequent GETs and emits its credential-scoped
+fallback policy. Header metadata unavailable in that phase remains unknown; it is
+not invented as provider=0 or a known Retry-After. No request, credential, wire,
+retry threshold or authority profile is added.
+
+The actual published-parent fixture made two identity GET attempts after one
+known429 and emitted no hint. The new regression fails on that parent and checks
+one HTTP attempt, zero target reads and a 60-second fallback; a healthy
+authenticated source read remains a successful control.
+
+Final affected local Python 3.14.2 suites: 287 methods, zero failures/errors/skips. Log SHA-256 `63067387f16bb1f3af921e4b7753be4896fc60a4ed1a5492ae978d9061a0efd9`. The TypeScript/Rust implementation, wire fixtures and their prior113/44 checks are unchanged; new-head hosted CI and independent reviews remain required. Installed/native operation remains NOT RUN.
