@@ -306,3 +306,39 @@ pinned. Final-head CI, completed independent code/security reviews, protected
 merge and actual-main checks are required. P16 still owns screen/action and
 actual running-screen integration. No runtime/authority was activated and no
 full local kernel was repeated.
+
+
+## Preserve uncertainty at classification and alias boundaries -- 2026-10-21
+
+The ordinary issue pass now skips records whose label list or any label name is
+unreadable, retaining partial source coverage. It never emits those identities as
+ordinary candidates that could overwrite earlier managed progress. Valid string
+and named-object labels, including a known empty list, retain their behavior.
+The page remains bounded and traversal continues to independently valid records.
+
+When a failed refresh uses a requested repository alias, the reducer retains its
+incoming partial coverage and reason while reconciling the known numeric identity.
+Only an intentional not_requested local poll reuses earlier remote coverage.
+Retained work and the current local admission remain separate from failed source
+coverage; no ended/accepted/applied state or native effect is inferred.
+
+Seven finalized assertion failures were reproduced on unchanged published 22e6ec5:
+six unreadable-label continuation variants and the failed-alias coverage case.
+Both final test files are identical between that RED and GREEN. The positive
+actual-CLI wire input now explicitly declares labels=[] for its ordinary issue;
+previously omitted metadata was ambiguous under the corrected classification.
+All original expected values and all 23 shared vectors are retained. The alias
+regression compares its coverage reason with the actual incoming producer frame,
+rather than assigning a different reason to the generic injected exception.
+
+Final local checks: 59 projection Python methods, 102 frontend tests, 39 Rust tests,
+TypeScript/build and unchanged bounded request/response probes all pass, with zero
+failures/errors/skips. All shared Python-emitted vectors pass Rust and TypeScript.
+Costs remain four GETs/8,444 bytes for a small source and five GETs for bounded
+128-record and 1-MiB prefix reads. Earlier raw/wire/admission/retained-page cases
+remain included. Unchanged HTTP parsing did not require another local suite run;
+the required final-head hosted kernel/Mac/hygiene CI still applies.
+
+P12 Rev4, CP8 and NC8 pins remain unchanged. No interface redesign, native command
+activation, installation or operating qualification is claimed. Final-head CI,
+independent code/security reviews, protected merge and actual-main checks remain.

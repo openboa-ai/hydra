@@ -16,6 +16,23 @@ function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
     response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
+test("failed identity refresh preserves partial coverage while local polling reuses the numeric repository",()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nfirst=ReadFixture({('example/alpha','open',False):[issue()]}).read(repository='example/alpha')\nfailed=ReadFixture(fail=lambda _: RuntimeError('fixture unavailable')).read(repository='example/alpha')\nlocal=ReadFixture().read(repository='example/alpha',refresh=False)\nprint(json.dumps([first,failed,local]))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
+  assert.equal(r.status,0,r.stderr);
+  const frames=(JSON.parse(r.stdout) as ProjectionV3[]).map(parseProjection);
+  const initial=()=>read(projectionState(frames[0]!.binding_epoch),1,frames[0]!);
+  const local=read(initial(),2,frames[2]!);
+  assert.equal(local.view!.projects[0]!.repository_ref.id,"101");
+  assert.equal(local.view!.projects[0]!.coverage.state,"complete");
+  const failed=read(initial(),2,frames[1]!);
+  assert.equal(failed.view!.projects[0]!.repository_ref.id,"101");
+  assert.deepEqual(failed.view!.work.map(w=>w.issue_ref.id),frames[0]!.work.map(w=>w.issue_ref.id));
+  assert.equal(failed.view!.projects[0]!.coverage.state,"partial","A failed refresh inherited old complete coverage");
+  assert.equal(frames[1]!.projects[0]!.coverage.state,"partial");
+  assert.equal(failed.view!.projects[0]!.coverage.reason,frames[1]!.projects[0]!.coverage.reason);
+  parseProjection(failed.view);
+});
 for (const [action,target] of [
   ["workflow_step",{repository_id:101,issue_number:7}],
   ["cleanup",{kind:"owned_resource",repository_id:101,issue_number:7,source_attempt:base.binding_epoch,

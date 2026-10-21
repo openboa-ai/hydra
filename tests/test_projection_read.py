@@ -67,6 +67,32 @@ def issue(number=7, body='A useful request without a fixed template.'):
 
 
 class ProjectionReadTests(unittest.TestCase):
+    def test_unreadable_ordinary_labels_do_not_demote_prior_managed_work(self):
+        from hydra_sdlc.github import ACTIVE_LABEL
+        opened = [issue(n) for n in range(1, 101)]
+        closed = [issue(n) for n in range(101, 129)]
+        for row in opened + closed:
+            row['labels'] = [{'name': ACTIVE_LABEL}]
+        for labels in (None, 'missing', [{}], [1], [{'name': None}], [ACTIVE_LABEL, {}]):
+            with self.subTest(labels=labels):
+                ordinary = copy.deepcopy(opened)
+                if labels == 'missing':
+                    ordinary[0].pop('labels')
+                else:
+                    ordinary[0]['labels'] = labels
+                ordinary.extend(issue(n) for n in range(201, 206))
+                rows = {('example/alpha', 'open', True): opened,
+                        ('example/alpha', 'closed', True): closed,
+                        ('example/alpha', 'open', False): ordinary}
+                first = ReadFixture(rows).read(repository='example/alpha')
+                cursor = first['projects'][0]['coverage']['next_cursor']
+                second = ReadFixture(rows).read(repository='example/alpha', cursor=cursor)
+                self.assertEqual({w['issue_ref']['id'] for w in second['work']},
+                                 {'101:' + str(n) for n in range(201, 206)},
+                                 'Unreadable label metadata demoted already managed work')
+                self.assertEqual(second['projects'][0]['coverage']['reason'], 'label_metadata_unavailable')
+                self.assertEqual(second['projects'][0]['coverage']['state'], 'partial')
+
     def test_deep_successful_comment_histories_do_not_evict_the_selected_repository(self):
         from hydra_sdlc.github import ACTIVE_LABEL
         rows = [issue(n) for n in range(1, 41)]

@@ -219,10 +219,14 @@ def _issue_rows(client, repository, limit, position):
                         continue
                     if plan == 2:
                         labels = raw.get('labels')
-                        if type(labels) is not list:
+                        names = ([label.get('name') if type(label) is dict else label for label in labels]
+                                 if type(labels) is list else None)
+                        if names is None or any(not isinstance(name, str) or not name for name in names):
                             complete, reason = False, 'label_metadata_unavailable'
-                        elif any(isinstance(name, str) and name.casefold() == ACTIVE_LABEL.casefold()
-                                 for name in (label.get('name') if type(label) is dict else label for label in labels)):
+                            # Unknown classification cannot overwrite earlier
+                            # managed progress as an ordinary candidate.
+                            continue
+                        if any(name.casefold() == ACTIVE_LABEL.casefold() for name in names):
                             # Managed plans already own these identities, even on
                             # an earlier continuation page. Do not demote them.
                             continue

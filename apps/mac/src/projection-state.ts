@@ -297,7 +297,13 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
             typeof s.observation.value?.full_name === "string" && s.observation.value.full_name.toLowerCase() === address.toLowerCase() &&
             !s.observation.resource.id.startsWith("requested:"));
           const old=state.view?.projects.find(p=>observed && key(p.repository_ref) === key(observed.observation.resource));
-          if (old) Object.assign(p,structuredClone(old),{admission:p.admission});
+          if (old) {
+            const coverage=p.coverage;
+            Object.assign(p,structuredClone(old),{admission:p.admission});
+            // Only intentional local polling reuses earlier remote coverage.
+            // Failed reads keep their actual partial/unavailable observation.
+            if (coverage.reason!=="not_requested") p.coverage=coverage;
+          }
         }
         const observed=[...state.source_slots.values()].find(s=>key(s.observation.resource)===key(p.repository_ref) &&
           s.observation.resource.kind==="repository" && typeof s.observation.value?.full_name==="string");
