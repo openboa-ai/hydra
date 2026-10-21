@@ -1,11 +1,19 @@
-## Outcome
+## 핵심 요약
 
-Describe the problem and resulting behavior. Link the work Issue and accepted specification.
+<!-- 변경 이유·핵심 변경·효과를 먼저 짧게 요약하세요. 몇 문장이나 불릿이면 충분하며 줄 수는 고정하지 않습니다. -->
 
-## Verification
+## 변경 내용
 
-Give requirement-linked results, current CI, and any unverified behavior. Include running-screen evidence for visual changes.
+<!-- 무엇이 어떻게 달라지는지 설명하세요. 중요한 동작·설계 선택과 이번 변경의 경계를 포함합니다. -->
 
-## Reviews and delivery
+## 검증
 
-Record code and security review results and how findings were resolved. Identify any required human decision. Keep merge, deployment, and observed operation distinct.
+<!-- 요구사항에 연결한 검증 결과와 원본 링크를 적으세요. 로컬 확인, 현재 커밋의 CI, 코드·보안 리뷰를 구분하고 지적 사항의 처리 결과를 남깁니다. 시각적 변경에는 실제 실행 화면 근거를 포함합니다. -->
+
+## 남은 범위
+
+<!-- 미검증 동작·제한·후속 작업·필요한 사람의 결정을 적으세요. 머지, 배포, 실제 운영 확인은 각각 구분합니다. 남은 항목이 없으면 없다고 명시합니다. -->
+
+## 관련 설계와 근거
+
+<!-- 작업 Issue, 수용된 spec.md의 정확한 판본, 구현·검증 근거를 연결하세요. -->
