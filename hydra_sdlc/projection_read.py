@@ -402,7 +402,13 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     position = _position(cfg, binding_epoch, repository, cursor)
     p.require(cursor is None or repository is None or refresh)
     start_project = position['project_index'] if position is not None and repository is None else 0
+    request_limit = 4096
     repos = [repository] if repository else cfg['repos'][start_project:]
+    if refresh and repository is None:
+        # A cold initial repository needs identity authentication, repository
+        # identity and three Issue lists. Keep its minimum fair share intact;
+        # the existing overview cursor carries every unvisited repository.
+        repos = repos[:request_limit // 5]
     control = control_from_config(cfg)
     at = _now()
     # Remote collection does not hold a local admission snapshot fresh. These
@@ -427,9 +433,8 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     p.require(isinstance(client, ProjectionClient))
     client.bind_context(binding_epoch, credential_scope)
     contexts, projects, work, locations, project_locations = {}, {}, {}, {}, {}
-    # The first owned GET reserves one extra request to verify the credential.
-    # Keep that one-time cost out of the ordinary per-repository read share.
-    with client.read_budget(seconds=45, requests=4097) as total:
+    # Transport authentication consumes this same aggregate provider budget.
+    with client.read_budget(seconds=45, requests=request_limit) as total:
         for index, address in enumerate(repos):
             requested_ref = _ref('github', 'repository', 'requested:' + address)
             context = {'requested': address, 'resource': requested_ref, 'value': None, 'observed_at': at}
@@ -446,9 +451,8 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             complete, reason, rows, next_cursor = False, 'not_requested', {}, None
             if refresh:
                 try:
-                    authentication = int(index == 0)
                     with client.read_budget(seconds=total.remaining_seconds / (len(repos) - index),
-                                            requests=authentication + (total.remaining_requests - authentication) // (len(repos) - index)):
+                                            requests=total.remaining_requests // (len(repos) - index)):
                         start = len(client.notes)
                         raw = client.api('GET', '/repos/' + address)
                         p.require(type(raw) is dict)
@@ -597,10 +601,13 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             frame['retry_hints'].append(hint)
     frame['projects'] = list(projects.values()); frame['work'] = list(work.values())
     frame['observations'] = list(observations.values())
-    complete = all(row['coverage']['state'] == 'complete' for row in frame['projects'])
+    remaining_projects = repository is None and start_project + len(repos) < len(cfg['repos'])
+    complete = not remaining_projects and all(row['coverage']['state'] == 'complete' for row in frame['projects'])
     page_scope = 'registered-projects;' + ('repository:' + repository if repository is not None else 'overview')
     frame['page'] = _coverage(page_scope + (':from:' + str(start_project) if start_project else ''), len(frame['projects']), complete,
-                              None if complete else 'source_coverage_incomplete')
+                              None if complete else 'repository_page_limit' if remaining_projects else 'source_coverage_incomplete')
+    if remaining_projects:
+        frame['page']['next_cursor'] = _cursor(cfg, binding_epoch, None, {'project_index': start_project + len(repos)})
     frame['assembled_at'] = _now()
     frame = _finish(frame, cfg, binding_epoch, locations, project_locations, repository=repository)
     p.encode(frame)

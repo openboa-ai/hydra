@@ -429,6 +429,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         const resolved=resolvedAliases.get(state.selected_ref.id.toLowerCase());
         if (resolved) state.selected_ref=structuredClone(resolved);
       }
+      const currentRequest = event.response.sequence < state.runtime_sequence ? state.view?.request ?? null : structuredClone(frame.request);
       const incoming = new Set<object>();
       if (!state.view) { state.view = structuredClone(frame); for (const x of [...state.view.projects,...state.view.work,...state.view.relations]) incoming.add(x); }
       else {
@@ -467,7 +468,6 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         removeWork(state,evicted,changed);
         state.view.relations = merge(state.view.relations,frame.relations,x=>json([x.from,x.kind,x.to]));
         state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
-        state.view.request = structuredClone(frame.request);
         state.view.capabilities = structuredClone(frame.capabilities);
         const domain=(scope:string)=>scope.startsWith("registered-projects;")?scope.replace(/:from:[0-9]+$/,""):scope;
         const localRead=event.scope==="local" || event.scope.startsWith("local:");
@@ -475,6 +475,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
             domain(frame.page.scope)==="registered-projects;overview")) state.view.page=structuredClone(frame.page);
         state.view.retry_hints = structuredClone(frame.retry_hints);
       }
+      state.view.request = currentRequest;
       refreshFacts(state,changed,incoming,event.sequence,event.response.sequence);
       window = {frame:windowFrame,sequence:event.sequence,received_sequence:event.response.sequence};
       if (state.error !== "read_policy_capacity_held") state.error = null; break;

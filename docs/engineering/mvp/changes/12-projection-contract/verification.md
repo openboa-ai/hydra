@@ -6,41 +6,52 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: credential context, embedded results and read budgets
+## Current correction: bounded overview and cached-result ordering
 
-This increment corrects three findings on published parent
-a639801c2d1d5a22f0e5312f74001c13cc713f46 under unchanged P12 Rev4 / CP8 / NC8.
+This increment corrects two findings on published parent
+c8a779ed3689d63dca3da98e570cd6177750309f. Accepted P12 Rev4 / CP8 / NC8 and
+the [Mac control contract](../../../mac-control/spec.md) remain unchanged.
 
-- Stable numeric repository identity hints survive credential rotation and
-  temporary sign-out. Remote source payloads, pending reads, cursors and freshness
-  remain fenced by credential context. Binding/runtime changes still discard
-  identity pins. The fixed reader always freshly GETs the registered address
-  with the selected credential; a hint grants no access, supplies no source fact
-  and cannot retarget a reused name to another numeric repository.
-- Every accepted same-runtime frame replaces its embedded request, including
-  null. Intentional command history remains in the separate feedback map.
-- The bounded reader reserves one initial credential identity request in addition
-  to 4096 ordinary reads and assigns it to the first repository slice. The
-  45-second aggregate deadline, nested caller caps, rate waits and GET-only
-  transport remain enforced. No authentication preflight or retry is added.
+- The aggregate refresh cap remains 4096 API requests including transport
+  authentication, with the existing 45-second deadline and nested caller caps.
+  An overview collects a bounded repository slice so its first fair share fits
+  identity authentication, repository identity and all three Issue lists. The
+  remaining-budget / remaining-repositories allocation is unchanged. Unvisited
+  repositories remain partial behind the existing overview cursor; byte pruning
+  can move that cursor earlier. All 1024 configured repositories remain reachable.
+- The reducer reuses its greatest accepted payload sequence to replace current
+  embedded request results. An older cached scope cannot restore a cleared
+  receipt, erase a newer result with null or replace a different newer result.
+  Fresh null and different results still replace the current result; separate
+  command feedback history is preserved. No extra persistent or reducer counter
+  is introduced.
+- Numeric repository pins still survive credential rotation/sign-out without
+  reusing remote data or access. Binding/runtime changes and late prior-context
+  response fences remain enforced; current-token GETs prove access and identity.
 
-The immutable parent reproduces one Python request-count assertion failure, one
-frontend current-result assertion failure and one Rust identity-retention assertion
-failure, with zero setup errors/skips. Actual Python reply/encoder frames exercise
-null -> applied -> null -> different result while preserving feedback history.
-Real owned HTTP/auth code with deterministic synthetic subprocess responses
-collects exactly one identity GET plus four reads for each of 1024 repositories.
-All source membership reads complete before independent wire-size pruning; the
-bounded returned frame remains partial with a continuation. This is request
-accounting evidence, not a claim that 4097 live requests fit the deadline. Tighter
-caller request/time limits, fresh renamed-repository reads, credential denial,
-reused names, late prior-context responses and independent local facts are tested.
+The preceding increment incorrectly treated 4097 synthetic requests as a passing
+accounting oracle. That expectation violated the existing accepted aggregate cap
+and has been replaced, rather than expanding the contract. The new independent
+oracle traverses actual returned overview cursors through all 1024 repositories,
+using a cold real HTTP/auth client with deterministic synthetic subprocess replies
+on each page. Every page stays within 4096 requests and one identity GET, every
+collected minimum membership completes, returned records never repeat, and the
+whole configured set is eventually returned. Wire-size pruning remains partial
+until the last returned slice. These are deterministic accounting/pagination
+checks, not a live throughput or installed-operation qualification.
 
-Final local checks pass: 261 selected Python 3.14.2 methods, 332 frontend tests,
-55 Rust 1.94.1 tests and TypeScript/Vite build, with zero failures/errors/skips.
-Final-head hosted CI, independent reviews, protected merge and actual-main checks
-remain separate. No native writer, installed authority, remote Q&A/Resume flow,
-session recovery or full two-project v1 operating acceptance is qualified here.
+The immutable parent reproduces two Python assertion failures across five methods
+and one failing frontend method across two, without setup errors/skips. The same
+tests pass after correction. Actual Python reply/encoder frames exercise fresh
+null/applied/different results and cached cross-scope replay with lower payload
+sequences, while preserving intentional feedback history.
+
+Final local impact checks pass: 262 selected Python 3.14.2 methods, 333 frontend
+tests, all 55 Rust 1.94.1 tests and TypeScript/Vite build, with zero failures,
+errors, skips or cancellations. Exact final-head CI, independent code/security
+reviews, protected merge and actual-main verification remain required. No native
+writer, installed authority, remote Q&A/Resume flow, session recovery or complete
+two-project v1 operating acceptance is qualified by these checks.
 
 ## Earlier correction: qualified claims and membership preservation
 

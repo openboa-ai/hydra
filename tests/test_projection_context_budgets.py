@@ -49,30 +49,21 @@ class NativeHTTP:
         return subprocess.CompletedProcess(argv,0,http(status,[],value),'' if status==200 else 'gh: denied (HTTP 403)')
 
 class ProjectionContextBudgetTests(unittest.TestCase):
-    def test_maximum_allowlist_has_one_authentication_and_complete_initial_membership(self):
-        fixture=ReadFixture();fixture.client=ProjectionClient();transport=NativeHTTP()
-        repos=['example/p'+str(n) for n in range(1024)];observed=[]
+    def test_maximum_allowlist_respects_the_accepted_cap_and_completes_first_membership(self):
+        fixture=ReadFixture();fixture.client=ProjectionClient();transport=NativeHTTP();observed=[]
         def capture(frame):
             observed.append([(row['repository_ref']['id'],row['coverage']['state']) for row in frame['projects']])
             return _bounded(frame)
         with patch('hydra_sdlc.github.subprocess.run',side_effect=transport.run), \
              patch('hydra_sdlc.github.time.monotonic',return_value=100), \
              patch('hydra_sdlc.projection_read._bounded',side_effect=capture):
-            frame=fixture.read(cfg={'repos':repos})
-        calls=Counter(path for _,_,path in transport.calls)
-        self.assertEqual(calls['/user'],1,'Authentication was repeated or omitted')
-        self.assertEqual(len(transport.calls),4097,'The auth reservation starved a repository list')
-        self.assertEqual(len(observed[0]),1024)
-        self.assertEqual({state for _,state in observed[0]},{'complete'},'A supported repository was given too few requests')
-        self.assertEqual(observed[0][0],('10000','complete'));self.assertEqual(observed[0][-1],('11023','complete'))
-        for name in repos:
-            queries=[path for path in calls if urlsplit(path).path=='/repos/'+name+'/issues']
-            self.assertEqual(len(queries),3,name);self.assertEqual(calls['/repos/'+name],1)
-        self.assertTrue(all(count==1 for count in calls.values()))
+            frame=fixture.read(cfg={'repos':['example/p'+str(n) for n in range(1024)]})
+        self.assertLessEqual(len(transport.calls),4096,'Authentication exceeded the accepted aggregate provider cap')
+        self.assertEqual(sum(path=='/user' for _,_,path in transport.calls),1)
+        self.assertEqual(observed[0][0],('10000','complete'),'The initial authentication starved the first repository')
+        self.assertEqual({state for _,state in observed[0]},{'complete'})
         self.assertLessEqual(len(p.encode(frame)),p.MAX_BYTES)
-        self.assertEqual(frame['page']['state'],'partial','Wire-size pruning was represented as complete')
-        self.assertIsNotNone(frame['page']['next_cursor'])
-        self.assertEqual(frame['projects'][0]['coverage']['state'],'complete')
+        self.assertEqual(frame['page']['state'],'partial');self.assertIsNotNone(frame['page']['next_cursor'])
 
     def test_outer_caller_request_and_time_caps_still_bound_authenticated_reads(self):
         for cap,seconds in ((4,45),(8,45),(20,0)):
