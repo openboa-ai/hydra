@@ -301,3 +301,31 @@ Executed focused commands in the designated isolated environment:
 python -m unittest discover -s tests -p test_ci_concurrency.py -v
 python -m unittest discover -s tests -p test_squash_completion.py -v
 ```
+
+
+## Python 3.14 compatibility baseline — 2026-10-21
+
+The current minimum is Python 3.14, as defined in the maintained specification.
+Earlier sections retain the actual interpreters and CI versions of those runs;
+their 3.11/3.12 results do not qualify the current source or an installed upgrade.
+
+Identical final regression tests fail against the published parent with seven
+assertion failures: old imports are accepted and package metadata still declares
+3.11. With the correction, all three regression methods pass without skips.
+They exercise 3.11/3.12/3.13 rejection before CLI/MCP runtime imports, 3.14 and
+later import boundaries, and agreement of the package metadata and CI floor.
+A separate real Python 3.12.7 process also rejects the source before CLI loading.
+Future-version boundary fixtures are not full compatibility qualification.
+
+A fresh isolated Python 3.14.2 environment installed this candidate with its
+pinned MCP 2.3.0 extra. Installed distribution metadata reports `>=3.14`.
+The full local suite ran 1211 methods in 337.303 seconds, with 26
+environment-specific skips and no failures or errors. Version regressions ran;
+skipped methods are not passing evidence. The CI candidate retains the full
+supported kernel suite, optional MCP install, Mac checks and trusted hygiene.
+Only the unsupported 3.11 compatibility slice is retired.
+
+Final-head hosted CI, independent code/security review, the existing protected
+workflow approval, merge and main verification are still required. No installed
+service was migrated or restarted, and no native control was granted. The full
+remote question/answer/restart acceptance remains separate and NOT RUN.

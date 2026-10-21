@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "openboa-hydra-sdlc"
 dynamic = ["version"]
 description = "GitHub-native coordination for Codex software development"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = ["markdown-it-py==4.2.0"]
 
 [project.optional-dependencies]
