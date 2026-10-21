@@ -277,7 +277,8 @@ def observe_comments(rows, service_identity, expected_context, *, coverage_compl
                 continue
             return DecisionObservation("unknown", "comment_actor_unavailable")
         if actor != service:
-            if isinstance(row.get("body"), str) and row["body"].startswith(prefix):
+            if (isinstance(row.get("body"), str)
+                    and _relevant_decision_claim(row["body"], prefix, expected.key)):
                 ignored += 1
             continue
         body = row.get("body")
@@ -357,7 +358,8 @@ def read_public_decision(github, repo, issue_number, expected_context, *,
                         or direct.get("issue_url") != f"https://api.github.com/repos/{canonical}/issues/{issue_number}"
                         or not isinstance(direct.get("body"), str)
                         or direct["body"].encode("utf-8") != wanted or not _unedited(direct)
-                        or not listed or any(row.get("body") != direct["body"]
+                        or not listed or any(_identity(row.get("user")) != service
+                                             or row.get("body") != direct["body"]
                                              or row.get("created_at") != direct.get("created_at")
                                              or row.get("updated_at") != direct.get("updated_at")
                                              for row in listed)):

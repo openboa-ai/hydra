@@ -38,6 +38,18 @@ Final-head CI, independent review, protected merge and actual-main checks remain
 delivery gates. Native answer provenance, authority, application, Resume and full
 P06/v1 operating acceptance remain separate requirements.
 
+## Actor reconciliation correction
+
+Two additional review regressions reproduce 14 assertion failures on actual
+published parent 8651df0, with no errors or skips. Pinned context and receipt refs
+must agree on numeric user ID and login in every listed copy and the direct GET;
+unrelated user metadata does not change identity. Outsider exclusion counts use
+the same full-key relevance predicate as classification, including damaged headers
+and other keys sharing a source attempt. Both new methods and all twelve guard
+methods pass. All 112 selected reader, GitHub, read-budget and continuation methods
+pass on Python 3.14.2, with no failures, errors or skips. The previous 24-row
+relevance matrix and accepted contract pins are retained.
+
 ## Responsibility and interface
 
 `hydra_sdlc/public_decisions.py` keeps the protocol separate from the existing

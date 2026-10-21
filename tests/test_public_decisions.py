@@ -453,5 +453,49 @@ class PublicDecisionGuardRegressionTests(unittest.TestCase):
                             self.assertEqual(self.observe([comment(70, body, user=actor)]).status, expected)
 
 
+class PublicDecisionActorReconciliationTests(unittest.TestCase):
+    def test_listed_and_direct_actors_agree_for_every_pinned_role_and_duplicate(self):
+        outsiders = ({'id': 99, 'login': 'openboa'},
+                     {'id': 11, 'login': 'outsider'},
+                     {'id': 99, 'login': 'outsider'})
+        for role, old_id, body in (('context', 5, EXPECTED), ('receipt', 6, RECEIPT)):
+            pin = {'known_' + role + '_id': old_id}
+            for actor in outsiders:
+                with self.subTest(role=role, actor=actor):
+                    transport = ReadOnlyTransport([comment(10, EXPECTED), comment(20, RECEIPT),
+                                                   comment(old_id, body, user=actor)])
+                    transport.direct[old_id]['user'] = copy.deepcopy(ACTOR)
+                    observed = read_public_decision(GitHub(transport=transport), REPO, 4,
+                                                   context(), **pin)
+                    self.assertEqual(observed.status, 'unknown')
+            selected_id = 10 if role == 'context' else 20
+            with self.subTest(role=role, duplicate=True):
+                transport = ReadOnlyTransport([comment(10, EXPECTED), comment(20, RECEIPT),
+                                               comment(selected_id, body, user=outsiders[-1])])
+                transport.direct[selected_id]['user'] = copy.deepcopy(ACTOR)
+                self.assertEqual(read_public_decision(GitHub(transport=transport), REPO, 4,
+                                                     context()).status, 'unknown')
+            with self.subTest(role=role, same_identity_extra_metadata=True):
+                transport = ReadOnlyTransport([comment(10, EXPECTED), comment(20, RECEIPT),
+                                               comment(old_id, body, user={**ACTOR, 'type': 'User'})])
+                transport.direct[old_id]['user'] = {'login': ACTOR['login'], 'id': ACTOR['id']}
+                self.assertEqual(read_public_decision(GitHub(transport=transport), REPO, 4,
+                                                     context(), **pin).status, 'pair')
+
+    def test_outsider_counts_follow_full_key_for_contexts_receipts_and_damaged_headers(self):
+        actor = {'id': 99, 'login': 'outsider'}
+        for body in (EXPECTED, RECEIPT):
+            for selected in (True, False):
+                value = body if selected else body.replace(b'"issue_number":4', b'"issue_number":5')
+                for framed in (value, b'Operator note\n' + value,
+                               value.replace(b'hydra: decision ', b'hydra: question ', 1)):
+                    with self.subTest(selected=selected, frame=framed.splitlines()[0]):
+                        observed = observe_comments([comment(10, EXPECTED), comment(20, RECEIPT),
+                                                     comment(30, framed, user=actor)], ACTOR,
+                                                    context(), coverage_complete=True)
+                        self.assertEqual(observed.status, 'pair')
+                        self.assertEqual(observed.ignored_outsiders, int(selected))
+
+
 if __name__ == "__main__":
     unittest.main()
