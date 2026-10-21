@@ -290,6 +290,7 @@ function observation(value: unknown): void {
     const data = plain(v.value);
     if (resource.kind === "admission")
       requireValue(canonical(v.revision) === canonical({kind: "monotonic", value: String(data.revision)}));
+    else if (resource.kind === "repository") requireValue(resource.id === String(data.numeric_id));
     else if (resource.kind === "issue") {
       const locator = /^([1-9][0-9]*):([1-9][0-9]*)$/.exec(String(resource.id));
       requireValue(locator !== null); integer(Number(locator[1]), 1); integer(Number(locator[2]), 1);
@@ -329,13 +330,52 @@ function fact(value: unknown, check: Check, index: Index): void {
   if (v.value === null) requireValue(v.reason !== null);
   else { requireValue(seen.size > 0 && v.reason === null); check(v.value); }
 }
-function admissionFact(value: unknown, index: Index): void {
+function repositoryName(value: unknown): string | null {
+  if (typeof value !== "string" || !/^[\x00-\x7f]*$/.test(value)) return null;
+  const name=value.toLowerCase();
+  return /^[a-z0-9][a-z0-9-]{0,38}\/[a-z0-9_.-]{1,100}$/.test(name)?name:null;
+}
+function repositoryNames(value: unknown, index: Index): Set<string> {
+  kindRef(value,"repository");const target=value as ResourceRef;requireValue(target.source==="github");
+  if (target.id.startsWith("requested:")) {
+    const name=repositoryName(target.id.slice(10));requireValue(name!==null);return new Set([name]);
+  }
+  requireValue(/^[1-9][0-9]*$/.test(target.id));integer(Number(target.id),1);
+  const names=new Set<string>(),fallback=new Set<string>();
+  for (const observed of index.values()) {
+    if(canonical(observed.resource)!==canonical(target))continue;
+    const requested=new Set<string>();
+    for(const [field,prefix] of [[observed.key,"github:repository-request:"],[observed.coverage.scope,"repository-address:"]] as const){
+      if(field.startsWith(prefix)){
+        const name=repositoryName(field.slice(prefix.length));if(name===null)return new Set();requested.add(name);
+      }
+    }
+    if(requested.size>1)return new Set();
+    if(requested.size)for(const name of requested)names.add(name);
+    else if(observed.value!==null){const name=repositoryName(observed.value.full_name);if(name!==null)fallback.add(name);}
+  }
+  return names.size?names:fallback;
+}
+function issueRepository(value: unknown): ResourceRef {
+  kindRef(value,"issue");const issue=value as ResourceRef;requireValue(issue.source==="github");
+  const locator=/^([1-9][0-9]*):([1-9][0-9]*)$/.exec(issue.id);requireValue(locator!==null);
+  const repository=locator[1]!,number=locator[2]!;integer(Number(repository),1);integer(Number(number),1);
+  return {source:"github",kind:"repository",id:repository};
+}
+function admissionFact(value: unknown, index: Index, names:Set<string>, binding:unknown): void {
   fact(value, x => one(x, "allowed paused stopped"), index);
   const v = value as Fact<string>;
-  if (v.value !== null) requireValue(v.evidence.some(item => {
-    const source = evidenceIn(item, index);
-    return source.resource.source === "hydra" && source.resource.kind === "admission";
-  }));
+  if(v.value===null)return;
+  const sources=v.evidence.map(item=>evidenceIn(item,index)).filter(source=>source.resource.source==="hydra" && source.resource.kind==="admission");
+  requireValue(sources.length>0 && binding!==null);
+  for(const source of sources){
+    requireValue(source.resource.id===binding);const snapshot=plain(source.value);let mode=snapshot.global_mode;
+    if(mode==="running"){
+      requireValue(names.size>0);const overrides=plain(snapshot.project_overrides),modes=new Set([...names].map(name=>overrides[name]??"running"));
+      requireValue(modes.size===1);mode=[...modes][0];
+    }
+    requireValue(v.value===(mode==="running"?"allowed":mode));
+  }
 }
 function readiness(value: unknown): void {
   const v = object(value, "disposition source_ref source_revision interpretation_ref binding_ref extracted missing authority trust_reason");
@@ -351,37 +391,8 @@ function readiness(value: unknown): void {
 }
 function decision(value: unknown, index: Index): void {
   const v = object(value, "question answer acceptance application");
-  const checks: Record<string, Check> = {
-    question: x => {
-      if (x === "none") return;
-      const q = object(x, "source_attempt_id task_ref question_ref revision");
-      uuid(q.source_attempt_id); kindRef(q.task_ref, "native_task"); ref(q.question_ref); nullable(q.revision, revision);
-    },
-    answer: x => {
-      const a = plain(x);
-      if (a.state === "awaiting") object(a, "state");
-      else {
-        object(a, "state answer_ref revision"); requireValue(a.state === "received");
-        ref(a.answer_ref); nullable(a.revision, revision);
-      }
-    },
-    acceptance: x => one(x, "pending accepted conflict invalid"),
-    application: x => {
-      const a = object(x, "state context_ref resolved_ref"); one(a.state, "pending context_recorded applied");
-      nullable(a.context_ref, ref); nullable(a.resolved_ref, ref);
-      requireValue((a.context_ref !== null) === (a.state !== "pending") && (a.resolved_ref !== null) === (a.state === "applied"));
-    },
-  };
-  for (const [key, check] of Object.entries(checks)) {
-    fact(v[key], check, index);
-    const f = v[key] as Fact<unknown>;
-    if (f.value !== null) requireValue(f.evidence.every(e =>
-      !["native_task_metadata", "native_history_page"].includes(index.get(e.observation_key)!.resource.kind)));
-  }
-  if ((v.question as Fact<unknown>).value === "none")
-    requireValue(["answer", "acceptance", "application"].every(key => {
-      const f = v[key] as Fact<unknown>; return f.value === null && f.reason === "not_applicable";
-    }));
+  // No implemented source mapping qualifies these axes. Metadata cannot enable it.
+  for(const key of ["question","answer","acceptance","application"])fact(v[key],()=>requireValue(false),index);
 }
 function wait(value: unknown): void {
   if (value === "none") return;
@@ -575,7 +586,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
     const p = object(item, "repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs");
     kindRef(p.repository_ref, "repository"); unique(projects, p.repository_ref);
     list(p.goal_refs, goalRef, 100); list(p.work_refs, ref, 128);
-    admissionFact(p.admission, index); fact(p.execution, execution, index);
+    admissionFact(p.admission, index,repositoryNames(p.repository_ref,index),plain(v.runtime).control_binding_digest); fact(p.execution, execution, index);
     refs(p.attention_refs); coverage(p.coverage); refs(p.source_refs);
   }, 1024);
   list(v.work, item => {
@@ -583,7 +594,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
     kindRef(w.issue_ref, "issue"); unique(work, w.issue_ref); list(w.goal_refs, goalRef, 100);
     list(w.spec_refs, requirementRef, 100); list(w.requirement_refs, requirementRef, 100);
     fact(w.readiness, readiness, index); fact(w.stage, x => one(x, "prepare design implement verify deliver observe complete"), index);
-    admissionFact(w.admission, index); fact(w.execution, execution, index); fact(w.wait, wait, index);
+    admissionFact(w.admission, index,repositoryNames(issueRepository(w.issue_ref),index),plain(v.runtime).control_binding_digest); fact(w.execution, execution, index); fact(w.wait, wait, index);
     decision(w.decision, index); fact(w.delivery, x => one(x, "candidate published merged post_merge_verified deployment_observed"), index);
     fact(w.result, x => one(x, "incomplete complete cancelled"), index); fact(w.cleanup, x => one(x, "not_required pending complete"), index);
     fact(w.next_action, x => nextAction(x, index), index);

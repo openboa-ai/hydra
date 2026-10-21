@@ -6,7 +6,58 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: source values and evidence causality
+## Current correction: derived facts and retained repository identity
+
+This increment corrects four findings on published parent
+e58ca8e036eebaf061d6be963664b20aee9ec605 under unchanged P12 Rev4 / CP8 / NC8.
+It changes no public wire field, native source support or command authority.
+
+- Known project/work admission facts are derived from all cited Hydra admission
+  snapshots with host restriction precedence and the owning repository's
+  registered aliases. Missing, foreign or conflicting store/name context cannot
+  support a known gate. Both view types use the same derivation rule.
+- Current/stale repository values require the exact canonical decimal numeric
+  resource locator. Requested names, leading zeros, another ID and signs cannot
+  carry a non-null numeric repository value. Successful query provenance notes
+  use the same validated numeric resource; unavailable notes retain requested refs.
+- No implemented SourceValue mapping currently qualifies any DecisionView axis.
+  Known question, answer, acceptance and application facts are rejected until
+  an actual qualified mapping is implemented. Ordinary Issue evidence, minimal
+  native metadata and capability claims do not create that mapping. Unknown
+  decisions remain readable. P04/P06 native decision integration remains open.
+- The existing fixed reader accepts an observed rename only when its numeric ID
+  matches the retained binding. It still queries configured addresses only and
+  rejects reused addresses with another ID. The bridge holds at most 1,024
+  volatile read hints within the existing binding/credential/runtime context,
+  clears them across context replacement and never retargets an existing name.
+  Internal bounded CLI hints do not select arbitrary API paths or grant effects.
+  Rename pagination retains the registered address associated with its cursor.
+
+One shared literal 136-case matrix supplies 272 projection/standard profiles to
+Python, Rust and TypeScript; all positive vectors use the actual Python encoder.
+The actual Python reader-to-reducer sequences cover rename/reused-address reads
+and independent admission preservation. Fixed-child-process tests verify the
+hint argv, failure retention and binding/credential/runtime reset fences.
+Validated response pages additionally fill the 1,024-entry limit, reject growth
+and retargeting, and keep renamed cursor scope tied to its registered address.
+
+The immutable published parent reproduces five Python methods with 108 assertion
+failures and zero setup errors/skips after normalizing the capability-ref fixture
+to its required string type. The earlier parent runs also reproduce three failing
+frontend methods and two failing aggregate Rust methods without setup errors or
+skips. The normalized capability-ref rejection oracle is unchanged. A preexisting
+incomplete-runtime positive fixture now marks admission unknown when the control
+binding is absent; independent observations and the cache-preservation oracle
+remain unchanged.
+
+Final local checks pass: 251 selected Python 3.14.2 methods, 327 frontend tests,
+all 53 Rust 1.94.1 tests and TypeScript/Vite build under Node 24.5.0. Final runs
+have zero failures/errors/skips/cancellations. Exact new-head hosted CI,
+independent reviews, protected merge and actual-main checks remain required.
+Installed migration, authenticated native decisions, actual remote control and
+the full v1 acceptance sequence remain unqualified.
+
+## Earlier correction: source values and evidence causality
 
 This increment corrects five findings on published parent
 3348240b10f208fd0caa149f6bdc43aa84d94988 under unchanged P12 Rev4 / CP8 / NC8.

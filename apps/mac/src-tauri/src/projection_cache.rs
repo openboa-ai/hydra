@@ -1,10 +1,10 @@
 //! Memory-only validated read cache. Eviction never retires work or resources.
-use crate::projection::ReadPayload;
+use crate::projection::{observed_repository_bindings,ReadPayload};
 use crate::projection_policy::ReadPolicy;
 use crate::protocol::RuntimeIdentity;
 use serde::{Serialize, Serializer};
 use serde_json::Value;
-use std::{collections::{HashMap, VecDeque}, sync::Arc, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, HashMap, VecDeque}, sync::Arc, time::{Duration, Instant}};
 
 const MAX_BYTES: usize = 4 * 1_048_576;
 const MAX_DETAILS: usize = 16;
@@ -56,6 +56,7 @@ pub struct ReadCache {
     continuations:VecDeque<(String,String,u64)>,
     context:ReadContext,
     last_context_probe:Option<Instant>,
+    repository_bindings:BTreeMap<String,u64>,
 }
 fn uuid(value:&str)->bool {
     value.len()==36 && value.bytes().enumerate().all(|(i,c)| if [8,13,18,23].contains(&i) {
@@ -74,13 +75,14 @@ impl ReadCache {
     pub fn new(epoch:String)->Result<Self,&'static str> {
         if !uuid(&epoch) {return Err("binding_invalid");}
         Ok(Self {epoch,runtime:None,next:0,orders:HashMap::new(),entries:HashMap::new(),
-            lru:VecDeque::new(),bytes:0,last_clock:None,ledger:VecDeque::new(),policy:ReadPolicy::default(),remote_started:None,local_started:None,continuations:VecDeque::new(),context:ReadContext{scope:None,sequence:0},last_context_probe:None})
+            lru:VecDeque::new(),bytes:0,last_clock:None,ledger:VecDeque::new(),policy:ReadPolicy::default(),remote_started:None,local_started:None,continuations:VecDeque::new(),context:ReadContext{scope:None,sequence:0},last_context_probe:None,repository_bindings:BTreeMap::new()})
     }
     pub fn binding_changed(&mut self,epoch:String)->Result<(),&'static str> {
         if !uuid(&epoch) || epoch==self.epoch {return Err("binding_invalid");}
         self.epoch=epoch; self.runtime=None; self.orders.clear(); self.entries.clear();
         self.lru.clear(); self.bytes=0; self.last_clock=None; self.ledger.clear();
         self.continuations.clear();self.context=ReadContext{scope:None,sequence:0};self.last_context_probe=None;
+        self.repository_bindings.clear();
         self.policy=ReadPolicy::default(); self.remote_started=None; self.local_started=None; Ok(())
     }
     fn clock(&mut self,now:Instant)->Instant {
@@ -162,6 +164,7 @@ impl ReadCache {
             // The response is a fresh, bound read of the new runtime. Invalidate
             // older cache/pending generations; retain the connection's quota wait.
             self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();self.continuations.clear();
+            self.repository_bindings.clear();
             self.orders.insert(ticket.scope.clone(),Order{issued:ticket.sequence,settled:0});
             let started=self.ledger.iter().find(|(t,_,_)|t.sequence==ticket.sequence).and_then(|(_,_,start)|*start);
             self.remote_started=None;self.local_started=None;
@@ -179,6 +182,15 @@ impl ReadCache {
         if size>1_048_576 {self.failed(ticket);return Err("response_limit");}
         let now=self.clock(now);
         self.runtime=Some(key);
+        if ticket.remote {
+            for (name,number) in observed_repository_bindings(&value) {
+                if self.repository_bindings.len()<1024 || self.repository_bindings.contains_key(&name) {
+                    // Identity is retained across failed reads, never refreshed
+                    // into a new source fact or silently retargeted by a name.
+                    self.repository_bindings.entry(name).or_insert(number);
+                }
+            }
+        }
         self.orders.get_mut(&ticket.scope).unwrap().settled=ticket.sequence;
         self.remove(&ticket.scope);
         let payload=Arc::new(payload);
@@ -197,6 +209,10 @@ impl ReadCache {
         self.touch(scope); Some(result)
     }
     pub fn epoch(&self)->&str {&self.epoch}
+    pub fn repository_binding_hints(&self)->Result<String,&'static str> {
+        let value=serde_json::to_string(&self.repository_bindings).map_err(|_|"read_binding_unavailable")?;
+        if value.len()>196_608{return Err("read_binding_limit");}Ok(value)
+    }
     pub fn context_probe_due(&mut self,now:Instant)->bool {
         if self.last_context_probe.is_some_and(|at|now.saturating_duration_since(at)<Duration::from_secs(5)) {return false;}
         self.last_context_probe=Some(now);true
@@ -206,6 +222,7 @@ impl ReadCache {
         if self.context.scope==scope {return Ok(());}
         self.context.sequence=self.context.sequence.checked_add(1).filter(|n|*n<=MAX_SEQUENCE).ok_or("sequence_exhausted")?;
         self.context.scope=scope;
+        self.repository_bindings.clear();
         self.remote_started=None;
         let scopes:Vec<_>=self.entries.keys().filter(|s|s.starts_with("remote:")).cloned().collect();
         for scope in scopes {self.remove(&scope);}
@@ -247,16 +264,22 @@ impl ReadCache {
     fn remember_continuations(&mut self,ticket:&ReadTicket,value:&Value) {
         let Some(lane)=ticket.scope.split(':').next().filter(|lane|["remote","local"].contains(lane)) else {return;};
         let mut targets=Vec::new();
+        let bindings=observed_repository_bindings(value);
         if let Some(cursor)=value["page"]["next_cursor"].as_str() {
             let repository=ticket.scope.split(':').nth(1).unwrap_or("overview");
             targets.push((repository.to_owned(),cursor.to_owned()));
         }
         for project in value["projects"].as_array().unwrap() {
             if let Some(cursor)=project["coverage"]["next_cursor"].as_str() {
-                if let Some(name)=value["observations"].as_array().unwrap().iter()
+                let requested=project["source_refs"].as_array().unwrap().iter().filter_map(|source| {
+                    if source["source"]!="github" || source["kind"]!="repository" {return None;}
+                    let name=source["id"].as_str()?.strip_prefix("requested:")?.to_ascii_lowercase();
+                    (bindings.get(&name).map(u64::to_string).as_deref()==project["repository_ref"]["id"].as_str()).then_some(name)
+                }).next();
+                if let Some(name)=requested.or_else(||value["observations"].as_array().unwrap().iter()
                     .find(|o|o["resource"]==project["repository_ref"] && o["resource"]["kind"]=="repository")
-                    .and_then(|o|o["value"]["full_name"].as_str()) {
-                    targets.push((name.to_ascii_lowercase(),cursor.to_owned()));
+                    .and_then(|o|o["value"]["full_name"].as_str()).map(str::to_ascii_lowercase)) {
+                    targets.push((name,cursor.to_owned()));
                 }
             }
         }
@@ -310,6 +333,69 @@ mod tests {
         let mut frame:Value=serde_json::from_str(vectors[0]["wire"].as_str().unwrap()).unwrap();
         frame["request_id"]=Value::String(request_id.into());
         serde_json::to_vec(&frame).unwrap()
+    }
+    #[test]
+    fn retained_names_bound_memory_without_retargeting_and_rename_cursors_keep_registered_address() {
+        let now=Instant::now();let mut cache=test_cache();
+        let mut renamed:Value=serde_json::from_slice(&fixture(&request(70))).unwrap();
+        let observed=renamed["observations"].as_array_mut().unwrap().iter_mut()
+            .find(|o|o["resource"]["kind"]=="repository" && o["resource"]["id"]=="101").unwrap();
+        observed["key"]="github:repository-request:example/alpha".into();
+        observed["coverage"]["scope"]="repository-address:example/alpha".into();
+        observed["value"]["full_name"]="example/renamed".into();
+        observed["value"]["url"]="https://github.com/example/renamed".into();
+        renamed["projects"][0]["source_refs"].as_array_mut().unwrap().push(
+            serde_json::json!({"source":"github","kind":"repository","id":"requested:example/alpha"}));
+        renamed["projects"][0]["coverage"]["next_cursor"]="rename-page".into();
+        let ticket=cache.issue("remote:overview:".into(),request(70),false).unwrap();cache.remote_started(now);
+        cache.accept(&ticket,&serde_json::to_vec(&renamed).unwrap(),now).unwrap();
+        assert_eq!(cache.read_held(now+Duration::from_secs(1),true,"remote:example/alpha:rename-page",true,false),Ok(false));
+        assert_eq!(cache.read_held(now+Duration::from_secs(1),true,"remote:example/renamed:rename-page",true,false),Ok(true));
+
+        // Fill through validated bounded response pages, not private map writes.
+        let seed:Value=serde_json::from_slice(&fixture(&request(71))).unwrap();
+        let admission=seed["observations"].as_array().unwrap().iter().find(|o|o["resource"]["kind"]=="admission").unwrap().clone();
+        let repository=seed["observations"].as_array().unwrap().iter().find(|o|o["resource"]["kind"]=="repository").unwrap().clone();
+        let project=seed["projects"][0].clone();
+        let page=|first:u64,count:u64,request_id:String| {
+            let mut frame=seed.clone();frame["request_id"]=request_id.into();
+            frame["work"]=serde_json::json!([]);frame["relations"]=serde_json::json!([]);
+            frame["observations"]=serde_json::json!([admission.clone()]);frame["projects"]=serde_json::json!([]);
+            for id in first..first+count {
+                let mut o=repository.clone();let name=format!("example/p{id}");
+                o["key"]=format!("github:{id}:repository").into();o["resource"]["id"]=id.to_string().into();
+                o["coverage"]["scope"]=format!("resource:{id}").into();
+                o["value"]["numeric_id"]=id.into();o["value"]["full_name"]=name.clone().into();
+                o["value"]["url"]=format!("https://github.com/{name}").into();
+                let mut p=project.clone();p["repository_ref"]=o["resource"].clone();
+                p["goal_refs"]=serde_json::json!([]);p["work_refs"]=serde_json::json!([]);
+                p["source_refs"]=serde_json::json!([o["resource"].clone(),admission["resource"].clone()]);
+                p["coverage"]=serde_json::json!({"state":"complete","scope":format!("repository:{id};managed-work"),
+                    "returned_count":0,"total_count":0,"next_cursor":null,"reason":null});
+                frame["observations"].as_array_mut().unwrap().push(o);frame["projects"].as_array_mut().unwrap().push(p);
+            }
+            frame["page"]=serde_json::json!({"state":"complete","scope":"host;overview","returned_count":count,
+                "total_count":count,"next_cursor":null,"reason":null});frame
+        };
+        let mut capacity=test_cache();
+        for (first,n) in [(201,71),(713,72)] {
+            let value=page(first,512,request(n));let bytes=serde_json::to_vec(&value).unwrap();
+            assert!(bytes.len()<=1_048_576);
+            let ticket=capacity.issue("remote:overview:".into(),request(n),false).unwrap();
+            capacity.accept(&ticket,&bytes,now).unwrap();
+        }
+        let before=capacity.repository_binding_hints().unwrap();assert!(before.len()<=196_608);
+        let pins:Value=serde_json::from_str(&before).unwrap();assert_eq!(pins.as_object().unwrap().len(),1024);
+        assert_eq!(pins["example/p201"],201);
+        let ticket=capacity.issue("remote:overview:".into(),request(73),false).unwrap();
+        capacity.accept(&ticket,&serde_json::to_vec(&page(2000,1,request(73))).unwrap(),now).unwrap();
+        assert_eq!(capacity.repository_binding_hints().unwrap(),before,"A new observed name exceeded the pin bound");
+        let mut reused=page(9000,1,request(74));
+        reused["observations"][1]["value"]["full_name"]="example/p201".into();
+        reused["observations"][1]["value"]["url"]="https://github.com/example/p201".into();
+        let ticket=capacity.issue("remote:overview:".into(),request(74),false).unwrap();
+        capacity.accept(&ticket,&serde_json::to_vec(&reused).unwrap(),now).unwrap();
+        assert_eq!(capacity.repository_binding_hints().unwrap(),before,"A reused name retargeted retained identity");
     }
     #[test]
     fn credential_rotation_keeps_per_scope_waits_fences_old_remote_and_preserves_local_cache() {
@@ -653,6 +739,14 @@ mod tests {
             let mut frame:Value=serde_json::from_slice(&fixture(&request(930))).unwrap();
             frame["runtime"][missing]=Value::Null;
             frame["runtime"]["identity_reason"]=Value::String("runtime_source_unavailable".into());
+            if missing=="control_binding_digest" {
+                for group in ["projects","work"] {
+                    for row in frame[group].as_array_mut().unwrap() {
+                        row["admission"]["value"]=Value::Null;
+                        row["admission"]["reason"]="admission_binding_unavailable".into();
+                    }
+                }
+            }
             let identity:RuntimeIdentity=serde_json::from_value(frame["runtime"].clone()).unwrap();
             assert!(identity.valid());assert!(!identity.known());
             let bytes=serde_json::to_vec(&frame).unwrap();

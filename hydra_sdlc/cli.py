@@ -50,6 +50,7 @@ def parser():
     control.add_argument("--binding-epoch")
     control.add_argument("--request-id")
     control.add_argument("--credential-scope", help="Expected opaque read context; never a credential or grant")
+    control.add_argument("--repository-bindings", help="Internal retained numeric read hints; never a source grant")
     control.add_argument("--repository", help="Registered read scope; never a mutation target")
     control.add_argument("--cursor", help="Opaque continuation for this exact registered read scope")
     return p
@@ -96,8 +97,13 @@ def operate_control(args):
         scope = getattr(args, 'credential_scope', None)
         if scope is not None:
             kwargs['credential_scope'] = scope
+        bindings = getattr(args, 'repository_bindings', None)
+        if bindings is not None:
+            from .projection import read_json, require
+            require(len(bindings.encode('utf-8')) <= 196608)
+            kwargs['repository_bindings'] = read_json(bindings)
         return read_projection(load_host_config(args.config), **kwargs)
-    if schema != 2 or any(value is not None for value in fields) or getattr(args, "credential_scope", None) is not None:
+    if schema != 2 or any(value is not None for value in fields) or getattr(args, "credential_scope", None) is not None or getattr(args, 'repository_bindings', None) is not None:
         raise ValueError("Unsupported control read profile")
     from .control import control_result, load_host_config
     return control_result(load_host_config(args.config), action=args.action,

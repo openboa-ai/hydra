@@ -335,6 +335,8 @@ def observation(value):
         source_value(value['resource']['kind'], value['value'])
         if value['resource']['kind'] == 'admission':
             require(value['revision'] == {'kind': 'monotonic', 'value': str(value['value']['revision'])})
+        elif value['resource']['kind'] == 'repository':
+            require(value['resource']['id'] == str(value['value']['numeric_id']))
         elif value['resource']['kind'] == 'issue':
             locator = re.fullmatch(r'([1-9][0-9]*):([1-9][0-9]*)', value['resource']['id'])
             require(locator is not None)
@@ -383,12 +385,74 @@ def fact(value, validator, observations):
         require(value['reason'] is not None)
 
 
-def admission_fact(value, observations):
+def _repository_name(value):
+    if type(value) is not str or not value.isascii():
+        return None
+    name = value.lower()
+    return name if re.fullmatch(r'[a-z0-9][a-z0-9-]{0,38}/[a-z0-9_.-]{1,100}', name) else None
+
+
+def repository_names(repository, observations):
+    """Resolve display context only; retained identity never grants an effect."""
+    kind_ref(repository, 'repository')
+    require(repository['source'] == 'github')
+    identifier = repository['id']
+    if identifier.startswith('requested:'):
+        name = _repository_name(identifier[10:])
+        require(name is not None)
+        return {name}
+    require(re.fullmatch(r'[1-9][0-9]*', identifier) is not None)
+    integer(int(identifier), 1)
+    names, fallback = set(), set()
+    for observed in observations.values():
+        if observed['resource'] != repository:
+            continue
+        requested = []
+        for field, prefix in ((observed['key'], 'github:repository-request:'),
+                              (observed['coverage']['scope'], 'repository-address:')):
+            if field.startswith(prefix):
+                name = _repository_name(field[len(prefix):])
+                if name is None:
+                    return set()
+                requested.append(name)
+        if len(set(requested)) > 1:
+            return set()
+        if requested:
+            names.update(requested)
+        elif observed['value'] is not None:
+            name = _repository_name(observed['value']['full_name'])
+            if name is not None:
+                fallback.add(name)
+    return names or fallback
+
+
+def issue_repository(issue):
+    kind_ref(issue, 'issue')
+    require(issue['source'] == 'github')
+    locator = re.fullmatch(r'([1-9][0-9]*):([1-9][0-9]*)', issue['id'])
+    require(locator is not None)
+    integer(int(locator[1]), 1)
+    integer(int(locator[2]), 1)
+    return {'source': 'github', 'kind': 'repository', 'id': locator[1]}
+
+
+def admission_fact(value, observations, names, binding):
     fact(value, lambda w: one(w, {'allowed', 'paused', 'stopped'}), observations)
     if value['value'] is not None:
-        require(any(observations[e['observation_key']]['resource']['source'] == 'hydra'
-                    and observations[e['observation_key']]['resource']['kind'] == 'admission'
-                    for e in value['evidence']))
+        sources = [observations[e['observation_key']] for e in value['evidence']
+                   if observations[e['observation_key']]['resource']['source'] == 'hydra'
+                   and observations[e['observation_key']]['resource']['kind'] == 'admission']
+        require(bool(sources) and binding is not None)
+        for observed in sources:
+            require(observed['resource']['id'] == binding)
+            snapshot = observed['value']
+            mode = snapshot['global_mode']
+            if mode == 'running':
+                require(bool(names))
+                modes = {snapshot['project_overrides'].get(name, 'running') for name in names}
+                require(len(modes) == 1)
+                mode = next(iter(modes))
+            require(value['value'] == {'running': 'allowed', 'paused': 'paused', 'stopped': 'stopped'}[mode])
 
 
 def canonical(value):
@@ -456,40 +520,10 @@ def readiness(value):
 
 def decision(value, observations):
     obj(value, 'question answer acceptance application')
-    def question(v):
-        if v == 'none':
-            return
-        obj(v, 'source_attempt_id task_ref question_ref revision')
-        uid(v['source_attempt_id'])
-        kind_ref(v['task_ref'], 'native_task')
-        ref(v['question_ref'])
-        nullable(v['revision'], revision)
-    def answer(v):
-        require(type(v) is dict)
-        if v.get('state') == 'awaiting':
-            obj(v, 'state')
-        else:
-            obj(v, 'state answer_ref revision')
-            require(v['state'] == 'received')
-            ref(v['answer_ref'])
-            nullable(v['revision'], revision)
-    def application(v):
-        obj(v, 'state context_ref resolved_ref')
-        one(v['state'], {'pending', 'context_recorded', 'applied'})
-        nullable(v['context_ref'], ref)
-        nullable(v['resolved_ref'], ref)
-        require((v['context_ref'] is not None) == (v['state'] != 'pending'))
-        require((v['resolved_ref'] is not None) == (v['state'] == 'applied'))
-    for key, validator in [('question', question), ('answer', answer),
-        ('acceptance', lambda v: one(v, {'pending', 'accepted', 'conflict', 'invalid'})),
-        ('application', application)]:
-        fact(value[key], validator, observations)
-        if value[key]['value'] is not None:
-            require(all(observations[e['observation_key']]['resource']['kind'] not in
-                        {'native_task_metadata', 'native_history_page'} for e in value[key]['evidence']))
-    if value['question']['value'] == 'none':
-        require(all(value[key]['value'] is None and value[key]['reason'] == 'not_applicable'
-                    for key in ('answer', 'acceptance', 'application')))
+    # No implemented SourceValue mapping qualifies a decision axis. A typed
+    # value or capability claim cannot substitute for that missing mapping.
+    for key in ('question', 'answer', 'acceptance', 'application'):
+        fact(value[key], lambda _: require(False), observations)
 
 
 def wait(value):
@@ -710,7 +744,8 @@ def validate_frame(value):
         kind_ref(v['repository_ref'], 'repository')
         array(v['goal_refs'], goal_ref, 100)
         array(v['work_refs'], ref, 128)
-        admission_fact(v['admission'], observations)
+        admission_fact(v['admission'], observations, repository_names(v['repository_ref'], observations),
+                       value['runtime']['control_binding_digest'])
         fact(v['execution'], execution, observations)
         array(v['attention_refs'], ref)
         coverage(v['coverage'])
@@ -734,7 +769,8 @@ def validate_frame(value):
         }
         for key, validator in facts.items():
             fact(v[key], validator, observations)
-        admission_fact(v['admission'], observations)
+        admission_fact(v['admission'], observations, repository_names(issue_repository(v['issue_ref']), observations),
+                       value['runtime']['control_binding_digest'])
         decision(v['decision'], observations)
         array(v['task_refs'], ref)
         array(v['resource_refs'], ref)

@@ -2,7 +2,7 @@
 use crate::protocol::{RuntimeIdentity, Snapshot, MAX_OUTPUT};
 use serde::{de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor}, Serialize};
 use serde_json::{Map, Number, Value};
-use std::{cell::Cell, collections::{HashMap, HashSet}, fmt};
+use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, fmt};
 
 type R = Result<(), &'static str>;
 type Index<'a> = HashMap<&'a str, &'a Value>;
@@ -257,6 +257,8 @@ fn observation(v: &Value) -> R {
         if kind=="admission" {
             let value=v["value"]["revision"].as_u64().ok_or(INVALID)?.to_string();
             need(v["revision"]==serde_json::json!({"kind":"monotonic","value":value}))?;
+        } else if kind=="repository" {
+            need(v["resource"]["id"]==v["value"]["numeric_id"].as_u64().ok_or(INVALID)?.to_string())?;
         } else if kind=="issue" {
             let (repository,issue)=string(&v["resource"]["id"])?.split_once(':').ok_or(INVALID)?;
             let repository_number=repository.parse::<u64>().map_err(|_|INVALID)?;
@@ -297,13 +299,75 @@ fn fact(v: &Value, check: impl Fn(&Value)->R, index: &Index<'_>) -> R {
     if v["value"].is_null() { need(!v["reason"].is_null()) }
     else { need(!seen.is_empty() && v["reason"].is_null())?; check(&v["value"]) }
 }
-fn admission_fact(v: &Value, index: &Index<'_>) -> R {
+fn canonical_repository_name(value:&str)->Option<String> {
+    if !value.is_ascii(){return None;}
+    let name=value.to_ascii_lowercase();repository_name(&name,true).is_ok().then_some(name)
+}
+fn repository_names(repository:&Value,index:&Index<'_>)->Result<HashSet<String>,&'static str> {
+    kind_ref(repository,"repository")?;need(repository["source"]=="github")?;
+    let identifier=string(&repository["id"])?;
+    if let Some(name)=identifier.strip_prefix("requested:") {
+        return Ok(HashSet::from([canonical_repository_name(name).ok_or(INVALID)?]));
+    }
+    let number=identifier.parse::<u64>().map_err(|_|INVALID)?;positive(&Value::from(number))?;
+    need(identifier==number.to_string())?;let mut names=HashSet::new();let mut fallback=HashSet::new();
+    for observed in index.values().filter(|o|o["resource"]==*repository) {
+        let mut requested=HashSet::new();
+        for (field,prefix) in [(string(&observed["key"])?,"github:repository-request:"),
+            (string(&observed["coverage"]["scope"])?,"repository-address:")] {
+            if let Some(value)=field.strip_prefix(prefix) {
+                let Some(name)=canonical_repository_name(value) else{return Ok(HashSet::new());};requested.insert(name);
+            }
+        }
+        if requested.len()>1{return Ok(HashSet::new());}
+        if !requested.is_empty(){names.extend(requested);}
+        else if !observed["value"].is_null() {
+            if let Some(name)=canonical_repository_name(string(&observed["value"]["full_name"])?) {fallback.insert(name);}
+        }
+    } Ok(if names.is_empty(){fallback}else{names})
+}
+fn issue_repository(issue:&Value)->Result<Value,&'static str> {
+    kind_ref(issue,"issue")?;need(issue["source"]=="github")?;
+    let (repository,number)=string(&issue["id"])?.split_once(':').ok_or(INVALID)?;
+    for value in [repository,number] {
+        let numeric=value.parse::<u64>().map_err(|_|INVALID)?;positive(&Value::from(numeric))?;need(value==numeric.to_string())?;
+    }
+    Ok(serde_json::json!({"source":"github","kind":"repository","id":repository}))
+}
+pub(crate) fn observed_repository_bindings(value:&Value)->BTreeMap<String,u64> {
+    let Some(observations)=value["observations"].as_array() else{return BTreeMap::new();};
+    let index:Index<'_>=observations.iter().filter(|o|o["availability"]=="current" && o["coverage"]["state"]=="complete")
+        .filter_map(|o|o["key"].as_str().map(|key|(key,o))).collect();
+    let Some(projects)=value["projects"].as_array() else{return BTreeMap::new();};
+    let mut candidates:BTreeMap<String,Option<u64>>=BTreeMap::new();
+    for project in projects {
+        let reference=&project["repository_ref"];
+        let Some(number)=reference["id"].as_str().and_then(|id|id.parse::<u64>().ok()) else{continue;};
+        if let Ok(names)=repository_names(reference,&index) {
+            for name in names {
+                candidates.entry(name).and_modify(|previous|{if *previous!=Some(number){*previous=None;}}).or_insert(Some(number));
+            }
+        }
+    }
+    candidates.into_iter().filter_map(|(name,number)|number.map(|number|(name,number))).take(1024).collect()
+}
+fn admission_fact(v: &Value, index: &Index<'_>, names:&HashSet<String>, binding:&Value) -> R {
     fact(v,|x|one(x,"allowed paused stopped"),index)?;
     if !v["value"].is_null() {
         let mut admission=false;
         for item in v["evidence"].as_array().ok_or(INVALID)? {
             let source=evidence_in(item,index)?;
-            admission |= source["resource"]["source"]=="hydra" && source["resource"]["kind"]=="admission";
+            if source["resource"]["source"]=="hydra" && source["resource"]["kind"]=="admission" {
+                admission=true;need(!binding.is_null() && source["resource"]["id"]==*binding)?;
+                let snapshot=&source["value"];let mode=string(&snapshot["global_mode"])?;
+                if mode=="running" {
+                    need(!names.is_empty())?;
+                    for name in names {
+                        let mode=match snapshot["project_overrides"].get(name){Some(mode)=>string(mode)?,None=>"running"};
+                        need(v["value"]==if mode=="running"{"allowed"}else{mode})?;
+                    }
+                } else {need(v["value"]==mode)?;}
+            }
         }
         need(admission)?;
     } Ok(())
@@ -319,34 +383,11 @@ fn readiness(v: &Value) -> R {
       text(&m["detail"],1024,true,true)?; optional(&m["owner_ref"],reference)},100)?;
     one(&v["authority"],"confirmed missing unknown")?; optional(&v["trust_reason"],code)
 }
-fn question(v: &Value)->R {
-    if v=="none" { return Ok(()); } object(v,"source_attempt_id task_ref question_ref revision")?;
-    uuid(&v["source_attempt_id"])?; kind_ref(&v["task_ref"],"native_task")?; reference(&v["question_ref"])?; optional(&v["revision"],revision)
-}
-fn answer(v: &Value)->R {
-    if v["state"]=="awaiting" { object(v,"state") }
-    else {object(v,"state answer_ref revision")?; need(v["state"]=="received")?; reference(&v["answer_ref"])?; optional(&v["revision"],revision)}
-}
-fn application(v: &Value)->R {
-    object(v,"state context_ref resolved_ref")?; one(&v["state"],"pending context_recorded applied")?;
-    optional(&v["context_ref"],reference)?; optional(&v["resolved_ref"],reference)?;
-    need((!v["context_ref"].is_null()) == (v["state"]!="pending") &&
-      (!v["resolved_ref"].is_null()) == (v["state"]=="applied"))
-}
 fn decision(v: &Value,index:&Index<'_>)->R {
     object(v,"question answer acceptance application")?;
-    fact(&v["question"],question,index)?; fact(&v["answer"],answer,index)?;
-    fact(&v["acceptance"],|x| one(x,"pending accepted conflict invalid"),index)?; fact(&v["application"],application,index)?;
+    // No implemented source mapping qualifies these axes. Metadata cannot enable it.
     for k in ["question","answer","acceptance","application"] {
-        if !v[k]["value"].is_null() {
-            for e in v[k]["evidence"].as_array().unwrap() {
-                let source=evidence_in(e,index)?;
-                need(!["native_task_metadata","native_history_page"].contains(&string(&source["resource"]["kind"])?))?;
-            }
-        }
-    }
-    if v["question"]["value"]=="none" {
-        for k in ["answer","acceptance","application"] { need(v[k]["value"].is_null() && v[k]["reason"]=="not_applicable")?; }
+        fact(&v[k],|_|Err(INVALID),index)?;
     } Ok(())
 }
 fn waiting(v:&Value)->R {
@@ -476,7 +517,7 @@ fn validate_frame(v:&Value)->R {
         object(p,"repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs")?;
         kind_ref(&p["repository_ref"],"repository")?; unique(&mut projects,&p["repository_ref"])?;
         list(&p["goal_refs"],goal_ref,100)?; list(&p["work_refs"],reference,128)?;
-        admission_fact(&p["admission"],&index)?; fact(&p["execution"],execution,&index)?;
+        admission_fact(&p["admission"],&index,&repository_names(&p["repository_ref"],&index)?,&v["runtime"]["control_binding_digest"])?; fact(&p["execution"],execution,&index)?;
         refs(&p["attention_refs"])?; coverage(&p["coverage"])?; refs(&p["source_refs"])?;
     }
     let mut works=HashSet::new();
@@ -486,7 +527,7 @@ fn validate_frame(v:&Value)->R {
         kind_ref(&w["issue_ref"],"issue")?; unique(&mut works,&w["issue_ref"])?;
         list(&w["goal_refs"],goal_ref,100)?; list(&w["spec_refs"],requirement_ref,100)?; list(&w["requirement_refs"],requirement_ref,100)?;
         fact(&w["readiness"],readiness,&index)?; fact(&w["stage"],|x| one(x,"prepare design implement verify deliver observe complete"),&index)?;
-        admission_fact(&w["admission"],&index)?; fact(&w["execution"],execution,&index)?;
+        admission_fact(&w["admission"],&index,&repository_names(&issue_repository(&w["issue_ref"])?,&index)?,&v["runtime"]["control_binding_digest"])?; fact(&w["execution"],execution,&index)?;
         fact(&w["wait"],waiting,&index)?; decision(&w["decision"],&index)?;
         fact(&w["delivery"],|x| one(x,"candidate published merged post_merge_verified deployment_observed"),&index)?;
         fact(&w["result"],|x| one(x,"incomplete complete cancelled"),&index)?; fact(&w["cleanup"],|x| one(x,"not_required pending complete"),&index)?;
@@ -710,6 +751,19 @@ mod tests {
             if StandardReply::parse(&serde_json::to_vec(&reply).unwrap()).is_ok()!=row["accepted_standard"].as_bool().unwrap(){failures.push(format!("{}:standard",row["name"]));}
         }
         assert!(failures.is_empty(),"source/value/evidence mismatches: {:?}",failures);
+    }
+
+    #[test]
+    fn derived_fact_profiles_use_actual_python_positive_encoders_and_literal_oracles() {
+        let output=Command::new("python3").arg("-I").arg(root().join("tests/fixtures/control-v3/emit_derived.py")).output().unwrap();
+        assert!(output.status.success());let rows:Value=serde_json::from_slice(&output.stdout).unwrap();
+        let rows=rows.as_array().unwrap();assert_eq!(rows.len(),272);let mut failures=Vec::new();
+        for row in rows {
+            let raw=row["wire"].as_str().unwrap().as_bytes();let expected=row["accepted"].as_bool().unwrap();
+            let accepted=if row["profile"]=="projection"{Projection::parse(raw).is_ok()}else{StandardReply::parse(raw).is_ok()};
+            if accepted!=expected{failures.push(format!("{}:{}",row["name"],row["profile"]));}
+        }
+        assert!(failures.is_empty(),"derived fact/source mismatches: {:?}",failures);
     }
 
 }

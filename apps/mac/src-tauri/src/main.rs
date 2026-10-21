@@ -112,7 +112,7 @@ impl Bridge {
             }
         }
         let scope=format!("{}:{}:{}",if refresh {"remote"}else{"local"},repository.unwrap_or("overview"),cursor.unwrap_or(""));
-        let ticket={
+        let (ticket,repository_bindings)={
             let mut state=self.projection.lock().await;
             let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
             if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
@@ -122,12 +122,14 @@ impl Bridge {
                 return cache.get(&scope,!refresh,now).ok_or_else(||BridgeError::new("source_wait"));
             }
             let ticket=cache.issue(scope,request,repository.is_some()).map_err(BridgeError::new)?;
+            let bindings=if refresh {cache.repository_binding_hints().map_err(BridgeError::new)?}else{"{}".into()};
             if refresh {cache.remote_started(now);}else{cache.local_started(now);}
-            ticket
+            (ticket,bindings)
         };
         let credential_scope=ticket.credential_scope.clone();
         let mut command=launch.projection_command(&ticket.epoch,&ticket.request_id,refresh,repository,cursor);
         if refresh {command.arg("--credential-scope").arg(credential_scope.ok_or_else(||BridgeError::new("read_context_unavailable"))?);}
+        if repository_bindings!="{}" {command.arg("--repository-bindings").arg(repository_bindings);}
         let output=bounded_output(command,Duration::from_secs(if refresh {60}else{15})).await;
         let mut state=self.projection.lock().await;
         let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
@@ -690,4 +692,49 @@ print(json.dumps(v))
             assert!(!bundled_navigation(&tauri::Url::parse(input).unwrap()));
         }
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retained_repository_identity_reaches_fixed_reader_and_respects_context_fences() {
+        use std::fs;
+        let mut f=ProjectionFixture::new(false);
+        let runtime=f.root.join("runtime");let original=fs::read_to_string(&runtime).unwrap();
+        let script=original.replace("print(json.dumps(v))", "with open(p+'.arguments','a') as out: out.write(json.dumps(a)+'\\n')\nprint(json.dumps(v))");
+        assert_ne!(script,original);fs::write(&runtime,&script).unwrap();
+        fn hints(f:&ProjectionFixture)->serde_json::Value {
+            let raw=fs::read_to_string(f.root.join("frame.json.arguments")).unwrap();
+            let args:Vec<String>=serde_json::from_str(raw.lines().last().unwrap()).unwrap();
+            args.iter().position(|a|a=="--repository-bindings").map(|i|serde_json::from_str(&args[i+1]).unwrap())
+                .unwrap_or_else(||serde_json::json!({}))
+        }
+        async fn fresh(f:&ProjectionFixture)->Result<CachedRead,BridgeError> {
+            f.bridge.projection.lock().await.as_mut().unwrap().remote_started(Instant::now()-Duration::from_secs(61));
+            f.read(true,None,false).await
+        }
+        f.read(true,None,false).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}));
+        fresh(&f).await.unwrap();assert_eq!(hints(&f)["example/alpha"],101,"Retained numeric repository never reached the fixed reader");
+
+        fs::write(&runtime,script.replace("print(json.dumps(v))","print('{')")).unwrap();
+        assert!(fresh(&f).await.is_err());fs::write(&runtime,&script).unwrap();
+        fresh(&f).await.unwrap();assert_eq!(hints(&f)["example/alpha"],101,"Read failure forgot an identity pin");
+
+        {
+            let mut state=f.bridge.projection.lock().await;let cache=state.as_mut().unwrap();
+            cache.context_changed(Some(format!("github:read:{}","b".repeat(64)))).unwrap();
+            cache.context_probe_due(Instant::now()+Duration::from_secs(10));
+        }
+        fresh(&f).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"Another credential inherited repository pins");
+
+        let epoch=read_epoch().unwrap();f.bridge.projection.lock().await.as_mut().unwrap().binding_changed(epoch.clone()).unwrap();f.epoch=epoch;
+        f.read(true,None,false).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"Another binding inherited repository pins");
+
+        let config=f.root.join("frame.json");let mut value:serde_json::Value=serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        value["runtime"]["code_digest"]="f".repeat(64).into();
+        for source in value["observations"].as_array_mut().unwrap().iter_mut().filter(|o|o["resource"]["kind"]=="repository") {
+            source["value"]=serde_json::Value::Null;source["observed_at"]=serde_json::Value::Null;source["availability"]="unavailable".into();
+            source["reason"]="fixture_unavailable".into();source["coverage"]=serde_json::json!({"state":"unavailable","scope":"fixture","returned_count":0,"total_count":null,"next_cursor":null,"reason":"fixture_unavailable"});
+        }
+        fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();fresh(&f).await.unwrap();
+        fresh(&f).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"A new runtime reused old repository pins");
+    }
+
 }

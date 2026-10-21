@@ -382,10 +382,18 @@ def _bounded(frame):
     return candidate
 
 
-def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository=None, github=None, cursor=None, credential_scope=None):
+def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository=None, github=None, cursor=None, credential_scope=None, repository_bindings=None):
     """Read a registered scope; no admission mutation, model call or native wake."""
     p.uid(binding_epoch); p.uid(request_id)
     p.require(type(refresh) is bool)
+    if repository_bindings is None:
+        repository_bindings = {}
+    p.require(type(repository_bindings) is dict and len(repository_bindings) <= 1024)
+    for address, identifier in repository_bindings.items():
+        p.require(type(address) is str and p._repository_name(address) == address)
+        p.integer(identifier, 1)
+    repository_bindings = {address: identifier for address, identifier in repository_bindings.items()
+                           if address in cfg['repos']}
     if repository is not None:
         repository = _repository(repository)
         p.require(repository in cfg['repos'])
@@ -443,7 +451,9 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
                             'url': 'https://github.com/' + str(raw.get('full_name')), 'contract_ref': None}
                         p.source_value('repository', repo_value)
                         _repository(repo_value['full_name'])
-                        p.require(repo_value['full_name'].casefold() == address.casefold())
+                        expected = repository_bindings.get(address)
+                        p.require(repo_value['numeric_id'] == expected if expected is not None
+                                  else repo_value['full_name'].casefold() == address.casefold())
                         client.accepted(start)
                         canonical, identifier = repo_value['full_name'], str(repo_value['numeric_id'])
                         repo_ref = _ref('github', 'repository', identifier)
@@ -565,7 +575,7 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
         limited = response is not None and response.limited
         reason = 'rate_limited' if limited else note['reason']
         value = context['value'] if note['valid'] else None
-        observed = _observation(key, _ref('github', 'repository', 'requested:' + context['requested']),
+        observed = _observation(key, context['resource'] if value is not None else _ref('github', 'repository', 'requested:' + context['requested']),
             'query:' + hashlib.sha256(note['path'].encode('utf-8')).hexdigest(),
             value, context['observed_at'], reason=reason)
         if value is not None:
