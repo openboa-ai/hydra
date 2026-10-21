@@ -205,6 +205,7 @@ impl ReadCache {
         if self.context.scope==scope {return Ok(());}
         self.context.sequence=self.context.sequence.checked_add(1).filter(|n|*n<=MAX_SEQUENCE).ok_or("sequence_exhausted")?;
         self.context.scope=scope;
+        self.remote_started=None;
         let scopes:Vec<_>=self.entries.keys().filter(|s|s.starts_with("remote:")).cloned().collect();
         for scope in scopes {self.remove(&scope);}
         self.orders.retain(|scope,_|!scope.starts_with("remote:"));
@@ -325,6 +326,7 @@ mod tests {
         cache.context_changed(Some(scope_b.into())).unwrap();
         assert_eq!(cache.accept(&old,&serde_json::to_vec(&value).unwrap(),now).unwrap_err(),"stale_read");
         assert!(cache.get("remote:overview:",false,now).is_none());
+        assert_eq!(cache.remote_wait(now+Duration::from_secs(1),false),Ok(0),"Credential B inherited A's ordinary poll floor");
         assert_eq!(cache.remote_wait(now+Duration::from_secs(60),false),Ok(0),"Credential B inherited A's provider wait");
         let retained=cache.get("local:overview:",true,now).unwrap();
         assert_eq!(retained.read_context.scope.as_deref(),Some(scope_b));
@@ -336,6 +338,30 @@ mod tests {
         assert_eq!(cache.read_held(now,false,"local:overview:",false,false),Ok(false));
         assert!(cache.context_probe_due(now));assert!(!cache.context_probe_due(now+Duration::from_secs(4)));
         assert!(cache.context_probe_due(now+Duration::from_secs(5)));
+    }
+    #[test]
+    fn credential_rotation_rebuilds_remote_cache_immediately_and_keeps_independent_poll_floors() {
+        let mut cache=test_cache();let now=Instant::now();
+        let scope_a="connection:alpha";let scope_b="connection:beta";
+        cache.context_changed(Some(scope_a.into())).unwrap();
+        let old=cache.issue("remote:overview:".into(),request(70),false).unwrap();
+        cache.remote_started(now);cache.accept(&old,&fixture(&old.request_id),now).unwrap();
+        let local=cache.issue("local:overview:".into(),request(71),false).unwrap();
+        cache.local_started(now);cache.accept(&local,&fixture(&local.request_id),now).unwrap();
+        let changed=now+Duration::from_secs(1);
+        cache.context_changed(Some(scope_a.into())).unwrap();
+        assert_eq!(cache.read_held(changed,true,"remote:overview:",false,false),Ok(true),"An unchanged credential reset its poll floor");
+        cache.context_changed(Some(scope_b.into())).unwrap();
+        assert!(cache.get("remote:overview:",false,changed).is_none());
+        assert_eq!(cache.read_held(changed,true,"remote:overview:",false,false),Ok(false),"The new credential cannot rebuild an invalidated cache");
+        assert!(cache.local_wait(changed),"Credential rotation reset the independent local floor");
+        assert!(!cache.get("local:overview:",true,changed).unwrap().stale);
+        let fresh=cache.issue("remote:overview:".into(),request(72),false).unwrap();
+        cache.remote_started(changed);
+        let read=cache.accept(&fresh,&fixture(&fresh.request_id),changed).unwrap();
+        assert_eq!(read.read_context.scope.as_deref(),Some(scope_b));
+        assert!(cache.get("remote:overview:",false,changed).is_some());
+        assert_eq!(cache.remote_wait(changed+Duration::from_secs(1),false),Ok(59),"The new read did not establish its own poll floor");
     }
     #[test]
     fn continuation_privileges_require_exact_issued_lineage_and_are_consumed() {

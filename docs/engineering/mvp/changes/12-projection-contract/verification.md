@@ -427,3 +427,28 @@ one HTTP attempt, zero target reads and a 60-second fallback; a healthy
 authenticated source read remains a successful control.
 
 Final affected local Python 3.14.2 suites: 287 methods, zero failures/errors/skips. Log SHA-256 `63067387f16bb1f3af921e4b7753be4896fc60a4ed1a5492ae978d9061a0efd9`. The TypeScript/Rust implementation, wire fixtures and their prior113/44 checks are unchanged; new-head hosted CI and independent reviews remain required. Installed/native operation remains NOT RUN.
+
+
+## Credential rotation and the ordinary remote poll floor
+
+An actual credential-context change now invalidates the obsolete ordinary
+remote-start timer together with that credential's remote cache and ordering.
+An unchanged context retains its floor. The new credential can rebuild an empty
+remote cache immediately and its successful read starts a new floor. Independent
+local data/timing and credential-scoped provider waits are retained; rotating
+back to a limited credential does not erase its provider wait.
+
+Identical final Rust test bytes reproduce two actual assertion failures on
+published 83204b600f96753738c8e392b6eaa2489336e198: the new credential is held
+for the old ordinary interval, both with and without a late previous-credential
+provider hint. With the one-line production correction, all 45 Rust tests pass
+without failures, ignored cases or filters under Rust 1.94.1. Python fixture
+children use 3.14.2. The actual locked frontend was built for the Rust test
+context under supported local Node 24.5.0; hosted CI retains Node 24.21.0.
+The initial missing-frontend build setup error is separate from this RED proof.
+
+P12 Rev4/CP8/NC8, provider quota policy, wire and command authority remain
+unchanged. Existing UI source bytes are unchanged; this result is a Rust cache
+behavior qualification, not an installed-app or native-operation observation.
+Final-head hosted CI and independent reviews, protected merge and exact-main
+verification remain required.
