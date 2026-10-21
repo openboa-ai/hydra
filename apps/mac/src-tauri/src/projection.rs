@@ -254,6 +254,16 @@ fn observation(v: &Value) -> R {
     one(&v["availability"],"current stale unavailable unsupported")?; coverage(&v["coverage"])?; optional(&v["reason"],code)?;
     if v["availability"]=="current" || v["availability"]=="stale" {
         need(!v["observed_at"].is_null() && !v["value"].is_null())?; source_value(kind,&v["value"])?;
+        if kind=="admission" {
+            let value=v["value"]["revision"].as_u64().ok_or(INVALID)?.to_string();
+            need(v["revision"]==serde_json::json!({"kind":"monotonic","value":value}))?;
+        } else if kind=="issue" {
+            let (repository,issue)=string(&v["resource"]["id"])?.split_once(':').ok_or(INVALID)?;
+            let repository_number=repository.parse::<u64>().map_err(|_|INVALID)?;
+            positive(&Value::from(repository_number))?;
+            need(repository==repository_number.to_string() &&
+                issue==v["value"]["number"].as_u64().ok_or(INVALID)?.to_string())?;
+        }
     } else {
         need(v["value"].is_null() && v["observed_at"].is_null() && !v["reason"].is_null() && v["coverage"]["state"]=="unavailable")?;
     }
@@ -286,6 +296,17 @@ fn fact(v: &Value, check: impl Fn(&Value)->R, index: &Index<'_>) -> R {
     }
     if v["value"].is_null() { need(!v["reason"].is_null()) }
     else { need(!seen.is_empty() && v["reason"].is_null())?; check(&v["value"]) }
+}
+fn admission_fact(v: &Value, index: &Index<'_>) -> R {
+    fact(v,|x|one(x,"allowed paused stopped"),index)?;
+    if !v["value"].is_null() {
+        let mut admission=false;
+        for item in v["evidence"].as_array().ok_or(INVALID)? {
+            let source=evidence_in(item,index)?;
+            admission |= source["resource"]["source"]=="hydra" && source["resource"]["kind"]=="admission";
+        }
+        need(admission)?;
+    } Ok(())
 }
 fn readiness(v: &Value) -> R {
     object(v,"disposition source_ref source_revision interpretation_ref binding_ref extracted missing authority trust_reason")?;
@@ -455,7 +476,7 @@ fn validate_frame(v:&Value)->R {
         object(p,"repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs")?;
         kind_ref(&p["repository_ref"],"repository")?; unique(&mut projects,&p["repository_ref"])?;
         list(&p["goal_refs"],goal_ref,100)?; list(&p["work_refs"],reference,128)?;
-        fact(&p["admission"],|x| one(x,"allowed paused stopped"),&index)?; fact(&p["execution"],execution,&index)?;
+        admission_fact(&p["admission"],&index)?; fact(&p["execution"],execution,&index)?;
         refs(&p["attention_refs"])?; coverage(&p["coverage"])?; refs(&p["source_refs"])?;
     }
     let mut works=HashSet::new();
@@ -465,7 +486,7 @@ fn validate_frame(v:&Value)->R {
         kind_ref(&w["issue_ref"],"issue")?; unique(&mut works,&w["issue_ref"])?;
         list(&w["goal_refs"],goal_ref,100)?; list(&w["spec_refs"],requirement_ref,100)?; list(&w["requirement_refs"],requirement_ref,100)?;
         fact(&w["readiness"],readiness,&index)?; fact(&w["stage"],|x| one(x,"prepare design implement verify deliver observe complete"),&index)?;
-        fact(&w["admission"],|x| one(x,"allowed paused stopped"),&index)?; fact(&w["execution"],execution,&index)?;
+        admission_fact(&w["admission"],&index)?; fact(&w["execution"],execution,&index)?;
         fact(&w["wait"],waiting,&index)?; decision(&w["decision"],&index)?;
         fact(&w["delivery"],|x| one(x,"candidate published merged post_merge_verified deployment_observed"),&index)?;
         fact(&w["result"],|x| one(x,"incomplete complete cancelled"),&index)?; fact(&w["cleanup"],|x| one(x,"not_required pending complete"),&index)?;
@@ -665,6 +686,30 @@ mod tests {
             if Projection::parse(&serde_json::to_vec(&frame).unwrap()).is_ok()!=expected {failures.push(format!("{}:projection",case["name"]));}
         }
         assert!(failures.is_empty(),"cleanup proof mismatches: {:?}",failures);
+    }
+
+    #[test]
+    fn p12_source_value_evidence_causality_matches_shared_oracles() {
+        let input:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/inputs.json")).unwrap()).unwrap();
+        let matrix:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/source-causality.json")).unwrap()).unwrap();
+        let commands:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/receipt-states.json")).unwrap()).unwrap();
+        let rows=matrix["cases"].as_array().unwrap();assert_eq!(rows.len(),30);let mut failures=Vec::new();
+        for row in rows {
+            let mut frame=input["frame"].clone();
+            for change in row["changes"].as_array().unwrap(){
+                let path=change["path"].as_array().unwrap();let mut target=&mut frame;
+                for key in path {target=if let Some(key)=key.as_str(){&mut target[key]}else{&mut target[key.as_u64().unwrap() as usize]};}
+                *target=change["value"].clone();
+            }
+            let mut reply=commands["commands"].as_array().unwrap().iter().find(|c|c["name"]=="admission").unwrap()["reply"].clone();
+            reply["observations"]=frame["observations"].clone();
+            let request=reply["request"].as_object_mut().unwrap();
+            for (key,value) in [("outcome",serde_json::json!("rejected")),("reason",serde_json::json!("fixture_source_check")),
+                ("receipt",Value::Null),("effect_refs",serde_json::json!([])),("observed_refs",serde_json::json!([])),("required_next",serde_json::json!("refresh"))]{request.insert(key.into(),value);}
+            if Projection::parse(&serde_json::to_vec(&frame).unwrap()).is_ok()!=row["accepted_projection"].as_bool().unwrap(){failures.push(format!("{}:projection",row["name"]));}
+            if StandardReply::parse(&serde_json::to_vec(&reply).unwrap()).is_ok()!=row["accepted_standard"].as_bool().unwrap(){failures.push(format!("{}:standard",row["name"]));}
+        }
+        assert!(failures.is_empty(),"source/value/evidence mismatches: {:?}",failures);
     }
 
 }

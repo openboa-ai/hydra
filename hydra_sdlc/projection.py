@@ -333,6 +333,14 @@ def observation(value):
     if value['availability'] in {'current', 'stale'}:
         require(value['observed_at'] is not None and value['value'] is not None)
         source_value(value['resource']['kind'], value['value'])
+        if value['resource']['kind'] == 'admission':
+            require(value['revision'] == {'kind': 'monotonic', 'value': str(value['value']['revision'])})
+        elif value['resource']['kind'] == 'issue':
+            locator = re.fullmatch(r'([1-9][0-9]*):([1-9][0-9]*)', value['resource']['id'])
+            require(locator is not None)
+            integer(int(locator[1]), 1)
+            integer(int(locator[2]), 1)
+            require(int(locator[2]) == value['value']['number'])
     else:
         require(value['value'] is None and value['observed_at'] is None and value['reason'] is not None)
         require(value['coverage']['state'] == 'unavailable')
@@ -373,6 +381,14 @@ def fact(value, validator, observations):
         validator(value['value'])
     else:
         require(value['reason'] is not None)
+
+
+def admission_fact(value, observations):
+    fact(value, lambda w: one(w, {'allowed', 'paused', 'stopped'}), observations)
+    if value['value'] is not None:
+        require(any(observations[e['observation_key']]['resource']['source'] == 'hydra'
+                    and observations[e['observation_key']]['resource']['kind'] == 'admission'
+                    for e in value['evidence']))
 
 
 def canonical(value):
@@ -694,7 +710,7 @@ def validate_frame(value):
         kind_ref(v['repository_ref'], 'repository')
         array(v['goal_refs'], goal_ref, 100)
         array(v['work_refs'], ref, 128)
-        fact(v['admission'], lambda w: one(w, {'allowed', 'paused', 'stopped'}), observations)
+        admission_fact(v['admission'], observations)
         fact(v['execution'], execution, observations)
         array(v['attention_refs'], ref)
         coverage(v['coverage'])
@@ -710,7 +726,6 @@ def validate_frame(value):
         facts = {
             'readiness': readiness,
             'stage': lambda w: one(w, {'prepare', 'design', 'implement', 'verify', 'deliver', 'observe', 'complete'}),
-            'admission': lambda w: one(w, {'allowed', 'paused', 'stopped'}),
             'execution': execution, 'wait': wait,
             'delivery': lambda w: one(w, {'candidate', 'published', 'merged', 'post_merge_verified', 'deployment_observed'}),
             'result': lambda w: one(w, {'incomplete', 'complete', 'cancelled'}),
@@ -719,6 +734,7 @@ def validate_frame(value):
         }
         for key, validator in facts.items():
             fact(v[key], validator, observations)
+        admission_fact(v['admission'], observations)
         decision(v['decision'], observations)
         array(v['task_refs'], ref)
         array(v['resource_refs'], ref)

@@ -126,7 +126,10 @@ class ProjectionPrimitiveTests(unittest.TestCase):
     def test_monotonic_revisions_preserve_decimal_strings_beyond_json_integer_range(self):
         value = minimal()
         counter = '100000000000000000000000000000000000001'
-        value['observations'][0]['revision']['value'] = counter
+        source = value['observations'][0]
+        source.update(key='hydra:host:ownership', resource={'source': 'hydra', 'kind': 'ownership', 'id': 'host'},
+                      value={'state': 'free', 'scope_digest': None, 'step_nonce': None})
+        source['revision']['value'] = counter
         try:
             result = p.read_json(p.encode(value))
         except p.ProjectionError:

@@ -403,9 +403,11 @@ mod tests {
         let mut value:Value=serde_json::from_slice(&fixture(&request(2))).unwrap();
         value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
         value["observations"][0]["revision"]["value"]="10".into();
+        value["observations"][0]["value"]["revision"]=10.into();
         let first=cache.issue("remote".into(),request(2),false).unwrap();
         cache.accept(&first,&serde_json::to_vec(&value).unwrap(),now).unwrap();
         value["observations"][0]["revision"]["value"]="0".into();value["request_id"]=request(3).into();
+        value["observations"][0]["value"]["revision"]=0.into();
         let issue=value["observations"].as_array_mut().unwrap().iter_mut().find(|o|o["resource"]["kind"]=="issue").unwrap();
         issue["value"]["title"]="New current GitHub source".into();
         let second=cache.issue("remote".into(),request(3),false).unwrap();
@@ -539,6 +541,9 @@ mod tests {
         let bytes=fixture(&request(2));let mut value:Value=serde_json::from_slice(&bytes).unwrap();
         value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
         let high="1".to_owned()+&"0".repeat(200);let low="9".repeat(200);
+        value["observations"][0]["key"]="hydra:counter:ownership".into();
+        value["observations"][0]["resource"]=serde_json::json!({"source":"hydra","kind":"ownership","id":"fixture-counter"});
+        value["observations"][0]["value"]=serde_json::json!({"state":"free","scope_digest":null,"step_nonce":null});
         value["observations"][0]["revision"]["value"]=high.clone().into();
         let ticket=cache.issue("local".into(),request(2),false).unwrap();
         cache.accept(&ticket,&serde_json::to_vec(&value).unwrap(),now).unwrap();
@@ -557,6 +562,7 @@ mod tests {
         let mut value:Value=serde_json::from_slice(&fixture(&local.request_id)).unwrap();
         value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
         value["observations"][0]["revision"]["value"]="8".into();
+        value["observations"][0]["value"]["revision"]=8.into();
         cache.accept(&local,&serde_json::to_vec(&value).unwrap(),now).unwrap();
         let remote=cache.accept(&remote,&fixture(&remote.request_id),now).expect("An older admission sample discarded an independent GitHub read");
         let remote=serde_json::to_value(remote.payload.as_ref()).unwrap();

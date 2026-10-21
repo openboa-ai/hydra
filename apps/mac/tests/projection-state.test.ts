@@ -208,14 +208,15 @@ test("monotonic revisions compare decimal meaning without floating-point convers
   assert.equal(compareRevisions({kind:"monotonic",value:"9007199254740993"},{kind:"monotonic",value:"9007199254740992"}),1);
   assert.equal(compareRevisions({kind:"opaque",value:"z"},{kind:"opaque",value:"a"}),null);
   const frame=structuredClone(base);frame.projects=[];frame.work=[];frame.relations=[];
-  frame.observations[0]!.revision={kind:"monotonic",value:high};
+  const source=frame.observations.find(o=>o.resource.kind==="ownership")!,initial=source.value!.state;
+  source.revision={kind:"monotonic",value:high};
   let s=read(projectionState(base.binding_epoch),1,frame);
-  frame.observations[0]!.revision={kind:"monotonic",value:low};
-  frame.observations[0]!.value!.global_mode="stopped";
+  source.revision={kind:"monotonic",value:low};
+  source.value!.state="busy";
   s=read(s,2,frame);
-  const slot=s.source_slots.get(frame.observations[0]!.key)!;
+  const slot=s.source_slots.get(source.key)!;
   assert.equal(slot.observation.revision!.value,high);
-  assert.equal(slot.observation.value!.global_mode,"paused");
+  assert.equal(slot.observation.value!.state,initial);
   assert.equal(slot.stale,true);
 });
 

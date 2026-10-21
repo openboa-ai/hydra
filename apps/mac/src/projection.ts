@@ -287,6 +287,14 @@ function observation(value: unknown): void {
   const c = plain(v.coverage);
   if (v.availability === "current" || v.availability === "stale") {
     requireValue(v.observed_at !== null && v.value !== null); sourceValue(resource.kind, v.value);
+    const data = plain(v.value);
+    if (resource.kind === "admission")
+      requireValue(canonical(v.revision) === canonical({kind: "monotonic", value: String(data.revision)}));
+    else if (resource.kind === "issue") {
+      const locator = /^([1-9][0-9]*):([1-9][0-9]*)$/.exec(String(resource.id));
+      requireValue(locator !== null); integer(Number(locator[1]), 1); integer(Number(locator[2]), 1);
+      requireValue(locator[2] === String(data.number));
+    }
   } else requireValue(v.value === null && v.observed_at === null && v.reason !== null && c.state === "unavailable");
   if (resource.kind === "native_task_metadata" || resource.kind === "native_history_page") {
     requireValue(v.revision === null);
@@ -320,6 +328,14 @@ function fact(value: unknown, check: Check, index: Index): void {
   }
   if (v.value === null) requireValue(v.reason !== null);
   else { requireValue(seen.size > 0 && v.reason === null); check(v.value); }
+}
+function admissionFact(value: unknown, index: Index): void {
+  fact(value, x => one(x, "allowed paused stopped"), index);
+  const v = value as Fact<string>;
+  if (v.value !== null) requireValue(v.evidence.some(item => {
+    const source = evidenceIn(item, index);
+    return source.resource.source === "hydra" && source.resource.kind === "admission";
+  }));
 }
 function readiness(value: unknown): void {
   const v = object(value, "disposition source_ref source_revision interpretation_ref binding_ref extracted missing authority trust_reason");
@@ -559,7 +575,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
     const p = object(item, "repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs");
     kindRef(p.repository_ref, "repository"); unique(projects, p.repository_ref);
     list(p.goal_refs, goalRef, 100); list(p.work_refs, ref, 128);
-    fact(p.admission, x => one(x, "allowed paused stopped"), index); fact(p.execution, execution, index);
+    admissionFact(p.admission, index); fact(p.execution, execution, index);
     refs(p.attention_refs); coverage(p.coverage); refs(p.source_refs);
   }, 1024);
   list(v.work, item => {
@@ -567,7 +583,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
     kindRef(w.issue_ref, "issue"); unique(work, w.issue_ref); list(w.goal_refs, goalRef, 100);
     list(w.spec_refs, requirementRef, 100); list(w.requirement_refs, requirementRef, 100);
     fact(w.readiness, readiness, index); fact(w.stage, x => one(x, "prepare design implement verify deliver observe complete"), index);
-    fact(w.admission, x => one(x, "allowed paused stopped"), index); fact(w.execution, execution, index); fact(w.wait, wait, index);
+    admissionFact(w.admission, index); fact(w.execution, execution, index); fact(w.wait, wait, index);
     decision(w.decision, index); fact(w.delivery, x => one(x, "candidate published merged post_merge_verified deployment_observed"), index);
     fact(w.result, x => one(x, "incomplete complete cancelled"), index); fact(w.cleanup, x => one(x, "not_required pending complete"), index);
     fact(w.next_action, x => nextAction(x, index), index);

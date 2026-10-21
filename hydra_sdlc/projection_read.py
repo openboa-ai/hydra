@@ -398,10 +398,12 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     # Remote collection does not hold a local admission snapshot fresh. These
     # placeholder facts are rebound to one final local read before encoding.
     snapshot = None
-    admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
+    runtime = capture_runtime_identity(cfg, control)
+    admission_ref = _ref('hydra', 'admission', runtime['control_binding_digest'] or 'requested:host-admission')
+    admission = _observation('hydra:host:admission', admission_ref,
         'resource:host:admission', None, at, reason='not_requested')
     observations = {}
-    frame = {'schema_version': 3, 'runtime': capture_runtime_identity(cfg, control),
+    frame = {'schema_version': 3, 'runtime': runtime,
         'binding_epoch': binding_epoch, 'request_id': request_id, 'assembled_at': at,
         'observations': [], 'projects': [], 'work': [], 'relations': [],
         'page': _coverage('registered-projects;overview', 0, False, 'not_requested'),
@@ -467,19 +469,25 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
                             observations[observed['key']] = observed
                             view = _work(observed, gate)
                             if managed:
+                                progress_key = 'github:' + identifier + ':progress:' + str(number)
+                                progress_scope = 'resource:' + identifier + ':progress:' + str(number)
+                                progress_ref = _ref('github', 'progress', 'requested:' + identifier + ':' + str(number))
+                                progress_observed = _observation(progress_key, progress_ref,
+                                    progress_scope, None, _now(), reason='progress_not_observed')
                                 try:
                                     start = len(client.notes)
                                     source = client.progress_source(canonical, number)
                                     client.accepted(start)
                                     if source is not None:
                                         progress_value, progress_ref = _progress(source, resource, identifier)
-                                        progress_observed = _observation('github:' + identifier + ':progress:' + str(number),
-                                            progress_ref, 'resource:' + identifier + ':progress:' + str(number), progress_value, _now())
-                                        observations[progress_observed['key']] = progress_observed
-                                        view['evidence_refs'].append(p.evidence_of(progress_observed))
-                                        view['stage'] = p.unknown('stage_mapping_unverified', [progress_observed])
+                                        progress_observed = _observation(progress_key, progress_ref,
+                                            progress_scope, progress_value, _now())
                                 except (ValueError, RuntimeError, OSError, TypeError, KeyError):
-                                    view['stage'] = p.unknown('progress_unavailable')
+                                    progress_observed = _observation(progress_key, progress_ref,
+                                        progress_scope, None, _now(), reason='progress_unavailable')
+                                observations[progress_key] = progress_observed
+                                view['evidence_refs'].append(p.evidence_of(progress_observed))
+                                view['stage'] = p.unknown(progress_observed['reason'] or 'stage_mapping_unverified', [progress_observed])
                             locations[p.canonical(resource)] = (address, row_locations[number])
                             work[p.canonical(resource)] = view
                             project['work_refs'].append(resource)
@@ -497,18 +505,20 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
         raise GitHubError('Read credential context changed')
     at = _now()
     try:
+        p.require(runtime['control_binding_digest'] is not None)
         snapshot = control.snapshot()
         admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
             'project_overrides': snapshot['projects'],
             'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
         p.source_value('admission', admission_value)
-        admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
+        admission = _observation('hydra:host:admission', admission_ref,
             'resource:host:admission', admission_value, at,
             revision={'kind': 'monotonic', 'value': str(snapshot['revision'])})
     except (OperationDenied, ValueError, KeyError, TypeError, OSError):
         snapshot = None
-        admission = _observation('hydra:host:admission', _ref('hydra', 'admission', 'host'),
-            'resource:host:admission', None, at, reason='admission_unavailable')
+        admission = _observation('hydra:host:admission', admission_ref,
+            'resource:host:admission', None, at,
+            reason='admission_unavailable' if runtime['control_binding_digest'] else 'admission_binding_unavailable')
     ownership_reason = 'ownership_unavailable'
     try:
         owner = observe_coordinator(cfg['lock_path'])

@@ -6,7 +6,56 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: exact receipts and final local observations
+## Current correction: source values and evidence causality
+
+This increment corrects five findings on published parent
+3348240b10f208fd0caa149f6bdc43aa84d94988 under unchanged P12 Rev4 / CP8 / NC8.
+It changes no wire fields, source capability, command authority or installation.
+
+- Every attempted managed-progress read emits its stable-key observation.
+  Exceptions, invalid records and no readable record emit unavailable evidence;
+  the reducer immediately retains the last good value as stale. Independent
+  Issue membership and complete repository coverage remain intact.
+- Known project/work admission facts require at least one Hydra admission
+  observation. Mixed supporting metadata remains valid. Generic evidence checks
+  still require every cited observation to be current, complete and revision-matched.
+- Non-null current/stale admission values require an exactly matching monotonic
+  observation revision. An unrelated or forged high outer counter is rejected.
+- Admission observations and project references use the runtime control-binding
+  digest. Missing binding identity produces an explicit unresolved requested ref,
+  unavailable admission and unknown gates while preserving independent reads.
+  Missing source-code identity with a known control binding remains readable.
+- Current/stale Issue values require a canonical positive safe-integer
+  repository:Issue locator whose Issue number equals the typed source value.
+  Unavailable resources retain opaque locator support.
+
+One shared 30-case matrix covers projection facts and standalone reply sources
+in Python, Rust and TypeScript. Actual builder-to-reducer sequences verify failed,
+missing and invalid progress after a current value, before the old value's TTL.
+The builder also checks known/missing binding, source-code identity failure and
+local snapshot failure. No raw error text becomes public output.
+
+The actual published parent reproduces 39 Python assertion failures across three
+methods, 21 failing frontend methods with 12 healthy controls passing, and one
+aggregate Rust matrix failure. There are no setup errors/skips/cancellations;
+the normal locked frontend build completed before Rust RED. The final frontend
+oracle was separately rechecked on that unchanged parent after correcting its
+expectation from erased/unavailable to retained/stale. The sourceFresh=false
+requirement is unchanged. Matrix formatting was compacted without changing any
+parsed test case, value or acceptance flag.
+
+Final local checks pass: 246 selected Python 3.14.2 methods, 324 frontend tests,
+all 50 Rust 1.94.1 tests and TypeScript/Vite build under Node 24.5.0. Final runs
+have zero failures/errors/skips/cancellations. Existing revision-order fixtures
+now pair admission counters with their typed value, and generic arbitrary-size
+counter tests use ownership observations. Their ordering/preservation oracles
+are unchanged; admission remains bounded by its declared numeric source type.
+
+These are source/consumer results. Exact new-head hosted CI, independent reviews,
+protected merge and actual-main checks remain required. Installed migration,
+native Q/A attribution, actual remote control and full v1 operation remain open.
+
+## Earlier correction: exact receipts and final local observations
 
 This increment corrects six code-review findings on published parent
 9296d4119229cc3f527b0c78dca0346b35a00b7b under unchanged P12 Rev4 / CP8 / NC8.
