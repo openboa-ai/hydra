@@ -7,7 +7,7 @@ import {
 type Slot = { latest_issued_seq: number; latest_settled_seq: number; observation: Observation;
   query_scope: string; received_at: number; stale: boolean; frame: string; received_sequence:number };
 type Query = { sequence: number; request_id: string; keys: Set<string> };
-type Command = { request_id: string; effect_key: string; action: string; target: Record<string, unknown>;
+type Command = { request_id: string; effect_key: string | null; action: string; target: Record<string, unknown>;
   operation?: "preserve" | "archive" | "retire" | "remove_schedule";
   parameters?: Record<string, unknown>; assignment?: Record<string, unknown> | null };
 type RetryWindow = { received_at: number; after_seconds: number; basis: "provider" | "fallback"; failures: Map<string, { count: number; frame: string }> };
@@ -61,6 +61,15 @@ function workflowReceipt(pending:Command,result:CommandResult) {
   }
   if (Object.hasOwn(r,"candidate")) valid(json(r.candidate)===json(p.candidate));
   if (kind==="decision") valid(r.source_attempt===p.source_attempt && r.round===p.round);
+  if (kind==="continuation") {
+    valid(Object.hasOwn(p,"progress"));
+    const progress=p.progress;
+    if (progress!==null) {
+      valid(progress && typeof progress==="object" && !Array.isArray(progress));
+      const pin=progress as Record<string,unknown>;
+      valid(["attempt_id","head","contract_revision"].every(field=>r[field]===pin[field]));
+    }
+  }
   if (kind==="publication") valid(r.branch===p.branch);
   if (kind==="delivery") valid(r.integration_base===p.integration_base);
 }
@@ -448,10 +457,11 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
     }
     case "selection_changed": state.selected_ref = event.selected_ref; break;
     case "command_started": {
-      valid(uuid.test(event.request_id) && event.effect_key.length > 0 && event.effect_key.length <= 512);
+      valid(uuid.test(event.request_id) && (event.effect_key === null ||
+        (typeof event.effect_key === "string" && event.effect_key.length > 0 && event.effect_key.length <= 512)));
       valid(!state.pending_commands.has(event.request_id) && !state.feedback.has(event.request_id));
       valid(/^[a-z][a-z0-9_]{0,63}$/.test(event.action) && size(event.target)<=4096);
-      valid(![...state.pending_commands.values(),...[...state.feedback.values()].filter(f=>f.outcome === "unknown" || f.outcome === "waiting")].some(c => c.effect_key === event.effect_key));
+      valid(event.effect_key === null || ![...state.pending_commands.values(),...[...state.feedback.values()].filter(f=>f.outcome === "unknown" || f.outcome === "waiting")].some(c => c.effect_key === event.effect_key));
       for (const [id,f] of state.feedback) if (state.pending_commands.size+state.feedback.size>=16 &&
           (f.outcome === "applied" || f.outcome === "rejected")) state.feedback.delete(id);
       valid(state.pending_commands.size + state.feedback.size < 16);
@@ -462,8 +472,14 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         const input=event.parameters;
         valid(input===undefined || (input!==null && typeof input==="object" && !Array.isArray(input)));
         const parameters=input===undefined?undefined:Object.fromEntries(
-          ["operation","stage","outcome","candidate","source_attempt","round","branch","integration_base"]
+          ["operation","stage","outcome","candidate","progress","source_attempt","round","branch","integration_base"]
             .filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
+        if (parameters?.progress!==undefined && parameters.progress!==null) {
+          const pin=parameters.progress;
+          valid(typeof pin==="object" && !Array.isArray(pin));
+          parameters.progress=Object.fromEntries(["attempt_id","head","contract_revision","phase"]
+            .filter(k=>Object.hasOwn(pin,k)).map(k=>[k,(pin as Record<string,unknown>)[k]]));
+        }
         // Keep only bounded correlation pins; private summaries never enter state.
         valid(size({parameters,assignment:event.assignment,effect_key:event.effect_key,target:event.target})<=4096);
         workflow={parameters:structuredClone(parameters),assignment:structuredClone(event.assignment)};

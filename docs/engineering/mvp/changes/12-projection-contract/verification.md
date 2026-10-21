@@ -6,7 +6,53 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: workflow reply correlation
+## Current correction: CP8 receipt, request and coverage boundaries
+
+This follow-up preserves P12 revision 4 / CP8 / NC8 and corrects four findings on
+published parent a7f59fcd1bcfde3c5d4eea1cf795b44b986aeb47. It changes no wire
+fields, command capability, server authority, installation or effect path.
+
+- Publication is applied only at publication_ready with a PR reference. A
+  pr_ready/publication_ready receipt cannot omit that reference. Delivery is
+  applied only after successful post-merge and Issue-close read-back. Valid
+  partial/failed receipts remain available under waiting/unknown outcomes.
+- Pending commands retain null effect keys. Nulls never create an effect-key
+  collision; duplicate request IDs and actual unresolved checkpoint/decision keys
+  remain fenced. Healthy admission/workflow/cleanup examples use their CP8 keys.
+- Continuation tracking retains a bounded snapshot of the typed ProgressPin,
+  distinguishes null from missing, and compares represented attempt/head/contract
+  fields before accepting feedback. No missing receipt phase field is invented.
+- Complete Issue membership is independent of a failed managed-progress read.
+  The affected stage remains unknown while removed ordinary Issues can be pruned.
+
+One independent 54-case receipt-state corpus drives Python, Rust and TypeScript,
+under both standard replies and embedded projection results. Nine healthy typed
+tracking events cover nullable and real effect keys. The actual producer also
+feeds the removed-Issue reducer regression. These are deterministic consumer
+tests, not executions of those commands or native operating acceptance.
+
+Unmodified-parent production logic reproduces 41 Python assertion failures
+(two methods), 35 failures among 72 new frontend methods, and one Rust matrix
+assertion. These behavioral runs have no errors or skips. Rust first required
+the normal locked frontend build; the earlier missing-dist compilation failure
+is recorded separately and is not behavioral RED. A controlled null-key-only
+correction still fails 27 frontend methods, exposing correlation/receipt/coverage
+failures behind the former input rejection; it is not unmodified-parent evidence.
+
+The same final wire inputs and oracles pass: two focused Python methods, all
+72 new frontend methods, all 239 selected Python methods, all 209 frontend methods,
+all 46 Rust methods, and TypeScript/Vite build. Python is 3.14.2, Node is 24.5.0,
+Rust is 1.94.1; all successful runs have no failures, errors, skips or cancellations.
+Formatting the corpus for review leaves every wire value/oracle unchanged; all
+three focused consumers were rerun on the final file. The earlier duplicate-effect
+test now uses a real checkpoint key rather than a fabricated admission key.
+
+Command feedback remains separate from current source Facts. P16 owns actual
+screen/action construction and wiring; native-only handoffs remain outside this
+standard renderer profile. New-head CI/reviews, protected merge and actual-main
+checks remain delivery gates. Full v1/native/installed qualification remains open.
+
+## Earlier workflow-correlation correction
 
 The reducer now snapshots bounded workflow correlation pins and the exact
 assignment at command submission. Private summaries are excluded. A reply with
@@ -17,7 +63,7 @@ base are compared where the receipt represents them. Missing or mismatched
 correlation leaves unknown feedback without an accepted receipt. Backend
 authorization and per-command effect guards retain their existing responsibility.
 
-The unchanged final 24-case regression reproduces 16 assertion failures on actual
+At that revision, the 24-case regression reproduced 16 assertion failures on actual
 parent `050c7beb2c20c92f30636e9c8ea347fae8ca5f1c`, with eight normal controls
 passing and no wire errors, cancellations or skips. With the correction all
 24 cases pass, including immutable pins after caller mutation and exclusion of

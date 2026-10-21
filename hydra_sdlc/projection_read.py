@@ -504,7 +504,7 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
                                         view['evidence_refs'].append(p.evidence_of(progress_observed))
                                         view['stage'] = p.unknown('stage_mapping_unverified', [progress_observed])
                                 except (ValueError, RuntimeError, OSError, TypeError, KeyError):
-                                    complete, reason = False, 'progress_unavailable'
+                                    view['stage'] = p.unknown('progress_unavailable')
                             locations[p.canonical(resource)] = (address, row_locations[number])
                             work[p.canonical(resource)] = view
                             project['work_refs'].append(resource)

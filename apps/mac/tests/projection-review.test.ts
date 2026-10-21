@@ -66,7 +66,7 @@ test(`cleanup feedback matches the requested resource and operation (${mismatch}
     effect_refs:[],observed_refs:[],required_next:"none",receipt:{kind:"cleanup",resource:structuredClone(resource),
       operation:"archive",result:"archived",evidence_refs:[]}};
   let s=reduceProjection(projectionState(base.binding_epoch),{type:"command_started",request_id:id(950),
-    effect_key:"cleanup:fixture-a",action:"cleanup",target,operation:"archive"} as Parameters<typeof reduceProjection>[1]);
+    effect_key:null,action:"cleanup",target,operation:"archive"} as Parameters<typeof reduceProjection>[1]);
   if (mismatch==="resource") reply.request.receipt.resource.id="fixture-b";
   if (mismatch==="operation") {reply.request.receipt.operation="retire";reply.request.receipt.result="retired";}
   s=reduceProjection(s,{type:"command_result",request_id:id(950),reply});
@@ -326,7 +326,7 @@ test("a regressed admission source stales only its dependent facts while current
 test("a valid new runtime starts a fresh source generation and fences old pending reads",()=>{
   let s=read(projectionState(base.binding_epoch),1);
   s=reduceProjection(s,{type:"read_started",scope:"old-independent",sequence:2,request_id:id(12)});
-  s=reduceProjection(s,{type:"command_started",request_id:id(90),effect_key:"pause:101",action:"admission_set",target:{kind:"repository",repository_id:101}});
+  s=reduceProjection(s,{type:"command_started",request_id:id(90),effect_key:null,action:"admission_set",target:{kind:"repository",repository_id:101}});
   const changed=structuredClone(base);changed.runtime.code_digest="f".repeat(64);
   s=read(s,3,changed);
   assert.equal(s.view!.runtime.code_digest,"f".repeat(64));
@@ -443,16 +443,17 @@ function workflowReply(operation:string) {
   } else if (operation==="publish_candidate") {
     Object.assign(parameters,{candidate:structuredClone(candidate),branch:"hydra/issue-7",expected_remote_head:null});
     receipt={kind:"publication",candidate,branch:"hydra/issue-7",observed_remote_head:candidate.head,
-      pr_ref:null,review_request_refs:[],progress_ref,stage:"branch_published"};
+      pr_ref:{source:"github",kind:"pull_request",id:"101:9"},review_request_refs:[],progress_ref,stage:"publication_ready"};
   } else {
     Object.assign(parameters,{candidate:structuredClone(candidate),pr_number:9,integration_base:"d".repeat(40)});
     receipt={kind:"delivery",candidate,pr_ref:{source:"github",kind:"pull_request",id:"fixture-pr"},
-      integration_base:"d".repeat(40),merge_commit:"e".repeat(40),post_merge:"pending",issue_closed:null,progress_ref};
+      integration_base:"d".repeat(40),merge_commit:"e".repeat(40),post_merge:"success",issue_closed:true,progress_ref};
   }
   reply.observations=[];
   reply.request={request_id:id(850),action:"workflow_step",target:{repository_id:101,issue_number:7},
     outcome:"applied",reason:null,effect_refs:[],observed_refs:[],receipt,required_next:"none"};
-  return {reply,start:{type:"command_started" as const,request_id:id(850),effect_key:"workflow:fixture",
+  return {reply,start:{type:"command_started" as const,request_id:id(850),effect_key:(operation==="checkpoint_only" || operation==="review_checkpoint") ?
+    "checkpoint:"+assignment.attempt_id+":"+assignment.step_id : operation==="decision_apply" ? "decision:"+assignment.attempt_id+":3" : null,
     action:"workflow_step",target:{repository_id:101,issue_number:7},parameters,assignment:expected}};
 }
 function workflowFeedback(value:ReturnType<typeof workflowReply>) {

@@ -552,6 +552,11 @@ def command_result(value, observations):
         receipt(value['receipt'], observations)
     if value['outcome'] == 'applied' and value['action'] in {'workflow_step', 'cleanup'}:
         require(value['receipt'] is not None)
+    if value['outcome'] == 'applied' and value['receipt'] is not None:
+        if value['receipt']['kind'] == 'publication':
+            require(value['receipt']['stage'] == 'publication_ready')
+        if value['receipt']['kind'] == 'delivery':
+            require(value['receipt']['post_merge'] == 'success' and value['receipt']['issue_closed'] is True)
     if value['action'] == 'admission_set' or (
             value['receipt'] is not None and value['receipt']['kind'] in {'checkpoint', 'decision'}):
         require((value['receipt'] is not None) == (value['outcome'] == 'applied'))
@@ -621,6 +626,7 @@ def receipt(value, observations):
         nullable(value['pr_ref'], ref)
         array(value['review_request_refs'], ref)
         one(value['stage'], {'branch_published', 'pr_ready', 'publication_ready'})
+        require(value['stage'] == 'branch_published' or value['pr_ref'] is not None)
     if kind == 'delivery':
         ref(value['pr_ref'])
         sha(value['integration_base'])

@@ -68,8 +68,12 @@ test("TTL, cached age and clock resume never turn unknown execution into ended",
 });
 test("unknown command feedback survives unrelated healthy reads, binding change and duplicate effects",()=>{
   let s=read(projectionState(base.binding_epoch),1);
-  const start={type:"command_started" as const,request_id:id(90),effect_key:"pause:101",action:"admission_set",
-    target:{kind:"repository",repository_id:101}};
+  const assignment={attempt_id:id(800),step_id:id(801),head:"a".repeat(40),
+    contract_revision:"b".repeat(40),spec_revision:null};
+  const start={type:"command_started" as const,request_id:id(90),
+    effect_key:"checkpoint:"+assignment.attempt_id+":"+assignment.step_id,action:"workflow_step",
+    target:{repository_id:101,issue_number:7},assignment,
+    parameters:{operation:"checkpoint_only",outcome:"candidate_ready",summary:"Preserve the checkpoint fixture."}};
   s=reduceProjection(s,start);
   assert.throws(()=>reduceProjection(s,{...start,request_id:id(91)}));
   s=reduceProjection(s,{type:"command_result",request_id:start.request_id,reply:{invalid:true}});
@@ -84,7 +88,7 @@ test("real P02 receipt is kept apart from current admission and actual execution
   const reply=JSON.parse(vectors.find(v=>v.accepted && v.profile==="standard")!.wire);
   let s=read(projectionState(base.binding_epoch),1);
   const before=structuredClone(s.view);
-  s=reduceProjection(s,{type:"command_started",request_id:reply.request.request_id,effect_key:"pause:101",
+  s=reduceProjection(s,{type:"command_started",request_id:reply.request.request_id,effect_key:null,
     action:reply.request.action,target:reply.request.target});
   s=reduceProjection(s,{type:"command_result",request_id:reply.request.request_id,reply});
   assert.equal(s.feedback.get(reply.request.request_id)?.outcome,"applied");
@@ -163,10 +167,10 @@ test("local-only reads update admission without duplicating repositories or refr
 });
 test("a request id collision cannot discard a different pending command",()=>{
   let s=projectionState(base.binding_epoch);
-  const start={type:"command_started" as const,request_id:id(90),effect_key:"pause:101",action:"admission_set",target:{kind:"repository",repository_id:101}};
+  const start={type:"command_started" as const,request_id:id(90),effect_key:null,action:"admission_set",target:{kind:"repository",repository_id:101}};
   s=reduceProjection(s,start);
-  assert.throws(()=>reduceProjection(s,{...start,effect_key:"pause:102",target:{kind:"repository",repository_id:102}}));
-  assert.equal(s.pending_commands.get(id(90))!.effect_key,"pause:101");
+  assert.throws(()=>reduceProjection(s,{...start,effect_key:null,target:{kind:"repository",repository_id:102}}));
+  assert.equal(s.pending_commands.get(id(90))!.effect_key,null);
 });
 
 test("an older cached frame cannot roll back a source with the same null revision",()=>{
@@ -191,7 +195,7 @@ test("a newly opened renderer preserves cache age even when it predates its own 
 });
 test("a changed runtime invalidates pending bindings and retains their effect as unknown",()=>{
   let s=read(projectionState(base.binding_epoch),1);
-  s=reduceProjection(s,{type:"command_started",request_id:id(90),effect_key:"pause:101",action:"admission_set",target:{kind:"repository",repository_id:101}});
+  s=reduceProjection(s,{type:"command_started",request_id:id(90),effect_key:null,action:"admission_set",target:{kind:"repository",repository_id:101}});
   const changed=structuredClone(base);changed.runtime.code_digest="f".repeat(64);
   s=read(s,2,changed);
   assert.equal(s.error,null);assert.equal(s.view!.runtime.code_digest,"f".repeat(64));assert.equal(s.pending_commands.size,0);

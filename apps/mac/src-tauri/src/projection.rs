@@ -391,6 +391,7 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
     if kind=="publication" {
         branch(&v["branch"])?; sha(&v["observed_remote_head"])?; need(v["observed_remote_head"]==v["candidate"]["head"])?;
         optional(&v["pr_ref"],reference)?; refs(&v["review_request_refs"])?; one(&v["stage"],"branch_published pr_ready publication_ready")?;
+        need(v["stage"]=="branch_published" || !v["pr_ref"].is_null())?;
     }
     if kind=="delivery" {
         reference(&v["pr_ref"])?; sha(&v["integration_base"])?; sha(&v["merge_commit"])?;
@@ -414,6 +415,12 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
     if kind.is_some() && v["action"]=="cleanup" {need(v["receipt"]["resource"]==v["target"]["resource"])?;}
     if v["outcome"]=="applied" && ["workflow_step","cleanup"].contains(&string(&v["action"])?) {
         need(!v["receipt"].is_null())?;
+    }
+    if v["outcome"]=="applied" && kind==Some("publication") {
+        need(v["receipt"]["stage"]=="publication_ready")?;
+    }
+    if v["outcome"]=="applied" && kind==Some("delivery") {
+        need(v["receipt"]["post_merge"]=="success" && v["receipt"]["issue_closed"]==true)?;
     }
     if v["action"]=="admission_set" || matches!(kind,Some("checkpoint"|"decision")) {
         need((!v["receipt"].is_null())==(v["outcome"]=="applied"))?;
@@ -628,5 +635,20 @@ mod tests {
     #[test]
     fn native_payload_is_rejected_before_its_value_is_traversed() {
         assert_eq!(StandardReply::parse(b"{\"reply_profile\": [invalid native bytes").unwrap_err(),"unsupported_reply_profile");
+    }
+
+    #[test]
+    fn cp8_receipt_state_matrix_agrees_with_shared_oracles() {
+        let data:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/receipt-states.json")).unwrap()).unwrap();
+        let inputs:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/inputs.json")).unwrap()).unwrap();
+        let cases=data["cases"].as_array().unwrap();assert_eq!(cases.len(),54);
+        let mut failures=Vec::new();
+        for case in cases {
+            let raw=case["wire"].as_str().unwrap();let expected=case["accepted"].as_bool().unwrap();
+            if StandardReply::parse(raw.as_bytes()).is_ok()!=expected {failures.push(format!("{}:standard",case["name"]));}
+            let reply:Value=serde_json::from_str(raw).unwrap();let mut frame=inputs["frame"].clone();frame["request"]=reply["request"].clone();
+            if Projection::parse(&serde_json::to_vec(&frame).unwrap()).is_ok()!=expected {failures.push(format!("{}:projection",case["name"]));}
+        }
+        assert!(failures.is_empty(),"CP8 receipt state mismatches: {:?}",failures);
     }
 }

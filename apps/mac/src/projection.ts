@@ -438,6 +438,7 @@ function receipt(value: unknown, index: Index): void {
   if (v.kind === "publication") {
     branch(v.branch); sha(v.observed_remote_head); requireValue(v.observed_remote_head === plain(v.candidate).head);
     nullable(v.pr_ref, ref); refs(v.review_request_refs); one(v.stage, "branch_published pr_ready publication_ready");
+    requireValue(v.stage === "branch_published" || v.pr_ref !== null);
   }
   if (v.kind === "delivery") {
     ref(v.pr_ref); sha(v.integration_base); sha(v.merge_commit);
@@ -461,6 +462,10 @@ function commandResult(value: unknown, index: Index): void {
     requireValue(canonical(plain(v.receipt).resource)===canonical(plain(v.target).resource));
   if (v.outcome === "applied" && ["workflow_step", "cleanup"].includes(v.action))
     requireValue(v.receipt !== null);
+  if (v.outcome === "applied" && kind === "publication")
+    requireValue(plain(v.receipt).stage === "publication_ready");
+  if (v.outcome === "applied" && kind === "delivery")
+    requireValue(plain(v.receipt).post_merge === "success" && plain(v.receipt).issue_closed === true);
   if (v.action === "admission_set" || ["checkpoint", "decision"].includes(String(kind)))
     requireValue((v.receipt !== null) === (v.outcome === "applied"));
   if (kind !== null) requireValue(
