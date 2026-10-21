@@ -1,0 +1,11 @@
+{
+  "case_id": "VF-D09-REQUIRED-CI",
+  "kind": "D",
+  "scenarios": ["S16"],
+  "preconditions": ["Existing synthetic test_project.config and observation; no actual GitHub run or merge."],
+  "events": ["Present exact-head genuine required checks and completed provider evidence.", "Independently alter producer, head, base, required job, protection, or provider evidence."],
+  "expected": ["The valid candidate passes the source gate.", "Spoofed, stale, missing, or unknown required evidence holds or diagnoses the candidate."],
+  "forbidden_effects": ["Treat old success as current evidence.", "Accept a green run with a missing required job.", "Always reject a valid candidate."],
+  "oracle": "Existing independent expected gate reasons and positive control in test_project; fixture replay is not live CI attestation.",
+  "scope": "Source D for selected exact candidate and required-check gates only; not all VF-D09 delivery behavior."
+}
