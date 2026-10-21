@@ -753,3 +753,36 @@ do not qualify this later correction. P13 Rev4/VF Rev11 and their exclusions are
 unchanged; full local kernel repetition was unnecessary. Final-head CI/artifacts,
 independent code/security review, scoped CODEOWNER approval, protected merge and
 actual-main checks remain required.
+'
+
+## Crashed execution, real UTC times and pinned artifact reads -- 2026-10-21
+
+Unexpected selector exit/signal now creates test_error evidence rather than
+misdiagnosing the selected implementation as invalid input. Available complete
+private counters survive a shutdown crash; a crash without a packet keeps zero
+unproven counters. It never certifies PASS, and later independent selectors still
+execute. SIGTERM/SIGINT and infrastructure exits retain their distinct outcomes.
+
+The report consumer parses the required UTC timestamps as actual datetimes before
+comparing them, rejecting impossible dates/times while accepting real leap days.
+It opens each artifact parent with no-follow directory descriptors and opens the
+bounded regular report relative to the pinned parent. Parent replacement cannot
+redirect the consumer to a matching PASS report outside that tree. The exporter
+uses the same owned directory traversal; no OS sandbox/authentication is claimed.
+
+Three unchanged regression methods reproduce seventeen assertions on published
+11bd049: eight fork/fresh-exec abrupt/late-shutdown crash cases, seven impossible
+UTC values and two parent-replacement races. Normal later selectors and read-only
+validation prove no effect replay. Final RED/GREEN use identical test bytes and
+no setup/import failures. All 67 collector contract methods pass on Python 3.14.2
+in 102.840 seconds with zero failures/errors/skips, including maximum 64x32,
+file-kind bounds, source pins, interruption and publication-commit regressions.
+
+The previous 11bd049 head passed all four jobs in
+[run 39525377126](https://github.com/openboa-ai/hydra/actions/runs/39525377126).
+Both hosted selected-source reports were consumed against the provider-checked
+merge/source/tree/manifest/policy pins without repeating their test effects.
+That evidence does not qualify this later correction. P13 Rev4/VF Rev11 and their
+native/full-v1 exclusions are unchanged. Final-head CI/artifacts, independent
+code/security reviews, scoped CODEOWNER approval, protected merge and actual-main
+checks remain required; no full local kernel was repeated.

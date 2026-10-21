@@ -121,10 +121,10 @@ def decode_json(data, *, limit=_INPUT_LIMIT):
     return json.loads(data, object_pairs_hook=unique)
 
 
-def read_json(path, *, limit=_INPUT_LIMIT):
+def read_json(path, *, limit=_INPUT_LIMIT, dir_fd=None):
     # O_NONBLOCK makes FIFO/device rejection immediate; inspect the opened inode,
     # not a path stat followed by a potentially different blocking open.
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     try:
         info = os.fstat(descriptor)
         require(stat.S_ISREG(info.st_mode) and info.st_size <= limit)
@@ -898,6 +898,18 @@ def _capture_worker(child, *, group, selector=None):
             raise KeyboardInterrupt()
         if returncode == _ENVIRONMENT_EXIT:
             raise EnvironmentUnavailable()
+        if selector is not None and returncode != 0:
+            # A selected implementation can crash before returning its packet,
+            # or during private shutdown after a complete packet. Preserve only
+            # available counters and record failure; never certify that PASS.
+            try:
+                selected = _selector_result(data, selector)
+            except (Invalid, ValueError, struct.error):
+                selected = {'outcome': {'selector': selector, 'collected': 0, 'executed': 0,
+                    'completed': 0, 'subtests': 0, 'reasons': []}, 'environment': execution_environment()}
+            outcome = selected['outcome']
+            outcome['reasons'] = sorted((set(outcome['reasons']) - {'passed'}) | {'test_error'})
+            return selected
         require(returncode == 0)
         if selector is not None:
             return _selector_result(data, selector)
@@ -951,9 +963,11 @@ def validate(report, root, manifest, pins):
         require(row["command_or_runbook"] == {"runner": SCRIPT, "selectors": case["selectors"]})
         require(row["evidence_refs"] == [{"kind": "same_run", "case_id": case["case_id"], "run_alias": report["run_alias"]}])
         require(row["limitations"] == LIMITATIONS)
+        times = []
         for key in ("started_at", "finished_at"):
             require(isinstance(row[key], str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00", row[key]))
-        require(row["finished_at"] >= row["started_at"])
+            times.append(datetime.fromisoformat(row[key]))
+        require(times[1] >= times[0])
         require(type(row["observed"]) is list and len(row["observed"]) == len(case["selectors"]))
         for selector, outcome in zip(case["selectors"], row["observed"]):
             require(type(outcome) is dict and set(outcome) == {"selector", "collected", "executed", "completed", "subtests", "reasons"})
@@ -988,20 +1002,38 @@ def artifact_path(root, relative, *, create=False):
     return target
 
 
+def open_artifact_directory(root):
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in ARTIFACT.parts:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def read_report(root, relative):
+    target = artifact_path(root, relative)
+    descriptor = open_artifact_directory(root)
+    try:
+        return read_json(target.name, limit=_REPORT_LIMIT, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def export(root, relative, report, *, publication=None, outcome=None):
     target = artifact_path(root, relative, create=True)
     # Each execution gets a new artifact. Never replace earlier evidence, even on failure.
     require(not target.exists())
     data = (json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode("ascii")
     require(len(data) <= _REPORT_LIMIT)
-    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor = open_artifact_directory(root)
     temp = ".pending-" + secrets.token_hex(8)
     created, linked, identity = False, False, None
     try:
-        for part in ARTIFACT.parts:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = child
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
         created = True
         with os.fdopen(fd, "wb") as stream:
@@ -1088,7 +1120,7 @@ def main():
             require(pins["candidate_head"] == head)
             verify_snapshot(snapshot, pins['source_revision'])
             if args.validate_report:
-                passed = validate(read_json(artifact_path(root, args.validate_report), limit=_REPORT_LIMIT), snapshot, manifest, pins)
+                passed = validate(read_report(root, args.validate_report), snapshot, manifest, pins)
             else:
                 artifact_path(root, args.output, create=True)
                 report = isolated_execute(snapshot, manifest, pins)

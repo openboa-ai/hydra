@@ -421,6 +421,85 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_crashed_selector_has_failed_evidence_and_does_not_hide_later_execution(self):
+        for fresh_exec in (False, True):
+            for shutdown in (False, True):
+                for crash in ('os.kill(os.getpid(), signal.SIGKILL)', 'os._exit(7)'):
+                    with self.subTest(fresh_exec=fresh_exec, shutdown=shutdown, crash=crash):
+                        body = ('atexit.register(lambda: ' + crash + ')' if shutdown else crash)
+                        fixture = self.fixture(extra='import signal, atexit', body=body)
+                        fixture.write('tests/test_probe.py', (fixture.root / 'tests/test_probe.py').read_text() +
+                            " def test_later(self):\n  with Path('effect').open('a') as f: f.write('once\\n')\n")
+                        fixture.case['selectors'].append('test_probe.Probe.test_later')
+                        fixture.save()
+                        if fresh_exec:
+                            fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + '\ndef _fork_available(): return False\n')
+                        result = fixture.run()
+                        self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'required_evidence_incomplete'})
+                        self.assertEqual(result.returncode, 1)
+                        row = fixture.report()['results'][0]
+                        self.assertEqual(row['status'], 'FAIL')
+                        crashed, later = row['observed']
+                        self.assertEqual(crashed['reasons'], ['test_error'])
+                        expected = (1, 1, 1) if shutdown else (0, 0, 0)
+                        self.assertEqual(tuple(crashed[k] for k in ('collected', 'executed', 'completed')), expected)
+                        self.assertEqual(later['reasons'], ['passed'])
+                        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+                        self.assertEqual(fixture.run(validate=True).returncode, 1)
+                        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+
+    def test_report_rejects_impossible_utc_dates_and_preserves_valid_leap_days(self):
+        fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once\\n')")
+        self.assertEqual(fixture.run().returncode, 0)
+        report = fixture.report()
+        invalid = ['0000-01-01T00:00:00+00:00', '2026-02-30T00:00:00+00:00',
+                   '2025-02-29T00:00:00+00:00', '2026-13-01T00:00:00+00:00',
+                   '2026-01-01T25:00:00+00:00', '2026-01-01T00:60:00+00:00',
+                   '2026-01-01T00:00:60+00:00']
+        for stamp in invalid:
+            with self.subTest(timestamp=stamp):
+                changed = copy.deepcopy(report)
+                changed['results'][0].update(started_at=stamp, finished_at=stamp)
+                fixture.json('artifacts/mvp-verification/report.json', changed)
+                self.assertEqual(fixture.run(validate=True).returncode, 2)
+        for start, end, valid in [('2000-02-29T00:00:00+00:00', '2000-02-29T00:00:01+00:00', True),
+                                  ('2026-01-01T00:00:01+00:00', '2026-01-01T00:00:00+00:00', False)]:
+            changed = copy.deepcopy(report)
+            changed['results'][0].update(started_at=start, finished_at=end)
+            fixture.json('artifacts/mvp-verification/report.json', changed)
+            self.assertEqual(fixture.run(validate=True).returncode, 0 if valid else 2)
+        self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+
+    def test_artifact_parent_replacement_cannot_substitute_an_external_pass(self):
+        for stage in ('after_path_check', 'before_report_open'):
+            with self.subTest(stage=stage):
+                fixture = self.fixture(body="with Path('effect').open('a') as f: f.write('once\\n')")
+                self.assertEqual(fixture.run().returncode, 0)
+                report = fixture.report()
+                fixture.json('outside-report/report.json', report)
+                report['run_alias'] = 'invalid-original-report'
+                fixture.json('artifacts/mvp-verification/report.json', report)
+                hook = ("scope=namespace['main'].__globals__\nPath=scope['Path']\nos=scope['os']\nswapped=[False]\n"
+                    "def swap():\n"
+                    " if swapped[0]: return\n swapped[0]=True\n"
+                    " parent=Path.cwd()/'artifacts/mvp-verification'\n"
+                    " parent.rename(parent.with_name('retained-parent'))\n"
+                    " parent.symlink_to(Path.cwd()/'outside-report',target_is_directory=True)\n")
+                if stage == 'after_path_check':
+                    hook += ("original=scope['artifact_path']\n"
+                        "def changed(*args,**kwargs):\n"
+                        " target=original(*args,**kwargs)\n swap()\n return target\n"
+                        "scope['artifact_path']=changed\n")
+                else:
+                    hook += ("original=os.open\n"
+                        "def changed(path,*args,**kwargs):\n"
+                        " if str(path).endswith('/report.json') or str(path)=='report.json': swap()\n"
+                        " return original(path,*args,**kwargs)\n"
+                        "os.open=changed\n")
+                result = fixture.run(validate=True, driver=self.driver(hook))
+                self.assertNotEqual(result.returncode, 0, 'An intermediate symlink substituted an outside PASS')
+                self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+
     def test_environment_preflight_snapshot_and_launch_are_blocked_without_public_details(self):
         for stage in ('git_timeout', 'snapshot_io', 'worker_launch'):
             with self.subTest(stage=stage):
