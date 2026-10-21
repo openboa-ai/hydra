@@ -234,6 +234,60 @@ def parse_anchor(body):
     return value
 
 
+@dataclass(frozen=True)
+class DelegationChange:
+    """Private canonical input, never human authority or an applied change."""
+    document: str
+
+    @property
+    def value(self):
+        return json.loads(self.document)
+
+    @property
+    def digest(self):
+        return hashlib.sha256(self.document.encode('utf-8')).hexdigest()
+
+
+def parse_delegation_change(raw):
+    """Validate WR 7.1 input without resolving sources or performing effects."""
+    _require(type(raw) in {str, bytes}, 'invalid_json')
+    try:
+        data = raw.encode('utf-8') if type(raw) is str else raw
+        _require(len(data) <= 262144, 'input_limit')
+        value = _json_object(data.decode('utf-8'))
+    except UnicodeError as exc:
+        raise WorkRecordError('invalid_json') from exc
+    _object(value, {'source_ref', 'target', 'change'})
+    source = value['source_ref']
+    _object(source, {'kind', 'handle', 'revision'})
+    _require(source['kind'] == 'native_instruction')
+    for field, limit in (('handle', 2048), ('revision', 512)):
+        _require(_text(source[field], limit)
+                 and not any(0x80 <= ord(c) <= 0x9f for c in source[field]))
+    target = value['target']
+    _object(target, {'kind', 'repository_id', 'issue_number'})
+    _require(type(target['kind']) is str and target['kind'] in {'goal', 'work'})
+    _issue_ref({k: target[k] for k in ('repository_id', 'issue_number')})
+    change = value['change']
+    _require(type(change) is dict and type(change.get('kind')) is str)
+    kind = change['kind']
+    if kind == 'amend':
+        _object(change, {'kind', 'requirements'})
+        if change['requirements'] is not None:
+            _require(type(change['requirements']) is list and len(change['requirements']) <= 50)
+            _requirements(change['requirements'], 1)
+    elif kind == 'withdraw':
+        _object(change, {'kind', 'actions'})
+        actions = change['actions']
+        _require(type(actions) is list and 1 <= len(actions) <= 3)
+        _require(all(type(action) is str and action in {'prepare', 'create_work', 'execute_work'}
+                     for action in actions) and len(set(actions)) == len(actions))
+    else:
+        _object(change, {'kind'})
+        _require(kind == 'cancel')
+    return DelegationChange(_canonical(value))
+
+
 def _owned_rows(rows, author, coverage):
     _require(coverage == 'complete', 'unknown')
     _require(type(rows) is list and len(rows) <= 10000, 'unknown')
