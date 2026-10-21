@@ -415,11 +415,12 @@ def verify_snapshot(root, revision, *, signatures=None, remember=False):
     return checks if remember else None
 
 
-def quiet():
+def quiet(result_fd=None):
     """Keep imports, children and shutdown handlers private through process exit."""
     sys.stdout.flush()
     sys.stderr.flush()
-    result_fd = os.dup(1)
+    if result_fd is None:
+        result_fd = os.dup(1)
     with open(os.devnull, "w") as sink:
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
@@ -790,6 +791,15 @@ def _emit_control(descriptor, data):
         data = data[count:]
 
 
+def _bootstrap_control(result_fd, fallback_fd, data):
+    # This runs only before any selected import. A broken control pipe cannot
+    # authenticate an outcome; it still cannot certify a successful method.
+    try:
+        _emit_control(result_fd if result_fd is not None else fallback_fd, data)
+    except OSError:
+        pass
+
+
 def _selector_result(data, selector):
     require(len(data) == _SELECTOR_PACKET.size)
     magic, collected, executed, completed, subtests, invoked, finished, mask, major, minor, micro = _SELECTOR_PACKET.unpack(data)
@@ -810,17 +820,18 @@ def _fork_selector_main(root, selector, write_fd, compiled, source_files):
     result_fd = None
     try:
         os.dup2(write_fd, 1)
+        result_fd = os.dup(1)
         with open(os.devnull, 'rb') as empty:
             os.dup2(empty.fileno(), 0)
         # Never inherit the orchestration report descriptor or other private
         # channels. Only stdin/null and the new stdout pipe survive setup.
         for descriptor in [int(name) for name in os.listdir('/dev/fd') if name.isdecimal()]:
-            if descriptor > 2:
+            if descriptor > 2 and descriptor != result_fd:
                 try:
                     os.close(descriptor)
                 except OSError:
                     pass
-        result_fd = quiet()
+        quiet(result_fd)
         install_termination_handler()
         sys.dont_write_bytecode = True
         _install_source_reader(root, _import_entries(root, source_files))
@@ -829,12 +840,10 @@ def _fork_selector_main(root, selector, write_fd, compiled, source_files):
         _emit_selector(root, selector, result_fd)
         return 0
     except KeyboardInterrupt:
-        if result_fd is not None:
-            _emit_control(result_fd, _CONTROL_INTERRUPTED)
+        _bootstrap_control(result_fd, write_fd, _CONTROL_INTERRUPTED)
         return 128 + signal.SIGINT
     except (OSError, subprocess.TimeoutExpired):
-        if result_fd is not None:
-            _emit_control(result_fd, _CONTROL_ENVIRONMENT)
+        _bootstrap_control(result_fd, write_fd, _CONTROL_ENVIRONMENT)
         return _ENVIRONMENT_EXIT
     except BaseException:
         return 2
@@ -884,13 +893,21 @@ class _ForkedSelector:
 
 def _worker_main(*, input_limit=_WORKER_INPUT_LIMIT):
     """Private child entry: stdout here is a supervisor pipe, never public stdout."""
+    result_fd = None
     try:
-        result_fd = quiet()
+        result_fd = os.dup(1)
+        quiet(result_fd)
         install_termination_handler()
         sys.dont_write_bytecode = True
     except KeyboardInterrupt:
+        _bootstrap_control(result_fd, 1, _CONTROL_INTERRUPTED)
+        if result_fd is not None:
+            os.close(result_fd)
         return 128 + signal.SIGINT
     except OSError:
+        _bootstrap_control(result_fd, 1, _CONTROL_ENVIRONMENT)
+        if result_fd is not None:
+            os.close(result_fd)
         return _ENVIRONMENT_EXIT
     selector = None
     try:
@@ -1217,13 +1234,20 @@ class Parser(argparse.ArgumentParser):
 
 
 def main():
+    result_fd = None
     try:
-        result_fd = quiet()
-    except OSError:
+        result_fd = os.dup(1)
+        quiet(result_fd)
+    except (OSError, KeyboardInterrupt) as error:
+        data = (b'{"reason":"environment_unavailable","status":"BLOCKED"}\n' if isinstance(error, OSError)
+                else b'{"reason":"interrupted","status":"FAIL"}\n')
         try:
-            os.write(1, b'{"reason":"environment_unavailable","status":"BLOCKED"}\n')
+            os.write(result_fd if result_fd is not None else 1, data)
         except OSError:
             pass
+        finally:
+            if result_fd is not None:
+                os.close(result_fd)
         return 2
     publication = {"result": None, "terminal": False}
     reason, code = "invalid_input", 2

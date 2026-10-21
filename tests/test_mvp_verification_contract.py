@@ -441,6 +441,33 @@ def assert_ci_contract(text):
 
 
 class VerificationProcessBoundaryTests(unittest.TestCase):
+    def test_early_worker_setup_os_failures_keep_environment_control(self):
+        for fresh in (False, True):
+            control = self.fixture(body="Path('effect').write_text('once')")
+            if fresh:
+                control.write(SCRIPT, (control.root / SCRIPT).read_text() + '\ndef _fork_available(): return False\n')
+            self.assertEqual(control.run().returncode, 0)
+            self.assertEqual((control.root / 'effect').read_text(), 'once')
+            for stage in ('quiet', 'install_termination_handler'):
+                with self.subTest(fresh=fresh, stage=stage):
+                    fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+                    source = (fixture.root / SCRIPT).read_text()
+                    if fresh:
+                        source += '\ndef _fork_available(): return False\n'
+                    source += ("\n_original_setup=" + stage + "\n"
+                        "def " + stage + "(*args,**kwargs):\n"
+                        " marker=Path.cwd()/'worker_setup_seen'\n"
+                        " if marker.exists(): raise OSError('synthetic bootstrap failure')\n"
+                        " marker.write_text('setup')\n"
+                        " return _original_setup(*args,**kwargs)\n")
+                    fixture.write(SCRIPT, source)
+                    result = fixture.run()
+                    self.assertEqual(json.loads(result.stdout), {'status':'BLOCKED','reason':'environment_unavailable'},
+                        'Early infrastructure failure became a selected test failure')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((fixture.root / 'effect').exists())
+                    self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
     fixture = VerificationCollectorTests.fixture
 
     def test_late_binary_resolution_cannot_replace_pinned_source(self):

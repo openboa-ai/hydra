@@ -987,3 +987,29 @@ contain two selected cases/five methods on Python 3.11.17 and 3.14.2. That evide
 does not qualify this later correction. Final-head CI/artifacts, independent
 code/security review, scoped CODEOWNER approval, protected merge and exact main
 checks remain required. Full v1/native operation remains NOT RUN.
+
+
+## Early setup control on the existing worker channel
+
+The worker now owns its supervisor descriptor before quiet/signal setup. The fork
+path retains only its own channel across inherited-descriptor cleanup; both worker
+profiles send the existing environment/interruption control before ending early.
+Public startup retains its original channel for safe environment/interruption JSON.
+No additional persistent channel or protocol is introduced. If the control channel
+itself is unusable, it cannot attest a result or certify PASS.
+
+The regression checks quiet and signal-setup OS failures under fork and fresh exec,
+with successful normal execution in both profiles. Three parent assertions fail;
+the already-correct fork signal case remains a control. Failed setup runs no
+selected effect and publishes no artifact. Existing numeric-exit, actual-signal,
+shutdown and source-boundary tests remain: a selected program's numeric75 without
+its explicit infrastructure control stays a test error.
+
+Final local Python 3.14.2: 82 collector methods plus 9 capability-completion methods, all 91 passed with zero failures/errors/skips in 177.099 seconds. Log SHA-256 `9d9568b0c8ce59a15d1e366ba0605dda27450f681a1477ebb00a5bfe8e340165`.
+
+Published 501b74c passed all four jobs in
+[run 39545521658](https://github.com/openboa-ai/hydra/actions/runs/39545521658);
+that earlier result does not qualify this correction. P13 Rev4/VF11 and their
+reviewed-test execution boundary remain unchanged. Final-head CI/artifacts,
+independent code/security review, scoped CODEOWNER approval, protected merge and
+exact main checks remain required. Installed/native/full-v1 operation is NOT RUN.
