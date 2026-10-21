@@ -306,6 +306,11 @@ class GitHub:
             raise GitHubError("Incomplete repository identity")
         return data
 
+    def native_relation_read(self, repo, source, relation):
+        """Observe one native relation without writes or stored edge state."""
+        from .github_relations import read_relation
+        return read_relation(self, repo, source, relation)
+
     def file(self, repo, path, ref):
         _sha(ref)
         if not isinstance(path, str) or path.startswith("/") or any(x in {"", ".", ".."} for x in path.split("/")):
