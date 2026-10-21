@@ -427,7 +427,9 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     p.require(isinstance(client, ProjectionClient))
     client.bind_context(binding_epoch, credential_scope)
     contexts, projects, work, locations, project_locations = {}, {}, {}, {}, {}
-    with client.read_budget(seconds=45, requests=4096) as total:
+    # The first owned GET reserves one extra request to verify the credential.
+    # Keep that one-time cost out of the ordinary per-repository read share.
+    with client.read_budget(seconds=45, requests=4097) as total:
         for index, address in enumerate(repos):
             requested_ref = _ref('github', 'repository', 'requested:' + address)
             context = {'requested': address, 'resource': requested_ref, 'value': None, 'observed_at': at}
@@ -444,8 +446,9 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             complete, reason, rows, next_cursor = False, 'not_requested', {}, None
             if refresh:
                 try:
+                    authentication = int(index == 0)
                     with client.read_budget(seconds=total.remaining_seconds / (len(repos) - index),
-                                            requests=total.remaining_requests // (len(repos) - index)):
+                                            requests=authentication + (total.remaining_requests - authentication) // (len(repos) - index)):
                         start = len(client.notes)
                         raw = client.api('GET', '/repos/' + address)
                         p.require(type(raw) is dict)

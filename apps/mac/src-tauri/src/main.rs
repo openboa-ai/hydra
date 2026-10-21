@@ -722,7 +722,7 @@ print(json.dumps(v))
             cache.context_changed(Some(format!("github:read:{}","b".repeat(64)))).unwrap();
             cache.context_probe_due(Instant::now()+Duration::from_secs(10));
         }
-        fresh(&f).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"Another credential inherited repository pins");
+        fresh(&f).await.unwrap();assert_eq!(hints(&f)["example/alpha"],101,"Credential rotation forgot stable repository identity");
 
         let epoch=read_epoch().unwrap();f.bridge.projection.lock().await.as_mut().unwrap().binding_changed(epoch.clone()).unwrap();f.epoch=epoch;
         f.read(true,None,false).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"Another binding inherited repository pins");

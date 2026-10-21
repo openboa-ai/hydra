@@ -467,6 +467,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         removeWork(state,evicted,changed);
         state.view.relations = merge(state.view.relations,frame.relations,x=>json([x.from,x.kind,x.to]));
         state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
+        state.view.request = structuredClone(frame.request);
         state.view.capabilities = structuredClone(frame.capabilities);
         const domain=(scope:string)=>scope.startsWith("registered-projects;")?scope.replace(/:from:[0-9]+$/,""):scope;
         const localRead=event.scope==="local" || event.scope.startsWith("local:");

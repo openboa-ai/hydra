@@ -6,7 +6,43 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: qualified claims and membership preservation
+## Current correction: credential context, embedded results and read budgets
+
+This increment corrects three findings on published parent
+a639801c2d1d5a22f0e5312f74001c13cc713f46 under unchanged P12 Rev4 / CP8 / NC8.
+
+- Stable numeric repository identity hints survive credential rotation and
+  temporary sign-out. Remote source payloads, pending reads, cursors and freshness
+  remain fenced by credential context. Binding/runtime changes still discard
+  identity pins. The fixed reader always freshly GETs the registered address
+  with the selected credential; a hint grants no access, supplies no source fact
+  and cannot retarget a reused name to another numeric repository.
+- Every accepted same-runtime frame replaces its embedded request, including
+  null. Intentional command history remains in the separate feedback map.
+- The bounded reader reserves one initial credential identity request in addition
+  to 4096 ordinary reads and assigns it to the first repository slice. The
+  45-second aggregate deadline, nested caller caps, rate waits and GET-only
+  transport remain enforced. No authentication preflight or retry is added.
+
+The immutable parent reproduces one Python request-count assertion failure, one
+frontend current-result assertion failure and one Rust identity-retention assertion
+failure, with zero setup errors/skips. Actual Python reply/encoder frames exercise
+null -> applied -> null -> different result while preserving feedback history.
+Real owned HTTP/auth code with deterministic synthetic subprocess responses
+collects exactly one identity GET plus four reads for each of 1024 repositories.
+All source membership reads complete before independent wire-size pruning; the
+bounded returned frame remains partial with a continuation. This is request
+accounting evidence, not a claim that 4097 live requests fit the deadline. Tighter
+caller request/time limits, fresh renamed-repository reads, credential denial,
+reused names, late prior-context responses and independent local facts are tested.
+
+Final local checks pass: 261 selected Python 3.14.2 methods, 332 frontend tests,
+55 Rust 1.94.1 tests and TypeScript/Vite build, with zero failures/errors/skips.
+Final-head hosted CI, independent reviews, protected merge and actual-main checks
+remain separate. No native writer, installed authority, remote Q&A/Resume flow,
+session recovery or full two-project v1 operating acceptance is qualified here.
+
+## Earlier correction: qualified claims and membership preservation
 
 This increment corrects seven findings on published parent
 da082c6203ff246720b9a540d975e02e99d2ad65 under unchanged P12 Rev4 / CP8 / NC8.

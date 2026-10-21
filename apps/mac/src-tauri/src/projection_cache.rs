@@ -222,7 +222,9 @@ impl ReadCache {
         if self.context.scope==scope {return Ok(());}
         self.context.sequence=self.context.sequence.checked_add(1).filter(|n|*n<=MAX_SEQUENCE).ok_or("sequence_exhausted")?;
         self.context.scope=scope;
-        self.repository_bindings.clear();
+        // Numeric identity pins do not confer access or reuse source facts.
+        // The fixed reader revalidates each registered address with the new
+        // credential; binding/runtime changes still discard these pins.
         self.remote_started=None;
         let scopes:Vec<_>=self.entries.keys().filter(|s|s.starts_with("remote:")).cloned().collect();
         for scope in scopes {self.remove(&scope);}
@@ -780,4 +782,29 @@ mod tests {
         assert!(cache.get("local:next:",true,now).is_some());
     }
 
+
+    #[test]
+    fn repository_identity_pins_survive_credentials_without_reusing_remote_facts() {
+        let mut cache=test_cache();let now=Instant::now();
+        cache.context_changed(Some("connection:alpha".into())).unwrap();
+        let local=cache.issue("local:overview:".into(),request(201),false).unwrap();
+        cache.accept(&local,&fixture(&local.request_id),now).unwrap();
+        let remote=cache.issue("remote:overview:".into(),request(202),false).unwrap();cache.remote_started(now);
+        cache.accept(&remote,&fixture(&remote.request_id),now).unwrap();
+        let pins=cache.repository_binding_hints().unwrap();assert!(pins.contains("example/alpha"));
+        let old=cache.issue("remote:overview:".into(),request(203),false).unwrap();
+        cache.context_changed(Some("connection:beta".into())).unwrap();
+        assert_eq!(cache.repository_binding_hints().unwrap(),pins,"Credential rotation discarded stable repository identity");
+        assert!(cache.get("remote:overview:",false,now).is_none(),"A new credential inherited remote facts");
+        assert!(!cache.get("local:overview:",true,now).unwrap().stale);
+        assert_eq!(cache.accept(&old,&fixture(&old.request_id),now).unwrap_err(),"stale_read");
+        assert_eq!(cache.repository_binding_hints().unwrap(),pins);
+        cache.context_changed(None).unwrap();
+        assert_eq!(cache.repository_binding_hints().unwrap(),pins,"Sign-out forgot identity while access was unavailable");
+        assert_eq!(cache.read_held(now,true,"remote:overview:",false,true),Err("read_context_unavailable"));
+        cache.context_changed(Some("connection:beta".into())).unwrap();
+        let fresh=cache.issue("remote:overview:".into(),request(204),false).unwrap();
+        cache.accept(&fresh,&fixture(&fresh.request_id),now).unwrap();
+        assert_eq!(cache.get("remote:overview:",false,now).unwrap().read_context.scope.as_deref(),Some("connection:beta"));
+    }
 }
