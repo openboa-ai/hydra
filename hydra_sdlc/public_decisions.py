@@ -231,14 +231,17 @@ def _claims_decision_key(body, expected_key):
             return False
         start, marker = min(markers)
         end = body.find(" -->", start + len(marker))
-        if len(body) > MAX_CONTEXT_BYTES or end < 0:
+        if end < 0 or end - start - len(marker) > MAX_CONTEXT_BYTES:
             return True
         try:
-            payload = _load(body[start + len(marker):end])
+            fragment = body[start + len(marker):end]
+            if len(fragment.encode("utf-8")) > MAX_CONTEXT_BYTES:
+                _invalid()
+            payload = _load(fragment)
             if type(payload) is not dict:
                 _invalid()
             key = _key(payload.get("key"))
-        except InvalidPublicDecision:
+        except (InvalidPublicDecision, UnicodeError):
             return True
         if key == expected_key:
             return True

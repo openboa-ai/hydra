@@ -389,6 +389,8 @@ class PublicDecisionGuardRegressionTests(unittest.TestCase):
         other['key']['issue_number'] = 5
         unrelated = comment(40, b'Operator note\n' + prepare_context('Other work', other).body)
         self.assertEqual(self.observe([outsider, unrelated]).status, 'pair')
+        oversized = comment(50, b'x' * (MAX_CONTEXT_BYTES + 1) + unrelated['body'].encode())
+        self.assertEqual(self.observe([outsider, unrelated, oversized]).status, 'pair')
 
     def test_pinned_receipt_cannot_claim_the_selected_context_role(self):
         for known_context in (None, 10, 30):

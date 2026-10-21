@@ -9,8 +9,9 @@ acceptance, `decision_apply`, continuation, and operating acceptance remain open
 ## Current review corrections
 
 Versioned claims for the selected decision are inspected even when a trusted
-comment's first line is altered or prefixed. Bounded marker scanning establishes
-relevance only; full framing and exact bytes still decide validity. A marker
+comment's first line is altered or prefixed. Marker payload parsing is bounded to 16 KiB and establishes
+relevance only; full framing and exact bytes still decide validity. A long body
+for a valid unrelated key cannot block the selected decision. A marker
 whose key cannot be read is held. Known outsiders and valid unrelated keys remain
 excluded, so they cannot block a healthy trusted pair.
 
