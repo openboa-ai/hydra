@@ -6,6 +6,30 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
+## Current correction: workflow reply correlation
+
+The reducer now snapshots bounded workflow correlation pins and the exact
+assignment at command submission. Private summaries are excluded. A reply with
+the same request/action/target still needs the requested operation and stage;
+checkpoint/review receipts also need the same assignment. Candidate pins,
+checkpoint outcomes, decision source/round, publication branch and integration
+base are compared where the receipt represents them. Missing or mismatched
+correlation leaves unknown feedback without an accepted receipt. Backend
+authorization and per-command effect guards retain their existing responsibility.
+
+The unchanged final 24-case regression reproduces 16 assertion failures on actual
+parent `050c7beb2c20c92f30636e9c8ea347fae8ca5f1c`, with eight normal controls
+passing and no wire errors, cancellations or skips. With the correction all
+24 cases pass, including immutable pins after caller mutation and exclusion of
+the private-summary canary. All 137 frontend methods and the locked TypeScript /
+Vite build pass under Node 24.5.0; fixture children use Python 3.14.2.
+
+This implements the common CP section 8 receipt-correlation requirement under
+P12 revision 4 / CP8 / NC8. It changes no schema, server effect path, grant or
+installed/native capability. New-head hosted CI, independent reviews, protected
+merge and actual-main verification remain separate delivery evidence. The
+following sections retain historical implementation and correction evidence.
+
 ## Implemented boundary
 
 The existing `control status` remains v2. The explicit v3 read profile requires binding epoch

@@ -1,11 +1,19 @@
-## Outcome
+## Summary
 
-Describe the problem and resulting behavior. Link the work Issue and accepted specification.
+<!-- Briefly explain the problem, the main change, and its effect. Use a few sentences or bullets; there is no fixed line count. Write the description in English. -->
+
+## Changes
+
+<!-- Explain what changes and how it behaves. Include material design choices and the boundary of this PR. -->
 
 ## Verification
 
-Give requirement-linked results, current CI, and any unverified behavior. Include running-screen evidence for visual changes.
+<!-- Link requirement-based results and original evidence. Distinguish local checks, CI for the current commit, and code/security reviews; explain how findings were resolved. Include running-screen evidence for visual changes. -->
 
-## Reviews and delivery
+## Remaining work
 
-Record code and security review results and how findings were resolved. Identify any required human decision. Keep merge, deployment, and observed operation distinct.
+<!-- State unverified behavior, limitations, follow-up work, and any required human decision. Keep merge, deployment, and observed operation distinct. Explicitly say when no items remain. -->
+
+## Design and evidence
+
+<!-- Link the work Issue, the exact accepted spec.md revision, and implementation/verification evidence. -->

@@ -411,3 +411,100 @@ test("capacity pressure from a failed read retains known work and independent so
   assert.ok(new TextEncoder().encode(JSON.stringify(s.view)).length<=MAX_PROJECTION_BYTES);
   parseProjection(s.view);
 });
+
+function workflowReply(operation:string) {
+  const reply=JSON.parse(vectors.find(v=>v.accepted && v.profile==="standard")!.wire);
+  const assignment={attempt_id:id(800),step_id:id(801),head:"a".repeat(40),
+    contract_revision:"b".repeat(40),spec_revision:null};
+  const candidate={attempt_id:id(800),head:"a".repeat(40),contract_revision:"b".repeat(40)};
+  const progress_ref={source:"github",kind:"progress",id:"101:7"};
+  const parameters:Record<string,unknown>={operation};
+  let receipt:Record<string,unknown>;
+  let expected:Record<string,unknown>|null=null;
+  if (operation==="checkpoint_only") {
+    Object.assign(parameters,{outcome:"candidate_ready",summary:"PRIVATE_SUMMARY_CANARY"});expected=assignment;
+    receipt={kind:"checkpoint",assignment:structuredClone(assignment),outcome:"candidate_ready",
+      checkpoint_head:"c".repeat(40),progress_ref,step_retired:true,ticket_released:true};
+  } else if (operation==="decision_apply") {
+    Object.assign(parameters,{source_attempt:id(800),round:3,proposal_ref:progress_ref});
+    receipt={kind:"decision",source_attempt:id(800),round:3,intent_ref:progress_ref,
+      context_ref:progress_ref,resolved_ref:progress_ref,resume_attempt:id(802)};
+  } else if (operation==="continue") {
+    Object.assign(parameters,{progress:null,reply_profile:"standard_v1"});
+    receipt={kind:"continuation",progress_ref,...candidate,boundary:"assignment_returned"};
+  } else if (operation==="verify_only") {
+    Object.assign(parameters,{stage:"run",candidate:structuredClone(candidate),reply_profile:"standard_v1"});
+    receipt={kind:"verification",candidate,verdict:"passed",review:"not_required",progress_ref,evidence_refs:[]};
+  } else if (operation==="review_checkpoint") {
+    Object.assign(parameters,{operation:"verify_only",stage:"review_checkpoint",candidate:structuredClone(candidate),
+      outcome:"candidate_ready",summary:"PRIVATE_SUMMARY_CANARY",reply_profile:"standard_v1"});expected=assignment;
+    receipt={kind:"verification_review",candidate,assignment:structuredClone(assignment),review:"accepted",
+      progress_ref,evidence_refs:[],step_retired:true,ticket_released:true};
+  } else if (operation==="publish_candidate") {
+    Object.assign(parameters,{candidate:structuredClone(candidate),branch:"hydra/issue-7",expected_remote_head:null});
+    receipt={kind:"publication",candidate,branch:"hydra/issue-7",observed_remote_head:candidate.head,
+      pr_ref:null,review_request_refs:[],progress_ref,stage:"branch_published"};
+  } else {
+    Object.assign(parameters,{candidate:structuredClone(candidate),pr_number:9,integration_base:"d".repeat(40)});
+    receipt={kind:"delivery",candidate,pr_ref:{source:"github",kind:"pull_request",id:"fixture-pr"},
+      integration_base:"d".repeat(40),merge_commit:"e".repeat(40),post_merge:"pending",issue_closed:null,progress_ref};
+  }
+  reply.observations=[];
+  reply.request={request_id:id(850),action:"workflow_step",target:{repository_id:101,issue_number:7},
+    outcome:"applied",reason:null,effect_refs:[],observed_refs:[],receipt,required_next:"none"};
+  return {reply,start:{type:"command_started" as const,request_id:id(850),effect_key:"workflow:fixture",
+    action:"workflow_step",target:{repository_id:101,issue_number:7},parameters,assignment:expected}};
+}
+function workflowFeedback(value:ReturnType<typeof workflowReply>) {
+  parseStandardReply(value.reply); // Every negative case is a valid wire reply.
+  const started=reduceProjection(projectionState(base.binding_epoch),value.start as Parameters<typeof reduceProjection>[1]);
+  const state=reduceProjection(started,{type:"command_result",request_id:id(850),reply:value.reply});
+  assert.equal(state.view,null,"Feedback manufactured a source Fact");
+  assert.equal(state.pending_commands.size,0);
+  return state.feedback.get(id(850))!;
+}
+for (const mismatch of ["none","operation","step","head","spec","outcome","missing_parameters","missing_assignment"])
+test(`workflow checkpoint feedback correlates its exact request (${mismatch})`,()=>{
+  const value=workflowReply("checkpoint_only");
+  if (mismatch==="operation") value.start.parameters.operation="continue";
+  if (mismatch==="step") value.reply.request.receipt.assignment.step_id=id(899);
+  if (mismatch==="head") value.reply.request.receipt.assignment.head="f".repeat(40);
+  if (mismatch==="spec") value.reply.request.receipt.assignment.spec_revision="f".repeat(40);
+  if (mismatch==="outcome") value.reply.request.receipt.outcome="needs_decision";
+  if (mismatch==="missing_parameters") delete (value.start as {parameters?:unknown}).parameters;
+  if (mismatch==="missing_assignment") delete (value.start as {assignment?:unknown}).assignment;
+  const feedback=workflowFeedback(value);
+  assert.equal(feedback.outcome,mismatch==="none"?"applied":"unknown");
+  if (mismatch!=="none") {
+    assert.equal(feedback.reason,"command_response_unverified");assert.equal(feedback.receipt,null);
+  }
+});
+for (const mismatch of ["none","stage","candidate","assignment","outcome"])
+test(`workflow review feedback preserves the requested candidate and stage (${mismatch})`,()=>{
+  const value=workflowReply("review_checkpoint");
+  if (mismatch==="stage") value.start.parameters.stage="run";
+  if (mismatch==="candidate") (value.start.parameters.candidate as Record<string,unknown>).head="f".repeat(40);
+  if (mismatch==="assignment") value.reply.request.receipt.assignment.step_id=id(899);
+  if (mismatch==="outcome") value.start.parameters.outcome="failed";
+  const feedback=workflowFeedback(value);
+  assert.equal(feedback.outcome,mismatch==="none"?"applied":"unknown");
+  if (mismatch!=="none") assert.equal(feedback.receipt,null);
+});
+for (const operation of ["decision_apply","continue","verify_only","publish_candidate","deliver"])
+for (const mismatch of [false,true])
+test(`workflow ${operation} accepts only its own receipt (mismatch=${mismatch})`,()=>{
+  const value=workflowReply(operation);
+  if (mismatch) value.start.parameters.operation="checkpoint_only";
+  const feedback=workflowFeedback(value);
+  assert.equal(feedback.outcome,mismatch?"unknown":"applied");
+  if (mismatch) assert.equal(feedback.receipt,null);
+});
+test("workflow correlation snapshots pins without retaining private summaries",()=>{
+  const value=workflowReply("checkpoint_only");
+  let state=reduceProjection(projectionState(base.binding_epoch),value.start as Parameters<typeof reduceProjection>[1]);
+  assert.equal(JSON.stringify([...state.pending_commands.values()]).includes("PRIVATE_SUMMARY_CANARY"),false);
+  value.start.parameters.operation="continue";value.start.assignment!.step_id=id(899);
+  state=reduceProjection(state,{type:"command_result",request_id:id(850),reply:value.reply});
+  assert.equal(state.feedback.get(id(850))!.outcome,"applied","Caller mutation changed the submitted request");
+  assert.equal(JSON.stringify([...state.feedback.values()]).includes("PRIVATE_SUMMARY_CANARY"),false);
+});

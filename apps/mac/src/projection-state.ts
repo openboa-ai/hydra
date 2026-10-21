@@ -7,7 +7,9 @@ import {
 type Slot = { latest_issued_seq: number; latest_settled_seq: number; observation: Observation;
   query_scope: string; received_at: number; stale: boolean; frame: string; received_sequence:number };
 type Query = { sequence: number; request_id: string; keys: Set<string> };
-type Command = { request_id: string; effect_key: string; action: string; target: Record<string, unknown>; operation?: "preserve" | "archive" | "retire" | "remove_schedule" };
+type Command = { request_id: string; effect_key: string; action: string; target: Record<string, unknown>;
+  operation?: "preserve" | "archive" | "retire" | "remove_schedule";
+  parameters?: Record<string, unknown>; assignment?: Record<string, unknown> | null };
 type RetryWindow = { received_at: number; after_seconds: number; basis: "provider" | "fallback"; failures: Map<string, { count: number; frame: string }> };
 type Feedback = Command & { outcome: CommandResult["outcome"]; reason: string | null; receipt: unknown };
 export interface ProjectionState {
@@ -40,6 +42,28 @@ const runtime = (view: Pick<ProjectionV3,"runtime">) => json([view.runtime.versi
   view.runtime.config_digest, view.runtime.control_binding_digest]);
 const unknown = (reason: string): Fact<never> => ({ value: null, evidence: [], reason });
 function valid(condition: unknown): asserts condition { if (!condition) throw new ProjectionError(); }
+function workflowReceipt(pending:Command,result:CommandResult) {
+  const p=pending.parameters,r=result.receipt as Record<string,unknown>;
+  valid(p && typeof p.operation==="string");
+  const kinds:Record<string,string>={checkpoint_only:"checkpoint",decision_apply:"decision",
+    continue:"continuation",publish_candidate:"publication",deliver:"delivery"};
+  const kind=p.operation==="verify_only" ? (p.stage==="run"?"verification":
+    p.stage==="review_checkpoint"?"verification_review":undefined) :
+    Object.hasOwn(kinds,p.operation)?kinds[p.operation]:undefined;
+  valid(kind!==undefined && r.kind===kind);
+  if (kind==="checkpoint" || kind==="verification_review")
+    valid(pending.assignment!=null && json(r.assignment)===json(pending.assignment));
+  else valid(pending.assignment===null);
+  if (kind==="checkpoint") valid(r.outcome===p.outcome);
+  if (kind==="verification_review" && result.outcome==="applied") {
+    const outcomes:Record<string,string>={candidate_ready:"accepted",failed:"failed",needs_decision:"pending"};
+    valid(typeof p.outcome==="string" && Object.hasOwn(outcomes,p.outcome) && r.review===outcomes[p.outcome]);
+  }
+  if (Object.hasOwn(r,"candidate")) valid(json(r.candidate)===json(p.candidate));
+  if (kind==="decision") valid(r.source_attempt===p.source_attempt && r.round===p.round);
+  if (kind==="publication") valid(r.branch===p.branch);
+  if (kind==="delivery") valid(r.integration_base===p.integration_base);
+}
 function uint(n: number) { valid(Number.isSafeInteger(n) && n >= 0); }
 export function compareRevisions(left:Revision|null,right:Revision|null):number|null {
   if (!left || !right || left.kind !== right.kind) return null;
@@ -433,8 +457,19 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       valid(state.pending_commands.size + state.feedback.size < 16);
       if (event.action==="cleanup") valid(["preserve","archive","retire","remove_schedule"].includes(event.operation ?? ""));
       else valid(event.operation===undefined);
+      let workflow:Pick<Command,"parameters"|"assignment">={};
+      if (event.action==="workflow_step") {
+        const input=event.parameters;
+        valid(input===undefined || (input!==null && typeof input==="object" && !Array.isArray(input)));
+        const parameters=input===undefined?undefined:Object.fromEntries(
+          ["operation","stage","outcome","candidate","source_attempt","round","branch","integration_base"]
+            .filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
+        // Keep only bounded correlation pins; private summaries never enter state.
+        valid(size({parameters,assignment:event.assignment,effect_key:event.effect_key,target:event.target})<=4096);
+        workflow={parameters:structuredClone(parameters),assignment:structuredClone(event.assignment)};
+      }
       state.pending_commands.set(event.request_id, { request_id:event.request_id,effect_key:event.effect_key,
-        action:event.action,target:structuredClone(event.target),...(event.action==="cleanup"?{operation:event.operation}:{}) }); break;
+        action:event.action,target:structuredClone(event.target),...workflow,...(event.action==="cleanup"?{operation:event.operation}:{}) }); break;
     }
     case "command_result": {
       const pending = state.pending_commands.get(event.request_id); if (!pending) return previous;
@@ -449,6 +484,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
           const receipt=r.receipt as Record<string,unknown>;
           valid(json(receipt.resource)===json(pending.target.resource) && receipt.operation===pending.operation);
         }
+        if (pending.action==="workflow_step" && r.receipt!==null) workflowReceipt(pending,r);
         result = r;
       } catch { /* A bad/lost receipt cannot become a failure-to-send or an applied Fact. */ }
       state.pending_commands.delete(event.request_id);
