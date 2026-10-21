@@ -12,7 +12,7 @@
     },
     {
       "name": "preserve-applied-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"preserve\",\"result\":\"preserved\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"none\"}}"
     },
     {
@@ -22,7 +22,7 @@
     },
     {
       "name": "preserve-waiting-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"preserve\",\"result\":\"preserved\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -32,7 +32,7 @@
     },
     {
       "name": "preserve-rejected-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"rejected\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"preserve\",\"result\":\"preserved\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "name": "preserve-unknown-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"preserve\",\"result\":\"preserved\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -52,7 +52,7 @@
     },
     {
       "name": "archive-applied-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"archive\",\"result\":\"archived\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"none\"}}"
     },
     {
@@ -62,7 +62,7 @@
     },
     {
       "name": "archive-waiting-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"archive\",\"result\":\"archived\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -72,7 +72,7 @@
     },
     {
       "name": "archive-rejected-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"rejected\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"archive\",\"result\":\"archived\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -82,7 +82,7 @@
     },
     {
       "name": "archive-unknown-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"archive\",\"result\":\"archived\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -92,7 +92,7 @@
     },
     {
       "name": "retire-applied-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"retire\",\"result\":\"retired\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"none\"}}"
     },
     {
@@ -102,7 +102,7 @@
     },
     {
       "name": "retire-waiting-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"retire\",\"result\":\"retired\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -112,7 +112,7 @@
     },
     {
       "name": "retire-rejected-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"rejected\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"retire\",\"result\":\"retired\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -122,7 +122,7 @@
     },
     {
       "name": "retire-unknown-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"retire\",\"result\":\"retired\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -132,7 +132,7 @@
     },
     {
       "name": "remove_schedule-applied-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"remove_schedule\",\"result\":\"schedule_removed\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"none\"}}"
     },
     {
@@ -142,7 +142,7 @@
     },
     {
       "name": "remove_schedule-waiting-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"remove_schedule\",\"result\":\"schedule_removed\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -152,7 +152,7 @@
     },
     {
       "name": "remove_schedule-rejected-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"rejected\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"remove_schedule\",\"result\":\"schedule_removed\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     },
     {
@@ -162,7 +162,7 @@
     },
     {
       "name": "remove_schedule-unknown-proof",
-      "accepted": true,
+      "accepted": false,
       "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"cleanup\",\"target\":{\"kind\":\"owned_resource\",\"repository_id\":101,\"issue_number\":7,\"source_attempt\":\"00000000-0000-4000-8000-000000000320\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"}},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"cleanup\",\"resource\":{\"source\":\"resource_provider\",\"kind\":\"workspace\",\"id\":\"fixture-owned-workspace\"},\"operation\":\"remove_schedule\",\"result\":\"schedule_removed\",\"evidence_refs\":[{\"source\":\"resource_provider\",\"kind\":\"receipt\",\"id\":\"fixture-exact-readback\"}]},\"required_next\":\"reconcile\"}}"
     }
   ]

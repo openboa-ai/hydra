@@ -72,15 +72,15 @@ for(const ref of [
   {source:"github",kind:"pull_request",id:"fixture-pr"},
 ])test("delivery exact PR "+JSON.stringify(ref),()=>{
   const c=sample("delivery");c.reply.request.receipt.pr_ref=ref;
-  const supported=ref.source==="github" && ref.kind==="pull_request" && /^101:[1-9][0-9]*$/.test(ref.id);
-  assert.equal(applied(c,seeded(),supported)?.outcome,supported && ref.id==="101:9"?"applied":"unknown");
+  assert.equal(applied(c,seeded(),false)?.outcome,"unknown","Unqualified delivery cannot prove a merge");
 });
 test("delivery snapshots the requested PR and cannot infer a missing number",()=>{
   const c=sample("delivery");c.reply.request.receipt.pr_ref={source:"github",kind:"pull_request",id:"101:9"};
   let state=reduceProjection(seeded(),c.event);c.event.parameters.pr_number=10;
   state=reduceProjection(state,{type:"command_result",request_id:c.event.request_id,reply:c.reply});
-  assert.equal(state.feedback.get(c.event.request_id)?.outcome,"applied");
-  delete c.event.parameters.pr_number;assert.equal(applied(c)?.outcome,"unknown");
+  assert.equal(state.pending_commands.size,0);
+  assert.equal(state.feedback.get(c.event.request_id)?.outcome,"unknown","Unqualified delivery remains unknown");
+  delete c.event.parameters.pr_number;assert.equal(applied(c,seeded(),false)?.outcome,"unknown");
 });
 for(const row of load("cleanup-receipts.json").cases)test("cleanup proof "+row.name,()=>{
   const combined=structuredClone(frame);combined.request=JSON.parse(row.wire).request;

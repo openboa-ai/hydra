@@ -1244,7 +1244,7 @@
     {
       "name": "cleanup-exact-resource",
       "profile": "projection",
-      "accepted": true,
+      "accepted": false,
       "changes": [
         {
           "path": [

@@ -481,8 +481,6 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
     if ["verification","verification_review","publication","delivery"].contains(&kind) {candidate(&v["candidate"])?;}
     if kind=="verification" {
         one(&v["verdict"],"passed failed")?; optional(&v["review"],|x| one(x,"pending accepted failed not_required"))?;
-        // P13 must qualify an invocation observation before this receipt is supported.
-        return Err("unsupported_verification_observation");
     }
     if kind=="verification_review" {
         assignment(&v["assignment"])?;
@@ -551,6 +549,8 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
         if progress["kind"]=="progress" {need(progress["id"]==expected)?;}
         else {
             need(progress["kind"]=="issue_comment")?;
+        }
+        if progress["kind"]=="issue_comment" || kind==Some("checkpoint") {
             let proofs:Vec<_>=v["observed_refs"].as_array().ok_or(INVALID)?.iter()
                 .filter_map(|e|index.get(e["observation_key"].as_str()?))
                 .filter(|o|o["resource"]["source"]=="github" && o["resource"]["kind"]=="progress" &&
@@ -558,6 +558,13 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
             need(proofs.len()==1)?;let proof=proofs[0];
             need(proof["availability"]=="current" && proof["coverage"]["state"]=="complete" &&
                 proof["value"]["issue_ref"]==serde_json::json!({"source":"github","kind":"issue","id":expected}))?;
+            if kind==Some("checkpoint") {
+                let checkpoint=&v["receipt"];
+                need(proof["value"]["head"]==checkpoint["checkpoint_head"] &&
+                    proof["value"]["attempt_id"]==checkpoint["assignment"]["attempt_id"] &&
+                    proof["value"]["contract_revision"]==checkpoint["assignment"]["contract_revision"] &&
+                    proof["value"]["native_step"].is_null())?;
+            }
         }
     }
     Ok(())
@@ -568,6 +575,13 @@ fn observations(value:&Value)->Result<Index<'_>,&'static str> {
 }
 fn bound_command_result(v:&Value,index:&Index<'_>,binding:&Value)->R {
     command_result(v,index)?;let receipt=&v["receipt"];
+    if v["outcome"]=="applied" && !matches!(v["action"].as_str(),Some("admission_set"|"workflow_step")) {
+        return Err("unsupported_command_source");
+    }
+    // Each future operation must qualify its paired producer and consumers first.
+    if !receipt.is_null() && !matches!(receipt["kind"].as_str(),Some("admission"|"checkpoint")) {
+        return Err("unsupported_receipt_source");
+    }
     if receipt["kind"]=="admission" {
         let source=evidence_in(&receipt["readback"],index)?;
         need(binding.is_string() && source["resource"]["source"]=="hydra" &&
@@ -893,4 +907,36 @@ fn workflow_source_receipt_identity_and_invocation_proofs() {
         if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
     }
     assert!(failures.is_empty(),"source identity/invocation mismatches: {:?}",failures);
+}
+
+#[cfg(test)]
+#[test]
+fn unqualified_command_actions_cannot_claim_applied() {
+    let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_unqualified_command_actions.py");
+    let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
+    assert!(output.status.success(),"action fixture failed: {}",String::from_utf8_lossy(&output.stderr));
+    let values:Value=serde_json::from_slice(&output.stdout).unwrap();let rows=values.as_array().unwrap();assert_eq!(rows.len(),12);
+    let mut failures=Vec::new();
+    for row in rows {
+        let bytes=row["wire"].as_str().unwrap().as_bytes();
+        let accepted=if row["profile"]=="standard" {StandardReply::parse(bytes).is_ok()}else{Projection::parse(bytes).is_ok()};
+        if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
+    }
+    assert!(failures.is_empty(),"unqualified action mismatches: {:?}",failures);
+}
+
+#[cfg(test)]
+#[test]
+fn qualified_command_sources_and_checkpoint_heads() {
+    let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_qualified_command_sources.py");
+    let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
+    assert!(output.status.success(),"actual qualified fixture failed: {}",String::from_utf8_lossy(&output.stderr));
+    let values:Value=serde_json::from_slice(&output.stdout).unwrap();let rows=values.as_array().unwrap();
+    assert_eq!(rows.len(),76);let mut failures=Vec::new();
+    for row in rows {
+        let bytes=row["wire"].as_str().unwrap().as_bytes();
+        let accepted=if row["profile"]=="standard" {StandardReply::parse(bytes).is_ok()}else{Projection::parse(bytes).is_ok()};
+        if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
+    }
+    assert!(failures.is_empty(),"qualified command source mismatches: {:?}",failures);
 }

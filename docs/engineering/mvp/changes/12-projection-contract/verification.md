@@ -898,3 +898,64 @@ failed Mac job and older review/artifact results are historical evidence.
 
 No runtime authority, installed source selection, native question handling or
 actual remote operation is qualified by these deterministic checks.
+
+
+## Qualified command sources and exact issued cursor lineage
+
+This recovery addresses four findings on immutable parent
+`e99ff5bf2e3a837c028c8ab9bc6c81fc9b457c42` under unchanged P12 Rev4, CP8,
+NC8 and P05 Rev2. That parent passed its three CI jobs and security review;
+its completed code review identified the remaining source/receipt and cursor gaps.
+
+The common handler currently implements only admission_set and checkpoint_only.
+All three semantic consumers now accept only their paired receipt profiles.
+Structural closed-union validation remains, but decision, continuation,
+verification/review, publication, delivery and cleanup receipts are explicitly
+unsupported until their owning change supplies a qualified producer/source and
+consumer connection. Echoed pins, a claimed successful merge/closure, unrelated
+progress observations and opaque evidence references cannot qualify an effect.
+Unknown/rejected responses without receipts remain valid. This is a current
+support boundary, not removal of P06/P13/P14/P15 or any full v1 requirement.
+Legacy tool behavior and runtime authority are unchanged.
+
+The same boundary also rejects applied work_create, native_control and open_record
+responses without a qualified implementation. Explicit unknown responses remain
+valid. Six additional action/outcome cases yield twelve shared wire vectors;
+prepublication checks reproduce six Python assertion failures and one failing
+frontend/Rust method before this additional common guard. The same frozen action
+oracles pass after correction. Echoing an action without a receipt is not a bypass.
+
+Checkpoint receipts require one explicitly selected current/complete progress
+read-back for both canonical and actual issue-comment locators. Its Issue,
+preserved head, attempt and contract must match the receipt, with native_step
+retired. The actual P05 producer remains positive and retains its authenticated
+issue-comment locator. Earlier hand-built positive fixtures now include this
+read-back; former unqualified future-effect positives are correctly rejected.
+Their final operating and consumer acceptance remains with the owning changes.
+
+The fixed bridge rejects unknown or altered continuation cursors before issuing a
+CLI read, including after the polling floor expires. Exact returned cursors are
+bound to their current query and credential/binding context using the existing
+bounded lineage, cache and request ledger. A previously issued failed query can
+still be explicitly retried after the normal wait, without regaining continuation
+polling privileges. Context changes discard that eligibility. The Python cursor
+codec remains an internal position encoding; it is not an authentication token.
+No new secret, persistent cursor store or source privilege is introduced.
+
+One new requirements-derived matrix has 38 cases / 76 actual producer wire
+vectors, including supported admission and actual checkpoint positives. Frozen
+parent checks reproduce 40 Python assertion failures, two failing frontend methods
+and one failing Rust wire method, without errors/skips. A separate Rust lifecycle
+test uses actual Python cursor encodings and reproduces acceptance of an altered
+position before reaching its forbidden read. Both unchanged new oracles pass
+after correction. An intermediate green run failed the old wire emitter's
+unqualified cleanup-positive oracle; that fixture error is preserved separately.
+Existing bridge entry-point tests also confirm an unissued cursor returns
+invalid_cursor without invoking the core reader. Registered-address rename and
+ordinary issued-page/retry cases retain their positive behavior.
+
+Final local Python 3.14.2 impact checks pass 374 methods. Frontend/Rust regression
+checks pass 348/60 methods, plus theme, frontend and native builds, without
+failures/errors/skips. New exact-head CI/reviews, protected merge and actual-main
+checks remain required. Source evidence does not establish native authority,
+installed operation, actual remote acceptance or the whole v1 goal.

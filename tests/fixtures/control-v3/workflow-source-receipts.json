@@ -11,7 +11,7 @@
     {
       "name": "publication:same",
       "command": "publication",
-      "accepted": true,
+      "accepted": false,
       "receipt_patch": {
         "pr_ref": {
           "source": "github",
@@ -107,7 +107,7 @@
     {
       "name": "publication:maximum",
       "command": "publication",
-      "accepted": true,
+      "accepted": false,
       "receipt_patch": {
         "pr_ref": {
           "source": "github",
@@ -155,7 +155,7 @@
     {
       "name": "delivery:same",
       "command": "delivery",
-      "accepted": true,
+      "accepted": false,
       "receipt_patch": {
         "pr_ref": {
           "source": "github",
@@ -251,7 +251,7 @@
     {
       "name": "delivery:maximum",
       "command": "delivery",
-      "accepted": true,
+      "accepted": false,
       "receipt_patch": {
         "pr_ref": {
           "source": "github",
@@ -299,7 +299,7 @@
     {
       "name": "publication:null:branch_published",
       "command": "publication",
-      "accepted": true,
+      "accepted": false,
       "request_patch": {
         "outcome": "waiting",
         "required_next": "reconcile"

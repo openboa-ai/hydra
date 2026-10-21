@@ -51,11 +51,11 @@ test("matching read-backs resolve unknown feedback for every supported command k
 
 test("unrelated, stale or changed-context read-backs retain unknown effect ownership",()=>{
   for(const change of ["id","target","operation","candidate","runtime","binding","stale","older"]){
-    const f=scenario("publication");f.start();f.result({});let reply=structuredClone(f.command.reply);
+    const f=scenario("checkpoint");f.start();f.result({});let reply=structuredClone(f.command.reply);
     if(change==="id")reply.request.request_id=id(123);
     if(change==="target"){reply.request.target.issue_number=99;reply.request.receipt.progress_ref.id="101:99";}
     if(change==="operation")reply=structuredClone(commands.find((r:any)=>r.name==="continue").reply);
-    if(change==="candidate")reply.request.receipt.candidate.head="c".repeat(40);
+    if(change==="candidate")reply.request.receipt.assignment.head="c".repeat(40);
     if(change==="binding")f.binding();
     if(change==="older"){f.read(null,3);f.read(reply,4,2);}
     else f.read(reply,2,2,change==="stale",change==="runtime"?(frame:any)=>{frame.runtime.code_digest="c".repeat(64);}:undefined);
@@ -67,10 +67,9 @@ test("unrelated, stale or changed-context read-backs retain unknown effect owner
   f.read(late,2);assert.deepEqual(f.state.feedback.get(f.command.event.request_id),old);
 });
 
-test("a later exact terminal result resolves waiting publication feedback",()=>{
-  const f=scenario("publication");f.start();const waiting=structuredClone(f.command.reply);
-  waiting.request.outcome="waiting";waiting.request.required_next="reconcile";
-  waiting.request.receipt.stage="branch_published";waiting.request.receipt.pr_ref=null;
+test("a later exact checkpoint read-back resolves waiting feedback",()=>{
+  const f=scenario("checkpoint");f.start();const waiting=structuredClone(f.command.reply);
+  Object.assign(waiting.request,{outcome:"waiting",required_next:"reconcile",receipt:null,effect_refs:[],observed_refs:[]});
   f.result(waiting);assert.equal(f.state.feedback.get(f.command.event.request_id)?.outcome,"waiting");
   f.read(f.command.reply,2);assert.equal(f.state.feedback.get(f.command.event.request_id)?.outcome,"applied");
 });

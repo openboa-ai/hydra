@@ -40,14 +40,16 @@ test("continuation retains its ProgressPin "+changed,()=>{
   if(changed!=="missing" && changed!=="null")
     assert.deepEqual(state.pending_commands.get(c.event.request_id)?.parameters?.progress,c.event.parameters.progress);
   state=reduceProjection(state,{type:"command_result",request_id:c.event.request_id,reply:c.reply});
-  assert.equal(state.feedback.get(c.event.request_id)?.outcome,["none","null"].includes(changed)?"applied":"unknown");
+  assert.equal(state.feedback.get(c.event.request_id)?.outcome,"unknown","Continuation has no qualified source profile");
 });
 test("continuation ProgressPin is a bounded snapshot",()=>{
   const c=sample("continue");let state=projectionState(frame.binding_epoch);
   assert.doesNotThrow(()=>{state=reduceProjection(state,c.event);});
+  const captured=structuredClone(state.pending_commands.get(c.event.request_id)?.parameters?.progress);
   c.event.parameters.progress.head="f".repeat(40);
+  assert.deepEqual(state.pending_commands.get(c.event.request_id)?.parameters?.progress,captured);
   state=reduceProjection(state,{type:"command_result",request_id:c.event.request_id,reply:c.reply});
-  assert.equal(state.feedback.get(c.event.request_id)?.outcome,"applied");
+  assert.equal(state.feedback.get(c.event.request_id)?.outcome,"unknown","Unqualified continuation cannot prove an effect");
   const large=sample("continue");large.event.parameters.progress.phase="x".repeat(5000);
   assert.throws(()=>reduceProjection(projectionState(frame.binding_epoch),large.event));
 });

@@ -692,6 +692,7 @@ def command_result(value, observations):
             require(progress['id'] == expected)
         else:
             require(progress['kind'] == 'issue_comment')
+        if progress['kind'] == 'issue_comment' or value['receipt']['kind'] == 'checkpoint':
             proofs = [observations[e['observation_key']] for e in value['observed_refs']
                 if observations[e['observation_key']]['resource'] ==
                    {'source': 'github', 'kind': 'progress', 'id': progress['id']}]
@@ -700,6 +701,12 @@ def command_result(value, observations):
             require(proof['availability'] == 'current' and proof['coverage']['state'] == 'complete'
                     and proof['value'] is not None and proof['value']['issue_ref'] ==
                     {'source': 'github', 'kind': 'issue', 'id': expected})
+            if value['receipt']['kind'] == 'checkpoint':
+                checkpoint = value['receipt']
+                require(proof['value']['head'] == checkpoint['checkpoint_head']
+                        and proof['value']['attempt_id'] == checkpoint['assignment']['attempt_id']
+                        and proof['value']['contract_revision'] == checkpoint['assignment']['contract_revision']
+                        and proof['value']['native_step'] is None)
 
 
 def receipt(value, observations):
@@ -747,8 +754,6 @@ def receipt(value, observations):
     if kind == 'verification':
         one(value['verdict'], {'passed', 'failed'})
         nullable(value['review'], lambda v: one(v, {'pending', 'accepted', 'failed', 'not_required'}))
-        # P13 must qualify an invocation observation before this receipt is supported.
-        raise ProjectionError('unsupported_verification_observation')
     if kind == 'verification_review':
         assignment(value['assignment'])
         require(all(value['assignment'][k] == value['candidate'][k] for k in ('attempt_id', 'head', 'contract_revision')))
@@ -789,6 +794,11 @@ def observations_index(values):
 def bound_command_result(value, observations, binding):
     command_result(value, observations)
     receipt = value['receipt']
+    if value['outcome'] == 'applied' and value['action'] not in {'admission_set', 'workflow_step'}:
+        raise ProjectionError('unsupported_command_source')
+    # Each future operation must qualify its paired producer and consumers first.
+    if receipt is not None and receipt['kind'] not in {'admission', 'checkpoint'}:
+        raise ProjectionError('unsupported_receipt_source')
     if receipt is not None and receipt['kind'] == 'admission':
         source = observations[receipt['readback']['observation_key']]
         require(binding is not None and source['resource'] ==

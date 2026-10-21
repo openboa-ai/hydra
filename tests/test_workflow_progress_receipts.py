@@ -70,7 +70,7 @@ def materialize(row):
         if mode!='opaque_unbound':
             value={'issue_ref':{'source':'github','kind':'issue','id':'101:7'},
                 'attempt_id':'00000000-0000-4000-8000-000000000320','phase':'implementation_done',
-                'native_step':None,'head':'a'*40,'contract_revision':'b'*40,'branch':'hydra/issue-7',
+                'native_step':None,'head':receipt.get('checkpoint_head','a'*40),'contract_revision':'b'*40,'branch':'hydra/issue-7',
                 'expected_head':'a'*40,'expected_base':'c'*40,'published_head':None,'wait_reason':None,
                 'next_action':'verify_only','pending_action':None,'pr_ref':None,'completion_refs':None,'cleanup_state':None}
             observation={'key':'fixture:workflow:progress','resource':{'source':'github','kind':'progress','id':'example/alpha/comments/600'},

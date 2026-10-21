@@ -622,7 +622,7 @@ print(json.dumps(v))
         let first=f.read(remote,None,false).await.unwrap();
         let repeated=f.read(remote,None,true).await.unwrap();
         assert!(repeated.cached);assert_eq!(repeated.sequence,first.sequence);assert_eq!(f.count(),1);
-        assert_eq!(f.read(remote,Some("altered_page"),false).await.unwrap_err().code,"source_wait");
+        assert_eq!(f.read(remote,Some("altered_page"),false).await.unwrap_err().code,"invalid_cursor");
         assert_eq!(f.count(),1,"An unissued cursor invoked the core reader");
         let next=f.read(remote,Some("continuation_page"),false).await;
         assert!(next.is_ok(),"Ordinary poll floor held an unread continuation: {:?}",next.err());

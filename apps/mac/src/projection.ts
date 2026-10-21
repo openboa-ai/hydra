@@ -492,8 +492,6 @@ function receipt(value: unknown, index: Index): void {
   if (["verification", "verification_review", "publication", "delivery"].includes(v.kind)) candidate(v.candidate);
   if (v.kind === "verification") {
     one(v.verdict, "passed failed"); nullable(v.review, x => one(x, "pending accepted failed not_required"));
-    // P13 must qualify an invocation observation before this receipt is supported.
-    throw new ProjectionError("unsupported_verification_observation");
   }
   if (v.kind === "verification_review") {
     assignment(v.assignment); const a = plain(v.assignment), c = plain(v.candidate);
@@ -556,6 +554,8 @@ function commandResult(value: unknown, index: Index): void {
     if (progress.kind === "progress") requireValue(progress.id === expected);
     else {
       requireValue(progress.kind === "issue_comment");
+    }
+    if (progress.kind === "issue_comment" || kind === "checkpoint") {
       const proofs = (v.observed_refs as unknown[]).map(e => index.get(String(plain(e).observation_key))!)
         .filter(o => { const resource=plain(o.resource); return resource.source === "github" &&
           resource.kind === "progress" && resource.id === progress.id; });
@@ -564,6 +564,11 @@ function commandResult(value: unknown, index: Index): void {
       requireValue(proof.availability === "current" && plain(proof.coverage).state === "complete" &&
         proof.value !== null && canonical(plain(proof.value).issue_ref) ===
         canonical({source:"github",kind:"issue",id:expected}));
+      if (kind === "checkpoint") {
+        const checkpoint=plain(v.receipt), assignment=plain(checkpoint.assignment), source=plain(proof.value);
+        requireValue(source.head === checkpoint.checkpoint_head && source.attempt_id === assignment.attempt_id &&
+          source.contract_revision === assignment.contract_revision && source.native_step === null);
+      }
     }
   }
 }
@@ -634,8 +639,13 @@ function inputValue(input: unknown): ObjectValue {
 }
 function boundCommandResult(value:unknown,index:Index,binding:unknown):void {
   commandResult(value,index);const result=plain(value);
+  if(result.outcome==="applied" && !["admission_set","workflow_step"].includes(String(result.action)))
+    throw new ProjectionError("unsupported_command_source");
   if(result.receipt===null)return;
-  const receipt=plain(result.receipt);if(receipt.kind!=="admission")return;
+  const receipt=plain(result.receipt);
+  // Each future operation must qualify its paired producer and consumers first.
+  if(!["admission","checkpoint"].includes(String(receipt.kind)))throw new ProjectionError("unsupported_receipt_source");
+  if(receipt.kind!=="admission")return;
   const source=evidenceIn(receipt.readback,index);
   requireValue(typeof binding==="string" && canonical(source.resource)===canonical({source:"hydra",kind:"admission",id:binding}));
 }

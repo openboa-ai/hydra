@@ -58,7 +58,7 @@ test("every unavailable observation kind retains its exact source owner",()=>{
   }
 });
 for (const mismatch of ["none","resource","operation"] as const)
-test(`cleanup feedback matches the requested resource and operation (${mismatch})`,()=>{
+test(`unqualified cleanup cannot prove an effect through echoed pins (${mismatch})`,()=>{
   const reply=JSON.parse(vectors.find(v=>v.accepted && v.profile==="standard")!.wire);
   const resource={source:"resource_provider",kind:"workspace",id:"fixture-a"};
   const target={kind:"owned_resource",repository_id:101,issue_number:7,source_attempt:base.binding_epoch,resource};
@@ -70,8 +70,8 @@ test(`cleanup feedback matches the requested resource and operation (${mismatch}
   if (mismatch==="resource") reply.request.receipt.resource.id="fixture-b";
   if (mismatch==="operation") {reply.request.receipt.operation="retire";reply.request.receipt.result="retired";}
   s=reduceProjection(s,{type:"command_result",request_id:id(950),reply});
-  assert.equal(s.feedback.get(id(950))!.outcome,mismatch==="none"?"applied":"unknown",
-    "An unrelated cleanup effect became verified feedback");
+  assert.equal(s.feedback.get(id(950))!.outcome,"unknown",
+    "An unqualified cleanup effect became verified feedback");
   assert.equal(s.view,null,"Command feedback created a source Fact");
 });
 function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
@@ -453,12 +453,18 @@ function workflowReply(operation:string) {
   reply.observations=[];
   reply.request={request_id:id(850),action:"workflow_step",target:{repository_id:101,issue_number:7},
     outcome:"applied",reason:null,effect_refs:[],observed_refs:[],receipt,required_next:"none"};
+  if(operation==="checkpoint_only"){
+    const sample=JSON.parse(readFileSync(new URL("../../../tests/fixtures/control-v3/receipt-states.json",import.meta.url),"utf8")).commands.find((c:any)=>c.name==="checkpoint").reply;
+    reply.observations=structuredClone(sample.observations);
+    reply.observations[0].value.attempt_id=assignment.attempt_id;
+    reply.request.observed_refs=structuredClone(sample.request.observed_refs);
+  }
   return {reply,start:{type:"command_started" as const,request_id:id(850),effect_key:(operation==="checkpoint_only" || operation==="review_checkpoint") ?
     "checkpoint:"+assignment.attempt_id+":"+assignment.step_id : operation==="decision_apply" ? "decision:"+assignment.attempt_id+":3" : null,
     action:"workflow_step",target:{repository_id:101,issue_number:7},parameters,assignment:expected}};
 }
 function workflowFeedback(value:ReturnType<typeof workflowReply>) {
-  if(value.reply.request.receipt.kind==="verification")assert.throws(()=>parseStandardReply(value.reply));
+  if(value.reply.request.receipt.kind!=="checkpoint")assert.throws(()=>parseStandardReply(value.reply));
   else parseStandardReply(value.reply); // Supported receipts still require exact intent correlation.
   const started=reduceProjection(projectionState(base.binding_epoch),value.start as Parameters<typeof reduceProjection>[1]);
   const state=reduceProjection(started,{type:"command_result",request_id:id(850),reply:value.reply});
@@ -490,8 +496,8 @@ test(`workflow review feedback preserves the requested candidate and stage (${mi
   if (mismatch==="assignment") value.reply.request.receipt.assignment.step_id=id(899);
   if (mismatch==="outcome") value.start.parameters.outcome="failed";
   const feedback=workflowFeedback(value);
-  assert.equal(feedback.outcome,mismatch==="none"?"applied":"unknown");
-  if (mismatch!=="none") assert.equal(feedback.receipt,null);
+  assert.equal(feedback.outcome,"unknown","Review completion has no qualified source profile");
+  assert.equal(feedback.receipt,null);
 });
 for (const operation of ["decision_apply","continue","verify_only","publish_candidate","deliver"])
 for (const mismatch of [false,true])
@@ -499,9 +505,8 @@ test(`workflow ${operation} accepts only its own receipt (mismatch=${mismatch})`
   const value=workflowReply(operation);
   if (mismatch) value.start.parameters.operation="checkpoint_only";
   const feedback=workflowFeedback(value);
-  const supported=!mismatch && operation!=="verify_only";
-  assert.equal(feedback.outcome,supported?"applied":"unknown");
-  if (!supported) assert.equal(feedback.receipt,null);
+  assert.equal(feedback.outcome,"unknown","This future operation has no qualified source profile");
+  assert.equal(feedback.receipt,null);
 });
 test("workflow correlation snapshots pins without retaining private summaries",()=>{
   const value=workflowReply("checkpoint_only");

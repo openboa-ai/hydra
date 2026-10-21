@@ -70,7 +70,7 @@
       "name": "continue:canonical",
       "command": "continue",
       "mode": "canonical",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "continue:foreign_repository",
@@ -106,7 +106,7 @@
       "name": "continue:opaque_matching",
       "command": "continue",
       "mode": "opaque_matching",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "continue:opaque_wrong_work",
@@ -202,7 +202,7 @@
       "name": "verify-review:canonical",
       "command": "verify-review",
       "mode": "canonical",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "verify-review:foreign_repository",
@@ -238,7 +238,7 @@
       "name": "verify-review:opaque_matching",
       "command": "verify-review",
       "mode": "opaque_matching",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "verify-review:opaque_wrong_work",
@@ -268,7 +268,7 @@
       "name": "publication:canonical",
       "command": "publication",
       "mode": "canonical",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "publication:foreign_repository",
@@ -304,7 +304,7 @@
       "name": "publication:opaque_matching",
       "command": "publication",
       "mode": "opaque_matching",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "publication:opaque_wrong_work",
@@ -334,7 +334,7 @@
       "name": "delivery:canonical",
       "command": "delivery",
       "mode": "canonical",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "delivery:foreign_repository",
@@ -370,7 +370,7 @@
       "name": "delivery:opaque_matching",
       "command": "delivery",
       "mode": "opaque_matching",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "delivery:opaque_wrong_work",

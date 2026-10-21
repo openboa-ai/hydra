@@ -234,8 +234,13 @@ impl ReadCache {
     }
     pub fn read_held(&self,now:Instant,remote:bool,scope:&str,continuation:bool,explicit_recovery:bool)->Result<bool,&'static str> {
         if remote && self.context.scope.is_none() {return Err("read_context_unavailable");}
-        let continuation=continuation && !self.entries.contains_key(scope) && self.continuations.iter().any(|(next,parent,sequence)|
+        let issued=self.continuations.iter().any(|(next,parent,sequence)|
             next==scope && self.entries.get(parent).is_some_and(|entry|entry.sequence==*sequence && !entry.stale));
+        let repeated=self.entries.contains_key(scope) || self.ledger.iter().any(|(ticket,_,_)|
+            ticket.scope==scope && ticket.epoch==self.epoch && (!ticket.remote ||
+                ticket.context_sequence==self.context.sequence && ticket.credential_scope==self.context.scope));
+        if continuation && !issued && !repeated {return Err("invalid_cursor");}
+        let continuation=continuation && !repeated && issued;
         if remote && continuation {
             // A cursor advances the bounded read; it is not an ordinary poll.
             // Connection quotas and exhausted automatic retries still apply.
@@ -352,7 +357,7 @@ mod tests {
         let ticket=cache.issue("remote:overview:".into(),request(70),false).unwrap();cache.remote_started(now);
         cache.accept(&ticket,&serde_json::to_vec(&renamed).unwrap(),now).unwrap();
         assert_eq!(cache.read_held(now+Duration::from_secs(1),true,"remote:example/alpha:rename-page",true,false),Ok(false));
-        assert_eq!(cache.read_held(now+Duration::from_secs(1),true,"remote:example/renamed:rename-page",true,false),Ok(true));
+        assert_eq!(cache.read_held(now+Duration::from_secs(1),true,"remote:example/renamed:rename-page",true,false),Err("invalid_cursor"));
 
         // Fill through validated bounded response pages, not private map writes.
         let seed:Value=serde_json::from_slice(&fixture(&request(71))).unwrap();
@@ -453,6 +458,33 @@ mod tests {
         assert_eq!(cache.remote_wait(changed+Duration::from_secs(1),false),Ok(59),"The new read did not establish its own poll floor");
     }
     #[test]
+    fn unissued_cursor_positions_never_reach_a_new_read_after_the_poll_floor() {
+        let code="import sys,json;sys.path.insert(0,str(__import__('pathlib').Path.cwd()));from hydra_sdlc.projection_read import _cursor,_position;cfg={'repos':['example/alpha','example/beta','example/gamma']};epoch='00000000-0000-4000-8000-000000000001';issued=_cursor(cfg,epoch,None,{'project_index':1});altered=_cursor(cfg,epoch,None,{'project_index':2});assert _position(cfg,epoch,None,altered)=={'project_index':2};print(json.dumps({'issued':issued,'altered':altered}))";
+        let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let output=Command::new("python3").args(["-I","-c",code]).current_dir(root).output().unwrap();
+        assert!(output.status.success(),"actual cursor codec failed: {}",String::from_utf8_lossy(&output.stderr));
+        let tokens:Value=serde_json::from_slice(&output.stdout).unwrap();
+        let issued=tokens["issued"].as_str().unwrap();let altered=tokens["altered"].as_str().unwrap();assert_ne!(issued,altered);
+        let mut cache=test_cache();let now=Instant::now();
+        let mut frame:Value=serde_json::from_slice(&fixture(&request(780))).unwrap();
+        frame["page"]["next_cursor"]=issued.into();
+        let ticket=cache.issue("remote:overview:".into(),request(780),false).unwrap();cache.remote_started(now);
+        cache.accept(&ticket,&serde_json::to_vec(&frame).unwrap(),now).unwrap();
+        let allowed=format!("remote:overview:{issued}");let forged=format!("remote:overview:{altered}");
+        assert_eq!(cache.read_held(now,true,&allowed,true,false),Ok(false));
+        for elapsed in [0,60,120] {
+            let time=now+Duration::from_secs(elapsed);
+            assert!(cache.read_held(time,true,&forged,true,false).is_err(),"An altered position became a new read after {elapsed}s");
+            assert!(cache.read_held(time,true,&format!("remote:example/other:{issued}"),true,false).is_err());
+        }
+        let consumed=cache.issue(allowed.clone(),request(781),false).unwrap();cache.remote_started(now);
+        cache.failed(&consumed);
+        assert_eq!(cache.read_held(now,true,&allowed,true,false),Ok(true));
+        assert_eq!(cache.read_held(now+Duration::from_secs(60),true,&allowed,true,false),Ok(false),"A previously issued failed query lost explicit retry");
+        cache.context_changed(Some("github:another-credential".into())).unwrap();
+        assert!(cache.read_held(now+Duration::from_secs(120),true,&allowed,true,false).is_err());
+    }
+    #[test]
     fn continuation_privileges_require_exact_issued_lineage_and_are_consumed() {
         let mut cache=test_cache();let now=Instant::now();
         let mut frame:Value=serde_json::from_slice(&fixture(&request(50))).unwrap();
@@ -460,12 +492,12 @@ mod tests {
         let ticket=cache.issue("remote:overview:".into(),request(50),false).unwrap();cache.remote_started(now);
         cache.accept(&ticket,&serde_json::to_vec(&frame).unwrap(),now).unwrap();
         assert_eq!(cache.read_held(now,true,"remote:overview:issued_cursor",true,false),Ok(false));
-        assert_eq!(cache.read_held(now,true,"remote:overview:altered_cursor",true,false),Ok(true),"Forged continuation bypassed the poll floor");
-        assert_eq!(cache.read_held(now,true,"remote:example/other:issued_cursor",true,false),Ok(true));
+        assert_eq!(cache.read_held(now,true,"remote:overview:altered_cursor",true,false),Err("invalid_cursor"));
+        assert_eq!(cache.read_held(now,true,"remote:example/other:issued_cursor",true,false),Err("invalid_cursor"));
         let next=cache.issue("remote:overview:issued_cursor".into(),request(51),false).unwrap();cache.remote_started(now);
         cache.failed(&next);
         assert_eq!(cache.read_held(now,true,"remote:overview:issued_cursor",true,false),Ok(true),"Consumed continuation replayed its privilege");
-        assert_eq!(cache.read_held(now+Duration::from_secs(60),true,"remote:overview:altered_cursor",true,false),Ok(false));
+        assert_eq!(cache.read_held(now+Duration::from_secs(60),true,"remote:overview:altered_cursor",true,false),Err("invalid_cursor"));
     }
     #[test]
     fn every_observation_kind_has_the_shared_exact_source_owner() {
