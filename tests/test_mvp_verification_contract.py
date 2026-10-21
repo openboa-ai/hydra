@@ -229,14 +229,36 @@ class VerificationCollectorTests(unittest.TestCase):
         self.assertEqual((fixture.root / "effect").read_text(), "once")
         self.assertEqual(fixture.report()["results"][1]["status"], "NOT RUN")
 
-    def test_export_failure_preserves_prior_bytes_and_single_effect(self):
-        fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once')")
-        fixture.write("artifacts/mvp-verification/report.json", "prior evidence")
-        result = fixture.run()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(json.loads(result.stdout)["reason"], "export_failed")
-        self.assertEqual((fixture.root / "artifacts/mvp-verification/report.json").read_text(), "prior evidence")
-        self.assertEqual((fixture.root / "effect").read_text(), "once")
+    def test_occupied_output_prevents_execution_and_preserves_prior_evidence(self):
+        for kind in ('file', 'directory', 'fifo'):
+            with self.subTest(kind=kind):
+                fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once')")
+                target = fixture.root / 'artifacts/mvp-verification/report.json'
+                target.parent.mkdir(parents=True)
+                if kind == 'file':
+                    target.write_text('prior evidence')
+                elif kind == 'directory':
+                    target.mkdir()
+                else:
+                    os.mkfifo(target)
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((fixture.root / 'effect').exists(), 'Occupied output still executed a selector')
+                self.assertEqual(json.loads(result.stdout)['reason'], 'invalid_input')
+                if kind == 'file':
+                    self.assertEqual(target.read_text(), 'prior evidence')
+                elif kind == 'directory':
+                    self.assertTrue(target.is_dir())
+                else:
+                    import stat
+                    self.assertTrue(stat.S_ISFIFO(target.stat().st_mode))
+        control = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once')")
+        self.assertEqual(control.run().returncode, 0)
+        saved = (control.root / 'artifacts/mvp-verification/report.json').read_bytes()
+        self.assertEqual((control.root / 'effect').read_text(), 'once')
+        self.assertNotEqual(control.run().returncode, 0)
+        self.assertEqual((control.root / 'effect').read_text(), 'once', 'Same-name retry repeated an existing effect')
+        self.assertEqual((control.root / 'artifacts/mvp-verification/report.json').read_bytes(), saved)
 
     def test_revision_and_corrupt_artifact_cannot_be_reused_or_rerun_effects(self):
         for mode in ("head", "source", "base", "spec", "policy", "fixture", "extra", "status", "count"):

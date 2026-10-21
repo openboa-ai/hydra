@@ -943,3 +943,47 @@ recorded separately rather than treating the artifact as current delivery author
 Those reports do not qualify this correction. P13 Rev4/VF11 exclusions remain.
 Final-head CI/artifacts, independent reviews, scoped CODEOWNER approval, protected
 merge and actual-main checks remain required.
+
+
+## Occupied destination preflight and explicit execution boundary
+
+An already occupied artifact destination is now rejected before importing or
+executing a selected method. The check uses the existing no-follow pinned artifact
+directory traversal; final atomic no-replace publication remains in place for
+actual races after preflight. Read-only validation of existing evidence is
+unchanged. A later publication race may prevent export after tests run; it does not
+authorize retrying their effects.
+
+The existing prior-output test is strengthened from preserving bytes after one
+execution to requiring zero selector effects for occupied files/directories/FIFOs.
+A fresh export still passes once, and a same-name retry preserves that evidence
+without appending another effect. The published parent reproduces four actual
+assertion failures, zero errors/skips, using the same final test bytes.
+
+The fixture guide also makes the previously documented reviewed-test/host boundary
+explicit: the collector pins its controlled bootstrap, default Python source and
+semantic revision reads, and checks other snapshot changes at boundaries. It does
+not continuously attest arbitrary OS file reads or helper programs, isolate a
+deliberately racing same-authority peer, or authenticate hostile selected programs.
+The same-UID arbitrary-data/helper scenario is a limitation outside that existing
+profile, not a claimed remediated isolation mechanism. Partial open/exec hooks
+would not establish that missing OS boundary. P13 Rev4/VF11 requirements and
+exclusions are unchanged; an OS isolation profile would require its own accepted
+design and qualification.
+
+Final local Python 3.14.2: all 81 collector methods and 9 capability-completion methods passed, zero failures/errors/skips, in 175.070 seconds. Log SHA-256 `03d168c2e182a77a9009c53359eecf1104af55db66f6821a2f73367530fa03e2`.
+
+The first broad local run retained one environment failure: its shell fixture
+selected Python 3.12 without the declared CommonMark dependency. The private test
+launcher now pins child `python3` to the same existing isolated Python 3.14.2
+runtime. No dependency was installed globally and no production assertion, timeout
+or CI gate was relaxed. The corrected full 90-method run passes.
+
+Published 308e63f passed all four jobs in
+[run 39542157692](https://github.com/openboa-ai/hydra/actions/runs/39542157692).
+Both actual hosted reports were consumed read-only against checked merge d14ae7b
+(tree 2085fc3), source head 308e63f and the actual c7a3679 invocation base; they
+contain two selected cases/five methods on Python 3.11.17 and 3.14.2. That evidence
+does not qualify this later correction. Final-head CI/artifacts, independent
+code/security review, scoped CODEOWNER approval, protected merge and exact main
+checks remain required. Full v1/native operation remains NOT RUN.

@@ -114,3 +114,19 @@ their background work; this collector is not an OS containment facility. Its
 immutable-source evidence is not a future-cleanliness or process-lifetime
 attestation for the writable effect workspace. Native resource/retirement
 qualification remains separate.
+
+
+An output destination already occupied at preflight is rejected before selector
+execution, including regular files, directories and special files. An accidental
+same-name retry preserves earlier evidence without repeating selector effects.
+The final atomic no-replace check remains necessary for a destination created
+after preflight; such a race can still prevent publication after tests ran.
+
+The source revision identifies the checked Git snapshot. Bootstrap, default
+Python source loading and collector-owned semantic revision reads consume pinned
+bytes; snapshot boundary checks detect other retained changes. This is not a
+continuous attestation of arbitrary file reads or helper programs, and does not
+isolate the snapshot from a deliberately racing process with the same OS
+authority. Reviewed tests and the execution host remain trusted. An OS isolation
+requirement needs a separately qualified execution boundary; this collector does
+not claim or enable one. Trusted hosted producer evidence remains independent.

@@ -1131,6 +1131,19 @@ def open_artifact_directory(root):
         raise
 
 
+def preflight_output(root, relative):
+    target = artifact_path(root, relative, create=True)
+    descriptor = open_artifact_directory(root)
+    try:
+        try:
+            os.stat(target.name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise Invalid()
+    finally:
+        os.close(descriptor)
+
+
 def read_report(root, relative):
     target = artifact_path(root, relative)
     descriptor = open_artifact_directory(root)
@@ -1245,7 +1258,7 @@ def main():
             if args.validate_report:
                 passed = validate(read_report(root, args.validate_report), snapshot, manifest, pins, read_input=read_input)
             else:
-                artifact_path(root, args.output, create=True)
+                preflight_output(root, args.output)
                 report = isolated_execute(snapshot, manifest, pins, read_input=read_input)
                 require(binding(root, manifest, args.checked_sha, args.base_sha, args.source_head,
                                 inputs=snapshot, read_input=read_input) == pins)
