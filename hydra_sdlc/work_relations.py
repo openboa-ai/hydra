@@ -157,3 +157,126 @@ def compare_bound_producers(binding, first, second, *, spec_directory, condition
     if current != expected:
         return ProducerMembership('changed', 'relationship_changed', len(current), len(payload['clauses']))
     return ProducerMembership('matched', 'producer_membership_only', len(current), len(payload['clauses']))
+
+
+@dataclass(frozen=True)
+class DependencyGraph:
+    coverage: str
+    reason: str
+    nodes: tuple
+    edges: tuple
+    cyclic: bool
+
+
+@dataclass(frozen=True)
+class DependencyTopology:
+    status: str
+    reason: str
+    first: DependencyGraph
+    second: DependencyGraph
+
+
+def _dependency_graph(root, reads, registered):
+    """Analyze reachable supplied observations without fetching missing rows.
+
+    A false cyclic flag on a partial observation does not prove acyclicity.
+    """
+    nodes, edges, queue, depths = {root}, set(), [root], {root: 0}
+    coverage, reason, position, stopped = 'complete', 'graph_observed', 0, False
+
+    def hold(code, *, unavailable=False):
+        nonlocal coverage, reason
+        if coverage == 'complete':
+            coverage = 'unavailable' if unavailable else 'partial'
+            reason = code
+
+    while position < len(queue) and not stopped:
+        source = queue[position]
+        position += 1
+        if source[0] not in registered:
+            hold('unregistered_producer', unavailable=source == root)
+            continue
+        observed = None if reads is None else reads.get(source)
+        if observed is None:
+            hold('relations_unavailable', unavailable=source == root)
+            continue
+        value = validate_relation(observed).value
+        _require(_identity(value['source']) == source, 'identity_mismatch')
+        _require(value['relation'] == 'blocked_by', 'relation_mismatch')
+        if value['coverage'] != 'complete':
+            hold('relations_unavailable' if value['coverage'] == 'unavailable'
+                 else 'relations_incomplete', unavailable=source == root
+                 and value['coverage'] == 'unavailable')
+        for item in value['items']:
+            target = _identity(item)
+            if len(edges) >= 1024:
+                coverage, reason, stopped = 'partial', 'graph_edge_limit', True
+                break
+            if target not in nodes:
+                if len(nodes) >= 256:
+                    coverage, reason, stopped = 'partial', 'graph_node_limit', True
+                    break
+                if depths[source] + 1 > 32:
+                    coverage, reason, stopped = 'partial', 'graph_depth_limit', True
+                    break
+                nodes.add(target)
+                depths[target] = depths[source] + 1
+                queue.append(target)
+            edges.add((source, target))
+
+    # Kahn's algorithm detects cycles without recursion and computes the longest
+    # acyclic root path. Discovery depth alone would let shortcut edges hide it.
+    outgoing = {node: [] for node in nodes}
+    incoming = dict.fromkeys(nodes, 0)
+    longest = dict.fromkeys(nodes, 0)
+    for source, target in edges:
+        outgoing[source].append(target)
+        incoming[target] += 1
+    ready = [node for node in sorted(nodes) if incoming[node] == 0]
+    position = 0
+    while position < len(ready):
+        source = ready[position]
+        position += 1
+        for target in outgoing[source]:
+            longest[target] = max(longest[target], longest[source] + 1)
+            incoming[target] -= 1
+            if incoming[target] == 0:
+                ready.append(target)
+    cyclic = len(ready) != len(nodes)
+    if not cyclic and max(longest.values()) > 32:
+        coverage, reason = 'partial', 'graph_depth_limit'
+    return DependencyGraph(coverage, reason, tuple(sorted(nodes)),
+                           tuple(sorted(edges)), cyclic)
+
+
+def dependency_topology(root, first, second, *, registered_repositories):
+    """Compare two bounded blocked-by graphs, never readiness or authority.
+
+    Read pools are plain dictionaries keyed by numeric (repository_id,
+    issue_number); None denotes an unavailable pass/row. Only reachable rows are
+    inspected. Qualified source adapters own visibility, complete pagination,
+    request budgets and current registration. This function performs no I/O and
+    cannot authenticate the supplied observations or repository scope.
+    Supplying the same pool twice does not prove two actual provider reads.
+
+    Each immutable pass retains its own coverage and bounded observed prefix.
+    Matching topology does not satisfy a binding's inputs, deliverables or stage,
+    validate its parent, or grant any effect. Callers must re-read before effects.
+    """
+    source = _identity(root)
+    _require(first is None or type(first) is dict, 'invalid_graph_reads')
+    _require(second is None or type(second) is dict, 'invalid_graph_reads')
+    _require(type(registered_repositories) in {set, frozenset}, 'invalid_graph_context')
+    registered = frozenset(registered_repositories)
+    for identifier in registered:
+        _identity({'repository_id': identifier, 'issue_number': 1})
+    before = _dependency_graph(source, first, registered)
+    after = _dependency_graph(source, second, registered)
+    if after.cyclic:
+        return DependencyTopology('cycle', 'dependency_cycle', before, after)
+    for observed in (after, before):
+        if observed.coverage != 'complete':
+            return DependencyTopology('unknown', observed.reason, before, after)
+    if before.nodes != after.nodes or before.edges != after.edges:
+        return DependencyTopology('changed', 'relations_unstable', before, after)
+    return DependencyTopology('matched', 'topology_only', before, after)

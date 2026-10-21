@@ -89,6 +89,8 @@ def _basis(value):
     if value["spec_revision"] is not None:
         _hex(value["spec_revision"], 40)
     _hex(value["intake_digest"], 64)
+    if key[3] > 1 and value["supersedes"] is None:
+        _invalid()
     if value["supersedes"] is not None:
         previous, _ = _pin(value["supersedes"])
         if previous[:3] != key[:3] or previous[3] != key[3] - 1:
@@ -219,6 +221,30 @@ def _unedited(row):
         return False
 
 
+def _claims_decision_key(body, expected_key):
+    """Recognize relevant or unreadable versioned claims without trusting headers."""
+    position = 0
+    while True:
+        markers = [(body.find(marker, position), marker) for marker in (_INTENT, _RECEIPT)]
+        markers = [(start, marker) for start, marker in markers if start >= 0]
+        if not markers:
+            return False
+        start, marker = min(markers)
+        end = body.find(" -->", start + len(marker))
+        if len(body) > MAX_CONTEXT_BYTES or end < 0:
+            return True
+        try:
+            payload = _load(body[start + len(marker):end])
+            if type(payload) is not dict:
+                _invalid()
+            key = _key(payload.get("key"))
+        except InvalidPublicDecision:
+            return True
+        if key == expected_key:
+            return True
+        position = end + 4
+
+
 def observe_comments(rows, service_identity, expected_context, *, coverage_complete):
     """Fold exact service-owned duplicates, without accepting a private decision."""
     expected = parse_context(expected_context.body)
@@ -237,7 +263,8 @@ def observe_comments(rows, service_identity, expected_context, *, coverage_compl
         try:
             actor = _identity(row.get("user"))
         except InvalidPublicDecision:
-            if isinstance(row.get("body"), str) and not row["body"].startswith(prefix):
+            if (isinstance(row.get("body"), str) and not row["body"].startswith(prefix)
+                    and not _claims_decision_key(row["body"], expected.key)):
                 continue
             return DecisionObservation("unknown", "comment_actor_unavailable")
         if actor != service:
@@ -247,7 +274,8 @@ def observe_comments(rows, service_identity, expected_context, *, coverage_compl
         body = row.get("body")
         if not isinstance(body, str):
             return DecisionObservation("unknown", "incomplete_comment")
-        if not body.startswith(prefix) or body in (prefix + "resolved", prefix + "resolved\n"):
+        if ((not body.startswith(prefix) and not _claims_decision_key(body, expected.key))
+                or body in (prefix + "resolved", prefix + "resolved\n")):
             continue  # A legacy one-line receipt is not a versioned receipt.
         try:
             comment_id = _positive(row.get("id"))
@@ -306,13 +334,15 @@ def read_public_decision(github, repo, issue_number, expected_context, *,
             observation = observe_comments(rows, identity, expected, coverage_complete=True)
             if observation.status in {"unknown", "conflict"}:
                 return observation
-            refs = {value for value in (observation.context_id, observation.receipt_id,
-                                        known_context_id, known_receipt_id) if value is not None}
+            context_refs = {value for value in (observation.context_id, known_context_id) if value is not None}
+            receipt_refs = {value for value in (observation.receipt_id, known_receipt_id) if value is not None}
+            if context_refs & receipt_refs:
+                return DecisionObservation("unknown", "pinned_reference_changed")
+            refs = context_refs | receipt_refs
             for comment_id in sorted(refs):
                 direct = github.api("GET", f"/repos/{canonical}/issues/comments/{comment_id}")
                 listed = [row for row in rows if isinstance(row, dict) and row.get("id") == comment_id]
-                wanted = (expected.body if comment_id in {observation.context_id, known_context_id}
-                          else receipt_body(expected))
+                wanted = expected.body if comment_id in context_refs else receipt_body(expected)
                 if (not isinstance(direct, dict) or type(direct.get("id")) is not int
                         or direct["id"] != comment_id or _identity(direct.get("user")) != service
                         or direct.get("issue_url") != f"https://api.github.com/repos/{canonical}/issues/{issue_number}"

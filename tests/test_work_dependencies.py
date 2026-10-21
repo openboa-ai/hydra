@@ -253,5 +253,200 @@ class BoundProducerMembershipTests(unittest.TestCase):
             self.assertEqual(compare().status, 'matched')
 
 
+class DependencyTopologyTests(unittest.TestCase):
+    @staticmethod
+    def ref(key):
+        return {'repository_id': key[0], 'issue_number': key[1]}
+
+    @classmethod
+    def pool(cls, adjacency, at=AT):
+        return {source: read([cls.ref(item) for item in items],
+            source=cls.ref(source), at=at) for source, items in adjacency.items()}
+
+    def topology(self, first, second=..., *, repositories=frozenset({1})):
+        from hydra_sdlc.work_relations import dependency_topology
+        if second is ...:
+            second = copy.deepcopy(first)
+        return dependency_topology(self.ref((1, 1)), first, second,
+            registered_repositories=repositories)
+
+    def test_complete_empty_graph_is_a_valid_topology_only_match(self):
+        result = self.topology(self.pool({(1, 1): []}))
+        self.assertEqual((result.status, result.reason), ('matched', 'topology_only'))
+        self.assertEqual(result.second.coverage, 'complete')
+        self.assertEqual(result.second.nodes, ((1, 1),))
+        self.assertEqual(result.second.edges, ())
+
+    def test_complete_chain_preserves_exact_numeric_edges(self):
+        result = self.topology(self.pool({(1, 1): [(1, 2)], (1, 2): [(1, 3)], (1, 3): []}))
+        self.assertEqual(result.status, 'matched')
+        self.assertEqual(result.second.nodes, ((1, 1), (1, 2), (1, 3)))
+        self.assertEqual(result.second.edges, (((1, 1), (1, 2)), ((1, 2), (1, 3))))
+        self.assertFalse(result.second.cyclic)
+
+    def test_transitive_drift_holds_with_identical_root_membership(self):
+        first = self.pool({(1, 1): [(1, 2)], (1, 2): [(1, 3)], (1, 3): []})
+        second = self.pool({(1, 1): [(1, 2)], (1, 2): []})
+        saved = copy.deepcopy((first, second))
+        result = self.topology(first, second)
+        self.assertEqual((result.status, result.reason), ('changed', 'relations_unstable'))
+        self.assertEqual(result.first.nodes, ((1, 1), (1, 2), (1, 3)))
+        self.assertEqual(result.second.nodes, ((1, 1), (1, 2)))
+        self.assertEqual((first, second), saved)
+
+    def test_timestamp_and_input_order_do_not_change_topology(self):
+        first = self.pool({(1, 1): [(1, 10), (1, 2)], (1, 2): [], (1, 10): []})
+        second = dict(reversed(list(self.pool(
+            {(1, 10): [], (1, 2): [], (1, 1): [(1, 2), (1, 10)]}, LATER).items())))
+        result = self.topology(first, second)
+        self.assertEqual(result.status, 'matched')
+        self.assertEqual(result.second.nodes, ((1, 1), (1, 2), (1, 10)))
+
+    def test_self_and_indirect_cycles_are_distinct_from_incomplete_reads(self):
+        for adjacency in ({(1, 1): [(1, 1)]},
+                {(1, 1): [(1, 2)], (1, 2): [(1, 3)], (1, 3): [(1, 2)]}):
+            with self.subTest(adjacency=adjacency):
+                result = self.topology(self.pool(adjacency))
+                self.assertEqual((result.status, result.reason), ('cycle', 'dependency_cycle'))
+                self.assertTrue(result.second.cyclic)
+                self.assertEqual(result.second.coverage, 'complete')
+
+    def test_an_observed_cycle_remains_a_cycle_with_an_unavailable_branch(self):
+        pool = self.pool({(1, 1): [(1, 1), (1, 2)]})
+        result = self.topology(pool)
+        self.assertEqual(result.status, 'cycle')
+        self.assertTrue(result.second.cyclic)
+        self.assertEqual(result.second.coverage, 'partial')
+
+    def test_missing_root_and_reachable_reads_never_become_empty_complete(self):
+        for pool, coverage in ((None, 'unavailable'), ({}, 'unavailable'),
+                (self.pool({(1, 1): [(1, 2)]}), 'partial')):
+            with self.subTest(coverage=coverage):
+                result = self.topology(pool)
+                self.assertEqual((result.status, result.reason), ('unknown', 'relations_unavailable'))
+                self.assertEqual(result.second.coverage, coverage)
+
+    def test_each_pass_must_be_complete_and_keeps_its_own_facts(self):
+        complete = self.pool({(1, 1): [(1, 2)], (1, 2): []})
+        result = self.topology(complete, None)
+        self.assertEqual(result.status, 'unknown')
+        self.assertEqual(result.first.edges, (((1, 1), (1, 2)),))
+        self.assertEqual(result.first.coverage, 'complete')
+        self.assertEqual(result.second.coverage, 'unavailable')
+        self.assertEqual(self.topology(None, complete).status, 'unknown')
+
+    def test_partial_edges_are_retained_without_becoming_a_match(self):
+        pool = self.pool({(1, 2): []})
+        pool[(1, 1)] = read([self.ref((1, 2))], source=self.ref((1, 1)), coverage='partial')
+        result = self.topology(pool)
+        self.assertEqual((result.status, result.reason), ('unknown', 'relations_incomplete'))
+        self.assertEqual(result.second.coverage, 'partial')
+        self.assertEqual(result.second.edges, (((1, 1), (1, 2)),))
+
+    def test_unavailable_dto_is_not_an_empty_complete_relation(self):
+        pool = {(1, 1): read(source=self.ref((1, 1)), coverage='unavailable')}
+        result = self.topology(pool)
+        self.assertEqual((result.status, result.reason), ('unknown', 'relations_unavailable'))
+        self.assertEqual(result.second.coverage, 'unavailable')
+
+    def test_registered_cross_repository_graph_can_match(self):
+        pool = self.pool({(1, 1): [(2, 3)], (2, 3): []})
+        result = self.topology(pool, repositories=frozenset({1, 2}))
+        self.assertEqual(result.status, 'matched')
+        self.assertEqual(result.second.edges, (((1, 1), (2, 3)),))
+
+    def test_unregistered_sources_are_held_without_reading_their_values(self):
+        pool = self.pool({(1, 1): [(2, 3)]})
+        pool[(2, 3)] = object()
+        result = self.topology(pool)
+        self.assertEqual((result.status, result.reason), ('unknown', 'unregistered_producer'))
+        result = self.topology({(1, 1): object()}, repositories=frozenset())
+        self.assertEqual((result.status, result.reason), ('unknown', 'unregistered_producer'))
+
+    def test_unrelated_invalid_and_cyclic_components_do_not_block_this_root(self):
+        pool = self.pool({(1, 1): [], (1, 20): [(1, 20)]})
+        pool[(9, 9)] = object()
+        result = self.topology(pool)
+        self.assertEqual(result.status, 'matched')
+        self.assertEqual(result.second.nodes, ((1, 1),))
+
+    def test_selected_dtos_revalidate_identity_relation_and_digest(self):
+        for mode in ('identity', 'relation', 'digest'):
+            with self.subTest(mode=mode):
+                row = read(source=self.ref((1, 2)) if mode == 'identity' else self.ref((1, 1)),
+                    relation='parent' if mode == 'relation' else 'blocked_by')
+                if mode == 'digest':
+                    value = row.value
+                    value['digest'] = 'a' * 64
+                    row = RelationRead(canonical(value))
+                with self.assertRaises(WorkRecordError):
+                    self.topology({(1, 1): row})
+
+    def test_snapshot_remains_immutable_after_inputs_change(self):
+        pool = self.pool({(1, 1): [(1, 2)], (1, 2): []})
+        result = self.topology(pool)
+        pool.clear()
+        self.assertEqual(result.second.nodes, ((1, 1), (1, 2)))
+        self.assertEqual(result.second.edges, (((1, 1), (1, 2)),))
+        with self.assertRaises(AttributeError):
+            result.second.nodes += ((1, 3),)
+
+    def test_node_budget_is_global_across_individually_valid_relations(self):
+        adjacency = {(1, n): [] for n in range(1, 257)}
+        adjacency[(1, 1)] = [(1, n) for n in range(2, 257)]
+        exact = self.topology(self.pool(adjacency))
+        self.assertEqual(exact.status, 'matched')
+        self.assertEqual(len(exact.second.nodes), 256)
+        adjacency[(1, 2)] = [(1, 257)]
+        adjacency[(1, 257)] = []
+        over = self.topology(self.pool(adjacency))
+        self.assertEqual((over.status, over.reason), ('unknown', 'graph_node_limit'))
+        self.assertEqual(over.second.coverage, 'partial')
+        self.assertLessEqual(len(over.second.nodes), 256)
+
+    def test_edge_budget_boundary_does_not_reject_the_normal_control(self):
+        adjacency = {(1, n): [] for n in range(1, 257)}
+        adjacency[(1, 1)] = [(1, n) for n in range(2, 257)]
+        for n in range(2, 6):
+            adjacency[(1, n)] = [(1, k) for k in range(6, 198)]
+        adjacency[(1, 6)] = [(1, 255)]
+        exact = self.topology(self.pool(adjacency))
+        self.assertEqual(exact.status, 'matched')
+        self.assertEqual(len(exact.second.edges), 1024)
+        adjacency[(1, 6)] = [(1, 254), (1, 255)]
+        over = self.topology(self.pool(adjacency))
+        self.assertEqual((over.status, over.reason), ('unknown', 'graph_edge_limit'))
+        self.assertEqual(over.second.coverage, 'partial')
+        self.assertLessEqual(len(over.second.edges), 1024)
+
+    def test_depth_32_matches_and_depth_33_is_partial(self):
+        adjacency = {(1, n): [(1, n + 1)] for n in range(1, 33)}
+        adjacency[(1, 33)] = []
+        exact = self.topology(self.pool(adjacency))
+        self.assertEqual(exact.status, 'matched')
+        adjacency[(1, 33)] = [(1, 34)]
+        adjacency[(1, 34)] = []
+        over = self.topology(self.pool(adjacency))
+        self.assertEqual((over.status, over.reason), ('unknown', 'graph_depth_limit'))
+        self.assertEqual(over.second.coverage, 'partial')
+
+    def test_shortcuts_cannot_hide_an_over_depth_acyclic_path(self):
+        adjacency = {(1, n): [(1, n + 1)] for n in range(2, 34)}
+        adjacency[(1, 34)] = []
+        adjacency[(1, 1)] = [(1, n) for n in range(2, 35)]
+        result = self.topology(self.pool(adjacency))
+        self.assertEqual((result.status, result.reason), ('unknown', 'graph_depth_limit'))
+        self.assertFalse(result.second.cyclic)
+
+    def test_invalid_graph_context_is_rejected_instead_of_inferred(self):
+        pool = self.pool({(1, 1): []})
+        for invalid in (True, '1', {True}, {0}, {9007199254740992}):
+            with self.subTest(context=repr(invalid)):
+                with self.assertRaises(WorkRecordError):
+                    self.topology(pool, repositories=invalid)
+        with self.assertRaises(WorkRecordError):
+            self.topology([])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -357,5 +357,78 @@ class PublicDecisionReadTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
 
 
+class PublicDecisionGuardRegressionTests(unittest.TestCase):
+    def observe(self, additional):
+        return observe_comments([comment(10, EXPECTED), comment(20, RECEIPT), *additional],
+                                ACTOR, context(), coverage_complete=True)
+
+    def test_trusted_same_key_claims_remain_relevant_after_header_damage(self):
+        for original in (EXPECTED, RECEIPT):
+            variants = (b'Operator note\n' + original,
+                        original.replace(b'hydra: decision ', b'hydra: question ', 1),
+                        original.replace(ATTEMPT.encode(), RESUME.encode(), 1))
+            for body in variants:
+                with self.subTest(body=body[:80]):
+                    observed = self.observe([comment(30, body)])
+                    self.assertEqual((observed.status, observed.reason),
+                                     ('unknown', 'invalid_service_record'))
+
+    def test_expected_key_is_detected_with_noncanonical_marker_json(self):
+        for original in (EXPECTED, RECEIPT):
+            with self.subTest(kind=original.splitlines()[0]):
+                body = b'Operator note\n' + original.replace(b'"key":', b'"key": ', 1)
+                self.assertEqual(self.observe([comment(30, body)]).status, 'unknown')
+
+    def test_unknown_actor_cannot_hide_a_prefixed_same_key_claim(self):
+        observed = self.observe([comment(30, b'Operator note\n' + EXPECTED, user=None)])
+        self.assertEqual((observed.status, observed.reason), ('unknown', 'comment_actor_unavailable'))
+
+    def test_known_outsiders_and_other_keys_preserve_a_healthy_pair(self):
+        outsider = comment(30, b'Operator note\n' + EXPECTED, user={'id': 99, 'login': 'outsider'})
+        other = copy.deepcopy(BASIS)
+        other['key']['issue_number'] = 5
+        unrelated = comment(40, b'Operator note\n' + prepare_context('Other work', other).body)
+        self.assertEqual(self.observe([outsider, unrelated]).status, 'pair')
+
+    def test_pinned_receipt_cannot_claim_the_selected_context_role(self):
+        for known_context in (None, 10, 30):
+            with self.subTest(known_context=known_context):
+                transport = ReadOnlyTransport([comment(10, EXPECTED), comment(20, RECEIPT), comment(30, EXPECTED)])
+                observed = read_public_decision(GitHub(transport=transport), REPO, 4, context(),
+                                               known_context_id=known_context, known_receipt_id=10)
+                self.assertEqual((observed.status, observed.reason), ('unknown', 'pinned_reference_changed'))
+
+    def test_disjoint_previously_pinned_roles_still_restore_the_pair(self):
+        transport = ReadOnlyTransport([comment(10, EXPECTED), comment(20, RECEIPT)])
+        observed = read_public_decision(GitHub(transport=transport), REPO, 4, context(),
+                                       known_context_id=10, known_receipt_id=20)
+        self.assertEqual((observed.status, observed.context_id, observed.receipt_id), ('pair', 10, 20))
+
+    def test_replacement_public_round_cannot_be_prepared_without_a_predecessor(self):
+        for round_number in (2, 3):
+            basis = copy.deepcopy(BASIS)
+            basis['key']['round'] = round_number
+            with self.subTest(round=round_number), self.assertRaises(InvalidPublicDecision):
+                prepare_context('Replacement without a predecessor', basis)
+
+    def test_noninitial_wire_cannot_bypass_the_predecessor_guard(self):
+        for round_number in (2, 3):
+            wire = EXPECTED.replace(b'"round":1', ('"round":' + str(round_number)).encode())
+            with self.subTest(round=round_number), self.assertRaises(InvalidPublicDecision):
+                parse_context(wire)
+
+    def test_initial_and_explicitly_pinned_replacements_remain_valid(self):
+        self.assertEqual(context().key[-1], 1)
+        for round_number in (2, 3):
+            basis = copy.deepcopy(BASIS)
+            basis['key']['round'] = round_number
+            previous = copy.deepcopy(KEY)
+            previous['round'] = round_number - 1
+            basis['supersedes'] = {'key': previous, 'context_sha256': DIGEST}
+            with self.subTest(round=round_number):
+                prepared = prepare_context('Explicit replacement', basis)
+                self.assertEqual(parse_context(prepared.body).key[-1], round_number)
+
+
 if __name__ == "__main__":
     unittest.main()

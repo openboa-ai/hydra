@@ -5,6 +5,34 @@ public intent and receipt contract in [EX revision 7, §7.3](../../contracts/exe
 It is a source component for later integration. Full P06, native answer
 acceptance, `decision_apply`, continuation, and operating acceptance remain open.
 
+
+## Current review corrections
+
+Versioned claims for the selected decision are inspected even when a trusted
+comment's first line is altered or prefixed. Bounded marker scanning establishes
+relevance only; full framing and exact bytes still decide validity. A marker
+whose key cannot be read is held. Known outsiders and valid unrelated keys remain
+excluded, so they cannot block a healthy trusted pair.
+
+Selected and previously pinned context/receipt references retain separate roles.
+Any overlap returns unknown instead of allowing context membership to validate a
+receipt pin. Direct GET read-back, source identity and the existing read budget
+are retained. The first public registration is round 1; later public replacement
+rounds require the same work's immediately preceding context pin. This structural
+codec check does not establish that a predecessor was actually observed or accepted.
+
+The same nine new methods reproduce 16 assertion failures on actual published
+parent `d838ce329b3389901f8fb1c1258999b971eeb1e6`, with no errors or skips.
+The correction passes all nine methods and all 109 selected public-reader,
+GitHub/read-budget and checkpoint-continuation methods on Python 3.14.2, with
+no failures, errors or skips. Healthy pairs, outsiders, unrelated keys, disjoint
+recovery pins, initial rounds and explicitly pinned replacements are positive
+controls. Existing P06 Rev2 / EX7 / CP7 / NC8 pins remain unchanged.
+
+Final-head CI, independent review, protected merge and actual-main checks remain
+delivery gates. Native answer provenance, authority, application, Resume and full
+P06/v1 operating acceptance remain separate requirements.
+
 ## Responsibility and interface
 
 `hydra_sdlc/public_decisions.py` keeps the protocol separate from the existing
