@@ -121,3 +121,38 @@ The previous b482665 hosted CI and reviews do not qualify this correction;
 final-head CI and independent code/security review, protected merge and main
 checks are required. Full answer/intent/restart and remote acceptance remain
 NOT RUN.
+
+
+## P04 Rev4 transport failures and bounds at the read boundary
+
+The stdio transport now limits each OS read to the remaining frame and total
+wire allowance before extending its buffer. Startup, auxiliary and diagnostic
+input stop at their 64 KiB bounds. A top-level result/error key permits the
+1 MiB response allowance; method/params and unclassified prefixes share the
+remaining auxiliary allowance. Matching ids or nested reserved keys do not
+increase it. Response field order, small unknown fields and fragmented UTF-8
+remain supported; complete strict JSON and RPC validation still follow framing.
+Mixed request/response envelopes are rejected. Exhausted auxiliary capacity
+prevents a further page request; no limit is increased to recover availability.
+
+Write/read/readiness OS failures become safe source failures. TimeoutError keeps
+its deadline classification; cancellation and owned-child cleanup are preserved.
+A real synthetic child closes stdin after replying to initialize and remains
+alive. That case reproduces the old broken-pipe misclassification and confirms
+ended-child cleanup after the correction. Source paths and OS text stay private.
+
+Identical final tests reproduce seven assertion failures on published
+3fef7f1695e8218be2892d5e964d39590c12f192: a broken pipe, two partial-read
+overshoots, three notification/unclassified-prefix overshoots and diagnostics.
+The final related run passes all 38 methods (26 transport, 12 retained reader)
+under Python 3.14.2, without failures, errors or skips. Positive controls include
+exact startup/page frames, result-first/id-last response order, coalesced small
+notifications, fragmented Unicode, high descriptors, deadlines and cancellation.
+File-backed deterministic read-bound fixtures are separate from the retained
+real owned-process fixtures. Neither is an actual native question observation.
+
+P04 Rev4, source/locator scope, request/page/deadline caps and inactive adapter
+boundary remain unchanged. Final-head hosted CI and independent code/security
+review, protected merge and main checks remain required. No installed profile,
+service, task or native control was activated. Full answer/intent/restart and
+remote operational acceptance remain NOT RUN.

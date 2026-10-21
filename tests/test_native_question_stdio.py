@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -45,6 +46,10 @@ for raw in sys.stdin.buffer:
         if mode == 'scope_init':
             p.with_suffix('.changed').write_text('changed')
         emit({'id': msg['id'], 'result': {}}, 65537 if mode == 'init_over' else None)
+        if mode == 'broken_input':
+            os.close(0)
+            p.with_suffix('.stdin_closed').write_text('closed')
+            time.sleep(60)
     elif method == 'initialized':
         continue
     elif method == 'thread/items/list':
@@ -80,6 +85,8 @@ for raw in sys.stdin.buffer:
             'questions': cfg.get('questions', [{'title': 'Choose scope', 'options': ['Small', 'Large']}]),
             'private-extra': 'private-canary-extra'}
         result = {'id': msg['id'], 'result': {'data': [{'turnId': turn, 'item': item}]}}
+        if mode == 'result_first':
+            result = {'result': result['result'], 'id': result['id']}
         if mode == 'wrong_id':
             result['id'] = 'different-request'
         if mode == 'duplicate_id':
@@ -87,7 +94,7 @@ for raw in sys.stdin.buffer:
             sys.stdout.write('{"id":"different-request",' + data[1:] + '\n');sys.stdout.flush();continue
         if mode == 'over_bytes' and page == 2:
             emit(result, 1048577)
-        elif mode == 'exact_bytes' and page == 2:
+        elif mode in {'exact_bytes', 'result_first'} and page == 2:
             emit(result, 1048576)
         else:
             emit(result)
@@ -206,6 +213,114 @@ class NativeQuestionStdioTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, 'unavailable')
         self.assertEqual(len(self.events(path)), 1)
         self.assert_ended(path)
+
+    async def test_broken_child_input_is_a_safe_transport_failure(self):
+        path = self.server(mode='broken_input')
+        original = stdio._StdioSource._send
+        async def send(source, method, params, **kwargs):
+            if method == 'initialized':
+                deadline = time.monotonic() + 5
+                while not path.with_suffix('.stdin_closed').exists():
+                    self.assertLess(time.monotonic(), deadline)
+                    await asyncio.sleep(.01)
+            return await original(source, method, params, **kwargs)
+        with patch.object(stdio._StdioSource, '_send', send):
+            result = await self.read(path)
+        self.assertEqual((result.status, result.reason), ('unavailable', 'source_failure'))
+        self.assertEqual(len(self.events(path)), 1)
+        self.assert_ended(path)
+
+    def framed_source(self, raw, *, auxiliary=0):
+        output = tempfile.TemporaryFile()
+        error = tempfile.TemporaryFile()
+        self.addCleanup(output.close)
+        self.addCleanup(error.close)
+        output.write(raw)
+        output.seek(0)
+        source = stdio._StdioSource('/unused', lambda: self.scope, self.scope)
+        source.process = SimpleNamespace(stdout=output, stderr=error)
+        source.aux_bytes = auxiliary
+        return source, output.fileno()
+
+    async def test_partial_reads_do_not_exceed_page_or_startup_frame_allowance(self):
+        original = os.read
+        for limit, startup in [(1048576, False), (65536, True)]:
+            with self.subTest(limit=limit):
+                raw = b'{"result":"' + b'x' * (limit + 8192)
+                source, output = self.framed_source(raw)
+                first = True
+                def read(descriptor, count):
+                    nonlocal first
+                    if descriptor == output and first:
+                        first = False
+                        count = min(count, 8191)
+                    return original(descriptor, count)
+                with patch.object(stdio.os, 'read', read), self.assertRaises(stdio.SourceFailure):
+                    await source._receive('expected', limit, startup=startup)
+                self.assertLessEqual(len(source.buffer), limit)
+                self.assertLessEqual(source.stdout_bytes, limit)
+
+    async def test_notification_and_unclassified_prefix_stop_at_remaining_auxiliary_bytes(self):
+        bodies = [
+            {'method': 'notice', 'params': {'x': 'x' * 900000}},
+            {'params': {'result': {'id': 'expected', 'x': 'x' * 900000}}, 'method': 'notice'},
+            {'extension': {'result': {'id': 'expected', 'x': 'x' * 900000}}, 'method': 'notice'},
+        ]
+        original = os.read
+        for body in bodies:
+            with self.subTest(first_key=next(iter(body))):
+                raw = json.dumps(body, separators=(',', ':')).encode() + b'\n'
+                source, output = self.framed_source(raw, auxiliary=1234)
+                peaks = []
+                def read(descriptor, count):
+                    chunk = original(descriptor, count)
+                    if descriptor == output:
+                        peaks.append(len(source.buffer) + len(chunk))
+                    return chunk
+                with patch.object(stdio.os, 'read', read), self.assertRaises(stdio.SourceFailure):
+                    await source._receive('expected', 1048576)
+                self.assertTrue(peaks)
+                self.assertLessEqual(max(peaks), 65536 - 1234)
+                self.assertLessEqual(source.stdout_bytes, 65536 - 1234)
+
+    async def test_auxiliary_exact_frame_limit_and_small_coalesced_notifications(self):
+        response = {'id': 'expected', 'result': {}}
+        small = json.dumps(response, separators=(',', ':')).encode()
+        raw = small + b' ' * (65535 - len(small)) + b'\n'
+        source, _ = self.framed_source(raw)
+        result, value = await source._receive('expected', 65536, startup=True)
+        self.assertEqual(len(result), 65536)
+        self.assertEqual(value, response)
+        notices = b'{"method":"notice","params":{}}\n' * 2
+        source, _ = self.framed_source(notices + small + b'\n')
+        _, value = await source._receive('expected', 1048576)
+        self.assertEqual(value, response)
+        self.assertEqual(source.aux_bytes, len(notices))
+        self.assertEqual(source.notifications, 2)
+
+    async def test_diagnostic_reads_stop_at_the_exact_byte_allowance(self):
+        source, _ = self.framed_source(b'{"result":"' + b'x' * 200000)
+        source.process.stderr.write(b'x' * 90000)
+        source.process.stderr.seek(0)
+        with self.assertRaises(stdio.SourceFailure):
+            await source._receive('expected', 1048576)
+        self.assertLessEqual(source.stderr_bytes, 65536)
+
+    async def test_result_first_id_last_retains_the_exact_page_limit(self):
+        path = self.server(mode='result_first')
+        result = await self.read(path)
+        self.assertEqual((result.status, result.pages_read), ('observed', 2))
+        self.assert_ended(path)
+
+    async def test_fragmented_unicode_prefix_does_not_require_id_first(self):
+        raw = '{"extension":"추가","result":{},"id":"expected"}\n'.encode()
+        source, output = self.framed_source(raw)
+        original = os.read
+        def read(descriptor, count):
+            return original(descriptor, min(1, count) if descriptor == output else count)
+        with patch.object(stdio.os, 'read', read):
+            _, value = await source._receive('expected', 1048576)
+        self.assertEqual(value['result'], {})
 
     async def test_rpc_identity_and_duplicate_keys_are_not_accepted(self):
         for mode in ['wrong_id', 'duplicate_id']:

@@ -38,6 +38,61 @@ def _constant(value):
     raise SourceFailure('unavailable')
 
 
+def _frame_kind(raw):
+    """Find top-level RPC keys within the bounded unclassified prefix.
+
+    A result/error key permits the page allowance; method/params use the
+    auxiliary allowance. Nested keys and a matching id alone grant no extra
+    bytes. Full strict JSON and RPC validation still follow framing.
+    """
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError as error:
+        if error.reason != 'unexpected end of data' or error.end != len(raw):
+            raise SourceFailure('unavailable') from None
+        text = raw[:error.start].decode('utf-8')
+    decoder = json.JSONDecoder()
+    index = 0
+    def space(position):
+        while position < len(text) and text[position] in ' \t\r\n':
+            position += 1
+        return position
+    index = space(index)
+    if index == len(text):
+        return None
+    if text[index] != '{':
+        raise SourceFailure('unavailable')
+    index += 1
+    while True:
+        index = space(index)
+        try:
+            key, end = decoder.raw_decode(text, index)
+        except (ValueError, RecursionError):
+            return None
+        if type(key) is not str:
+            raise SourceFailure('unavailable')
+        index = space(end)
+        if index == len(text):
+            return None
+        if text[index] != ':':
+            raise SourceFailure('unavailable')
+        if key in {'method', 'params'}:
+            return 'auxiliary'
+        if key in {'result', 'error'}:
+            return 'response'
+        index = space(index + 1)
+        try:
+            _, index = decoder.raw_decode(text, index)
+        except (ValueError, RecursionError):
+            return None
+        index = space(index)
+        if index == len(text) or text[index] == '}':
+            return None
+        if text[index] != ',':
+            raise SourceFailure('unavailable')
+        index += 1
+
+
 class _StdioSource:
     def __init__(self, executable, binding, scope):
         self.executable, self._binding, self.scope = executable, binding, scope
@@ -95,16 +150,18 @@ class _StdioSource:
                 raise SourceFailure('unavailable')
             raw = raw[written:]
 
-    async def _read(self):
+    async def _read(self, allowance):
         output = self.process.stdout.fileno()
         error = self.process.stderr.fileno()
         while True:
             self._current()
-            descriptors = [output] + ([error] if self.stderr_open else [])
             # Bound diagnostics before accepting a simultaneously available result.
             if self.stderr_open:
+                diagnostic_allowance = _AUX_BYTES - self.stderr_bytes
+                if diagnostic_allowance <= 0:
+                    raise SourceFailure('unavailable')
                 try:
-                    chunk = os.read(error, 8192)
+                    chunk = os.read(error, min(8192, diagnostic_allowance))
                 except BlockingIOError:
                     pass
                 else:
@@ -113,7 +170,10 @@ class _StdioSource:
                         raise SourceFailure('unavailable')
                     self.stderr_open = bool(chunk)
             try:
-                chunk = os.read(output, 8192)
+                remaining = min(allowance, 3 * _PAGE_BYTES + _AUX_BYTES - self.stdout_bytes)
+                if remaining <= 0:
+                    raise SourceFailure('unavailable')
+                chunk = os.read(output, min(8192, remaining))
             except BlockingIOError:
                 descriptors = [output] + ([error] if self.stderr_open else [])
                 await self._ready(descriptors)
@@ -126,14 +186,22 @@ class _StdioSource:
             return chunk
 
     async def _receive(self, identifier, limit, *, startup=False):
+        kind = 'auxiliary' if startup else None
         while True:
+            if kind is None:
+                kind = _frame_kind(self.buffer)
+            auxiliary = _AUX_BYTES - self.aux_bytes
+            frame_limit = limit if kind == 'response' else min(limit, auxiliary)
             boundary = self.buffer.find(b'\n')
             if boundary < 0:
-                if len(self.buffer) >= limit:
+                if len(self.buffer) >= frame_limit:
                     raise SourceFailure('unavailable')
-                self.buffer.extend(await self._read())
+                # A read may also contain the beginning of the next frame.
+                # Keep any such tail within the remaining auxiliary allowance.
+                allowance = min(frame_limit - len(self.buffer), max(1, auxiliary))
+                self.buffer.extend(await self._read(allowance))
                 continue
-            if boundary + 1 > limit:
+            if boundary + 1 > frame_limit:
                 raise SourceFailure('unavailable')
             raw = bytes(self.buffer[:boundary + 1])
             del self.buffer[:boundary + 1]
@@ -145,13 +213,15 @@ class _StdioSource:
             if type(value) is not dict:
                 raise SourceFailure('unavailable')
             if 'method' in value:
-                if 'id' in value or not isinstance(value['method'], str):
+                if ('id' in value or 'result' in value or 'error' in value
+                        or not isinstance(value['method'], str)):
                     # A read must not answer approvals, elicitation or tool calls.
                     raise SourceFailure('unavailable')
                 self.notifications += 1
                 self.aux_bytes += len(raw)
                 if self.notifications > 32 or self.aux_bytes > _AUX_BYTES:
                     raise SourceFailure('unavailable')
+                kind = 'auxiliary' if startup else None
                 continue
             if value.get('id') != identifier or ('result' in value) == ('error' in value):
                 raise SourceFailure('unavailable')
@@ -201,15 +271,22 @@ class _StdioSource:
                 or request.direction not in {'asc', 'desc'} or max_bytes != _PAGE_BYTES
                 or not 0 < timeout <= 30 or self.pages >= 3):
             raise SourceFailure('unavailable')
-        async with asyncio.timeout(timeout):
-            await self._start()
-            self.pages += 1
-            identifier = uuid.uuid4().hex
-            await self._send('thread/items/list', request.params(), identifier=identifier)
-            raw, _ = await self._receive(identifier, max_bytes)
-            async def chunks():
-                yield raw
-            yield chunks()
+        try:
+            async with asyncio.timeout(timeout):
+                await self._start()
+                if self.aux_bytes >= _AUX_BYTES:
+                    raise SourceFailure('unavailable')
+                self.pages += 1
+                identifier = uuid.uuid4().hex
+                await self._send('thread/items/list', request.params(), identifier=identifier)
+                raw, _ = await self._receive(identifier, max_bytes)
+                async def chunks():
+                    yield raw
+                yield chunks()
+        except TimeoutError:
+            raise
+        except OSError:
+            raise SourceFailure('unavailable') from None
 
     async def close(self):
         """Release owned pipes and bound EOF/terminate/kill of the owned child.
