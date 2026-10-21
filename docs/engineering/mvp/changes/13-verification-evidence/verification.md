@@ -786,3 +786,47 @@ That evidence does not qualify this later correction. P13 Rev4/VF Rev11 and thei
 native/full-v1 exclusions are unchanged. Final-head CI/artifacts, independent
 code/security reviews, scoped CODEOWNER approval, protected merge and actual-main
 checks remain required; no full local kernel was repeated.
+
+
+## Compiled bytes and semantic input validation -- 2026-10-21
+
+The bounded compile cache now reads selected modules through the same pinned
+inode/size/hash checker used by snapshot verification. Code objects therefore
+come from the verified bytes, including when a transient substitution is restored
+before a later boundary. The cache's 8 MB ceiling uses the pinned size; source
+reads are bounded before compilation. No selected code executes in the cache.
+
+Selector packet validity and process exit are checked together. A packetless
+zero exit is test_error evidence with zero unproven counters, while later
+independent selectors still run. Nonzero/crash, valid shutdown packets, signals
+and infrastructure outcomes retain their separate treatment. Missing requested
+report files are invalid evidence whether their parent already exists or not.
+
+Requirement anchors now use the already declared markdown-it-py 4.2.0 CommonMark
+parser instead of a second handwritten block parser. Only top-level heading tokens
+are normalized; no rendering, link fetching or document extensions are enabled.
+Inline tags/autolinks do not hide following real headings, and code/HTML blocks
+remain excluded. A missing registered parser dependency produces a safe nonzero
+environment wait without raw import text or effects.
+
+Four unchanged methods reproduce eight assertions on published ea27891:
+transient compiled substitution, fork/fresh-exec zero exits, missing evidence,
+and valid headings after inline HTML/autolinks. Normal compiled execution,
+real block exclusions and read-only validation provide counterexamples to an
+always-deny implementation. The same final test bytes pass all 72 collector
+contract methods on Python 3.14.2 in 127.614 seconds with no failures/errors/
+skips, including maximum 64x32 and earlier source/signal/publication/file tests.
+
+An initial local run retained the CI-shell failure from resolving python3 outside
+the registered test environment. Repeating the unchanged source/tests with that
+same declared interpreter/dependency environment passed the original oracle.
+No dependency pin, CI gate or expected outcome was weakened; no full local kernel
+was repeated. The existing dependency was reused in an isolated local test profile.
+
+The previous ea27891 head passed all four jobs in
+[run 39526954889](https://github.com/openboa-ai/hydra/actions/runs/39526954889).
+Both hosted reports were consumed against actual provider/run/merge-tree/source/
+manifest/policy pins. That result does not qualify this later correction.
+P13 Rev4/VF Rev11 and their native/full-v1 exclusions stay unchanged. Final-head
+CI/artifacts, completed independent code/security reviews, scoped CODEOWNER
+approval, protected merge and actual-main checks remain required.

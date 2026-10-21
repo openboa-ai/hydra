@@ -421,6 +421,101 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_compiled_selector_bytes_cannot_be_substituted_between_snapshot_checks(self):
+        def repeated(body):
+            fixture = self.fixture(body=body)
+            fixture.write('tests/test_probe.py', (fixture.root / 'tests/test_probe.py').read_text() +
+                " def test_later(self):\n  with Path('effect').open('a') as f: f.write('once\\n')\n")
+            fixture.case['selectors'].append('test_probe.Probe.test_later')
+            fixture.save()
+            return fixture
+        normal = repeated('self.assertEqual(2 + 2, 4)')
+        self.assertEqual(normal.run().returncode, 0)
+        self.assertEqual(normal.run(validate=True).returncode, 0)
+        self.assertEqual((normal.root / 'effect').read_text().splitlines(), ['once'])
+        fixture = repeated("self.fail('committed')")
+        hook = '''
+phase=[False]
+target=[None]
+original_read=Path.read_bytes
+original_fdopen=os.fdopen
+original_compile=_compile_selected
+saved=[None,None,None]
+def replace_source(data):
+    os.chmod(target[0],saved[2]|0o200)
+    target[0].write_bytes(data)
+    os.chmod(target[0],saved[2])
+def swapped_read(read):
+    replace_source(saved[1])
+    try: return read()
+    finally: replace_source(saved[0])
+def changed_read(path):
+    if phase[0] and path==target[0]:
+        return swapped_read(lambda: original_read(path))
+    return original_read(path)
+class ChangedStream:
+    def __init__(self,stream): self.stream=stream
+    def __enter__(self): return self
+    def __exit__(self,*args): return self.stream.__exit__(*args)
+    def __getattr__(self,name): return getattr(self.stream,name)
+    def read(self,*args): return swapped_read(lambda: self.stream.read(*args))
+def changed_fdopen(fd,*args,**kwargs):
+    stream=original_fdopen(fd,*args,**kwargs)
+    if phase[0] and target[0] is not None:
+        left,right=os.fstat(fd),target[0].stat()
+        if (left.st_dev,left.st_ino)==(right.st_dev,right.st_ino):
+            return ChangedStream(stream)
+    return stream
+def changed_compile(root,manifest,*args,**kwargs):
+    target[0]=root/'tests/test_probe.py'
+    saved[0]=original_read(target[0])
+    expression=b"self.fail('committed')"
+    saved[1]=saved[0].replace(expression,b'pass'+b' '*(len(expression)-4))
+    assert saved[0]!=saved[1] and len(saved[0])==len(saved[1])
+    saved[2]=target[0].stat().st_mode & 0o777
+    phase[0]=True
+    try: return original_compile(root,manifest,*args,**kwargs)
+    finally: phase[0]=False
+Path.read_bytes=changed_read
+os.fdopen=changed_fdopen
+_compile_selected=changed_compile
+'''
+        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + hook)
+        result = fixture.run()
+        self.assertNotEqual(result.returncode, 0, 'Substituted compiled code certified the committed failing selector')
+        self.assertFalse((fixture.root / 'effect').exists())
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
+    def test_packetless_zero_exit_records_failed_evidence_and_runs_later_selector(self):
+        for fresh_exec in (False, True):
+            with self.subTest(fresh_exec=fresh_exec):
+                fixture = self.fixture(body='os._exit(0)')
+                fixture.write('tests/test_probe.py', (fixture.root / 'tests/test_probe.py').read_text() +
+                    " def test_later(self):\n  with Path('effect').open('a') as f: f.write('once\\n')\n")
+                fixture.case['selectors'].append('test_probe.Probe.test_later')
+                fixture.save()
+                if fresh_exec:
+                    fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + '\ndef _fork_available(): return False\n')
+                result = fixture.run()
+                self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'required_evidence_incomplete'})
+                self.assertEqual(result.returncode, 1)
+                crashed, later = fixture.report()['results'][0]['observed']
+                self.assertEqual(crashed['reasons'], ['test_error'])
+                self.assertEqual(tuple(crashed[k] for k in ('collected', 'executed', 'completed')), (0, 0, 0))
+                self.assertEqual(later['reasons'], ['passed'])
+                self.assertEqual((fixture.root / 'effect').read_text().splitlines(), ['once'])
+
+    def test_missing_report_is_invalid_evidence_with_or_without_parent(self):
+        for parent in (False, True):
+            with self.subTest(parent=parent):
+                fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+                if parent:
+                    (fixture.root / 'artifacts/mvp-verification').mkdir(parents=True)
+                result = fixture.run(validate=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'invalid_input'})
+                self.assertFalse((fixture.root / 'effect').exists())
+
     def test_crashed_selector_has_failed_evidence_and_does_not_hide_later_execution(self):
         for fresh_exec in (False, True):
             for shutdown in (False, True):
@@ -1166,6 +1261,38 @@ class VerificationCIContractTests(unittest.TestCase):
 
 class VerificationEvidenceReferenceTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
+
+    def test_inline_html_and_autolinks_do_not_hide_real_requirement_headings(self):
+        cases = [('<https://example.com>\n## Acceptance\n', True),
+                 ('<span>inline</span>\n## Acceptance\n', True),
+                 ('<a href="/path">link</a>\n## Acceptance\n', True),
+                 ('paragraph\n<custom>\n## Acceptance\n', True),
+                 ('<div>\n## Acceptance\n</div>\n', False),
+                 ('<custom>\n## Acceptance\n', False),
+                 ('<style>\n\n## Acceptance\n</style>\n', False),
+                 ('<custom>\n\n## Acceptance\n', True)]
+        for document, valid in cases:
+            with self.subTest(document=document):
+                fixture = self.fixture(body="Path('effect').write_text('once')")
+                fixture.write('docs/contract.md', document)
+                fixture.case['requirements'][0]['revision'] = digest(document.encode())
+                fixture.save()
+                result = fixture.run()
+                self.assertEqual(result.returncode == 0, valid, result.stdout)
+                self.assertEqual((fixture.root / 'effect').exists(), valid)
+
+    def test_missing_registered_markdown_dependency_is_a_safe_environment_wait(self):
+        fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+        hook = ("import builtins\noriginal=builtins.__import__\n"
+                "def unavailable(name,*args,**kwargs):\n"
+                " if name=='markdown_it': raise ImportError('" + CANARY + "')\n"
+                " return original(name,*args,**kwargs)\n"
+                "builtins.__import__=unavailable\n")
+        result = fixture.run(driver=VerificationProcessBoundaryTests.driver(hook))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout), {'status': 'BLOCKED', 'reason': 'environment_unavailable'})
+        self.assertFalse((fixture.root / 'effect').exists())
+        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
 
     def test_requirement_section_resolves_before_selected_test_effect(self):
         cases = [

@@ -136,66 +136,28 @@ def read_json(path, *, limit=_INPUT_LIMIT, dir_fd=None):
 
 
 def section_anchors(text):
-    """Resolve ATX/single-line Setext headings; code and raw HTML are not headings.
-
-    Ambiguous inline markup is ignored rather than inventing a requirement anchor.
-    """
-    anchors, paragraph, fence, raw_html = set(), [], None, None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if fence:
-            if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(fence[1]) + r",}[ \t]*", line):
-                fence = None
+    """Resolve top-level CommonMark headings without rendering or fetching links."""
+    try:
+        from markdown_it import MarkdownIt
+    except ImportError as error:
+        raise EnvironmentUnavailable() from error
+    try:
+        tokens = MarkdownIt('commonmark').parse(text)
+    except (ValueError, RecursionError) as error:
+        raise Invalid() from error
+    anchors = set()
+    for index, token in enumerate(tokens):
+        if token.type != 'heading_open' or token.level != 0:
             continue
-        if raw_html:
-            if ((raw_html == "block" and not stripped) or
-                    (raw_html != "block" and raw_html in line.lower())):
-                raw_html = None
-            continue
-        opening = re.match(r" {0,3}(`{3,}|~{3,})", line)
-        if opening:
-            marker = opening[1]
-            fence, paragraph = (marker[0], len(marker)), []
-            continue
-        if line.startswith(("    ", "\t")):
-            paragraph = []
-            continue
-        if stripped.startswith("<!--"):
-            raw_html = None if "-->" in stripped else "-->"
-            paragraph = []
-            continue
-        html = re.match(r" {0,3}<(script|pre|style|textarea)(?:\s|>)", line, re.IGNORECASE)
-        if html:
-            end = "</" + html[1].lower() + ">"
-            raw_html, paragraph = (None if end in line.lower() else end), []
-            continue
-        if re.match(r" {0,3}<[A-Za-z/!?]", line):
-            raw_html, paragraph = "block", []
-            continue
-        atx = re.fullmatch(r" {0,3}#{1,6}(?:[ \t]+(.*?))?[ \t]*", line)
-        heading = atx[1] or "" if atx else None
-        if atx:
-            heading = re.sub(r"[ \t]+#+[ \t]*$", "", heading)
-        elif re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", line) and len(paragraph) == 1:
-            heading = paragraph[0]
-        if heading is None:
-            if stripped and not re.match(r"[#>*+\-]", stripped):
-                paragraph.append(stripped)
-            else:
-                paragraph = []
-            continue
-        paragraph = []
-        heading = re.sub(r"!?\[([^\[\]]*)\]\([^()]*\)", r"\1", heading)
-        heading = re.sub(r"(`+)([^`]*?)\1", r"\2", heading)
-        heading = re.sub(r"(\*\*?|~~)(.+?)\1", r"\2", heading)
-        heading = re.sub(r"(?<!\w)(__?)(?!\s)(.+?)(?<!\s)\1(?!\w)", r"\2", heading)
-        if re.search(r"[\\<>&\[\]`*~]", heading):
-            continue
-        slug = re.sub(r"[^\w -]", "", heading.strip().lower()).replace(" ", "-")
+        inline = tokens[index + 1]
+        heading = ''.join(child.content if child.type in {'text', 'code_inline', 'image'}
+            else ' ' if child.type in {'softbreak', 'hardbreak'} else ''
+            for child in (inline.children or [])).strip()
+        slug = re.sub(r'[^\w -]', '', heading.lower()).replace(' ', '-')
         candidate, suffix = slug, 0
         while candidate in anchors:
             suffix += 1
-            candidate = slug + "-" + str(suffix)
+            candidate = slug + '-' + str(suffix)
         anchors.add(candidate)
     return anchors
 
@@ -362,6 +324,20 @@ def _snapshot_identity(info):
     return info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink
 
 
+def _read_snapshot_file(path, identity, size, expected, link):
+    require(_snapshot_identity(os.lstat(path)) == identity)
+    if link:
+        data = os.readlink(path).encode('utf-8')
+    else:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            require(_snapshot_identity(info) == identity and info.st_size == size)
+            data = stream.read(size + 1)
+    require(len(data) == size and hashlib.sha256(data).digest() == expected)
+    return data
+
+
 def _check_snapshot_bytes(checks):
     directories, files = checks
     # Reuse known paths and expected hashes, never timestamps as content proof.
@@ -369,17 +345,8 @@ def _check_snapshot_bytes(checks):
     for path, identity, names in directories:
         require(_snapshot_identity(os.lstat(path)) == identity)
         require(tuple(sorted(os.listdir(path))) == names)
-    for path, identity, size, expected, link in files:
-        require(_snapshot_identity(os.lstat(path)) == identity)
-        if link:
-            data = os.readlink(path).encode('utf-8')
-        else:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-            with os.fdopen(descriptor, 'rb') as stream:
-                info = os.fstat(stream.fileno())
-                require(_snapshot_identity(info) == identity and info.st_size == size)
-                data = stream.read(size + 1)
-        require(len(data) == size and hashlib.sha256(data).digest() == expected)
+    for entry in files:
+        _read_snapshot_file(*entry)
 
 
 def verify_snapshot(root, revision, *, signatures=None, remember=False):
@@ -603,7 +570,7 @@ def execute(root, manifest, pins):
     # replace later committed implementations without changing checked files.
     entries, interrupted = [], False
     signatures = verify_snapshot(root, pins['source_revision'], remember=True)
-    compiled = _compile_selected(root, manifest) if _fork_available() else {}
+    compiled = _compile_selected(root, manifest, signatures) if _fork_available() else {}
     run_alias = "verification-" + secrets.token_hex(16)
     for case in manifest["cases"]:
         started, outcomes = now(), []
@@ -664,7 +631,7 @@ class _CompiledFinder:
         return importlib.util.spec_from_loader(fullname, _CompiledLoader(fullname, path, code))
 
 
-def _compile_selected(root, manifest):
+def _compile_selected(root, manifest, signatures):
     """Compile bounded repeated inputs once; never execute/import selected code.
 
     Forks inherit immutable code objects, while every module namespace and test
@@ -677,15 +644,17 @@ def _compile_selected(root, manifest):
             name = selector.split('.')[0]
             counts[name] = counts.get(name, 0) + 1
     compiled, retained = {}, 0
+    pinned = {entry[0]: entry for entry in signatures[1]}
     for name in sorted(counts, key=counts.get, reverse=True):
         if counts[name] < 2:
             continue
         path = regular(root, 'tests/' + name + '.py')
-        size = path.stat().st_size
+        entry = pinned.get(str(path))
+        require(entry is not None and not entry[-1])
+        size = entry[2]
         if size > 8_000_000 - retained:
             continue
-        data = path.read_bytes()
-        require(len(data) == size)
+        data = _read_snapshot_file(*entry)
         try:
             code = compile(data, str(path), 'exec', dont_inherit=True, optimize=sys.flags.optimize)
         except SyntaxError:
@@ -898,21 +867,22 @@ def _capture_worker(child, *, group, selector=None):
             raise KeyboardInterrupt()
         if returncode == _ENVIRONMENT_EXIT:
             raise EnvironmentUnavailable()
-        if selector is not None and returncode != 0:
+        if selector is not None:
             # A selected implementation can crash before returning its packet,
             # or during private shutdown after a complete packet. Preserve only
             # available counters and record failure; never certify that PASS.
+            invalid_packet = False
             try:
                 selected = _selector_result(data, selector)
             except (Invalid, ValueError, struct.error):
+                invalid_packet = True
                 selected = {'outcome': {'selector': selector, 'collected': 0, 'executed': 0,
                     'completed': 0, 'subtests': 0, 'reasons': []}, 'environment': execution_environment()}
-            outcome = selected['outcome']
-            outcome['reasons'] = sorted((set(outcome['reasons']) - {'passed'}) | {'test_error'})
+            if invalid_packet or returncode != 0:
+                outcome = selected['outcome']
+                outcome['reasons'] = sorted((set(outcome['reasons']) - {'passed'}) | {'test_error'})
             return selected
         require(returncode == 0)
-        if selector is not None:
-            return _selector_result(data, selector)
         report = decode_json(data, limit=_REPORT_LIMIT)
         if report == {"worker_interrupted": True}:
             raise KeyboardInterrupt()
@@ -1020,6 +990,8 @@ def read_report(root, relative):
     descriptor = open_artifact_directory(root)
     try:
         return read_json(target.name, limit=_REPORT_LIMIT, dir_fd=descriptor)
+    except FileNotFoundError as error:
+        raise Invalid() from error
     finally:
         os.close(descriptor)
 
