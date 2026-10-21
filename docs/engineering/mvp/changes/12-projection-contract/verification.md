@@ -774,3 +774,39 @@ unchanged. Existing UI source bytes are unchanged; this result is a Rust cache
 behavior qualification, not an installed-app or native-operation observation.
 Final-head hosted CI and independent reviews, protected merge and exact-main
 verification remain required.
+
+
+## Final observation and page cursor recovery
+
+The unchanged P12 Rev4 / CP8 / NC8 and Mac contract also apply to the three
+findings on parent `b40cc3969a0141698b062bd89b288fa5fd8db430`:
+
+- The coordinator ownership probe now precedes the final admission snapshot.
+  A Pause or Stop applied during the probe is visible in the same response.
+- Overview page metadata follows accepted payload sequence. An older cached
+  initial page cannot restore a consumed continuation; newer local polls do not
+  suppress a fresh remote page. Binding/runtime resets retain their own boundary.
+- Python, Rust and TypeScript reject `current` observations with unavailable
+  coverage. The shared literal matrix grows from 30 to 33 cases, retaining
+  positive stale/unavailable and current/partial observations in both profiles.
+
+Frozen parent tests reproduce four Python assertion failures, two failing
+frontend methods and one failing Rust method, with no test errors/skips. The
+initial Tauri build preflight did not reach tests and is excluded from RED;
+the actual Rust parent comparison ran after building the unchanged frontend.
+The same oracles pass after the fixes. Impact checks pass 289 Python 3.14.2,
+338 frontend and 55 Rust 1.94.1 methods plus the TypeScript/Vite build, without
+failures/errors/skips. Existing source/receipt matrices remain in place.
+
+These are deterministic source, consumer and ordering checks. Current-head
+independent reviews, CI, protected merge and actual-main checks remain required.
+No native authority, action grant, installed migration, live source capability
+or complete v1 operating acceptance is established by this recovery.
+
+
+This recovery also integrates checked main `58e6917ff9a813ad7a32530b2393161f509a82bc`
+without a separate intermediate branch-update CI cycle. All delivered Issue
+planning blobs are preserved and the same P12 frontend/Rust source bytes retain
+their 338/55 passing checks. All 313 selected combined Python 3.14.2 methods pass
+without failures/errors/skips. Current final-head CI and independent reviews
+remain mandatory; no earlier head is promoted to final delivery evidence.

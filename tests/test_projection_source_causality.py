@@ -43,7 +43,7 @@ def matrix_frames(row):
 class ProjectionSourceCausalityTests(unittest.TestCase):
     def test_shared_source_evidence_matrix_in_both_profiles(self):
         rows=json.loads((FIXTURE/'source-causality.json').read_text())['cases']
-        self.assertEqual(len(rows),30)
+        self.assertEqual(len(rows),33)
         for row in rows:
             frame,reply=matrix_frames(row)
             for profile,value in [('projection',frame),('standard',reply)]:

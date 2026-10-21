@@ -15,7 +15,7 @@ type Feedback = Command & { outcome: CommandResult["outcome"]; reason: string | 
 export interface ProjectionState {
   binding_epoch: string; source_slots: Map<string, Slot>; selected_ref: ResourceRef | null;
   pending_commands: Map<string, Command>; feedback: Map<string, Feedback>;
-  queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null; runtime_sequence:number;
+  queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null; runtime_sequence:number; page_sequence:number;
   read_context: {scope:string|null;sequence:number};
   retry_windows: Map<string, RetryWindow>; last_now: number; error: string | null;
 }
@@ -108,7 +108,7 @@ export function compareRevisions(left:Revision|null,right:Revision|null):number|
 export function projectionState(binding_epoch: string): ProjectionState {
   valid(uuid.test(binding_epoch));
   return { binding_epoch, source_slots: new Map(), selected_ref: null, pending_commands: new Map(),
-    feedback: new Map(), read_context:{scope:null,sequence:0}, retry_windows: new Map(), queries: new Map(), view: null, runtime_key: null, runtime_sequence:0, last_now: 0, error: null };
+    feedback: new Map(), read_context:{scope:null,sequence:0}, retry_windows: new Map(), queries: new Map(), view: null, runtime_key: null, runtime_sequence:0, page_sequence:0, last_now: 0, error: null };
 }
 function stale(state: ProjectionState, keys: Iterable<string>, reason: string) {
   for (const k of keys) {
@@ -308,7 +308,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         }
         for (const [id,c] of state.pending_commands) state.feedback.set(id,{...c,outcome:"unknown",reason:"runtime_binding_changed",receipt:null});
         state.pending_commands.clear();state.queries.clear();state.source_slots.clear();
-        state.view=null;state.selected_ref=null;
+        state.view=null;state.page_sequence=0;state.selected_ref=null;
       }
       state.runtime_key = identity;
       state.runtime_sequence=Math.max(state.runtime_sequence,event.response.sequence);
@@ -431,7 +431,8 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       }
       const currentRequest = event.response.sequence < state.runtime_sequence ? state.view?.request ?? null : structuredClone(frame.request);
       const incoming = new Set<object>();
-      if (!state.view) { state.view = structuredClone(frame); for (const x of [...state.view.projects,...state.view.work,...state.view.relations]) incoming.add(x); }
+      const localRead=event.scope==="local" || event.scope.startsWith("local:");
+      if (!state.view) { state.view = structuredClone(frame); state.page_sequence=localRead?0:event.response.sequence; for (const x of [...state.view.projects,...state.view.work,...state.view.relations]) incoming.add(x); }
       else {
         // Absence is meaningful only for a complete refresh of the same set.
         // Removing a display record does not complete or retire its native work.
@@ -470,9 +471,11 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
         state.view.capabilities = structuredClone(frame.capabilities);
         const domain=(scope:string)=>scope.startsWith("registered-projects;")?scope.replace(/:from:[0-9]+$/,""):scope;
-        const localRead=event.scope==="local" || event.scope.startsWith("local:");
-        if(!localRead && (domain(frame.page.scope)===domain(state.view.page.scope) ||
-            domain(frame.page.scope)==="registered-projects;overview")) state.view.page=structuredClone(frame.page);
+        if(!localRead && event.response.sequence>=state.page_sequence &&
+            (domain(frame.page.scope)===domain(state.view.page.scope) ||
+             domain(frame.page.scope)==="registered-projects;overview")) {
+          state.view.page=structuredClone(frame.page);state.page_sequence=event.response.sequence;
+        }
         state.view.retry_hints = structuredClone(frame.retry_hints);
       }
       state.view.request = currentRequest;

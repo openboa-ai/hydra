@@ -285,6 +285,7 @@ function observation(value: unknown): void {
   nullable(v.revision, revision); nullable(v.observed_at, timestamp); timestamp(v.last_attempt_at);
   one(v.availability, "current stale unavailable unsupported"); coverage(v.coverage); nullable(v.reason, code);
   const c = plain(v.coverage);
+  if (v.availability === "current") requireValue(c.state !== "unavailable");
   if (v.availability === "current" || v.availability === "stale") {
     requireValue(v.observed_at !== null && v.value !== null); sourceValue(resource.kind, v.value);
     const data = plain(v.value);

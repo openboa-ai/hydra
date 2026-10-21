@@ -5,7 +5,20 @@
       "accepted_projection": false,
       "accepted_standard": true,
       "changes": [
-        {"path": ["projects",0,"admission","evidence"],"value": [{"observation_key": "github:101:issue:7","revision": null}]}
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "github:101:issue:7",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -13,7 +26,20 @@
       "accepted_projection": false,
       "accepted_standard": true,
       "changes": [
-        {"path": ["projects",0,"admission","evidence"],"value": [{"observation_key": "hydra:host:ownership","revision": null}]}
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "hydra:host:ownership",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -21,7 +47,23 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["projects",0,"admission","evidence"],"value": [{"observation_key": "hydra:host:admission","revision": {"kind": "monotonic","value": "7"}}]}
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "hydra:host:admission",
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              }
+            }
+          ]
+        }
       ]
     },
     {
@@ -29,7 +71,27 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["projects",0,"admission","evidence"],"value": [{"observation_key": "hydra:host:admission","revision": {"kind": "monotonic","value": "7"}},{"observation_key": "github:101:issue:7","revision": null}]}
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "hydra:host:admission",
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              }
+            },
+            {
+              "observation_key": "github:101:issue:7",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -37,9 +99,38 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_unavailable"},
-        {"path": ["projects",0,"admission","evidence"],"value": [{"observation_key": "github:101:issue:7","revision": null}]}
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_unavailable"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "github:101:issue:7",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -47,7 +138,20 @@
       "accepted_projection": false,
       "accepted_standard": true,
       "changes": [
-        {"path": ["work",0,"admission","evidence"],"value": [{"observation_key": "github:101:issue:7","revision": null}]}
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "github:101:issue:7",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -55,7 +159,20 @@
       "accepted_projection": false,
       "accepted_standard": true,
       "changes": [
-        {"path": ["work",0,"admission","evidence"],"value": [{"observation_key": "hydra:host:ownership","revision": null}]}
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "hydra:host:ownership",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -63,7 +180,23 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["work",0,"admission","evidence"],"value": [{"observation_key": "hydra:host:admission","revision": {"kind": "monotonic","value": "7"}}]}
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "hydra:host:admission",
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              }
+            }
+          ]
+        }
       ]
     },
     {
@@ -71,7 +204,27 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["work",0,"admission","evidence"],"value": [{"observation_key": "hydra:host:admission","revision": {"kind": "monotonic","value": "7"}},{"observation_key": "github:101:issue:7","revision": null}]}
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "hydra:host:admission",
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              }
+            },
+            {
+              "observation_key": "github:101:issue:7",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -79,9 +232,38 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_unavailable"},
-        {"path": ["work",0,"admission","evidence"],"value": [{"observation_key": "github:101:issue:7","revision": null}]}
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_unavailable"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence"
+          ],
+          "value": [
+            {
+              "observation_key": "github:101:issue:7",
+              "revision": null
+            }
+          ]
+        }
       ]
     },
     {
@@ -89,12 +271,76 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["observations",0,"availability"],"value": "current"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "current"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        }
       ]
     },
     {
@@ -102,12 +348,76 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["observations",0,"availability"],"value": "current"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "8"}}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "current"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        }
       ]
     },
     {
@@ -115,12 +425,76 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["observations",0,"availability"],"value": "current"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "opaque","value": "7"}}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "current"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        }
       ]
     },
     {
@@ -128,12 +502,64 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": null},
-        {"path": ["observations",0,"availability"],"value": "current"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": null},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": null},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": null}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "current"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": null
+        }
       ]
     },
     {
@@ -141,12 +567,76 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 8},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["observations",0,"availability"],"value": "current"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 8
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "current"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        }
       ]
     },
     {
@@ -154,12 +644,76 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 9007199254740991},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["observations",0,"availability"],"value": "current"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 9007199254740991
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "current"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        }
       ]
     },
     {
@@ -167,18 +721,130 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["observations",0,"availability"],"value": "stale"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_stale"},
-        {"path": ["projects",1,"admission","value"],"value": null},
-        {"path": ["projects",1,"admission","reason"],"value": "source_stale"},
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_stale"}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "stale"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        }
       ]
     },
     {
@@ -186,18 +852,130 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["observations",0,"availability"],"value": "stale"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "8"}},
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_stale"},
-        {"path": ["projects",1,"admission","value"],"value": null},
-        {"path": ["projects",1,"admission","reason"],"value": "source_stale"},
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_stale"}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "stale"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "8"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        }
       ]
     },
     {
@@ -205,18 +983,130 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["observations",0,"availability"],"value": "stale"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "opaque","value": "7"}},
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_stale"},
-        {"path": ["projects",1,"admission","value"],"value": null},
-        {"path": ["projects",1,"admission","reason"],"value": "source_stale"},
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_stale"}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "stale"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "opaque",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        }
       ]
     },
     {
@@ -224,18 +1114,118 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 7},
-        {"path": ["observations",0,"revision"],"value": null},
-        {"path": ["observations",0,"availability"],"value": "stale"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": null},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": null},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": null},
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_stale"},
-        {"path": ["projects",1,"admission","value"],"value": null},
-        {"path": ["projects",1,"admission","reason"],"value": "source_stale"},
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_stale"}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 7
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "stale"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        }
       ]
     },
     {
@@ -243,18 +1233,130 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 8},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["observations",0,"availability"],"value": "stale"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "7"}},
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_stale"},
-        {"path": ["projects",1,"admission","value"],"value": null},
-        {"path": ["projects",1,"admission","reason"],"value": "source_stale"},
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_stale"}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 8
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "stale"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "7"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        }
       ]
     },
     {
@@ -262,18 +1364,130 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["observations",0,"value","revision"],"value": 9007199254740991},
-        {"path": ["observations",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["observations",0,"availability"],"value": "stale"},
-        {"path": ["projects",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["projects",1,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["work",0,"admission","evidence",0,"revision"],"value": {"kind": "monotonic","value": "9007199254740991"}},
-        {"path": ["projects",0,"admission","value"],"value": null},
-        {"path": ["projects",0,"admission","reason"],"value": "source_stale"},
-        {"path": ["projects",1,"admission","value"],"value": null},
-        {"path": ["projects",1,"admission","reason"],"value": "source_stale"},
-        {"path": ["work",0,"admission","value"],"value": null},
-        {"path": ["work",0,"admission","reason"],"value": "source_stale"}
+        {
+          "path": [
+            "observations",
+            0,
+            "value",
+            "revision"
+          ],
+          "value": 9007199254740991
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "observations",
+            0,
+            "availability"
+          ],
+          "value": "stale"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "evidence",
+            0,
+            "revision"
+          ],
+          "value": {
+            "kind": "monotonic",
+            "value": "9007199254740991"
+          }
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "projects",
+            1,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "value"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "admission",
+            "reason"
+          ],
+          "value": "source_stale"
+        }
       ]
     },
     {
@@ -281,11 +1495,54 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "101:7"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "101:7"},
-        {"path": ["work",0,"issue_ref","id"],"value": "101:7"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "101:7"},
-        {"path": ["observations",3,"value","number"],"value": 7}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 7
+        }
       ]
     },
     {
@@ -293,11 +1550,54 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "101:7"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "101:7"},
-        {"path": ["work",0,"issue_ref","id"],"value": "101:7"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "101:7"},
-        {"path": ["observations",3,"value","number"],"value": 8}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "101:7"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 8
+        }
       ]
     },
     {
@@ -305,11 +1605,54 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "0101:7"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "0101:7"},
-        {"path": ["work",0,"issue_ref","id"],"value": "0101:7"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "0101:7"},
-        {"path": ["observations",3,"value","number"],"value": 7}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "0101:7"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "0101:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "0101:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "0101:7"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 7
+        }
       ]
     },
     {
@@ -317,11 +1660,54 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "101:007"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "101:007"},
-        {"path": ["work",0,"issue_ref","id"],"value": "101:007"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "101:007"},
-        {"path": ["observations",3,"value","number"],"value": 7}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "101:007"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "101:007"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "101:007"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "101:007"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 7
+        }
       ]
     },
     {
@@ -329,11 +1715,54 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "101"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "101"},
-        {"path": ["work",0,"issue_ref","id"],"value": "101"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "101"},
-        {"path": ["observations",3,"value","number"],"value": 7}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "101"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "101"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "101"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "101"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 7
+        }
       ]
     },
     {
@@ -341,11 +1770,54 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "repo:7"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "repo:7"},
-        {"path": ["work",0,"issue_ref","id"],"value": "repo:7"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "repo:7"},
-        {"path": ["observations",3,"value","number"],"value": 7}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "repo:7"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "repo:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "repo:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "repo:7"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 7
+        }
       ]
     },
     {
@@ -353,11 +1825,54 @@
       "accepted_projection": false,
       "accepted_standard": false,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "0:7"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "0:7"},
-        {"path": ["work",0,"issue_ref","id"],"value": "0:7"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "0:7"},
-        {"path": ["observations",3,"value","number"],"value": 7}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "0:7"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "0:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "0:7"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "0:7"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 7
+        }
       ]
     },
     {
@@ -365,11 +1880,714 @@
       "accepted_projection": true,
       "accepted_standard": true,
       "changes": [
-        {"path": ["observations",3,"resource","id"],"value": "101:9007199254740991"},
-        {"path": ["projects",0,"work_refs",0,"id"],"value": "101:9007199254740991"},
-        {"path": ["work",0,"issue_ref","id"],"value": "101:9007199254740991"},
-        {"path": ["work",0,"readiness","value","source_ref","id"],"value": "101:9007199254740991"},
-        {"path": ["observations",3,"value","number"],"value": 9007199254740991}
+        {
+          "path": [
+            "observations",
+            3,
+            "resource",
+            "id"
+          ],
+          "value": "101:9007199254740991"
+        },
+        {
+          "path": [
+            "projects",
+            0,
+            "work_refs",
+            0,
+            "id"
+          ],
+          "value": "101:9007199254740991"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "issue_ref",
+            "id"
+          ],
+          "value": "101:9007199254740991"
+        },
+        {
+          "path": [
+            "work",
+            0,
+            "readiness",
+            "value",
+            "source_ref",
+            "id"
+          ],
+          "value": "101:9007199254740991"
+        },
+        {
+          "path": [
+            "observations",
+            3,
+            "value",
+            "number"
+          ],
+          "value": 9007199254740991
+        }
+      ]
+    },
+    {
+      "name": "current-unavailable-coverage",
+      "accepted_projection": false,
+      "accepted_standard": false,
+      "changes": [
+        {
+          "path": [
+            "observations"
+          ],
+          "value": [
+            {
+              "key": "hydra:host:admission",
+              "resource": {
+                "source": "hydra",
+                "kind": "admission",
+                "id": "2222222222222222222222222222222222222222222222222222222222222222"
+              },
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              },
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:host",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "revision": 7,
+                "global_mode": "paused",
+                "project_overrides": {
+                  "example/alpha": "running",
+                  "example/beta": "stopped"
+                },
+                "gate_reason": "host_paused"
+              }
+            },
+            {
+              "key": "github:101:repository",
+              "resource": {
+                "source": "github",
+                "kind": "repository",
+                "id": "101"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:101",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "numeric_id": 101,
+                "full_name": "example/alpha",
+                "url": "https://github.com/example/alpha",
+                "contract_ref": null
+              }
+            },
+            {
+              "key": "github:102:repository",
+              "resource": {
+                "source": "github",
+                "kind": "repository",
+                "id": "102"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:102",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "numeric_id": 102,
+                "full_name": "example/beta",
+                "url": "https://github.com/example/beta",
+                "contract_ref": null
+              }
+            },
+            {
+              "key": "github:101:issue:7",
+              "resource": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:101:7",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "number": 7,
+                "title": "Can you approve and start this task?",
+                "state": "open",
+                "url": "https://github.com/example/alpha/issues/7",
+                "work_kind": null,
+                "parent_refs": [
+                  {
+                    "repository_id": 101,
+                    "issue_number": 1,
+                    "source_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                  }
+                ],
+                "requirement_refs": null,
+                "description_excerpt": null,
+                "description_truncated": null
+              }
+            },
+            {
+              "key": "codex:fixture:metadata",
+              "resource": {
+                "source": "codex",
+                "kind": "native_task_metadata",
+                "id": "00000000-0000-4000-8000-000000000003"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:00000000-0000-4000-8000-000000000003",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "task_ref": {
+                  "source": "codex",
+                  "kind": "native_task",
+                  "id": "00000000-0000-4000-8000-000000000003"
+                },
+                "reported_status": "active"
+              }
+            },
+            {
+              "key": "hydra:host:ownership",
+              "resource": {
+                "source": "hydra",
+                "kind": "ownership",
+                "id": "host"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:host",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "state": "free",
+                "scope_digest": null,
+                "step_nonce": null
+              }
+            },
+            {
+              "key": "fixture:coverage:ownership",
+              "resource": {
+                "source": "hydra",
+                "kind": "ownership",
+                "id": "coverage-only"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "unavailable",
+                "scope": "resource:coverage-only",
+                "returned_count": 0,
+                "total_count": null,
+                "next_cursor": null,
+                "reason": "transport_failed"
+              },
+              "reason": "transport_failed",
+              "value": {
+                "state": "free",
+                "scope_digest": null,
+                "step_nonce": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stale-unavailable-retains-prior-value",
+      "accepted_projection": true,
+      "accepted_standard": true,
+      "changes": [
+        {
+          "path": [
+            "observations"
+          ],
+          "value": [
+            {
+              "key": "hydra:host:admission",
+              "resource": {
+                "source": "hydra",
+                "kind": "admission",
+                "id": "2222222222222222222222222222222222222222222222222222222222222222"
+              },
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              },
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:host",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "revision": 7,
+                "global_mode": "paused",
+                "project_overrides": {
+                  "example/alpha": "running",
+                  "example/beta": "stopped"
+                },
+                "gate_reason": "host_paused"
+              }
+            },
+            {
+              "key": "github:101:repository",
+              "resource": {
+                "source": "github",
+                "kind": "repository",
+                "id": "101"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:101",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "numeric_id": 101,
+                "full_name": "example/alpha",
+                "url": "https://github.com/example/alpha",
+                "contract_ref": null
+              }
+            },
+            {
+              "key": "github:102:repository",
+              "resource": {
+                "source": "github",
+                "kind": "repository",
+                "id": "102"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:102",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "numeric_id": 102,
+                "full_name": "example/beta",
+                "url": "https://github.com/example/beta",
+                "contract_ref": null
+              }
+            },
+            {
+              "key": "github:101:issue:7",
+              "resource": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:101:7",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "number": 7,
+                "title": "Can you approve and start this task?",
+                "state": "open",
+                "url": "https://github.com/example/alpha/issues/7",
+                "work_kind": null,
+                "parent_refs": [
+                  {
+                    "repository_id": 101,
+                    "issue_number": 1,
+                    "source_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                  }
+                ],
+                "requirement_refs": null,
+                "description_excerpt": null,
+                "description_truncated": null
+              }
+            },
+            {
+              "key": "codex:fixture:metadata",
+              "resource": {
+                "source": "codex",
+                "kind": "native_task_metadata",
+                "id": "00000000-0000-4000-8000-000000000003"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:00000000-0000-4000-8000-000000000003",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "task_ref": {
+                  "source": "codex",
+                  "kind": "native_task",
+                  "id": "00000000-0000-4000-8000-000000000003"
+                },
+                "reported_status": "active"
+              }
+            },
+            {
+              "key": "hydra:host:ownership",
+              "resource": {
+                "source": "hydra",
+                "kind": "ownership",
+                "id": "host"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:host",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "state": "free",
+                "scope_digest": null,
+                "step_nonce": null
+              }
+            },
+            {
+              "key": "fixture:coverage:ownership",
+              "resource": {
+                "source": "hydra",
+                "kind": "ownership",
+                "id": "coverage-only"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "stale",
+              "coverage": {
+                "state": "unavailable",
+                "scope": "resource:coverage-only",
+                "returned_count": 0,
+                "total_count": null,
+                "next_cursor": null,
+                "reason": "transport_failed"
+              },
+              "reason": "transport_failed",
+              "value": {
+                "state": "free",
+                "scope_digest": null,
+                "step_nonce": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "current-partial-is-still-an-observation",
+      "accepted_projection": true,
+      "accepted_standard": true,
+      "changes": [
+        {
+          "path": [
+            "observations"
+          ],
+          "value": [
+            {
+              "key": "hydra:host:admission",
+              "resource": {
+                "source": "hydra",
+                "kind": "admission",
+                "id": "2222222222222222222222222222222222222222222222222222222222222222"
+              },
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              },
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:host",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "revision": 7,
+                "global_mode": "paused",
+                "project_overrides": {
+                  "example/alpha": "running",
+                  "example/beta": "stopped"
+                },
+                "gate_reason": "host_paused"
+              }
+            },
+            {
+              "key": "github:101:repository",
+              "resource": {
+                "source": "github",
+                "kind": "repository",
+                "id": "101"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:101",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "numeric_id": 101,
+                "full_name": "example/alpha",
+                "url": "https://github.com/example/alpha",
+                "contract_ref": null
+              }
+            },
+            {
+              "key": "github:102:repository",
+              "resource": {
+                "source": "github",
+                "kind": "repository",
+                "id": "102"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:102",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "numeric_id": 102,
+                "full_name": "example/beta",
+                "url": "https://github.com/example/beta",
+                "contract_ref": null
+              }
+            },
+            {
+              "key": "github:101:issue:7",
+              "resource": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:101:7",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "number": 7,
+                "title": "Can you approve and start this task?",
+                "state": "open",
+                "url": "https://github.com/example/alpha/issues/7",
+                "work_kind": null,
+                "parent_refs": [
+                  {
+                    "repository_id": 101,
+                    "issue_number": 1,
+                    "source_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                  }
+                ],
+                "requirement_refs": null,
+                "description_excerpt": null,
+                "description_truncated": null
+              }
+            },
+            {
+              "key": "codex:fixture:metadata",
+              "resource": {
+                "source": "codex",
+                "kind": "native_task_metadata",
+                "id": "00000000-0000-4000-8000-000000000003"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:00000000-0000-4000-8000-000000000003",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "task_ref": {
+                  "source": "codex",
+                  "kind": "native_task",
+                  "id": "00000000-0000-4000-8000-000000000003"
+                },
+                "reported_status": "active"
+              }
+            },
+            {
+              "key": "hydra:host:ownership",
+              "resource": {
+                "source": "hydra",
+                "kind": "ownership",
+                "id": "host"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "complete",
+                "scope": "resource:host",
+                "returned_count": 1,
+                "total_count": 1,
+                "next_cursor": null,
+                "reason": null
+              },
+              "reason": null,
+              "value": {
+                "state": "free",
+                "scope_digest": null,
+                "step_nonce": null
+              }
+            },
+            {
+              "key": "fixture:coverage:ownership",
+              "resource": {
+                "source": "hydra",
+                "kind": "ownership",
+                "id": "coverage-only"
+              },
+              "revision": null,
+              "observed_at": "2026-10-21T00:00:00Z",
+              "last_attempt_at": "2026-10-21T00:00:00Z",
+              "availability": "current",
+              "coverage": {
+                "state": "partial",
+                "scope": "resource:coverage-only",
+                "returned_count": 1,
+                "total_count": null,
+                "next_cursor": null,
+                "reason": "transport_failed"
+              },
+              "reason": "transport_failed",
+              "value": {
+                "state": "free",
+                "scope_digest": null,
+                "step_nonce": null
+              }
+            }
+          ]
+        }
       ]
     }
   ]

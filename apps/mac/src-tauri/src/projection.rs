@@ -252,6 +252,7 @@ fn observation(v: &Value) -> R {
     need(v["resource"]["source"]==owner)?;
     optional(&v["revision"],revision)?; optional(&v["observed_at"],timestamp)?; timestamp(&v["last_attempt_at"])?;
     one(&v["availability"],"current stale unavailable unsupported")?; coverage(&v["coverage"])?; optional(&v["reason"],code)?;
+    if v["availability"]=="current" {need(v["coverage"]["state"]!="unavailable")?;}
     if v["availability"]=="current" || v["availability"]=="stale" {
         need(!v["observed_at"].is_null() && !v["value"].is_null())?; source_value(kind,&v["value"])?;
         if kind=="admission" {
@@ -773,7 +774,7 @@ mod tests {
         let input:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/inputs.json")).unwrap()).unwrap();
         let matrix:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/source-causality.json")).unwrap()).unwrap();
         let commands:Value=serde_json::from_slice(&std::fs::read(root().join("tests/fixtures/control-v3/receipt-states.json")).unwrap()).unwrap();
-        let rows=matrix["cases"].as_array().unwrap();assert_eq!(rows.len(),30);let mut failures=Vec::new();
+        let rows=matrix["cases"].as_array().unwrap();assert_eq!(rows.len(),33);let mut failures=Vec::new();
         for row in rows {
             let mut frame=input["frame"].clone();
             for change in row["changes"].as_array().unwrap(){

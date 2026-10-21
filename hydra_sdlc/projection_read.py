@@ -522,22 +522,6 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             observations[repo_observation['key']] = repo_observation
     if client.context_changed:
         raise GitHubError('Read credential context changed')
-    at = _now()
-    try:
-        p.require(runtime['control_binding_digest'] is not None)
-        snapshot = control.snapshot()
-        admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
-            'project_overrides': snapshot['projects'],
-            'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
-        p.source_value('admission', admission_value)
-        admission = _observation('hydra:host:admission', admission_ref,
-            'resource:host:admission', admission_value, at,
-            revision={'kind': 'monotonic', 'value': str(snapshot['revision'])})
-    except (OperationDenied, ValueError, KeyError, TypeError, OSError):
-        snapshot = None
-        admission = _observation('hydra:host:admission', admission_ref,
-            'resource:host:admission', None, at,
-            reason='admission_unavailable' if runtime['control_binding_digest'] else 'admission_binding_unavailable')
     ownership_reason = 'ownership_unavailable'
     try:
         owner = observe_coordinator(cfg['lock_path'])
@@ -559,7 +543,23 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     except (ValueError, TypeError, RuntimeError, OSError):
         owner_value = None
     ownership = _observation('hydra:host:ownership', _ref('hydra', 'ownership', 'host'),
-        'resource:host:ownership', owner_value, at, reason=None if owner_value else ownership_reason)
+        'resource:host:ownership', owner_value, _now(), reason=None if owner_value else ownership_reason)
+    at = _now()
+    try:
+        p.require(runtime['control_binding_digest'] is not None)
+        snapshot = control.snapshot()
+        admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
+            'project_overrides': snapshot['projects'],
+            'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
+        p.source_value('admission', admission_value)
+        admission = _observation('hydra:host:admission', admission_ref,
+            'resource:host:admission', admission_value, at,
+            revision={'kind': 'monotonic', 'value': str(snapshot['revision'])})
+    except (OperationDenied, ValueError, KeyError, TypeError, OSError):
+        snapshot = None
+        admission = _observation('hydra:host:admission', admission_ref,
+            'resource:host:admission', None, at,
+            reason='admission_unavailable' if runtime['control_binding_digest'] else 'admission_binding_unavailable')
     observations.update({item['key']: item for item in (admission, ownership)})
     gates = {}
     if snapshot is not None:

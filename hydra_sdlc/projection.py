@@ -330,6 +330,8 @@ def observation(value):
     one(value['availability'], {'current', 'stale', 'unavailable', 'unsupported'})
     coverage(value['coverage'])
     nullable(value['reason'], code)
+    if value['availability'] == 'current':
+        require(value['coverage']['state'] != 'unavailable')
     if value['availability'] in {'current', 'stale'}:
         require(value['observed_at'] is not None and value['value'] is not None)
         source_value(value['resource']['kind'], value['value'])
