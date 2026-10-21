@@ -959,3 +959,35 @@ checks pass 348/60 methods, plus theme, frontend and native builds, without
 failures/errors/skips. New exact-head CI/reviews, protected merge and actual-main
 checks remain required. Source evidence does not establish native authority,
 installed operation, actual remote acceptance or the whole v1 goal.
+
+
+## All live-parent cursors and bounded consumption metadata
+
+Parent `3a234c36545d57c047f29cb3771277a97e607d02` passed all three CI jobs
+and exact-head security review. Its code review identified a conflict between the
+supported project/page coverage and a separate 64-token continuation registry:
+cursors still exposed by a live cached parent could be dropped, including the
+overview cursor for remaining projects.
+
+Cursor membership is now derived directly from validated live cached payloads.
+The duplicate token registry is removed. Each parent retains only consumed cursor
+slot ordinals, bounded by that payload's exposed slots. Parent replacement,
+eviction, stale state and binding/context changes naturally invalidate its lineage.
+The payload cache remains bounded to 4 MiB and details to 16. No new wire field,
+secret, persistent record, command authority or source activation is introduced.
+
+The frozen regression constructs one validated parent with an overview cursor
+and 65 project cursors. It reproduces one actual behavior failure on the immutable
+parent and passes after correction. Every unread exposed cursor advances; issuing
+and failing all 66 pages rotates the request ledger without restoring consumed
+polling privileges. All those visible cursors retain ordinary retry after the
+normal wait. Unknown tokens and old-context tokens remain rejected.
+
+Final local Rust impact checks pass 61 methods plus the native build without
+failures/skips. The same frozen oracle passes, including existing entry-point,
+provider-wait, rename, unknown/altered-cursor, source-wire, LRU and v2 regressions.
+The frontend also builds. Python and frontend source/test bytes are unchanged from
+the checked parent; its CI collected 1,558 Python methods with eight explicit skips
+and passed 348 frontend methods. Those results remain historical until new-head
+CI, independent reviews, protected merge and actual-main verification complete.
+Native operation, actual remote flow and full v1 acceptance remain unqualified.

@@ -37,7 +37,8 @@ pub struct CachedRead {
 fn serialize_payload<S:Serializer>(value:&Arc<ReadPayload>,serializer:S)->Result<S::Ok,S::Error> {
     value.as_ref().serialize(serializer)
 }
-struct Entry {payload:Arc<ReadPayload>,received:Instant,bytes:usize,detail:bool,stale:bool,sequence:u64}
+struct Entry {payload:Arc<ReadPayload>,received:Instant,bytes:usize,detail:bool,stale:bool,sequence:u64,
+    consumed_cursors:Vec<usize>}
 #[derive(Default)]
 struct Order {issued:u64,settled:u64}
 pub struct ReadCache {
@@ -53,7 +54,6 @@ pub struct ReadCache {
     policy:ReadPolicy,
     remote_started:Option<Instant>,
     local_started:Option<Instant>,
-    continuations:VecDeque<(String,String,u64)>,
     context:ReadContext,
     last_context_probe:Option<Instant>,
     repository_bindings:BTreeMap<String,u64>,
@@ -71,17 +71,42 @@ fn runtime_key(payload:&ReadPayload)->Result<Value,&'static str> {
         "config_digest":identity.config_digest,"control_binding_digest":identity.control_binding_digest,
         "identity_reason":identity.identity_reason}))
 }
+fn exposed_cursor_slot(parent:&str,value:&Value,query:&str)->Option<usize> {
+    let lane=parent.split(':').next().filter(|lane|["remote","local"].contains(lane))?;
+    let mut query=query.splitn(3,':');
+    if query.next()!=Some(lane) {return None;}
+    let wanted_repository=query.next()?;let wanted_cursor=query.next()?;
+    if value["page"]["next_cursor"].as_str()==Some(wanted_cursor) &&
+        parent.split(':').nth(1).unwrap_or("overview")==wanted_repository {
+        return Some(0);
+    }
+    let bindings=observed_repository_bindings(value);
+    for (index,project) in value["projects"].as_array()?.iter().enumerate() {
+        if project["coverage"]["next_cursor"].as_str()==Some(wanted_cursor) {
+            let requested=project["source_refs"].as_array()?.iter().filter_map(|source| {
+                if source["source"]!="github" || source["kind"]!="repository" {return None;}
+                let name=source["id"].as_str()?.strip_prefix("requested:")?.to_ascii_lowercase();
+                (bindings.get(&name).map(u64::to_string).as_deref()==project["repository_ref"]["id"].as_str()).then_some(name)
+            }).next();
+            let repository=requested.or_else(||value["observations"].as_array()?.iter()
+                .find(|o|o["resource"]==project["repository_ref"] && o["resource"]["kind"]=="repository")
+                .and_then(|o|o["value"]["full_name"].as_str()).map(str::to_ascii_lowercase));
+            if repository.as_deref()==Some(wanted_repository) {return Some(index+1);}
+        }
+    }
+    None
+}
 impl ReadCache {
     pub fn new(epoch:String)->Result<Self,&'static str> {
         if !uuid(&epoch) {return Err("binding_invalid");}
         Ok(Self {epoch,runtime:None,next:0,orders:HashMap::new(),entries:HashMap::new(),
-            lru:VecDeque::new(),bytes:0,last_clock:None,ledger:VecDeque::new(),policy:ReadPolicy::default(),remote_started:None,local_started:None,continuations:VecDeque::new(),context:ReadContext{scope:None,sequence:0},last_context_probe:None,repository_bindings:BTreeMap::new()})
+            lru:VecDeque::new(),bytes:0,last_clock:None,ledger:VecDeque::new(),policy:ReadPolicy::default(),remote_started:None,local_started:None,context:ReadContext{scope:None,sequence:0},last_context_probe:None,repository_bindings:BTreeMap::new()})
     }
     pub fn binding_changed(&mut self,epoch:String)->Result<(),&'static str> {
         if !uuid(&epoch) || epoch==self.epoch {return Err("binding_invalid");}
         self.epoch=epoch; self.runtime=None; self.orders.clear(); self.entries.clear();
         self.lru.clear(); self.bytes=0; self.last_clock=None; self.ledger.clear();
-        self.continuations.clear();self.context=ReadContext{scope:None,sequence:0};self.last_context_probe=None;
+        self.context=ReadContext{scope:None,sequence:0};self.last_context_probe=None;
         self.repository_bindings.clear();
         self.policy=ReadPolicy::default(); self.remote_started=None; self.local_started=None; Ok(())
     }
@@ -106,7 +131,14 @@ impl ReadCache {
         let remote=scope.starts_with("remote:");
         let ticket=ReadTicket{scope,epoch:self.epoch.clone(),request_id,sequence,detail,
             credential_scope:self.context.scope.clone(),context_sequence:self.context.sequence,remote};
-        self.continuations.retain(|(scope,_,_)|scope!=&ticket.scope);
+        if ticket.scope.splitn(3,':').nth(2).is_some_and(|token|!token.is_empty()) {
+            for (parent,entry) in &mut self.entries {
+                if entry.stale {continue;}
+                if let Some(slot)=entry.payload.projection_value().and_then(|value|exposed_cursor_slot(parent,value,&ticket.scope)) {
+                    if !entry.consumed_cursors.contains(&slot) {entry.consumed_cursors.push(slot);}
+                }
+            }
+        }
         self.ledger.push_back((ticket.clone(),false,None));
         while self.ledger.len()>64 {self.ledger.pop_front();}
         Ok(ticket)
@@ -163,7 +195,7 @@ impl ReadCache {
             }
             // The response is a fresh, bound read of the new runtime. Invalidate
             // older cache/pending generations; retain the connection's quota wait.
-            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();self.continuations.clear();
+            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();
             self.repository_bindings.clear();
             self.orders.insert(ticket.scope.clone(),Order{issued:ticket.sequence,settled:0});
             let started=self.ledger.iter().find(|(t,_,_)|t.sequence==ticket.sequence).and_then(|(_,_,start)|*start);
@@ -195,9 +227,8 @@ impl ReadCache {
         self.remove(&ticket.scope);
         let payload=Arc::new(payload);
         self.entries.insert(ticket.scope.clone(),Entry{payload:payload.clone(),received:now,
-            bytes:size,detail:ticket.detail,stale:false,sequence:ticket.sequence});
+            bytes:size,detail:ticket.detail,stale:false,sequence:ticket.sequence,consumed_cursors:Vec::new()});
         self.bytes+=size; self.touch(&ticket.scope); self.bound();
-        self.remember_continuations(ticket,&value);
         Ok(CachedRead{payload,age_ms:0,cached:false,stale:false,sequence:ticket.sequence,read_context:self.context.clone()})
     }
     pub fn get(&mut self,scope:&str,local:bool,now:Instant)->Option<CachedRead> {
@@ -229,18 +260,24 @@ impl ReadCache {
         let scopes:Vec<_>=self.entries.keys().filter(|s|s.starts_with("remote:")).cloned().collect();
         for scope in scopes {self.remove(&scope);}
         self.orders.retain(|scope,_|!scope.starts_with("remote:"));
-        self.continuations.retain(|(scope,_,_)|!scope.starts_with("remote:"));
         Ok(())
     }
     pub fn read_held(&self,now:Instant,remote:bool,scope:&str,continuation:bool,explicit_recovery:bool)->Result<bool,&'static str> {
         if remote && self.context.scope.is_none() {return Err("read_context_unavailable");}
-        let issued=self.continuations.iter().any(|(next,parent,sequence)|
-            next==scope && self.entries.get(parent).is_some_and(|entry|entry.sequence==*sequence && !entry.stale));
+        let mut issued=false;let mut unread=false;
+        if continuation {
+            for (parent,entry) in &self.entries {
+                if entry.stale {continue;}
+                if let Some(slot)=entry.payload.projection_value().and_then(|value|exposed_cursor_slot(parent,value,scope)) {
+                    issued=true;unread|=!entry.consumed_cursors.contains(&slot);
+                }
+            }
+        }
         let repeated=self.entries.contains_key(scope) || self.ledger.iter().any(|(ticket,_,_)|
             ticket.scope==scope && ticket.epoch==self.epoch && (!ticket.remote ||
                 ticket.context_sequence==self.context.sequence && ticket.credential_scope==self.context.scope));
         if continuation && !issued && !repeated {return Err("invalid_cursor");}
-        let continuation=continuation && !repeated && issued;
+        let continuation=continuation && !repeated && unread;
         if remote && continuation {
             // A cursor advances the bounded read; it is not an ordinary poll.
             // Connection quotas and exhausted automatic retries still apply.
@@ -268,40 +305,10 @@ impl ReadCache {
         if let Some((_,_,start))=self.ledger.back_mut() {*start=Some((false,now));}
     }
 
-    fn remember_continuations(&mut self,ticket:&ReadTicket,value:&Value) {
-        let Some(lane)=ticket.scope.split(':').next().filter(|lane|["remote","local"].contains(lane)) else {return;};
-        let mut targets=Vec::new();
-        let bindings=observed_repository_bindings(value);
-        if let Some(cursor)=value["page"]["next_cursor"].as_str() {
-            let repository=ticket.scope.split(':').nth(1).unwrap_or("overview");
-            targets.push((repository.to_owned(),cursor.to_owned()));
-        }
-        for project in value["projects"].as_array().unwrap() {
-            if let Some(cursor)=project["coverage"]["next_cursor"].as_str() {
-                let requested=project["source_refs"].as_array().unwrap().iter().filter_map(|source| {
-                    if source["source"]!="github" || source["kind"]!="repository" {return None;}
-                    let name=source["id"].as_str()?.strip_prefix("requested:")?.to_ascii_lowercase();
-                    (bindings.get(&name).map(u64::to_string).as_deref()==project["repository_ref"]["id"].as_str()).then_some(name)
-                }).next();
-                if let Some(name)=requested.or_else(||value["observations"].as_array().unwrap().iter()
-                    .find(|o|o["resource"]==project["repository_ref"] && o["resource"]["kind"]=="repository")
-                    .and_then(|o|o["value"]["full_name"].as_str()).map(str::to_ascii_lowercase)) {
-                    targets.push((name,cursor.to_owned()));
-                }
-            }
-        }
-        for (repository,cursor) in targets {
-            let scope=format!("{lane}:{repository}:{cursor}");
-            self.continuations.retain(|(next,_,_)|next!=&scope);
-            self.continuations.push_back((scope,ticket.scope.clone(),ticket.sequence));
-            while self.continuations.len()>64 {self.continuations.pop_front();}
-        }
-    }
     fn touch(&mut self,scope:&str) {
         self.lru.retain(|key|key!=scope); self.lru.push_back(scope.to_owned());
     }
     fn remove(&mut self,scope:&str) {
-        self.continuations.retain(|(_,parent,_)|parent!=scope);
         if let Some(entry)=self.entries.remove(scope) {self.bytes-=entry.bytes;}
         self.lru.retain(|key|key!=scope);
         if self.orders.get(scope).is_some_and(|order|order.issued==order.settled) {
@@ -456,6 +463,51 @@ mod tests {
         assert_eq!(read.read_context.scope.as_deref(),Some(scope_b));
         assert!(cache.get("remote:overview:",false,changed).is_some());
         assert_eq!(cache.remote_wait(changed+Duration::from_secs(1),false),Ok(59),"The new read did not establish its own poll floor");
+    }
+    #[test]
+    fn live_parent_retains_all_exposed_cursors_and_consumed_privileges_after_ledger_rotation() {
+        let now=Instant::now();let mut cache=test_cache();
+        let mut frame:Value=serde_json::from_slice(&fixture(&request(910))).unwrap();
+        let admission=frame["observations"].as_array().unwrap().iter().find(|o|o["resource"]["kind"]=="admission").unwrap().clone();
+        let repository=frame["observations"].as_array().unwrap().iter().find(|o|o["resource"]["kind"]=="repository").unwrap().clone();
+        let project=frame["projects"][0].clone();
+        frame["work"]=serde_json::json!([]);frame["relations"]=serde_json::json!([]);
+        frame["observations"]=serde_json::json!([admission.clone()]);frame["projects"]=serde_json::json!([]);
+        let mut scopes=vec!["remote:overview:overview-tail".to_owned()];
+        for id in 5000u64..5065 {
+            let name=format!("example/p{id}");let token=format!("project-{id}");
+            let mut o=repository.clone();
+            o["key"]=format!("github:{id}:repository").into();o["resource"]["id"]=id.to_string().into();
+            o["coverage"]["scope"]=format!("resource:{id}").into();o["value"]["numeric_id"]=id.into();
+            o["value"]["full_name"]=name.clone().into();o["value"]["url"]=format!("https://github.com/{name}").into();
+            let mut p=project.clone();p["repository_ref"]=o["resource"].clone();
+            p["goal_refs"]=serde_json::json!([]);p["work_refs"]=serde_json::json!([]);
+            p["source_refs"]=serde_json::json!([o["resource"].clone(),admission["resource"].clone()]);
+            p["coverage"]=serde_json::json!({"state":"partial","scope":format!("repository:{id};managed-work"),
+                "returned_count":0,"total_count":null,"next_cursor":token,"reason":"record_limit"});
+            frame["observations"].as_array_mut().unwrap().push(o);frame["projects"].as_array_mut().unwrap().push(p);
+            scopes.push(format!("remote:{name}:{token}"));
+        }
+        frame["page"]=serde_json::json!({"state":"partial","scope":"host;overview","returned_count":65,
+            "total_count":null,"next_cursor":"overview-tail","reason":"record_limit"});
+        let bytes=serde_json::to_vec(&frame).unwrap();assert!(bytes.len()<=1_048_576);
+        let root=cache.issue("remote:overview:".into(),request(910),false).unwrap();cache.remote_started(now);
+        cache.accept(&root,&bytes,now).unwrap();
+        assert_eq!(cache.read_held(now,true,&scopes[0],true,false),Ok(false),"A live parent lost its exposed overview cursor");
+        for (index,scope) in scopes.iter().enumerate() {
+            assert_eq!(cache.read_held(now,true,scope,true,false),Ok(false),"An unread exposed cursor was lost: {scope}");
+            let ticket=cache.issue(scope.clone(),request(1000+index as u32),true).unwrap();cache.remote_started(now);
+            cache.failed(&ticket);
+        }
+        // More than 64 real issued-page tickets have rotated the request ledger.
+        assert!(cache.get("remote:overview:",false,now).is_some());
+        for scope in &scopes {
+            assert_eq!(cache.read_held(now,true,scope,true,false),Ok(true),"A consumed cursor regained its poll privilege: {scope}");
+            assert_eq!(cache.read_held(now+Duration::from_secs(60),true,scope,true,false),Ok(false),"A consumed visible cursor lost ordinary retry: {scope}");
+        }
+        assert!(cache.read_held(now+Duration::from_secs(60),true,"remote:overview:forged-tail",true,false).is_err());
+        cache.context_changed(Some("github:changed-scope".into())).unwrap();
+        assert!(cache.read_held(now+Duration::from_secs(60),true,&scopes[0],true,false).is_err());
     }
     #[test]
     fn unissued_cursor_positions_never_reach_a_new_read_after_the_poll_floor() {

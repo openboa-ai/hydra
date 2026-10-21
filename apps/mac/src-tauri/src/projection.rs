@@ -703,6 +703,9 @@ impl StandardReply {
 #[serde(untagged)]
 pub enum ReadPayload {V3(Projection),V2(Snapshot)}
 impl ReadPayload {
+    pub(crate) fn projection_value(&self)->Option<&Value> {
+        match self {Self::V3(value)=>Some(&value.0),Self::V2(_)=>None}
+    }
     pub fn parse(bytes:&[u8])->Result<Self,&'static str> {
         let value=read_json(bytes)?;
         match value["schema_version"].as_u64() {
