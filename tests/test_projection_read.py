@@ -44,12 +44,14 @@ class ReadFixture:
         rows = self.issues.get((repository, state, managed), [])
         return copy.deepcopy(rows[(page - 1) * 100:page * 100])
 
-    def read(self, *, refresh=True, owner=None, cfg=None, **kwargs):
+    def read(self, *, refresh=True, owner=None, cfg=None, admission_snapshot=None, **kwargs):
         config = {'repos': ['example/alpha', 'example/beta'], 'host_alias': 'fixture', 'lock_path': 'unused-fixture-lock'}
         if cfg:
             config.update(cfg)
         class Control:
             def snapshot(self):
+                if admission_snapshot is not None:
+                    return copy.deepcopy(admission_snapshot)
                 return {'revision': 7, 'global_mode': 'paused',
                         'projects': {'example/alpha': 'running', 'example/beta': 'stopped'}}
         with patch('hydra_sdlc.projection_read.control_from_config', return_value=Control()), \

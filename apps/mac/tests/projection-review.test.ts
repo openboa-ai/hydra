@@ -16,6 +16,28 @@ function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
     response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
+test("local admission reads refresh retained work without refreshing independent GitHub or execution",()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nfirst=ReadFixture({('example/alpha','open',False):[issue()]}).read()\nframes=[first]\nfor revision,mode in [(8,'stopped'),(9,'running'),(6,'paused')]:\n fixture=ReadFixture()\n frame=fixture.read(refresh=False,admission_snapshot={'revision':revision,'global_mode':mode,'projects':{}})\n assert not fixture.calls\n frames.append(frame)\nprint(json.dumps(frames))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
+  assert.equal(r.status,0,r.stderr);
+  const frames=(JSON.parse(r.stdout) as ProjectionV3[]).map(parseProjection);
+  let s=read(projectionState(frames[0]!.binding_epoch),1,frames[0]!);
+  const initialReadiness=structuredClone(s.view!.work[0]!.readiness);
+  for (const [index,expected] of ["stopped","allowed"].entries()) {
+    s=read(s,index+2,frames[index+1]!);
+    const project=s.view!.projects.find(p=>p.repository_ref.id==="101")!,work=s.view!.work[0]!;
+    assert.equal(project.admission.value,expected);
+    assert.deepEqual(work.admission,project.admission,"Retained work lost a newly observed local admission fact");
+    assert.equal(work.admission.evidence[0]!.revision!.value,String(index+8));
+    assert.deepEqual(work.readiness,initialReadiness);
+    assert.equal(work.execution.value,null);assert.equal(work.cleanup.value,null);
+    parseProjection(s.view);
+  }
+  s=read(s,4,frames[3]!);
+  assert.equal(s.view!.projects.find(p=>p.repository_ref.id==="101")!.admission.value,null);
+  assert.equal(s.view!.work[0]!.admission.value,null,"A regressed admission observation was promoted to current work");
+  assert.deepEqual(s.view!.work[0]!.readiness,initialReadiness);
+});
 for (const failedRefresh of [false,true]) test(`numeric repository resolution replaces a ${failedRefresh ? "failed-refresh" : "local-only"} placeholder`,()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture\nfirst=ReadFixture(fail=lambda _: RuntimeError('fixture unavailable')).read() if " + (failedRefresh ? "True" : "False") + " else ReadFixture().read(refresh=False)\nprint(json.dumps([first,ReadFixture().read()]))\n";
   const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});

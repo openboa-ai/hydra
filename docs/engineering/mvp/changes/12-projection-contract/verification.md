@@ -227,3 +227,38 @@ P12 Rev4/CP8/NC8 remain pinned and unchanged. Final-head CI and completed
 independent code/security reviews, protected merge and actual-main checks are
 still required. P16 owns the later screen/action integration and running-screen
 evidence. No runtime, source capability or authority was installed or activated.
+
+
+## Current local admission and bounded raw input -- 2026-10-21
+
+Local polls intentionally return no work rows. The reducer now propagates a
+uniquely matching project's freshly validated admission Fact to its retained work
+rows, preserving the current revision/evidence rather than leaving source_changed.
+Missing, stale, regressed or ambiguous project facts cannot become current work
+admission. Independent GitHub readiness/age, unknown execution/cleanup and command
+feedback remain separate; this read model neither changes admission nor wakes work.
+
+The projection-only HTTP parser rejects raw UTF-8 input above 1 MiB before JSON
+decoding. The bound includes response headers and multibyte characters. Exactly
+1 MiB remains accepted. Legacy JSON-only API behavior and the separate aggregate
+collection budget are unchanged; oversize raw input is not normalized as success.
+
+Published 7ddb603 reproduces three actual assertions: two ASCII/multibyte byte
+boundary failures and one retained-work admission failure. Identical final test
+bytes pass. Actual producer normal/local stopped/local allowed/regressed-revision
+frames verify work/project agreement without GitHub GETs or refreshed independent
+readiness. Oversize responses invoke the JSON decoder zero times.
+
+Local Python projection56, GitHub71, frontend91 and Rust38 pass with zero failures,
+errors/skips/ignored cases, plus typecheck/Vite build and the actual shared wire.
+Some Python selections overlap; these are suite counts, not a combined unique
+count. Cost fixtures retain 4 GET/8,444 bytes for small; 5 GET/324,434 bytes for
+128 records; 5 GET/1,038,843 bytes for 55 UTF-8 records with a usable cursor.
+These are source/fixture observations, not installed or native qualification.
+
+P12 Rev4/CP8/NC8 remain pinned and unchanged. The previous 7ddb603 passed all four
+jobs in [run 39526279339](https://github.com/openboa-ai/hydra/actions/runs/39526279339);
+that evidence does not qualify this correction. Final-head CI and completed
+independent code/security review, protected merge and main checks are required.
+P16 still owns screen/action integration. No runtime or authority was activated
+and no full local kernel was repeated.

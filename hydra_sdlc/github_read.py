@@ -8,6 +8,7 @@ import re
 import time
 
 MAX_INTEGER = 9_007_199_254_740_991
+MAX_INPUT_BYTES = 1_048_576
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ def parse_response(raw, *, status_hint=None, now=None):
     Server Date anchors absolute retry/reset values. Without that anchor an
     absolute timestamp is unqualified, never a manufactured provider zero.
     """
-    if type(raw) is not str or len(raw.encode('utf-8')) > 8_000_000:
+    if type(raw) is not str or len(raw.encode('utf-8')) > MAX_INPUT_BYTES:
         raise ValueError('Invalid GitHub read response')
     received = time.monotonic() if now is None else now
     raw = raw.replace('\r\n', '\n')

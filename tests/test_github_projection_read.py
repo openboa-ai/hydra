@@ -20,6 +20,22 @@ def http(status=200, headers=(), value=None):
 
 
 class GitHubProjectionReadTests(unittest.TestCase):
+    def test_raw_projection_input_obeys_the_one_mib_utf8_boundary_before_decoding(self):
+        limit = 1_048_576
+        prefix, suffix = 'HTTP/2.0 200 Result\r\n\r\n{"body":"', '"}'
+        for unit in ('x', '🚀'):
+            with self.subTest(unit=unit):
+                budget = limit - len((prefix + suffix).encode('utf-8'))
+                count, remainder = divmod(budget, len(unit.encode('utf-8')))
+                raw = prefix + unit * count + 'x' * remainder + suffix
+                self.assertEqual(len(raw.encode('utf-8')), limit)
+                self.assertIsInstance(parse_response(raw).value, dict)
+                oversized = raw[:-len(suffix)] + 'x' + suffix
+                with patch('hydra_sdlc.github_read.json.loads', wraps=json.loads) as decode:
+                    with self.assertRaises(ValueError):
+                        parse_response(oversized)
+                    decode.assert_not_called()
+
     def test_registered_double_dot_names_are_not_confused_with_path_traversal(self):
         calls = []
         client = GitHub(transport=lambda method, path, payload: calls.append((method,path,payload)) or {'id':101})

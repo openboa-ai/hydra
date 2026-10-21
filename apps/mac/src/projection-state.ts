@@ -75,9 +75,18 @@ function refreshFacts(state: ProjectionState, changed: Set<string>, incoming: Se
     for (const axis of ["admission", "execution"] as const)
       p[axis] = currentFact(p[axis], state, changed, incoming.has(p), seq, receivedSequence) as never;
   }
+  const admissions=new Map<string,Fact<string>|null>();
+  for (const p of view.projects) for (const ref of p.work_refs) {
+    const k=key(ref);
+    admissions.set(k,admissions.has(k) ? null : p.admission);
+  }
   for (const w of view.work) {
     for (const axis of ["readiness", "stage", "admission", "execution", "wait", "delivery", "result", "cleanup", "next_action"] as const)
       w[axis] = currentFact(w[axis], state, changed, incoming.has(w), seq, receivedSequence) as never;
+    // Local polls carry project gates without work rows. A uniquely matched,
+    // freshly validated project gate also applies to its retained work display.
+    const admission=admissions.get(key(w.issue_ref));
+    if (!incoming.has(w) && admission && admission.value!==null) w.admission=structuredClone(admission);
     for (const axis of ["question", "answer", "acceptance", "application"] as const)
       w.decision[axis] = currentFact(w.decision[axis], state, changed, incoming.has(w), seq, receivedSequence);
     // A lost question cannot leave a dependent answer/application looking current.
