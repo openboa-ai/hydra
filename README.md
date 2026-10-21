@@ -45,16 +45,21 @@ digests are observations, not proof of native control or unattended operation.
 
 ## Standalone CLI
 
-Install Python 3.11+ with the optional pinned Codex SDK into an isolated environment:
+Install Python 3.14+ with the optional pinned Codex SDK into an isolated environment:
 
 ```sh
-python3 -m pip install '.[codex]'
+python3.14 -m pip install '.[codex]'
 hydra status --repos owner/product
 hydra run --issue https://github.com/owner/product/issues/12 \
   --workspace-root /absolute/owned/workspaces --host-alias development-mac
 hydra serve --repos owner/product owner/another-product \
   --workspace-root /absolute/owned/workspaces --host-alias development-mac
 ```
+
+Package installation and direct source imports require Python 3.14 or newer.
+When upgrading an existing installation, prepare a separate 3.14+ environment
+and qualify its dependencies and runtime identity before changing the service
+configuration. Updating source does not migrate or restart an installed service.
 
 The first runtime selects the existing `openboa` GitHub CLI account per operation
 and the existing ChatGPT subscription or available account credits. It neither buys credits nor switches
