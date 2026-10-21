@@ -714,3 +714,42 @@ All four jobs on the prior head passed in
 that result does not qualify this later correction. Final-head CI/artifacts,
 independent code/security review, the existing scoped CODEOWNER approval,
 protected merge and main checks remain required.
+
+
+## Infrastructure outcomes remain distinct -- 2026-10-21
+
+Known subprocess timeouts and OS failures during preflight, snapshot preparation,
+worker launch or private selector setup now return safe
+BLOCKED/environment_unavailable with nonzero exit. Private workers preserve that
+classification through their parent channel. Explicit interruption, malformed
+inputs, selected test failures and export failures retain their own diagnoses;
+public responses never include exception text. The original 600-second deadline,
+source pins and publication commit point remain unchanged.
+
+Two regression methods reproduce eleven assertion failures on unchanged 0af5b8a:
+three supervisor stages and fork/fresh-exec launch/setup with OS/timeout failures.
+The identical tests now require the environment diagnosis, no control effect and
+no reusable PASS artifact. Their normal control executes once and read-only
+artifact validation does not repeat it. All 64 collector contract methods pass
+with zero failures/errors/skips on Python 3.14.2 in 94.734 seconds, including
+the full 64x32 matrix and prior interruption/publication regressions.
+
+An initial run found an existing directory-input assertion failing after the new
+classification: fdopen raised an OS error before the regular-file check. The
+collector now checks fstat before fdopen. The unchanged directory/FIFO/symlink
+oracle passes; no expected result or gate was weakened.
+
+The fixture guide clarifies the existing reviewed-test boundary. Owned process
+groups do not contain programs that deliberately detach into new OS sessions;
+tests remain responsible for their background work. Immutable execution inputs
+do not attest future cleanliness or process lifetime in the writable effect
+workspace. OS containment and actual native resource retirement are unqualified.
+
+All four jobs on 0af5b8a passed in
+[run 39517798513](https://github.com/openboa-ai/hydra/actions/runs/39517798513),
+and both selected-source reports were checked against the actual provider run,
+checked merge tree, source head and pinned manifest/policy/fixtures. Those results
+do not qualify this later correction. P13 Rev4/VF Rev11 and their exclusions are
+unchanged; full local kernel repetition was unnecessary. Final-head CI/artifacts,
+independent code/security review, scoped CODEOWNER approval, protected merge and
+actual-main checks remain required.

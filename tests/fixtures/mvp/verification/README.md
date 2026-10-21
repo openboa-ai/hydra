@@ -101,3 +101,16 @@ Selected programs retain their ordinary OS and assertion authority. Deliberately
 forging descriptors, replacing assertions or manufacturing verdicts is outside this
 reviewed-test boundary. Packet framing and a public alias do not authenticate
 hostile programs. Trusted hosted producer/run evidence remains a separate check.
+
+
+Known infrastructure timeouts and OS failures produce safe BLOCKED/environment
+diagnostics and nonzero exit. Malformed inputs, selected test failures, explicit
+interruption and export failures retain their separate outcomes. No exception
+text is public. This classification does not authenticate a CI producer.
+
+Owned process-group cleanup does not contain programs that deliberately create
+new OS sessions or otherwise escape that group. Reviewed tests must own/clean up
+their background work; this collector is not an OS containment facility. Its
+immutable-source evidence is not a future-cleanliness or process-lifetime
+attestation for the writable effect workspace. Native resource/retirement
+qualification remains separate.

@@ -63,6 +63,7 @@ _INPUT_LIMIT = 262144
 _WORKER_INPUT_LIMIT = 2 * _INPUT_LIMIT
 _MAX_CASES = 64
 _MAX_SELECTORS = 32
+_ENVIRONMENT_EXIT = 75
 # A report repeats manifest-controlled tokens at most twice. Allow 1 KiB of
 # fixed outcome/count/reason formatting per method, 8 KiB per case and 4 KiB
 # for the root envelope. This covers the full accepted manifest, including
@@ -72,6 +73,10 @@ _REPORT_LIMIT = 2 * _INPUT_LIMIT + _MAX_CASES * (_MAX_SELECTORS * 1024 + 8192) +
 
 class Invalid(Exception):
     """No exception text is part of the public protocol."""
+
+
+class EnvironmentUnavailable(OSError):
+    """Known verification infrastructure is unavailable; never expose its text."""
 
 
 def require(value):
@@ -120,9 +125,13 @@ def read_json(path, *, limit=_INPUT_LIMIT):
     # O_NONBLOCK makes FIFO/device rejection immediate; inspect the opened inode,
     # not a path stat followed by a potentially different blocking open.
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(stream.fileno())
+    try:
+        info = os.fstat(descriptor)
         require(stat.S_ISREG(info.st_mode) and info.st_size <= limit)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with os.fdopen(descriptor, "rb") as stream:
         return decode_json(stream.read(limit + 1).decode("utf-8"), limit=limit)
 
 
@@ -756,6 +765,8 @@ def _fork_selector_main(root, selector, write_fd, compiled):
         return 0
     except KeyboardInterrupt:
         return 128 + signal.SIGINT
+    except (OSError, subprocess.TimeoutExpired):
+        return _ENVIRONMENT_EXIT
     except BaseException:
         return 2
 
@@ -801,9 +812,14 @@ class _ForkedSelector:
 
 def _worker_main():
     """Private child entry: stdout here is a supervisor pipe, never public stdout."""
-    result_fd = quiet()
-    install_termination_handler()
-    sys.dont_write_bytecode = True
+    try:
+        result_fd = quiet()
+        install_termination_handler()
+        sys.dont_write_bytecode = True
+    except KeyboardInterrupt:
+        return 128 + signal.SIGINT
+    except OSError:
+        return _ENVIRONMENT_EXIT
     selector = None
     try:
         request = decode_json(sys.stdin.buffer.read(_WORKER_INPUT_LIMIT + 1), limit=_WORKER_INPUT_LIMIT)
@@ -826,6 +842,8 @@ def _worker_main():
             # cancellation status instead of writing JSON through that closed fd.
             return 128 + signal.SIGINT
         report = {"worker_interrupted": True}
+    except (OSError, subprocess.TimeoutExpired):
+        return _ENVIRONMENT_EXIT
     except BaseException:
         os.close(result_fd)
         return 2
@@ -863,7 +881,8 @@ def _capture_worker(child, *, group, selector=None):
         with selectors.DefaultSelector() as poller:
             poller.register(child.stdout, selectors.EVENT_READ)
             while True:
-                require(time.monotonic() < deadline)
+                if time.monotonic() >= deadline:
+                    raise EnvironmentUnavailable()
                 if not poller.select(.1):
                     continue
                 chunk = os.read(child.stdout.fileno(), 65536)
@@ -872,10 +891,13 @@ def _capture_worker(child, *, group, selector=None):
                 data.extend(chunk)
                 require(len(data) <= (_SELECTOR_PACKET.size if selector is not None else _REPORT_LIMIT))
         remaining = deadline - time.monotonic()
-        require(remaining > 0)
+        if remaining <= 0:
+            raise EnvironmentUnavailable()
         returncode = child.wait(timeout=remaining)
         if returncode in {-signal.SIGTERM, -signal.SIGINT, 128 + signal.SIGTERM, 128 + signal.SIGINT}:
             raise KeyboardInterrupt()
+        if returncode == _ENVIRONMENT_EXIT:
+            raise EnvironmentUnavailable()
         require(returncode == 0)
         if selector is not None:
             return _selector_result(data, selector)
@@ -1032,7 +1054,14 @@ class Parser(argparse.ArgumentParser):
 
 
 def main():
-    result_fd = quiet()
+    try:
+        result_fd = quiet()
+    except OSError:
+        try:
+            os.write(1, b'{"reason":"environment_unavailable","status":"BLOCKED"}\n')
+        except OSError:
+            pass
+        return 2
     publication = {"result": None}
     reason, code = "invalid_input", 2
     try:
@@ -1074,13 +1103,17 @@ def main():
         reason, code = "interrupted", 2
     except SystemExit:
         reason, code = "invalid_input", 2
+    except (OSError, subprocess.TimeoutExpired):
+        if reason == "invalid_input":
+            reason, code = "environment_unavailable", 2
     except Exception:
         pass
     if publication["result"] is not None:
         reason, code = publication["result"]
     elif _TERMINATION_REQUESTED:
         reason, code = "interrupted", 2
-    os.write(result_fd, (json.dumps({"status": "PASS" if code == 0 else "FAIL", "reason": reason}, sort_keys=True) + "\n").encode("ascii"))
+    status = "PASS" if code == 0 else ("BLOCKED" if reason == "environment_unavailable" else "FAIL")
+    os.write(result_fd, (json.dumps({"status": status, "reason": reason}, sort_keys=True) + "\n").encode("ascii"))
     os.close(result_fd)
     return code
 

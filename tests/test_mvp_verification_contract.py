@@ -421,6 +421,55 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_environment_preflight_snapshot_and_launch_are_blocked_without_public_details(self):
+        for stage in ('git_timeout', 'snapshot_io', 'worker_launch'):
+            with self.subTest(stage=stage):
+                fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+                hook = "import subprocess\nscope=namespace['main'].__globals__\n"
+                if stage == 'git_timeout':
+                    hook += ("def unavailable(*args,**kwargs): raise subprocess.TimeoutExpired('" + CANARY + "',15)\n"
+                             "scope['git']=unavailable\n")
+                elif stage == 'snapshot_io':
+                    hook += ("def unavailable(*args,**kwargs): raise OSError('" + CANARY + "')\n"
+                             "scope['source_snapshot']=unavailable\n")
+                else:
+                    hook += ("original=scope['isolated_worker']\n"
+                        "def failed_launch(*args,**kwargs): raise OSError('" + CANARY + "')\n"
+                        "def unavailable(*args,**kwargs):\n"
+                        " old=subprocess.Popen\n subprocess.Popen=failed_launch\n"
+                        " try: return original(*args,**kwargs)\n"
+                        " finally: subprocess.Popen=old\n"
+                        "scope['isolated_worker']=unavailable\n")
+                result = fixture.run(driver=self.driver(hook))
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout), {'status': 'BLOCKED', 'reason': 'environment_unavailable'})
+                self.assertFalse((fixture.root / 'effect').exists())
+                self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+        normal = self.fixture(body="with Path('effect').open('a') as f: f.write('once\\n')")
+        self.assertEqual(normal.run().returncode, 0)
+        self.assertEqual(normal.run(validate=True).returncode, 0)
+        self.assertEqual((normal.root / 'effect').read_text().splitlines(), ['once'])
+
+    def test_private_worker_infrastructure_failure_keeps_its_environment_classification(self):
+        profiles = (False, True) if sys.platform in {'darwin', 'linux'} and hasattr(os, 'fork') else (True,)
+        for fresh_exec in profiles:
+            for stage in ('launch', 'selector_setup'):
+                for failure in ('os_error', 'timeout'):
+                    with self.subTest(fresh_exec=fresh_exec, stage=stage, failure=failure):
+                        fixture = self.fixture(body="Path('effect').write_text('forbidden')")
+                        extra = '\ndef _fork_available(): return ' + str(not fresh_exec) + '\n'
+                        extra += "def _unavailable(*args,**kwargs):\n raise " + (
+                            "OSError('" + CANARY + "')" if failure == 'os_error' else
+                            "subprocess.TimeoutExpired('" + CANARY + "',15)") + '\n'
+                        extra += ("_emit_selector=_unavailable\n" if stage == 'selector_setup' else
+                                  "subprocess.Popen=_unavailable\n" if fresh_exec else "os.fork=_unavailable\n")
+                        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + extra)
+                        result = fixture.run()
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(json.loads(result.stdout), {'status': 'BLOCKED', 'reason': 'environment_unavailable'})
+                        self.assertFalse((fixture.root / 'effect').exists())
+                        self.assertFalse((fixture.root / 'artifacts/mvp-verification/report.json').exists())
+
     def test_signal_at_selector_return_keeps_interruption_classification(self):
         for fresh_exec in (False, True):
             for signum in ('SIGTERM', 'SIGINT'):
