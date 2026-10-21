@@ -43,7 +43,7 @@ test("same/null revisions still recompute dependent facts, without interpreting 
   let s=read(projectionState(base.binding_epoch),1);
   const frame=structuredClone(base), admission=frame.observations.find(o=>o.resource.kind==="admission")!;
   admission.value!.global_mode="stopped";
-  frame.projects=[];frame.work=[];frame.relations=[];
+  frame.projects=[];frame.work=[];frame.relations=[];frame.page={...frame.page,returned_count:0,total_count:frame.page.state==="complete"?0:null};
   s=read(s,2,frame);
   assert.equal(s.source_slots.get(admission.key)?.observation.value?.global_mode,"stopped");
   assert.equal(s.view?.projects[0]?.admission.value,null);
@@ -207,7 +207,7 @@ test("monotonic revisions compare decimal meaning without floating-point convers
   assert.equal(compareRevisions({kind:"monotonic",value:high},{kind:"monotonic",value:low}),1);
   assert.equal(compareRevisions({kind:"monotonic",value:"9007199254740993"},{kind:"monotonic",value:"9007199254740992"}),1);
   assert.equal(compareRevisions({kind:"opaque",value:"z"},{kind:"opaque",value:"a"}),null);
-  const frame=structuredClone(base);frame.projects=[];frame.work=[];frame.relations=[];
+  const frame=structuredClone(base);frame.projects=[];frame.work=[];frame.relations=[];frame.page={...frame.page,returned_count:0,total_count:frame.page.state==="complete"?0:null};
   const source=frame.observations.find(o=>o.resource.kind==="ownership")!,initial=source.value!.state;
   source.revision={kind:"monotonic",value:high};
   let s=read(projectionState(base.binding_epoch),1,frame);

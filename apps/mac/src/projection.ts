@@ -685,6 +685,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
   }, 512);
   list(v.relations,item=>parentRelation(item,index));
   coverage(v.page);
+  requireValue(plain(v.page).returned_count === (v.projects as unknown[]).length);
   list(v.capabilities, item => {
     const c = object(item, "source operation state actor qualification_ref reason");
     one(c.source, "github codex resource_provider hydra"); text(c.operation); one(c.state, "available unsupported unavailable");

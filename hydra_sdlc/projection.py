@@ -888,6 +888,7 @@ def validate_frame(value):
     require(len({canonical(v['issue_ref']) for v in value['work']}) == len(value['work']))
     array(value['relations'], lambda v: parent_relation(v, observations))
     coverage(value['page'])
+    require(value['page']['returned_count'] == len(value['projects']))
     def capability(v):
         obj(v, 'source operation state actor qualification_ref reason')
         one(v['source'], SOURCES)

@@ -15,7 +15,7 @@ test("credential contexts fence late frames and preserve the previous scope's re
   function apply(state:ProjectionState,n:number,scope:string,contextSequence:number,limited:boolean,local=false,cached=false) {
     const frame=structuredClone(base),request_id=id(n+970);
     frame.request_id=request_id;
-    if (local) {frame.observations=frame.observations.filter(o=>o.resource.source==="hydra");frame.work=[];frame.projects=[];frame.relations=[];}
+    if (local) {frame.observations=frame.observations.filter(o=>o.resource.source==="hydra");frame.work=[];frame.projects=[];frame.relations=[];frame.page={...frame.page,returned_count:0,total_count:frame.page.state==="complete"?0:null};}
     else {
       const o=structuredClone(frame.observations.find(o=>o.resource.source==="github")!);
       o.key="query:credential-fixture";o.reason=limited?"rate_limited":null;frame.observations.push(o);
@@ -49,7 +49,7 @@ test("every unavailable observation kind retains its exact source owner",()=>{
   const owners=JSON.parse(readFileSync(new URL("../../../tests/fixtures/control-v3/source-owners.json",import.meta.url),"utf8")) as Record<string,string>;
   for (const [kind,owner] of Object.entries(owners)) for (const source of ["github","codex","resource_provider","hydra"]) {
     const frame=structuredClone(base),o=frame.observations[0]!;
-    frame.projects=[];frame.work=[];frame.relations=[];frame.retry_hints=[];frame.observations=[o];
+    frame.projects=[];frame.work=[];frame.relations=[];frame.page={...frame.page,returned_count:0,total_count:frame.page.state==="complete"?0:null};frame.retry_hints=[];frame.observations=[o];
     o.resource={source,kind,id:"fixture"} as typeof o.resource;
     o.revision=null;o.value=null;o.observed_at=null;o.availability="unavailable";o.reason="fixture_unavailable";
     o.coverage={...o.coverage,state:"unavailable",returned_count:0,total_count:null,next_cursor:null,reason:"fixture_unavailable"};
@@ -105,11 +105,13 @@ test(`cached overview cannot erase newer detail or failed coverage (failed=${aft
   assert.deepEqual(s.selected_ref,selected);
   assert.deepEqual(s.view!.projects.find(p=>p.repository_ref.id==="101")!.coverage,before,
     "Older cached coverage replaced the newer project observation");
-  parseProjection(s.view);
+  // Source frames were parsed above; the display accumulates multiple pages.
+  assert.equal(s.view!.projects.length,2);
   s=apply(s,"overview",5,4,frames[3]!);
   assert.deepEqual(s.view!.work.map(w=>w.issue_ref.id).sort(),["101:7","102:4"]);
   assert.deepEqual(s.selected_ref,selected,"Source absence must not replace the user's independent selection");
-  parseProjection(s.view);
+  // Source frames were parsed above; the display accumulates multiple pages.
+  assert.equal(s.view!.projects.length,2);
 });
 for (const empty of [false,true])
 test(`a late cached old runtime cannot roll back the accepted generation (empty=${empty})`,()=>{

@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "name": "complete-membership",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": true
+    },
+    {
+      "name": "partial-membership",
+      "state": "partial",
+      "count": 2,
+      "total": null,
+      "accepted": true
+    },
+    {
+      "name": "empty-complete-with-projects",
+      "state": "complete",
+      "count": 0,
+      "total": 0,
+      "accepted": false
+    },
+    {
+      "name": "understated-membership",
+      "state": "partial",
+      "count": 1,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "overstated-membership",
+      "state": "partial",
+      "count": 3,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "unavailable-with-projects",
+      "state": "unavailable",
+      "count": 0,
+      "total": null,
+      "accepted": false
+    }
+  ]
+}

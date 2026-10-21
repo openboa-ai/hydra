@@ -599,6 +599,18 @@ p=a[a.index('--config')+1]
 v=json.load(open(p))
 v['request_id']=a[a.index('--request-id')+1]
 v['binding_epoch']=a[a.index('--binding-epoch')+1]
+if '--repository' in a:
+ r=a[a.index('--repository')+1]
+ ids={o['resource']['id'] for o in v['observations'] if o['resource']['kind']=='repository' and o['value'] and o['value'].get('full_name','').lower()==r}
+ v['projects']=[project for project in v['projects'] if project['repository_ref']['id'] in ids or project['repository_ref']['id']=='requested:'+r]
+ v['work']=[work for work in v['work'] if work['issue_ref']['id'].split(':')[0] in ids]
+ for project in v['projects']: project['coverage']['next_cursor']=v['page']['next_cursor']
+ v['page']['next_cursor']=None
+ v['page']['scope']='registered-projects;repository:'+r
+else:
+ v['page']['scope']='registered-projects;overview'
+v['page']['returned_count']=len(v['projects'])
+if v['page']['state']=='complete': v['page']['total_count']=len(v['projects'])
 with open(p+'.calls','a') as f: f.write('read\n')
 print(json.dumps(v))
 "#).unwrap();

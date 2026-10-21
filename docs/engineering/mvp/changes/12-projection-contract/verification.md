@@ -991,3 +991,46 @@ the checked parent; its CI collected 1,558 Python methods with eight explicit sk
 and passed 348 frontend methods. Those results remain historical until new-head
 CI, independent reviews, protected merge and actual-main verification complete.
 Native operation, actual remote flow and full v1 acceptance remain unqualified.
+
+
+## Read snapshot, membership and resume boundaries
+
+Code review of parent `4ea2972f0516a451492039cf09f622b407b4c1f9` found four
+read-boundary defects despite passing CI and security review. This correction
+reuses accepted P12 Rev4 / CP8 / NC8 without a wire or authority expansion.
+
+- Capability snapshots and their headers follow the existing accepted response
+  sequence. An older cached scope cannot replace them. Whole-page rotation at
+  the memory bound preserves newer capability, command and page snapshots too.
+- Python, Rust and TypeScript require each source page's returned project count
+  to match its actual project records. A renderer display can accumulate multiple
+  validated pages; its retained source page metadata is not a newly emitted frame.
+- Clock resume clears ordinary local and remote polling floors and marks cache
+  entries stale. Verified provider retry windows remain in force.
+- Cache admission checks the captured overview/repository query before updating
+  data, repository pins, continuation lineage or provider retry policy. Scoped
+  pages cannot supply another repository, multiple projects, foreign work or a
+  retargeted numeric identity. Registered rename, unavailable placeholder and
+  empty partial responses retain their normal read behavior.
+
+The shared six-case page-count corpus starts from the actual Python read producer
+and drives all three consumers. Two legitimate pages pass; four contradictory
+membership claims fail. Frozen event regressions cover capability changes in both
+directions, older cached scopes, runtime changes, valid page accumulation and a
+1,200-project display union that must rotate within the 1,024-project bound.
+Rust regressions exercise post-resume local/remote refresh, a preserved 600-second
+provider wait, query mismatches, numeric retargeting and legitimate scoped reads.
+
+On the immutable parent the same final oracles produce four Python subtest
+failures, three frontend method failures and three Rust method failures, with no
+setup errors or skips; the independent scoped-read positive passes. All those
+oracles pass after correction. Existing empty/scoped synthetic fixtures now
+describe the records they actually return; source validation remains strict.
+Tests of accumulated display membership do not treat it as a new wire response.
+
+Final local impact checks pass 375 Python methods, 352 frontend methods and
+65 Rust methods, with no failures/errors/skips, plus frontend and native builds.
+Prior intermediate fixture failures remain separate from final passing evidence.
+Final-head CI, independent reviews, protected merge and actual-main checks remain
+delivery gates. Installed operation, the real remote flow, two-project acceptance
+and full v1 D/L/O remain unqualified by these source checks.

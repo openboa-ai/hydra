@@ -16,6 +16,7 @@ type Feedback = CapturedCommand & { outcome: CommandResult["outcome"]; reason: s
 export interface ProjectionState {
   binding_epoch: string; source_slots: Map<string, Slot>; selected_ref: ResourceRef | null;
   pending_commands: Map<string, CapturedCommand>; feedback: Map<string, Feedback>;
+  // Accumulated display records retain source page metadata; this is not a new wire frame.
   queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null; runtime_sequence:number; page_sequence:number;
   read_context: {scope:string|null;sequence:number};
   retry_windows: Map<string, RetryWindow>; last_now: number; error: string | null;
@@ -243,12 +244,22 @@ function bound(state: ProjectionState, window?: ReadWindow) {
     // when their union no longer fits; never manufacture an intra-page cursor
     // or silently discard part of the page behind its real next-record cursor.
     const keys = new Set(window.frame.observations.map(o => o.key));
+    const current = state.view;
     state.source_slots = new Map([...state.source_slots].filter(([k]) => keys.has(k)));
     state.view = structuredClone(window.frame);
+    if (window.received_sequence < state.runtime_sequence) {
+      state.view.assembled_at=current.assembled_at; state.view.request_id=current.request_id;
+      state.view.capabilities=current.capabilities; state.view.request=current.request;
+      state.view.retry_hints=current.retry_hints.filter(h=>keys.has(h.observation_key));
+    }
+    if (window.received_sequence < state.page_sequence) state.view.page=current.page;
     const incoming = new Set<object>([...state.view.projects, ...state.view.work, ...state.view.relations]);
     refreshFacts(state, new Set(), incoming, window.sequence, window.received_sequence);
     try {
-      if (fits(state.view)) { parseProjection(state.view); return; }
+      // The display can retain a newer source page while rotating membership.
+      // Validate the rotated records against their already validated wire page;
+      // never rewrite the page metadata displayed as a source observation.
+      if (fits(state.view)) { parseProjection({...state.view,page:window.frame.page}); return; }
     } catch { /* A retained source fence cannot create a malformed display. */ }
   }
   // Memory pressure is an explicit read-model failure, never task completion,
@@ -485,15 +496,17 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         }
         removeWork(state,evicted,changed);
         state.view.relations = merge(state.view.relations,frame.relations,x=>json([x.from,x.kind,x.to]));
-        state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
-        state.view.capabilities = structuredClone(frame.capabilities);
+        if (event.response.sequence >= state.runtime_sequence) {
+          state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
+          state.view.capabilities = structuredClone(frame.capabilities);
+          state.view.retry_hints = structuredClone(frame.retry_hints);
+        }
         const domain=(scope:string)=>scope.startsWith("registered-projects;")?scope.replace(/:from:[0-9]+$/,""):scope;
         if(!localRead && event.response.sequence>=state.page_sequence &&
             (domain(frame.page.scope)===domain(state.view.page.scope) ||
              domain(frame.page.scope)==="registered-projects;overview")) {
           state.view.page=structuredClone(frame.page);state.page_sequence=event.response.sequence;
         }
-        state.view.retry_hints = structuredClone(frame.retry_hints);
       }
       state.view.request = currentRequest;
       if(currentRequest && frame.request && event.response.sequence===state.runtime_sequence && !event.response.stale){

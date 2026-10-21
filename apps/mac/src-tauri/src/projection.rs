@@ -626,6 +626,7 @@ fn validate_frame(v:&Value)->R {
     }
     list(&v["relations"],|r| parent_relation(r,&index),4096)?;
     coverage(&v["page"])?;
+    need(v["page"]["returned_count"].as_u64()==Some(v["projects"].as_array().unwrap().len() as u64))?;
     list(&v["capabilities"],|c| {
         object(c,"source operation state actor qualification_ref reason")?; one(&c["source"],"github codex resource_provider hydra")?;
         short(&c["operation"])?; one(&c["state"],"available unsupported unavailable")?; one(&c["actor"],"core native_actor provider")?;
@@ -942,4 +943,20 @@ fn qualified_command_sources_and_checkpoint_heads() {
         if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
     }
     assert!(failures.is_empty(),"qualified command source mismatches: {:?}",failures);
+}
+
+#[cfg(test)]
+mod read_page_count_regressions {
+    use super::*;
+    #[test]
+    fn actual_read_wire_counts_match_returned_membership() {
+        let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_read_page_counts.py");
+        let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
+        assert!(output.status.success(),"Actual read producer failed: {}",String::from_utf8_lossy(&output.stderr));
+        let cases:Value=serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(cases.as_array().unwrap().len(),6);
+        for case in cases.as_array().unwrap() {
+            assert_eq!(ReadPayload::parse(case["wire"].as_str().unwrap().as_bytes()).is_ok(),case["accepted"].as_bool().unwrap(),"{}",case["name"]);
+        }
+    }
 }

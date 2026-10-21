@@ -96,6 +96,31 @@ fn exposed_cursor_slot(parent:&str,value:&Value,query:&str)->Option<usize> {
     }
     None
 }
+// A source frame belongs to the captured query, before it can affect cache,
+// repository pins, continuation lineage or the connection's retry policy.
+fn matches_read_scope(ticket:&ReadTicket,value:&Value,pins:&BTreeMap<String,u64>)->bool {
+    let mut query=ticket.scope.splitn(3,':');
+    if !matches!(query.next(),Some("remote"|"local")) {return false;}
+    let Some(repository)=query.next() else{return false;};
+    let Some(cursor)=query.next() else{return false;};
+    let Some(scope)=value["page"]["scope"].as_str() else{return false;};
+    if repository=="overview" {
+        if scope=="registered-projects;overview" {return true;}
+        return !cursor.is_empty() && scope.strip_prefix("registered-projects;overview:from:")
+            .is_some_and(|offset|offset.parse::<u64>().ok().is_some_and(|n|n>0 && n.to_string()==offset));
+    }
+    if !crate::protocol::repository_valid(repository) || scope!=format!("registered-projects;repository:{repository}") {return false;}
+    let projects=value["projects"].as_array().unwrap();
+    if projects.len()>1 {return false;}
+    let Some(project)=projects.first() else{return value["work"].as_array().unwrap().is_empty();};
+    let Some(identifier)=project["repository_ref"]["id"].as_str() else{return false;};
+    if identifier==format!("requested:{repository}") {return value["work"].as_array().unwrap().is_empty();}
+    let Some(number)=identifier.parse::<u64>().ok() else{return false;};
+    let observed=observed_repository_bindings(value);
+    if pins.get(repository).or_else(||observed.get(repository))!=Some(&number) {return false;}
+    let prefix=format!("{identifier}:");
+    value["work"].as_array().unwrap().iter().all(|work|work["issue_ref"]["id"].as_str().is_some_and(|id|id.starts_with(&prefix)))
+}
 impl ReadCache {
     pub fn new(epoch:String)->Result<Self,&'static str> {
         if !uuid(&epoch) {return Err("binding_invalid");}
@@ -118,6 +143,7 @@ impl ReadCache {
     }
     pub fn clock_resumed(&mut self) {
         for entry in self.entries.values_mut() {entry.stale=true;}
+        self.local_started=None; self.remote_started=None;
     }
     pub fn issue(&mut self,scope:String,request_id:String,detail:bool)->Result<ReadTicket,&'static str> {
         if scope.is_empty() || scope.chars().count()>4096 || scope.chars().any(|c|c<'\u{20}' || c=='\u{7f}') || !uuid(&request_id) {
@@ -168,6 +194,9 @@ impl ReadCache {
         let value=serde_json::to_value(&payload).map_err(|_|"invalid_response")?;
         if value["schema_version"]==3 && (value["binding_epoch"]!=ticket.epoch || value["request_id"]!=ticket.request_id) {
             self.failed(ticket); return Err("read_binding_mismatch");
+        }
+        if !matches_read_scope(ticket,&value,&self.repository_bindings) {
+            self.failed(ticket);return Err("read_scope_mismatch");
         }
         if ticket.remote {
             if ticket.credential_scope.is_none() {self.failed(ticket);return Err("read_context_unavailable");}
@@ -346,6 +375,7 @@ mod tests {
         let vectors:Value=serde_json::from_slice(&output.stdout).unwrap();
         let mut frame:Value=serde_json::from_str(vectors[0]["wire"].as_str().unwrap()).unwrap();
         frame["request_id"]=Value::String(request_id.into());
+        frame["page"]["scope"]="registered-projects;overview".into();
         serde_json::to_vec(&frame).unwrap()
     }
     #[test]
@@ -388,7 +418,7 @@ mod tests {
                     "returned_count":0,"total_count":0,"next_cursor":null,"reason":null});
                 frame["observations"].as_array_mut().unwrap().push(o);frame["projects"].as_array_mut().unwrap().push(p);
             }
-            frame["page"]=serde_json::json!({"state":"complete","scope":"host;overview","returned_count":count,
+            frame["page"]=serde_json::json!({"state":"complete","scope":"registered-projects;overview","returned_count":count,
                 "total_count":count,"next_cursor":null,"reason":null});frame
         };
         let mut capacity=test_cache();
@@ -488,7 +518,7 @@ mod tests {
             frame["observations"].as_array_mut().unwrap().push(o);frame["projects"].as_array_mut().unwrap().push(p);
             scopes.push(format!("remote:{name}:{token}"));
         }
-        frame["page"]=serde_json::json!({"state":"partial","scope":"host;overview","returned_count":65,
+        frame["page"]=serde_json::json!({"state":"partial","scope":"registered-projects;overview","returned_count":65,
             "total_count":null,"next_cursor":"overview-tail","reason":"record_limit"});
         let bytes=serde_json::to_vec(&frame).unwrap();assert!(bytes.len()<=1_048_576);
         let root=cache.issue("remote:overview:".into(),request(910),false).unwrap();cache.remote_started(now);
@@ -563,7 +593,7 @@ mod tests {
                 o["revision"]=Value::Null;o["value"]=Value::Null;o["observed_at"]=Value::Null;o["availability"]="unavailable".into();
                 o["reason"]="fixture_unavailable".into();
                 o["coverage"]=serde_json::json!({"state":"unavailable","scope":"fixture","returned_count":0,"total_count":null,"next_cursor":null,"reason":"fixture_unavailable"});
-                frame["projects"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);frame["relations"]=serde_json::json!([]);
+                frame["projects"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);frame["relations"]=serde_json::json!([]);frame["page"]["returned_count"]=0.into();frame["page"]["total_count"]=Value::Null;
                 frame["retry_hints"]=serde_json::json!([]);frame["observations"]=serde_json::json!([o]);
                 assert_eq!(ReadPayload::parse(&serde_json::to_vec(&frame).unwrap()).is_ok(),owner==source,"Foreign source impersonated {kind}");
             }
@@ -573,21 +603,21 @@ mod tests {
     fn same_scope_regression_cannot_discard_a_current_independent_source() {
         let mut cache=test_cache();let now=Instant::now();
         let mut value:Value=serde_json::from_slice(&fixture(&request(2))).unwrap();
-        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
+        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);value["page"]["returned_count"]=0.into();value["page"]["total_count"]=Value::Null;
         value["observations"][0]["revision"]["value"]="10".into();
         value["observations"][0]["value"]["revision"]=10.into();
-        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        let first=cache.issue("local:overview:remote".into(),request(2),false).unwrap();
         cache.accept(&first,&serde_json::to_vec(&value).unwrap(),now).unwrap();
         value["observations"][0]["revision"]["value"]="0".into();value["request_id"]=request(3).into();
         value["observations"][0]["value"]["revision"]=0.into();
         let issue=value["observations"].as_array_mut().unwrap().iter_mut().find(|o|o["resource"]["kind"]=="issue").unwrap();
         issue["value"]["title"]="New current GitHub source".into();
-        let second=cache.issue("remote".into(),request(3),false).unwrap();
+        let second=cache.issue("local:overview:remote".into(),request(3),false).unwrap();
         let accepted=cache.accept(&second,&serde_json::to_vec(&value).unwrap(),now)
             .expect("A per-source regression discarded a healthy GitHub observation");
         let read=serde_json::to_value(accepted.payload.as_ref()).unwrap();
         assert!(read["observations"].as_array().unwrap().iter().any(|o|o["value"]["title"]=="New current GitHub source"));
-        assert!(!cache.get("remote",false,now).unwrap().stale);
+        assert!(!cache.get("local:overview:remote",false,now).unwrap().stale);
     }
     #[test]
     fn explicit_v3_route_rejects_a_real_v2_payload_without_clearing_other_sources() {
@@ -597,61 +627,61 @@ mod tests {
         let wire=vectors.as_array().unwrap().iter().find(|v|v["profile"]=="legacy" && v["accepted"]==true).unwrap()["wire"].as_str().unwrap();
         assert!(matches!(ReadPayload::parse(wire.as_bytes()),Ok(ReadPayload::V2(_))));
         let mut cache=test_cache();let now=Instant::now();
-        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        let first=cache.issue("local:overview:remote".into(),request(2),false).unwrap();
         cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let mut legacy:Value=serde_json::from_str(wire).unwrap();legacy["runtime"]["code_digest"]="f".repeat(64).into();
-        let second=cache.issue("local".into(),request(3),false).unwrap();
+        let second=cache.issue("local:overview:".into(),request(3),false).unwrap();
         assert_eq!(cache.accept(&second,&serde_json::to_vec(&legacy).unwrap(),now).unwrap_err(),"projection_schema_mismatch");
-        assert!(!cache.get("remote",false,now).unwrap().stale);
-        assert!(cache.get("local",true,now).is_none());
+        assert!(!cache.get("local:overview:remote",false,now).unwrap().stale);
+        assert!(cache.get("local:overview:",true,now).is_none());
     }
     #[test]
     fn old_success_or_failure_cannot_erase_new_settled_scope() {
         let mut cache=test_cache(); let now=Instant::now();
-        let old=cache.issue("github:alpha".into(),request(2),false).unwrap();
-        let latest=cache.issue("github:alpha".into(),request(3),false).unwrap();
+        let old=cache.issue("local:overview:alpha".into(),request(2),false).unwrap();
+        let latest=cache.issue("local:overview:alpha".into(),request(3),false).unwrap();
         cache.accept(&latest,&fixture(&latest.request_id),now).unwrap();
         assert!(!cache.failed(&old));
         assert_eq!(cache.accept(&old,&fixture(&old.request_id),now).unwrap_err(),"stale_read");
-        assert!(!cache.get("github:alpha",false,now).unwrap().stale);
+        assert!(!cache.get("local:overview:alpha",false,now).unwrap().stale);
     }
     #[test]
     fn failure_stales_only_its_scope_and_cached_reads_do_not_renew_age() {
         let mut cache=test_cache(); let now=Instant::now();
-        for (scope,n) in [("github:alpha",2),("github:beta",3)] {
+        for (scope,n) in [("local:overview:alpha",2),("local:overview:beta",3)] {
             let ticket=cache.issue(scope.into(),request(n),false).unwrap();
             cache.accept(&ticket,&fixture(&ticket.request_id),now).unwrap();
         }
-        let bad=cache.issue("github:alpha".into(),request(4),false).unwrap(); assert!(cache.failed(&bad));
-        assert!(cache.get("github:alpha",false,now).unwrap().stale);
-        assert!(!cache.get("github:beta",false,now).unwrap().stale);
-        assert_eq!(cache.get("github:beta",false,now+Duration::from_secs(10)).unwrap().age_ms,10_000);
-        assert_eq!(cache.get("github:beta",false,now+Duration::from_secs(20)).unwrap().age_ms,20_000);
-        assert!(cache.get("github:beta",false,now+Duration::from_secs(61)).unwrap().stale);
+        let bad=cache.issue("local:overview:alpha".into(),request(4),false).unwrap(); assert!(cache.failed(&bad));
+        assert!(cache.get("local:overview:alpha",false,now).unwrap().stale);
+        assert!(!cache.get("local:overview:beta",false,now).unwrap().stale);
+        assert_eq!(cache.get("local:overview:beta",false,now+Duration::from_secs(10)).unwrap().age_ms,10_000);
+        assert_eq!(cache.get("local:overview:beta",false,now+Duration::from_secs(20)).unwrap().age_ms,20_000);
+        assert!(cache.get("local:overview:beta",false,now+Duration::from_secs(61)).unwrap().stale);
     }
     #[test]
     fn binding_clock_and_response_echo_are_explicit_fences() {
         let mut cache=test_cache(); let now=Instant::now();
-        let ticket=cache.issue("local".into(),request(2),false).unwrap();
+        let ticket=cache.issue("local:overview:".into(),request(2),false).unwrap();
         assert_eq!(cache.accept(&ticket,&fixture(&request(3)),now).unwrap_err(),"read_binding_mismatch");
-        let ticket=cache.issue("local".into(),request(4),false).unwrap();
+        let ticket=cache.issue("local:overview:".into(),request(4),false).unwrap();
         cache.accept(&ticket,&fixture(&ticket.request_id),now).unwrap();
-        cache.clock_resumed(); assert!(cache.get("local",true,now).unwrap().stale);
+        cache.clock_resumed(); assert!(cache.get("local:overview:",true,now).unwrap().stale);
         cache.binding_changed(request(5)).unwrap();
-        assert!(cache.get("local",true,now).is_none());
+        assert!(cache.get("local:overview:",true,now).is_none());
         assert_eq!(cache.accept(&ticket,&fixture(&ticket.request_id),now).unwrap_err(),"stale_read");
     }
     #[test]
     fn detail_lru_is_bounded_and_eviction_is_not_resource_completion() {
         let mut cache=test_cache(); let now=Instant::now();
         for n in 2..20 {
-            let scope=format!("detail:{n}");
+            let scope=format!("local:overview:detail-{n}");
             let ticket=cache.issue(scope,request(n),true).unwrap();
             cache.accept(&ticket,&fixture(&ticket.request_id),now).unwrap();
         }
         assert_eq!(cache.counts().2,16); assert!(cache.counts().1<=4_194_304);
-        assert!(cache.get("detail:2",false,now).is_none());
-        let current=cache.get("detail:19",false,now).unwrap();
+        assert!(cache.get("local:overview:detail-2",false,now).is_none());
+        let current=cache.get("local:overview:detail-19",false,now).unwrap();
         let value=serde_json::to_value(current.payload.as_ref()).unwrap();
         assert!(value["work"][0]["execution"]["value"].is_null());
         assert!(value["work"][0]["cleanup"]["value"].is_null());
@@ -679,20 +709,20 @@ mod tests {
         }
         let mut total=0;
         for n in 2..11 {
-            let ticket=cache.issue(format!("detail:{n}"),request(n),true).unwrap();
+            let ticket=cache.issue(format!("local:overview:detail-{n}"),request(n),true).unwrap();
             value["request_id"]=ticket.request_id.clone().into();
             let bytes=serde_json::to_vec(&value).unwrap();assert!(bytes.len()>500_000 && bytes.len()<=1_048_576);
             total+=bytes.len();cache.accept(&ticket,&bytes,now).unwrap();
             assert!(cache.counts().1<=4_194_304);
         }
-        assert!(total>4_194_304);assert!(cache.get("detail:2",false,now).is_none());
-        assert!(cache.get("detail:10",false,now).is_some());assert!(cache.counts().0<9);
+        assert!(total>4_194_304);assert!(cache.get("local:overview:detail-2",false,now).is_none());
+        assert!(cache.get("local:overview:detail-10",false,now).is_some());assert!(cache.counts().0<9);
     }
     #[test]
     fn late_original_hint_still_holds_quota_but_cannot_replace_new_data_or_renew_on_replay() {
         let mut cache=test_cache();let now=Instant::now();
-        let old=cache.issue("github:alpha".into(),request(2),false).unwrap();
-        let latest=cache.issue("github:alpha".into(),request(3),false).unwrap();
+        let old=cache.issue("local:overview:alpha".into(),request(2),false).unwrap();
+        let latest=cache.issue("local:overview:alpha".into(),request(3),false).unwrap();
         cache.accept(&latest,&fixture(&latest.request_id),now).unwrap();
         let mut value:Value=serde_json::from_slice(&fixture(&old.request_id)).unwrap();
         let mut o=value["observations"].as_array().unwrap().iter().find(|o|o["resource"]["source"]=="github").unwrap().clone();
@@ -702,7 +732,7 @@ mod tests {
         let bytes=serde_json::to_vec(&value).unwrap();
         assert_eq!(cache.accept(&old,&bytes,now).unwrap_err(),"stale_read");
         assert_eq!(cache.remote_wait(now,true),Ok(3600));
-        assert_eq!(cache.get("github:alpha",false,now).unwrap().sequence,latest.sequence);
+        assert_eq!(cache.get("local:overview:alpha",false,now).unwrap().sequence,latest.sequence);
         assert_eq!(cache.accept(&old,&bytes,now+Duration::from_secs(100)).unwrap_err(),"stale_read");
         assert_eq!(cache.remote_wait(now+Duration::from_secs(100),true),Ok(3500));
         cache.clock_resumed();assert_eq!(cache.remote_wait(now+Duration::from_secs(100),true),Ok(3500));
@@ -711,28 +741,28 @@ mod tests {
     fn raw_cache_preserves_full_decimal_tokens_for_the_source_aware_consumer() {
         let mut cache=test_cache();let now=Instant::now();
         let bytes=fixture(&request(2));let mut value:Value=serde_json::from_slice(&bytes).unwrap();
-        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
+        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);value["page"]["returned_count"]=0.into();value["page"]["total_count"]=Value::Null;
         let high="1".to_owned()+&"0".repeat(200);let low="9".repeat(200);
         value["observations"][0]["key"]="hydra:counter:ownership".into();
         value["observations"][0]["resource"]=serde_json::json!({"source":"hydra","kind":"ownership","id":"fixture-counter"});
         value["observations"][0]["value"]=serde_json::json!({"state":"free","scope_digest":null,"step_nonce":null});
         value["observations"][0]["revision"]["value"]=high.clone().into();
-        let ticket=cache.issue("local".into(),request(2),false).unwrap();
+        let ticket=cache.issue("local:overview:".into(),request(2),false).unwrap();
         cache.accept(&ticket,&serde_json::to_vec(&value).unwrap(),now).unwrap();
         value["observations"][0]["revision"]["value"]=low.clone().into();value["request_id"]=request(3).into();
-        let ticket=cache.issue("local".into(),request(3),false).unwrap();
+        let ticket=cache.issue("local:overview:".into(),request(3),false).unwrap();
         cache.accept(&ticket,&serde_json::to_vec(&value).unwrap(),now).unwrap();
-        let retained=cache.get("local",true,now).unwrap();assert!(!retained.stale);
+        let retained=cache.get("local:overview:",true,now).unwrap();assert!(!retained.stale);
         let retained=serde_json::to_value(retained.payload.as_ref()).unwrap();
         assert_eq!(retained["observations"][0]["revision"]["value"],low);
     }
     #[test]
     fn older_shared_metadata_in_an_independent_read_does_not_discard_new_github_data() {
         let mut cache=test_cache();let now=Instant::now();
-        let remote=cache.issue("remote".into(),request(2),false).unwrap();
-        let local=cache.issue("local".into(),request(3),false).unwrap();
+        let remote=cache.issue("local:overview:remote".into(),request(2),false).unwrap();
+        let local=cache.issue("local:overview:".into(),request(3),false).unwrap();
         let mut value:Value=serde_json::from_slice(&fixture(&local.request_id)).unwrap();
-        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
+        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);value["page"]["returned_count"]=0.into();value["page"]["total_count"]=Value::Null;
         value["observations"][0]["revision"]["value"]="8".into();
         value["observations"][0]["value"]["revision"]=8.into();
         cache.accept(&local,&serde_json::to_vec(&value).unwrap(),now).unwrap();
@@ -740,42 +770,42 @@ mod tests {
         let remote=serde_json::to_value(remote.payload.as_ref()).unwrap();
         assert_eq!(remote["projects"].as_array().unwrap().len(),2);
         assert!(remote["observations"].as_array().unwrap().iter().any(|o|o["resource"]["source"]=="github" && o["availability"]=="current"));
-        let local=cache.get("local",true,now).unwrap();assert!(!local.stale);
+        let local=cache.get("local:overview:",true,now).unwrap();assert!(!local.stale);
         let local=serde_json::to_value(local.payload.as_ref()).unwrap();
         assert_eq!(local["observations"][0]["revision"]["value"],"8");
     }
     #[test]
     fn current_runtime_change_recovers_a_generation_without_late_rollback_or_quota_reset() {
         let mut cache=test_cache();let now=Instant::now();
-        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        let first=cache.issue("local:overview:remote".into(),request(2),false).unwrap();
         let mut value:Value=serde_json::from_slice(&fixture(&first.request_id)).unwrap();
         let mut o=value["observations"].as_array().unwrap().iter().find(|o|o["resource"]["source"]=="github").unwrap().clone();
         o["key"]="query:runtime".into();o["reason"]="provider_wait".into();
         value["observations"].as_array_mut().unwrap().push(o);
         value["retry_hints"]=serde_json::json!([{"observation_key":"query:runtime","scope":format!("github:registered-read:{EPOCH}"),"after_seconds":600,"basis":"provider"}]);
         cache.accept(&first,&serde_json::to_vec(&value).unwrap(),now).unwrap();
-        let old=cache.issue("old-independent".into(),request(3),false).unwrap();
-        let fresh=cache.issue("local".into(),request(4),false).unwrap();
+        let old=cache.issue("local:overview:old-independent".into(),request(3),false).unwrap();
+        let fresh=cache.issue("local:overview:".into(),request(4),false).unwrap();
         let mut value:Value=serde_json::from_slice(&fixture(&fresh.request_id)).unwrap();
         value["runtime"]["code_digest"]="f".repeat(64).into();
         let accepted=cache.accept(&fresh,&serde_json::to_vec(&value).unwrap(),now).expect("A legitimate runtime update permanently poisoned the cache");
         assert_eq!(serde_json::to_value(accepted.payload.as_ref()).unwrap()["runtime"]["code_digest"],"f".repeat(64));
-        assert!(cache.get("remote",false,now).is_none());
+        assert!(cache.get("local:overview:remote",false,now).is_none());
         assert_eq!(cache.accept(&old,&fixture(&old.request_id),now).unwrap_err(),"stale_read");
-        assert!(!cache.get("local",true,now).unwrap().stale);
+        assert!(!cache.get("local:overview:",true,now).unwrap().stale);
         assert_eq!(cache.remote_wait(now,true),Ok(600));
     }
     #[test]
     fn local_generation_replacement_releases_old_remote_poll_floor() {
         let mut cache=test_cache();let now=Instant::now();
-        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        let first=cache.issue("local:overview:remote".into(),request(2),false).unwrap();
         cache.remote_started(now);cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let started=now+Duration::from_secs(1);
-        let local=cache.issue("local".into(),request(3),false).unwrap();cache.local_started(started);
+        let local=cache.issue("local:overview:".into(),request(3),false).unwrap();cache.local_started(started);
         let mut value:Value=serde_json::from_slice(&fixture(&local.request_id)).unwrap();
         value["runtime"]["code_digest"]="f".repeat(64).into();
         cache.accept(&local,&serde_json::to_vec(&value).unwrap(),started).unwrap();
-        assert!(cache.get("remote",false,started).is_none());
+        assert!(cache.get("local:overview:remote",false,started).is_none());
         assert_eq!(cache.remote_wait(started,false),Ok(0),"An invalidated generation held an empty remote cache");
         assert!(cache.local_wait(started+Duration::from_secs(4)));
         assert!(!cache.local_wait(started+Duration::from_secs(5)));
@@ -783,10 +813,10 @@ mod tests {
     #[test]
     fn remote_generation_replacement_retains_its_own_start_but_not_old_local_floor() {
         let mut cache=test_cache();let now=Instant::now();
-        let first=cache.issue("local".into(),request(2),false).unwrap();
+        let first=cache.issue("local:overview:".into(),request(2),false).unwrap();
         cache.local_started(now);cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let started=now+Duration::from_secs(1);
-        let remote=cache.issue("remote".into(),request(3),false).unwrap();cache.remote_started(started);
+        let remote=cache.issue("local:overview:remote".into(),request(3),false).unwrap();cache.remote_started(started);
         let mut value:Value=serde_json::from_slice(&fixture(&remote.request_id)).unwrap();
         value["runtime"]["code_digest"]="f".repeat(64).into();
         cache.accept(&remote,&serde_json::to_vec(&value).unwrap(),started+Duration::from_secs(1)).unwrap();
@@ -797,10 +827,10 @@ mod tests {
     #[test]
     fn late_old_runtime_hint_holds_the_same_connection_without_restoring_old_data() {
         let mut cache=test_cache();let now=Instant::now();
-        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        let first=cache.issue("local:overview:remote".into(),request(2),false).unwrap();
         cache.accept(&first,&fixture(&first.request_id),now).unwrap();
-        let old=cache.issue("old-remote".into(),request(3),false).unwrap();
-        let fresh=cache.issue("local".into(),request(4),false).unwrap();
+        let old=cache.issue("local:overview:old-remote".into(),request(3),false).unwrap();
+        let fresh=cache.issue("local:overview:".into(),request(4),false).unwrap();
         let mut next:Value=serde_json::from_slice(&fixture(&fresh.request_id)).unwrap();
         next["runtime"]["code_digest"]="f".repeat(64).into();
         cache.accept(&fresh,&serde_json::to_vec(&next).unwrap(),now).unwrap();
@@ -814,7 +844,7 @@ mod tests {
         assert_eq!(cache.remote_wait(now,true),Ok(600));
         assert_eq!(cache.accept(&old,&bytes,now+Duration::from_secs(100)).unwrap_err(),"stale_read");
         assert_eq!(cache.remote_wait(now+Duration::from_secs(100),true),Ok(500));
-        let retained=serde_json::to_value(cache.get("local",true,now).unwrap().payload.as_ref()).unwrap();
+        let retained=serde_json::to_value(cache.get("local:overview:",true,now).unwrap().payload.as_ref()).unwrap();
         assert_eq!(retained["runtime"]["code_digest"],"f".repeat(64));
     }
     #[test]
@@ -847,23 +877,23 @@ mod tests {
     #[test]
     fn p12_review_incomplete_runtime_preserves_generation_and_validation_fences() {
         let now=Instant::now();let mut cache=test_cache();
-        let first=cache.issue("local:first:".into(),request(931),false).unwrap();
-        let late=cache.issue("local:late:".into(),request(932),false).unwrap();
+        let first=cache.issue("local:overview:first".into(),request(931),false).unwrap();
+        let late=cache.issue("local:overview:late".into(),request(932),false).unwrap();
         let mut incomplete:Value=serde_json::from_slice(&fixture(&request(931))).unwrap();
         incomplete["runtime"]["code_digest"]=Value::Null;
         incomplete["runtime"]["identity_reason"]=Value::String("runtime_source_unavailable".into());
         assert!(cache.accept(&first,&serde_json::to_vec(&incomplete).unwrap(),now).is_ok());
-        let next=cache.issue("local:next:".into(),request(933),false).unwrap();
+        let next=cache.issue("local:overview:next".into(),request(933),false).unwrap();
         assert!(cache.accept(&next,&fixture(&request(933)),now).is_ok());
-        assert!(cache.get("local:first:",true,now).is_none());
+        assert!(cache.get("local:overview:first",true,now).is_none());
         incomplete["request_id"]=Value::String(request(932));
         assert_eq!(cache.accept(&late,&serde_json::to_vec(&incomplete).unwrap(),now).unwrap_err(),"stale_read");
-        assert!(cache.get("local:next:",true,now).is_some());
-        let bad=cache.issue("local:bad:".into(),request(934),false).unwrap();
+        assert!(cache.get("local:overview:next",true,now).is_some());
+        let bad=cache.issue("local:overview:bad".into(),request(934),false).unwrap();
         let mut malformed:Value=serde_json::from_slice(&fixture(&request(934))).unwrap();
         malformed["runtime"]["code_digest"]=Value::String("invalid".into());
         assert!(cache.accept(&bad,&serde_json::to_vec(&malformed).unwrap(),now).is_err());
-        assert!(cache.get("local:next:",true,now).is_some());
+        assert!(cache.get("local:overview:next",true,now).is_some());
     }
 
 
@@ -891,4 +921,103 @@ mod tests {
         cache.accept(&fresh,&fixture(&fresh.request_id),now).unwrap();
         assert_eq!(cache.get("remote:overview:",false,now).unwrap().read_context.scope.as_deref(),Some("connection:beta"));
     }
+    #[test]
+    fn resumed_clock_refreshes_each_poll_lane_without_resetting_provider_waits() {
+        let now=Instant::now();
+        for remote in [false,true] {
+            let mut cache=test_cache();
+            let scope=if remote {"remote:overview:"} else {"local:overview:"};
+            let ticket=cache.issue(scope.into(),request(940),false).unwrap();
+            let mut frame:Value=serde_json::from_slice(&fixture(&ticket.request_id)).unwrap();
+            frame["page"]["scope"]="registered-projects;overview".into();
+            cache.accept(&ticket,&serde_json::to_vec(&frame).unwrap(),now).unwrap();
+            if remote {cache.remote_started(now);}else{cache.local_started(now);}
+            assert_eq!(cache.read_held(now+Duration::from_secs(1),remote,scope,false,false),Ok(true));
+            cache.clock_resumed();
+            assert!(cache.get(scope,true,now+Duration::from_secs(1)).unwrap().stale);
+            assert_eq!(cache.read_held(now+Duration::from_secs(1),remote,scope,false,false),Ok(false),"Resume did not release the ordinary polling floor");
+        }
+        let mut cache=test_cache();
+        let ticket=cache.issue("remote:overview:".into(),request(941),false).unwrap();
+        let mut frame:Value=serde_json::from_slice(&fixture(&ticket.request_id)).unwrap();
+        frame["page"]["scope"]="registered-projects;overview".into();
+        let observation=frame["observations"].as_array_mut().unwrap().iter_mut().find(|o|o["resource"]["source"]=="github").unwrap();
+        observation["reason"]="rate_limited".into();
+        let key=observation["key"].clone();
+        frame["retry_hints"]=serde_json::json!([{"observation_key":key,"scope":ticket.credential_scope.clone().unwrap(),"after_seconds":600,"basis":"provider"}]);
+        cache.accept(&ticket,&serde_json::to_vec(&frame).unwrap(),now).unwrap();cache.remote_started(now);
+        cache.clock_resumed();
+        assert_eq!(cache.read_held(now+Duration::from_secs(1),true,"remote:overview:",false,false),Ok(true),"Resume discarded a provider retry window");
+        assert_eq!(cache.remote_wait(now+Duration::from_secs(1),true),Ok(599));
+    }
+    fn scoped_frame(request_id:&str,name:&str)->Value {
+        let mut frame:Value=serde_json::from_slice(&fixture(request_id)).unwrap();
+        let identifier=if name=="example/alpha" {"101"}else{"102"};
+        frame["projects"].as_array_mut().unwrap().retain(|p|p["repository_ref"]["id"]==identifier);
+        frame["work"].as_array_mut().unwrap().retain(|w|w["issue_ref"]["id"].as_str().unwrap().starts_with(&format!("{identifier}:")));
+        frame["page"]=serde_json::json!({"state":"partial","scope":format!("registered-projects;repository:{name}"),"returned_count":1,"total_count":null,"next_cursor":null,"reason":"source_coverage_incomplete"});
+        frame
+    }
+    #[test]
+    fn read_query_rejects_overview_foreign_membership_and_retargeted_pins() {
+        let now=Instant::now();
+        for bad in ["overview","foreign_page","foreign_member","extra_member","foreign_work","retarget"] {
+            let mut cache=test_cache();
+            if bad=="retarget" {
+                let root=cache.issue("remote:overview:".into(),request(950),false).unwrap();
+                let mut frame:Value=serde_json::from_slice(&fixture(&root.request_id)).unwrap();frame["page"]["scope"]="registered-projects;overview".into();
+                cache.accept(&root,&serde_json::to_vec(&frame).unwrap(),now).unwrap();
+            }
+            let ticket=cache.issue("remote:example/alpha:".into(),request(951),true).unwrap();
+            let mut frame=scoped_frame(&ticket.request_id,"example/alpha");
+            if bad=="overview" {frame["page"]["scope"]="registered-projects;overview".into();}
+            if bad=="foreign_page" {frame["page"]["scope"]="registered-projects;repository:example/beta".into();}
+            if bad=="foreign_member" || bad=="retarget" {
+                frame=scoped_frame(&ticket.request_id,"example/beta");frame["page"]["scope"]="registered-projects;repository:example/alpha".into();
+                if bad=="retarget" {
+                    let observation=frame["observations"].as_array_mut().unwrap().iter_mut().find(|o|o["resource"]["kind"]=="repository" && o["resource"]["id"]=="102").unwrap();
+                    observation["value"]["full_name"]="example/alpha".into();observation["value"]["url"]="https://github.com/example/alpha".into();
+                }
+            }
+            if bad=="extra_member" {
+                let extra=scoped_frame(&ticket.request_id,"example/beta")["projects"][0].clone();
+                frame["projects"].as_array_mut().unwrap().push(extra);frame["page"]["returned_count"]=2.into();
+            }
+            if bad=="foreign_work" {
+                let mut extra=frame["work"][0].clone();extra["issue_ref"]["id"]="102:701".into();
+                for field in ["readiness","stage","admission","execution","wait","delivery","result","cleanup","next_action"] {
+                    extra[field]=serde_json::json!({"value":null,"reason":"not_observed","evidence":[]});
+                }
+                extra["decision"]=serde_json::json!({"question":{"value":null,"reason":"not_observed","evidence":[]},"answer":{"value":null,"reason":"not_observed","evidence":[]},"acceptance":{"value":null,"reason":"not_observed","evidence":[]},"application":{"value":null,"reason":"not_observed","evidence":[]}});
+                for field in ["goal_refs","spec_refs","requirement_refs","task_refs","resource_refs","evidence_refs"] {extra[field]=serde_json::json!([]);}
+                frame["work"].as_array_mut().unwrap().push(extra);
+            }
+            assert!(ReadPayload::parse(&serde_json::to_vec(&frame).unwrap()).is_ok(),"The regression fixture is not valid wire: {bad}");
+            assert!(cache.accept(&ticket,&serde_json::to_vec(&frame).unwrap(),now).is_err(),"A mismatched query entered the cache: {bad}");
+            assert!(cache.get("remote:example/alpha:",false,now).is_none());
+        }
+    }
+    #[test]
+    fn scoped_query_accepts_registered_rename_and_unavailable_membership() {
+        let now=Instant::now();
+        for variant in ["current","rename","unavailable","empty"] {
+            let mut cache=test_cache();let ticket=cache.issue("remote:example/alpha:".into(),request(960),true).unwrap();
+            let mut frame=scoped_frame(&ticket.request_id,"example/alpha");
+            if variant=="rename" {
+                let observation=frame["observations"].as_array_mut().unwrap().iter_mut().find(|o|o["resource"]["kind"]=="repository" && o["resource"]["id"]=="101").unwrap();
+                observation["coverage"]["scope"]="repository-address:example/alpha".into();
+                observation["value"]["full_name"]="example/renamed".into();observation["value"]["url"]="https://github.com/example/renamed".into();
+                frame["projects"][0]["source_refs"].as_array_mut().unwrap().push(serde_json::json!({"source":"github","kind":"repository","id":"requested:example/alpha"}));
+            }
+            if variant=="unavailable" {
+                frame["projects"][0]["repository_ref"]["id"]="requested:example/alpha".into();
+                frame["projects"][0]["work_refs"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);
+                frame["projects"][0]["admission"]=serde_json::json!({"value":null,"reason":"source_unavailable","evidence":[]});
+            }
+            if variant=="empty" {frame["projects"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);frame["page"]["returned_count"]=0.into();}
+            let bytes=serde_json::to_vec(&frame).unwrap();
+            assert!(cache.accept(&ticket,&bytes,now).is_ok(),"A valid scoped response was lost: {variant}");
+        }
+    }
+
 }
