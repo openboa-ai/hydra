@@ -179,3 +179,51 @@ that run does not qualify this later correction. P12 Rev4/CP8/NC8 and the existi
 authority/native exclusions are unchanged. Final-head CI and independent reviews,
 protected merge and main checks remain required; P16 still owns screen/action and
 actual running-screen integration. No runtime/authority was installed or activated.
+
+
+## Repository resolution and bounded continuation navigation -- 2026-10-21
+
+Local-only or failed initial reads can retain a requested repository alias. A later
+numeric repository observation now replaces that alias and reconciles its display
+selection. The inverse numeric-to-local-only path remains supported. Numeric
+identity, execution and command authority are not inferred from an address alone.
+
+Project navigation now tracks the same work retained by the merged read model.
+Within the accepted 128-ref project bound, continuation refs accumulate alongside
+their whole work records. At the bound it rotates only that project's incoming
+whole page, removing the prior page's related cached sources/relations while
+preserving other projects, actual cursors and command feedback. Byte-budget
+rotation remains separate. No partial slice is promoted to whole-source coverage
+and cache eviction does not terminate, complete or retire actual work.
+
+Unread cursor scopes advance immediately despite the ordinary local/remote poll
+floor. Replaying a cached cursor is a repeat poll, retaining the normal floor and
+original cache age. Both continuation and manual recovery still honor connection
+provider waits and automatic-retry exhaustion. The bridge uses the same bounded
+process invocation; no new reader or authority was introduced.
+
+Actual producer cases cover local-only/failed-read resolution, 100+20 fault/recovery
+pages within the bound and 128+22 pages that require project rotation. They require
+every retained work to be reachable, every newly read whole record present, the
+128 bound, exact provider cursor, another project's retention and unknown cleanup.
+Actual bridge calls verify local and remote continuation, cursor replay and
+provider-limited recovery; child invocation counts distinguish cache reads from
+additional subprocesses. These are source/fixture checks, not installed operation.
+
+Unchanged published d201dc0 reproduces five actual assertions: three renderer
+identity/navigation failures and two bridge continuation failures. No compiler or
+setup error is counted. Earlier draft assertions incorrectly required retaining
+150 project refs and allowed admission under the paused fixture host; the existing
+128 contract and actual paused input corrected those oracles before the final
+unchanged-parent RED. Final RED and GREEN use identical regression test bytes.
+
+The final source/test bytes pass Python55, frontend90 and Rust38 with zero
+failures/errors/skips/ignored cases, typecheck/Vite build and the existing actual
+19-vector Python/Rust/TS wire. Read-cost fixtures remain small 4 GET/8,444 bytes,
+128-record prefix 5 GET/324,434 bytes, and UTF-8 prefix 5 GET/1,038,843 bytes with
+55 whole records and a usable cursor. No full local kernel was repeated.
+
+P12 Rev4/CP8/NC8 remain pinned and unchanged. Final-head CI and completed
+independent code/security reviews, protected merge and actual-main checks are
+still required. P16 owns the later screen/action integration and running-screen
+evidence. No runtime, source capability or authority was installed or activated.

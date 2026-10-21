@@ -16,6 +16,52 @@ function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
     response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
+for (const failedRefresh of [false,true]) test(`numeric repository resolution replaces a ${failedRefresh ? "failed-refresh" : "local-only"} placeholder`,()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture\nfirst=ReadFixture(fail=lambda _: RuntimeError('fixture unavailable')).read() if " + (failedRefresh ? "True" : "False") + " else ReadFixture().read(refresh=False)\nprint(json.dumps([first,ReadFixture().read()]))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
+  assert.equal(r.status,0,r.stderr);
+  const [initial,resolved]=(JSON.parse(r.stdout) as ProjectionV3[]).map(parseProjection);
+  assert.ok(initial && resolved);
+  let s=read(projectionState(initial.binding_epoch),1,initial);
+  const alias=s.view!.projects.find(p=>p.repository_ref.id==="requested:example/alpha")!.repository_ref;
+  s=reduceProjection(s,{type:"selection_changed",selected_ref:alias});
+  s=read(s,2,resolved);
+  assert.deepEqual(s.view!.projects.map(p=>p.repository_ref.id).sort(),["101","102"],
+    "A successfully resolved repository remained beside its requested alias");
+  assert.equal(s.selected_ref!.id,"101");
+  assert.equal(s.view!.projects.find(p=>p.repository_ref.id==="101")!.admission.value,"paused");
+  assert.equal(s.view!.projects.find(p=>p.repository_ref.id==="101")!.execution.value,null);
+  parseProjection(s.view);
+});
+test("actual continuation pages keep retained work reachable within the per-project bound",()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nsets=[]\nfor total in (120,150):\n rows={('example/alpha','open',False):[issue(n) for n in range(1,total+1)]}\n fail=(lambda path: RuntimeError('fixture unavailable') if '/issues?' in path and 'page=2' in path else None) if total==120 else None\n first=ReadFixture(rows,fail=fail).read(repository='example/alpha')\n second=ReadFixture(rows).read(repository='example/alpha',cursor=first['projects'][0]['coverage']['next_cursor'])\n assert second['projects'][0]['coverage']['next_cursor'] is None\n sets.append([first,second])\nprint(json.dumps(sets))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
+  assert.equal(r.status,0,r.stderr);
+  const sets=(JSON.parse(r.stdout) as ProjectionV3[][]).map(frames=>frames.map(parseProjection));
+  assert.deepEqual(sets.map(frames=>frames.map(f=>f.work.length)),[[100,20],[128,22]]);
+  for (const [index,frames] of sets.entries()) {
+  let s=read(projectionState(frames[0]!.binding_epoch),1);const seen=new Set<string>();
+  for (const [n,frame] of frames.entries()) {
+    s=read(s,n+2,frame);
+    const project=s.view!.projects.find(p=>p.repository_ref.id==="101")!;
+    const retained=s.view!.work.filter(w=>w.issue_ref.id.startsWith("101:"));
+    assert.deepEqual(project.work_refs.map(r=>r.id).sort(),retained.map(w=>w.issue_ref.id).sort(),
+      "Project navigation omitted retained work from an earlier continuation page");
+    assert.ok(project.work_refs.length<=128,"The renderer exceeded the accepted per-project wire bound");
+    for (const w of frame.work) {
+      assert.ok(retained.some(r=>r.issue_ref.id===w.issue_ref.id),"A new whole work record disappeared");
+      seen.add(w.issue_ref.id);
+    }
+    assert.ok(s.view!.projects.some(p=>p.repository_ref.id==="102"),"Project-page rotation discarded a different project");
+    assert.equal(project.coverage.next_cursor,frame.projects[0]!.coverage.next_cursor);
+    assert.equal(project.coverage.state,"partial","A continuation slice cannot certify whole-source coverage");
+    assert.ok(retained.every(w=>w.cleanup.value===null));
+    parseProjection(s.view);
+  }
+  assert.equal(seen.size,index===0 ? 120 : 150);
+  assert.equal(s.view!.work.filter(w=>w.issue_ref.id.startsWith("101:")).length,index===0 ? 120 : 22);
+  }
+});
 test("actual producer continuation remains traversable when merged pages exceed the renderer budget",()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nrows={('example/alpha','open',False):[issue(n,'🚀'*5000) for n in range(1,151)]}\nframes=[]\ncursor=None\nfor _ in range(8):\n frame=ReadFixture(rows).read(repository='example/alpha',cursor=cursor)\n frames.append(frame)\n cursor=frame['projects'][0]['coverage']['next_cursor']\n if cursor is None: break\nassert cursor is None\nprint(json.dumps(frames,ensure_ascii=False))\n";
   const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:8388608});

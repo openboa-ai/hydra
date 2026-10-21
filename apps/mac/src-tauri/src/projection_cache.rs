@@ -164,6 +164,17 @@ impl ReadCache {
         self.touch(scope); Some(result)
     }
     pub fn epoch(&self)->&str {&self.epoch}
+    pub fn read_held(&self,now:Instant,remote:bool,scope:&str,continuation:bool,explicit_recovery:bool)->Result<bool,&'static str> {
+        let continuation=continuation && !self.entries.contains_key(scope);
+        if remote && continuation {
+            // A cursor advances the bounded read; it is not an ordinary poll.
+            // Connection quotas and exhausted automatic retries still apply.
+            return self.policy.wait_seconds("github",&format!("github:registered-read:{}",self.epoch),now,explicit_recovery)
+                .map(|seconds|seconds>0);
+        }
+        if remote {self.remote_wait(now,explicit_recovery).map(|seconds|seconds>0)}
+        else {Ok(!continuation && self.local_wait(now))}
+    }
     pub fn remote_wait(&self,now:Instant,explicit_recovery:bool)->Result<u64,&'static str> {
         let quota=self.policy.wait_seconds("github",&format!("github:registered-read:{}",self.epoch),now,explicit_recovery)?;
         let poll=self.remote_started.map(|start|Duration::from_secs(60).saturating_sub(now.saturating_duration_since(start)))

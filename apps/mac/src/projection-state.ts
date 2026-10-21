@@ -91,6 +91,18 @@ function refreshFacts(state: ProjectionState, changed: Set<string>, incoming: Se
   view.observations = [...state.source_slots.values()].map(slot => slot.observation);
 }
 type ReadWindow = { frame: ProjectionV3; sequence: number; received_sequence: number };
+function removeWork(state:ProjectionState,removed:Set<string>,changed:Set<string>) {
+  const view=state.view!;
+  view.work=view.work.filter(w=>!removed.has(key(w.issue_ref)));
+  view.relations=view.relations.filter(r=>!removed.has(key(r.from)) && !removed.has(key(r.to)));
+  for (const [k,slot] of state.source_slots) {
+    const o=slot.observation,issue=o.value?.issue_ref as ResourceRef|undefined;
+    if ((o.resource.kind==="issue" && removed.has(key(o.resource))) ||
+        (o.resource.kind==="progress" && issue && removed.has(key(issue)))) {
+      state.source_slots.delete(k);changed.add(k);
+    }
+  }
+}
 function pruneUnusedSources(state: ProjectionState) {
   const view = state.view!;
   const evidence = new Set(view.retry_hints.map(h => h.observation_key)), resources = new Set<string>();
@@ -117,7 +129,7 @@ function bound(state: ProjectionState, window?: ReadWindow) {
       reason: "receipt_capacity_held", receipt: null });
   }
   const fits = (view: ProjectionV3) => size(view) <= MAX_PROJECTION_BYTES &&
-    view.work.length <= 512 && view.projects.length <= 1024;
+    view.work.length <= 512 && view.projects.length <= 1024 && view.projects.every(p=>p.work_refs.length<=128);
   if (!state.view || fits(state.view)) return;
   pruneUnusedSources(state);
   if (fits(state.view)) return;
@@ -259,14 +271,24 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       state.queries.delete(event.scope);
       // Local admission can update the already observed repository's display context.
       // This does not refresh repository identity, coverage, progress or authority.
+      const resolvedAliases=new Map<string,ResourceRef>();
       for (const p of frame.projects) {
-        if (!p.repository_ref.id.startsWith("requested:")) continue;
-        const address=p.repository_ref.id.slice("requested:".length);
-        const observed=[...state.source_slots.values()].find(s=>s.observation.resource.kind === "repository" &&
-          typeof s.observation.value?.full_name === "string" && s.observation.value.full_name.toLowerCase() === address.toLowerCase() &&
-          !s.observation.resource.id.startsWith("requested:"));
-        const old=state.view?.projects.find(p=>observed && key(p.repository_ref) === key(observed.observation.resource));
-        if (old) Object.assign(p,structuredClone(old),{admission:p.admission});
+        if (p.repository_ref.id.startsWith("requested:")) {
+          const address=p.repository_ref.id.slice("requested:".length);
+          const observed=[...state.source_slots.values()].find(s=>s.observation.resource.kind === "repository" &&
+            typeof s.observation.value?.full_name === "string" && s.observation.value.full_name.toLowerCase() === address.toLowerCase() &&
+            !s.observation.resource.id.startsWith("requested:"));
+          const old=state.view?.projects.find(p=>observed && key(p.repository_ref) === key(observed.observation.resource));
+          if (old) Object.assign(p,structuredClone(old),{admission:p.admission});
+        }
+        const observed=[...state.source_slots.values()].find(s=>key(s.observation.resource)===key(p.repository_ref) &&
+          s.observation.resource.kind==="repository" && typeof s.observation.value?.full_name==="string");
+        if (observed) resolvedAliases.set("requested:"+(observed.observation.value!.full_name as string).toLowerCase(),p.repository_ref);
+      }
+      if (state.view) state.view.projects=state.view.projects.filter(p=>!resolvedAliases.has(p.repository_ref.id.toLowerCase()));
+      if (state.selected_ref?.kind==="repository") {
+        const resolved=resolvedAliases.get(state.selected_ref.id.toLowerCase());
+        if (resolved) state.selected_ref=structuredClone(resolved);
       }
       const incoming = new Set<object>();
       if (!state.view) { state.view = structuredClone(frame); for (const x of [...state.view.projects,...state.view.work,...state.view.relations]) incoming.add(x); }
@@ -281,22 +303,29 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
           for (const w of state.view.work) if (w.issue_ref.source==="github" &&
               w.issue_ref.id.startsWith(p.repository_ref.id+":") && !present.has(key(w.issue_ref))) removed.add(key(w.issue_ref));
         }
-        state.view.work=state.view.work.filter(w=>!removed.has(key(w.issue_ref)));
-        state.view.relations=state.view.relations.filter(r=>!removed.has(key(r.from)) && !removed.has(key(r.to)));
-        for (const [k,slot] of state.source_slots) {
-          const o=slot.observation,issue=o.value?.issue_ref as ResourceRef|undefined;
-          if ((o.resource.kind==="issue" && removed.has(key(o.resource))) ||
-              (o.resource.kind==="progress" && issue && removed.has(key(issue)))) {
-            state.source_slots.delete(k);changed.add(k);
-          }
-        }
+        removeWork(state,removed,changed);
         const merge = <T extends object>(old:T[],next:T[],identify:(x:T)=>string) => {
           const values = new Map(old.map(x => [identify(x),x]));
           for (const x of next) { const clone = structuredClone(x); values.set(identify(clone),clone); incoming.add(clone); }
           return [...values.values()];
         };
+        const priorProjects=new Map(state.view.projects.map(p=>[key(p.repository_ref),p]));
         state.view.projects = merge(state.view.projects,frame.projects,x=>key(x.repository_ref));
         state.view.work = merge(state.view.work,frame.work,x=>key(x.issue_ref));
+        const retainedWork=new Set(state.view.work.map(w=>key(w.issue_ref)));
+        const evicted=new Set<string>();
+        for (const p of state.view.projects) {
+          const refs=[...(priorProjects.get(key(p.repository_ref))?.work_refs ?? []),...p.work_refs];
+          const combined=[...new Map(refs.filter(ref=>retainedWork.has(key(ref))).map(ref=>[key(ref),ref])).values()];
+          if (combined.length<=128) p.work_refs=combined;
+          else {
+            // Rotate only this project's whole page at its wire bound. Other
+            // projects, the provider cursor and command feedback remain intact.
+            const incomingRefs=new Set(p.work_refs.map(key));
+            for (const ref of combined) if (!incomingRefs.has(key(ref))) evicted.add(key(ref));
+          }
+        }
+        removeWork(state,evicted,changed);
         state.view.relations = merge(state.view.relations,frame.relations,x=>json([x.from,x.kind,x.to]));
         state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
         state.view.capabilities = structuredClone(frame.capabilities); state.view.page = structuredClone(frame.page);

@@ -87,7 +87,7 @@ impl Bridge {
             let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
             if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
             let now=Instant::now();
-            let held=if refresh {cache.remote_wait(now,recovery).map_err(BridgeError::new)? > 0}else{cache.local_wait(now)};
+            let held=cache.read_held(now,refresh,&scope,cursor.is_some(),recovery).map_err(BridgeError::new)?;
             if held {
                 return cache.get(&scope,!refresh,now).ok_or_else(||BridgeError::new("source_wait"));
             }
@@ -530,6 +530,74 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    struct ProjectionFixture {root:std::path::PathBuf,epoch:String,bridge:Bridge}
+    #[cfg(unix)]
+    impl ProjectionFixture {
+        fn new(provider_wait:bool)->Self {
+            use std::{fs,os::unix::fs::PermissionsExt,path::PathBuf,process::Command};
+            let epoch=read_epoch().unwrap();
+            let root=std::env::temp_dir().join(format!("hydra-projection-read-{epoch}"));
+            fs::create_dir(&root).unwrap();
+            let emitter=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_wire.py");
+            let output=Command::new("python3").arg("-I").arg(emitter).output().unwrap();
+            assert!(output.status.success());
+            let vectors:serde_json::Value=serde_json::from_slice(&output.stdout).unwrap();
+            let mut value:serde_json::Value=serde_json::from_str(vectors[0]["wire"].as_str().unwrap()).unwrap();
+            if provider_wait {
+                let mut o=value["observations"].as_array().unwrap().iter()
+                    .find(|o|o["resource"]["source"]=="github").unwrap().clone();
+                o["key"]="query:provider-hold".into();o["reason"]="provider_wait".into();
+                value["observations"].as_array_mut().unwrap().push(o);
+                value["retry_hints"]=serde_json::json!([{"observation_key":"query:provider-hold",
+                    "scope":format!("github:registered-read:{epoch}"),"after_seconds":600,"basis":"provider"}]);
+            }
+            let config=root.join("frame.json");fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();
+            let runtime=root.join("runtime");
+            fs::write(&runtime,b"#!/usr/bin/env python3\nimport json,sys\na=sys.argv\np=a[a.index('--config')+1]\nv=json.load(open(p))\nv['request_id']=a[a.index('--request-id')+1]\nv['binding_epoch']=a[a.index('--binding-epoch')+1]\nwith open(p+'.calls','a') as f: f.write('read\\n')\nprint(json.dumps(v))\n").unwrap();
+            fs::set_permissions(&runtime,fs::Permissions::from_mode(0o700)).unwrap();
+            let mut bridge=Bridge::new();
+            bridge.launch=Ok(LaunchConfig{runtime,config,home:root.as_os_str().into()});
+            bridge.projection=Mutex::new(Ok(ReadCache::new(epoch.clone()).unwrap()));
+            Self{root,epoch,bridge}
+        }
+        fn count(&self)->usize {std::fs::read_to_string(self.root.join("frame.json.calls")).unwrap().lines().count()}
+        async fn read(&self,remote:bool,cursor:Option<&str>,recovery:bool)->Result<CachedRead,BridgeError> {
+            self.bridge.projection_read(&self.epoch,read_epoch().unwrap(),remote,
+                if remote {Some("example/alpha")} else {None},cursor,recovery).await
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for ProjectionFixture {fn drop(&mut self){let _=std::fs::remove_dir_all(&self.root);}}
+    #[cfg(unix)]
+    async fn continuation_during_poll_floor(remote:bool) {
+        let f=ProjectionFixture::new(false);
+        let first=f.read(remote,None,false).await.unwrap();
+        let repeated=f.read(remote,None,true).await.unwrap();
+        assert!(repeated.cached);assert_eq!(repeated.sequence,first.sequence);assert_eq!(f.count(),1);
+        let next=f.read(remote,Some("continuation_page"),false).await;
+        assert!(next.is_ok(),"Ordinary poll floor held an unread continuation: {:?}",next.err());
+        let next=next.unwrap();assert!(!next.cached);assert!(next.sequence>first.sequence);assert_eq!(f.count(),2);
+        let replay=f.read(remote,Some("continuation_page"),true).await.unwrap();
+        assert!(replay.cached);assert_eq!(replay.sequence,next.sequence);assert_eq!(f.count(),2);
+        let repeated=f.read(remote,None,false).await.unwrap();
+        assert!(repeated.cached);assert_eq!(f.count(),2);
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_continuation_is_not_a_repeat_poll() {continuation_during_poll_floor(false).await;}
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remote_continuation_is_not_a_repeat_poll() {continuation_during_poll_floor(true).await;}
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn continuation_and_manual_recovery_still_honor_provider_wait() {
+        let f=ProjectionFixture::new(true);f.read(true,None,false).await.unwrap();
+        for recovery in [false,true] {
+            assert_eq!(f.read(true,Some("continuation_page"),recovery).await.unwrap_err().code,"source_wait");
+        }
+        assert_eq!(f.count(),1);
+    }
     #[tokio::test]
     async fn queued_refresh_cannot_spawn_after_quit_fence() {
         let bridge = Arc::new(Bridge::new());
