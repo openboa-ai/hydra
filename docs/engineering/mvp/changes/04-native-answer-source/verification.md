@@ -92,3 +92,32 @@ qualification, source binding and locator production must precede a separately
 delegated native observation. Answer attribution/correction, selected unsent
 intent, controller restart, CP/P06 consumption and the first remote flow remain
 separate unqualified responsibilities. This follow-up does not advertise them.
+
+
+## P04 Rev4 high-numbered pipes and launch failures
+
+Owned pipe reads now use nonblocking reads and the event loop's reader
+registration. A long-running POSIX caller whose new pipe descriptors exceed
+select's descriptor range can still read a valid question. An isolated real
+worker holds 1,100 descriptors, verifies the owned pipes are at least 1,024 and
+observes the normal two-page result plus ended-child proof. Its resource-limit
+setting is confined to that worker; the host process is unchanged.
+
+OS failures launching the selected executable are classified as safe transport
+source failures rather than malformed provider responses. Actual missing,
+non-executable and directory paths return unavailable/source_failure without
+exposing the OS exception. A relative path remains rejected before launch.
+
+The two final regression methods reproduce four actual assertion failures on
+published b4826656d28c5983129190123962cdf4c5737b90. Identical final test bytes pass
+with the correction: nineteen transport and twelve retained reader methods,
+31 total, Python 3.14.2, zero failures/errors/skips. The normal byte, protocol,
+scope, deadline, cancellation and cleanup controls remain in that same run.
+These are synthetic owned-process tests, not an actual Codex source observation.
+
+P04 Rev4 and its limits, fixed methods, scope guard, cleanup and inactive
+source boundary remain unchanged. No profile or installed runtime is activated.
+The previous b482665 hosted CI and reviews do not qualify this correction;
+final-head CI and independent code/security review, protected merge and main
+checks are required. Full answer/intent/restart and remote acceptance remain
+NOT RUN.

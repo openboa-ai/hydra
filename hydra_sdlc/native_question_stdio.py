@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
-import select
 import signal
 import subprocess
 import time
@@ -102,25 +101,29 @@ class _StdioSource:
         while True:
             self._current()
             descriptors = [output] + ([error] if self.stderr_open else [])
-            ready, _, _ = select.select(descriptors, [], [], 0)
-            if not ready:
+            # Bound diagnostics before accepting a simultaneously available result.
+            if self.stderr_open:
+                try:
+                    chunk = os.read(error, 8192)
+                except BlockingIOError:
+                    pass
+                else:
+                    self.stderr_bytes += len(chunk)
+                    if self.stderr_bytes > _AUX_BYTES:
+                        raise SourceFailure('unavailable')
+                    self.stderr_open = bool(chunk)
+            try:
+                chunk = os.read(output, 8192)
+            except BlockingIOError:
+                descriptors = [output] + ([error] if self.stderr_open else [])
                 await self._ready(descriptors)
                 continue
-            # Bound diagnostics before accepting a simultaneously available result.
-            if error in ready:
-                chunk = os.read(error, 8192)
-                self.stderr_bytes += len(chunk)
-                if self.stderr_bytes > _AUX_BYTES:
-                    raise SourceFailure('unavailable')
-                self.stderr_open = bool(chunk)
-            if output in ready:
-                chunk = os.read(output, 8192)
-                if not chunk:
-                    raise SourceFailure('unavailable')
-                self.stdout_bytes += len(chunk)
-                if self.stdout_bytes > 3 * _PAGE_BYTES + _AUX_BYTES:
-                    raise SourceFailure('unavailable')
-                return chunk
+            if not chunk:
+                raise SourceFailure('unavailable')
+            self.stdout_bytes += len(chunk)
+            if self.stdout_bytes > 3 * _PAGE_BYTES + _AUX_BYTES:
+                raise SourceFailure('unavailable')
+            return chunk
 
     async def _receive(self, identifier, limit, *, startup=False):
         while True:
@@ -168,9 +171,12 @@ class _StdioSource:
             raise SourceFailure('unsupported' if os.name != 'posix' else 'unavailable')
         # Keep the already selected account/home. No alternate configuration,
         # model invocation, listener or shell command is selected on failure.
-        self.process = subprocess.Popen([str(executable), 'app-server', '--listen', 'stdio://'],
-            cwd='/', stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            bufsize=0, start_new_session=True)
+        try:
+            self.process = subprocess.Popen([str(executable), 'app-server', '--listen', 'stdio://'],
+                cwd='/', stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                bufsize=0, start_new_session=True)
+        except OSError:
+            raise SourceFailure('unavailable') from None
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             os.set_blocking(stream.fileno(), False)
         identifier = uuid.uuid4().hex

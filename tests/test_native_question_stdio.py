@@ -286,11 +286,53 @@ class NativeQuestionStdioTests(unittest.IsolatedAsyncioTestCase):
             foreign.wait(timeout=5)
 
     async def test_bad_executable_is_safe_and_relative_paths_are_not_started(self):
-        for executable in ['/missing/cli', 'relative-cli']:
+        not_executable = self.server()
+        not_executable.chmod(0o600)
+        for executable in ['/missing/cli', 'relative-cli', str(not_executable), str(self.root)]:
             with self.subTest(executable=executable):
                 result = await stdio.read_question_stdio(executable, lambda: self.scope, self.scope, self.locator)
-                self.assertEqual(result.status, 'unavailable')
+                self.assertEqual((result.status, result.reason), ('unavailable', 'source_failure'))
                 self.assertNotIn(executable, repr(result))
+
+    async def test_high_numbered_owned_pipes_keep_normal_read_available(self):
+        path = self.server()
+        worker = r'''
+import asyncio,json,os,resource,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from hydra_sdlc import native_question_stdio as stdio
+from hydra_sdlc.native_question_source import SourceScope,QuestionLocator
+soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+assert hard==resource.RLIM_INFINITY or hard>=1300, 'fixture needs 1300 permitted descriptors'
+resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,1300),hard))
+held=[];children=[];pipe_min=[]
+original=stdio.subprocess.Popen
+def start(*args,**kwargs):
+    child=original(*args,**kwargs)
+    children.append(child)
+    pipe_min.append(min(child.stdin.fileno(),child.stdout.fileno(),child.stderr.fileno()))
+    return child
+try:
+    held=[os.open(os.devnull,os.O_RDONLY) for _ in range(1100)]
+    stdio.subprocess.Popen=start
+    scope=SourceScope('synthetic-source','selected-connection','selected-task')
+    locator=QuestionLocator(scope,'selected-turn','known-question')
+    result=asyncio.run(stdio.read_question_stdio(Path(sys.argv[2]),lambda:scope,scope,locator))
+    print(json.dumps({'status':result.status,'reason':result.reason,'pages':result.pages_read,
+                      'pipe_min':pipe_min,'owned_child_ended':all(child.poll() is not None for child in children)}))
+finally:
+    stdio.subprocess.Popen=original
+    for descriptor in held:os.close(descriptor)
+'''
+        process = subprocess.run([sys.executable, '-I', '-c', worker,
+                                  str(Path(__file__).resolve().parents[1]), str(path)],
+                                 capture_output=True, text=True, timeout=20)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        observed = json.loads(process.stdout)
+        self.assertTrue(observed['pipe_min'] and min(observed['pipe_min']) >= 1024)
+        self.assertEqual((observed['status'], observed['pages']), ('observed', 2))
+        self.assertTrue(observed['owned_child_ended'])
+        self.assert_ended(path)
 
     async def test_repeated_cancellation_keeps_cleanup_bounded_and_owned(self):
         path = self.server(mode='ignore_term')
