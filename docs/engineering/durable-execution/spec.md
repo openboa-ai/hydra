@@ -151,7 +151,7 @@ reviewed delivery, continued goal work and cross-project operation satisfy the p
 Run the deterministic unittest suite in a separate `Kernel tests` job on PR merge candidates and
 main. Use the existing pinned checkout, read-only contents permission, no persisted Git credential,
 no secrets, no Codex authentication/model calls, and a five-minute timeout. The runner's Python 3
-must satisfy the package's Python 3.11 minimum. Tests use fake SDK contracts and the standard
+must satisfy the package's Python 3.14 minimum. Tests use fake SDK contracts and the standard
 library; no dependency installation or provider access is needed for this job. The existing
 hygiene job remains separate and keeps its trust boundary. The first introduction follows native
 CODEOWNER review; make Kernel tests required only after observing its real producer and success.

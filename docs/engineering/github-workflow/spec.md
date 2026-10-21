@@ -20,7 +20,7 @@ only protects that host. Explicit stopped-host handover, not automatic failover.
 
 ## Product contract and work intake
 
-Use Python 3.11+ standard library, the existing optional pinned Codex SDK, git and
+Use Python 3.14+ standard library, the existing optional pinned Codex SDK, git and
 existing authenticated gh as the runtime transport. Interactive work uses the GitHub
 connector. Every runtime GitHub action selects openboa per process; never use the
 human account or persist/expose its token. Worker execution receives no publishing
@@ -887,3 +887,25 @@ Verify the exact candidate through normal code/security review, CI, protected me
 and checks on its actual merge SHA. Actual consecutive-push preservation (O05) still
 requires observing each SHA/run/workflow/producer result in an authorized run; local
 models, lint and a single PR's green checks do not satisfy that observation.
+
+
+## Python compatibility baseline — 2026-10-21
+
+The operator-selected minimum is Python 3.14. Package metadata, direct source
+imports, installation instructions and CI must agree on that floor. Unsupported
+interpreters fail before CLI or MCP runtime imports, configuration reads, provider
+creation or work dispatch. Use the existing pinned Python 3.14.2 CI environment;
+retire the unsupported 3.11 compatibility slice while retaining the entire kernel
+suite, optional MCP installation, Mac checks and trusted repository hygiene.
+
+Historical verification records retain the actual interpreters they observed.
+This source change neither upgrades an installed environment nor restarts a
+service or grants native controls. An installation migration uses a separate
+3.14+ environment and requires its own dependency, identity and operational
+qualification before the selected service configuration changes.
+
+Acceptance: old-version imports stop before runtime loading; 3.14 and later
+version boundaries import successfully; metadata and the CI floor agree; the
+full supported-version suite and unchanged delivery checks pass. Protected
+workflow edits still require the existing CODEOWNER approval. Source acceptance
+does not establish installed-runtime migration or native operational acceptance.

@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.14.2']
+        python: ['3.14.2']
     steps:
       - name: Check out merge candidate or main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -34,7 +34,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Verify Python and bounded execution contracts
         run: |
-          python3 -c 'import sys; assert sys.version_info >= (3, 11)'
+          python3 -c 'import sys; assert sys.version_info >= (3, 14)'
           python3 -m pip install '.[mcp]'
           python3 -m unittest discover -s tests -v
       - name: Collect selected source verification evidence

@@ -420,7 +420,7 @@ def ci_script(text):
 
 def assert_ci_contract(text):
     """Bounded regression tripwire, backed by actionlint and independent CI review."""
-    required = ["permissions:\n  contents: read\n", "timeout-minutes: 10", "PYTHONDONTWRITEBYTECODE: '1'", "python: ['3.11', '3.14.2']",
+    required = ["permissions:\n  contents: read\n", "timeout-minutes: 10", "PYTHONDONTWRITEBYTECODE: '1'", "python: ['3.14.2']",
         "python3 -m pip install '.[mcp]'", "python3 -m unittest discover -s tests -v",
         "uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
         "path: artifacts/mvp-verification/result.json", "if-no-files-found: error",

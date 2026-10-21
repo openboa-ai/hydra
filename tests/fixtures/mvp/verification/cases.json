@@ -14,7 +14,7 @@
       "requirements": [
         {
           "path": "docs/engineering/github-workflow/spec.md",
-          "revision": "sha256:e6b4ffc1ce4e557f082fd4823dd4d9fa3e00364a86c3821d1e8abb44ecc9e9bf",
+          "revision": "sha256:82f819a95081ce1da87ac81ccec49d60f13729330f1fe7251779635e2ddaa551",
           "section": "product-contract-and-work-intake"
         }
       ],
@@ -29,7 +29,7 @@
       "requirements": [
         {
           "path": "docs/engineering/github-workflow/spec.md",
-          "revision": "sha256:e6b4ffc1ce4e557f082fd4823dd4d9fa3e00364a86c3821d1e8abb44ecc9e9bf",
+          "revision": "sha256:82f819a95081ce1da87ac81ccec49d60f13729330f1fe7251779635e2ddaa551",
           "section": "execution-delivery-and-recovery"
         }
       ],
