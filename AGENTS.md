@@ -8,6 +8,7 @@ The current implementation contract is `docs/engineering/github-workflow/spec.md
 
 ## Working on a change
 
+- Write repository documentation and GitHub artifacts in English. Use the operator's preferred language in conversation.
 - Read the applicable instructions and relevant specifications first. Before implementation, identify the scoped, reviewed specification and its accepted revision. Reuse accepted decisions for changes within their boundary.
 - Use a durable Issue for work that spans sessions, repositories, dependencies, or asynchronous delegation. Record the outcome and completion evidence; do not create records solely for ceremony.
 - Verify repository, branch, base, and local changes before editing. Work in isolation and preserve unrelated work.
