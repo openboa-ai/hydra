@@ -90,33 +90,65 @@ function refreshFacts(state: ProjectionState, changed: Set<string>, incoming: Se
     state, changed, incoming.has(r), seq, receivedSequence).value === true);
   view.observations = [...state.source_slots.values()].map(slot => slot.observation);
 }
-function partial(view: ProjectionV3) {
-  view.page = { ...view.page, state: "partial", returned_count: view.projects.length,
-    total_count: null, next_cursor: null, reason: "renderer_limit" };
-  for (const p of view.projects) {
-    p.work_refs = p.work_refs.filter(ref => view.work.some(w => key(w.issue_ref) === key(ref)));
-    p.coverage = { ...p.coverage, state: "partial", returned_count: p.work_refs.length,
-      total_count: null, next_cursor: null, reason: "renderer_limit" };
+type ReadWindow = { frame: ProjectionV3; sequence: number; received_sequence: number };
+function pruneUnusedSources(state: ProjectionState) {
+  const view = state.view!;
+  const evidence = new Set(view.retry_hints.map(h => h.observation_key)), resources = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) { for (const v of value) walk(v); return; }
+    if (!value || typeof value !== "object") return;
+    const v = value as Record<string, unknown>;
+    if (typeof v.observation_key === "string") evidence.add(v.observation_key);
+    if (typeof v.source === "string" && typeof v.kind === "string" && typeof v.id === "string") resources.add(json([v.source,v.kind,v.id]));
+    for (const child of Object.values(v)) walk(child);
+  };
+  walk(view.projects); walk(view.work); walk(view.relations); walk(view.capabilities);
+  for (const [k,slot] of state.source_slots) {
+    const o = slot.observation;
+    if (!evidence.has(k) && o.resource.source !== "hydra" &&
+        (!resources.has(key(o.resource)) || k.startsWith("github:query:"))) state.source_slots.delete(k);
   }
+  refreshFacts(state,new Set(),new Set(),Number.MAX_SAFE_INTEGER);
 }
-function bound(state: ProjectionState) {
+function bound(state: ProjectionState, window?: ReadWindow) {
   const feedbackSize = () => size([...state.feedback.values()]);
   if (feedbackSize() > 131_072) {
     for (const [k, f] of state.feedback) state.feedback.set(k, { ...f, outcome: "unknown",
       reason: "receipt_capacity_held", receipt: null });
   }
-  const view = state.view; if (!view) return;
-  while (size(view) > MAX_PROJECTION_BYTES || view.work.length > 512 || view.projects.length > 1024) {
-    if (view.work.length) view.work.shift();
-    else if (view.projects.length) view.projects.shift();
-    else {
-      const victim = state.source_slots.keys().next().value;
-      if (victim === undefined) { state.view = null; state.error = "renderer_limit"; return; }
-      state.source_slots.delete(victim);
-      refreshFacts(state, new Set([victim]), new Set(), Number.MAX_SAFE_INTEGER);
-    }
-    partial(view);
+  const fits = (view: ProjectionV3) => size(view) <= MAX_PROJECTION_BYTES &&
+    view.work.length <= 512 && view.projects.length <= 1024;
+  if (!state.view || fits(state.view)) return;
+  pruneUnusedSources(state);
+  if (fits(state.view)) return;
+  // Failure metadata can grow a previously full page. Evict stale cached values
+  // before any known work identity; this never marks a source current or ended.
+  const hints = new Set(state.view.retry_hints.map(h => h.observation_key));
+  const staleValues = [...state.source_slots].filter(([k,s]) => s.stale && s.observation.value !== null && !hints.has(k))
+    .sort(([,a],[,b]) => size(b.observation.value)-size(a.observation.value));
+  for (const [k,s] of staleValues) {
+    const o = s.observation;
+    state.source_slots.set(k,{...s,stale:true,observation:{...o,value:null,availability:"unavailable",observed_at:null,
+      reason:"renderer_limit",coverage:{...o.coverage,state:"unavailable",returned_count:0,total_count:null,next_cursor:null,reason:"renderer_limit"}}});
+    refreshFacts(state,new Set([k]),new Set(),Number.MAX_SAFE_INTEGER);
+    if (fits(state.view)) return;
   }
+  if (window) {
+    // Pages are individually bounded. Rotate to the complete incoming page
+    // when their union no longer fits; never manufacture an intra-page cursor
+    // or silently discard part of the page behind its real next-record cursor.
+    const keys = new Set(window.frame.observations.map(o => o.key));
+    state.source_slots = new Map([...state.source_slots].filter(([k]) => keys.has(k)));
+    state.view = structuredClone(window.frame);
+    const incoming = new Set<object>([...state.view.projects, ...state.view.work, ...state.view.relations]);
+    refreshFacts(state, new Set(), incoming, window.sequence, window.received_sequence);
+    try {
+      if (fits(state.view)) { parseProjection(state.view); return; }
+    } catch { /* A retained source fence cannot create a malformed display. */ }
+  }
+  // Memory pressure is an explicit read-model failure, never task completion,
+  // resource retirement or a claim that a command did not take effect.
+  state.view = null; state.source_slots.clear(); state.error = "renderer_limit";
 }
 function failed(state: ProjectionState, scope: string, sequence: number, reason: string) {
   const query = state.queries.get(scope);
@@ -132,6 +164,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
   const state = { ...previous, source_slots: new Map(previous.source_slots), queries: new Map(previous.queries),
     pending_commands: new Map(previous.pending_commands), feedback: new Map(previous.feedback),
     view: previous.view ? structuredClone(previous.view) : null, retry_windows: new Map([...previous.retry_windows].map(([k,v]) => [k,{ ...v, failures:new Map(v.failures) }])) };
+  let window: ReadWindow | undefined;
   switch (event.type) {
     case "binding_changed": {
       valid(uuid.test(event.binding_epoch) && event.binding_epoch !== state.binding_epoch);
@@ -164,6 +197,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         failed(state,event.scope,event.sequence,"read_binding_mismatch"); break;
       }
       const identity = runtime(frame);
+      const windowFrame = structuredClone(frame);
       if (state.runtime_key !== null && state.runtime_key !== identity) {
         for (const [id,c] of state.pending_commands) state.feedback.set(id,{...c,outcome:"unknown",reason:"runtime_binding_changed",receipt:null});
         state.pending_commands.clear();state.queries.clear();state.source_slots.clear();
@@ -269,6 +303,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         state.view.retry_hints = structuredClone(frame.retry_hints);
       }
       refreshFacts(state,changed,incoming,event.sequence,event.response.sequence);
+      window = {frame:windowFrame,sequence:event.sequence,received_sequence:event.response.sequence};
       if (state.error !== "read_policy_capacity_held") state.error = null; break;
     }
     case "clock_resumed": {
@@ -305,7 +340,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       break;
     }
   }
-  bound(state); return state;
+  bound(state,window); return state;
 }
 export function sourceFresh(state: ProjectionState, observation_key: string, now: number): boolean {
   uint(now); const slot = state.source_slots.get(observation_key); if (!slot) return false;

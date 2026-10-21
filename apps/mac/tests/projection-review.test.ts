@@ -16,6 +16,52 @@ function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
     response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
+test("actual producer continuation remains traversable when merged pages exceed the renderer budget",()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nrows={('example/alpha','open',False):[issue(n,'🚀'*5000) for n in range(1,151)]}\nframes=[]\ncursor=None\nfor _ in range(8):\n frame=ReadFixture(rows).read(repository='example/alpha',cursor=cursor)\n frames.append(frame)\n cursor=frame['projects'][0]['coverage']['next_cursor']\n if cursor is None: break\nassert cursor is None\nprint(json.dumps(frames,ensure_ascii=False))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:8388608});
+  assert.equal(r.status,0,r.stderr);
+  const frames=(JSON.parse(r.stdout) as ProjectionV3[]).map(parseProjection);
+  assert.ok(frames.length>1);
+  let s=projectionState(frames[0]!.binding_epoch);const seen=new Set<string>();
+  for (const [n,frame] of frames.entries()) {
+    s=read(s,n+1,frame);
+    assert.ok(s.view,"A valid incoming continuation disappeared under aggregate pressure");
+    assert.ok(new TextEncoder().encode(JSON.stringify(s.view)).length<=MAX_PROJECTION_BYTES);
+    const expected=frame.projects[0]!.coverage.next_cursor;
+    assert.equal(s.view.projects.find(p=>p.repository_ref.id==="101")?.coverage.next_cursor,expected,
+      "The reducer lost the actual cursor for the next unread record");
+    for (const w of frame.work) {
+      assert.ok(s.view.work.some(current=>current.issue_ref.id===w.issue_ref.id),"A newly read whole record was omitted");
+      seen.add(w.issue_ref.id);
+    }
+    parseProjection(s.view);
+  }
+  assert.equal(seen.size,150);
+});
+test("a regressed admission source stales only its dependent facts while current GitHub remains visible",()=>{
+  const first=structuredClone(base),admission=first.observations.find(o=>o.resource.kind==="admission")!;
+  const revision=(frame:ProjectionV3,n:string)=>{
+    const o=frame.observations.find(o=>o.key===admission.key)!;o.revision={kind:"monotonic",value:n};
+    o.value!.revision=Number(n);
+    const walk=(value:unknown):void=>{
+      if (Array.isArray(value)) {for(const x of value)walk(x);return;}
+      if (value && typeof value==="object") {
+        const v=value as Record<string,unknown>;
+        if(v.observation_key===admission.key)v.revision={kind:"monotonic",value:n};
+        for(const x of Object.values(v))walk(x);
+      }
+    };walk(frame);
+  };
+  revision(first,"10");let s=read(projectionState(first.binding_epoch),1,first);
+  const second=structuredClone(base);revision(second,"0");
+  const issue=second.observations.find(o=>o.resource.kind==="issue")!;issue.value!.title="Current independent GitHub change";
+  s=read(s,2,second);
+  assert.equal(s.source_slots.get(admission.key)!.stale,true);
+  assert.equal(s.source_slots.get(admission.key)!.observation.revision!.value,"10");
+  assert.equal(s.view!.projects[0]!.admission.value,null);
+  assert.equal(s.view!.observations.find(o=>o.key===issue.key)!.value!.title,"Current independent GitHub change");
+  assert.equal(s.view!.work[0]!.readiness.value!.disposition,"propose");
+});
 test("a valid new runtime starts a fresh source generation and fences old pending reads",()=>{
   let s=read(projectionState(base.binding_epoch),1);
   s=reduceProjection(s,{type:"read_started",scope:"old-independent",sequence:2,request_id:id(12)});
@@ -79,4 +125,28 @@ test("bounded command feedback cannot evict an otherwise valid producer prefix o
   assert.equal(s.feedback.get(reply.request.request_id)!.outcome,"applied");
   assert.equal(s.view!.work.length,count,"Command feedback silently evicted valid source work");
   assert.equal(s.view!.page.next_cursor,cursor);
+});
+
+test("capacity pressure from a failed read retains known work and independent source scope",()=>{
+  const frame=structuredClone(base);
+  const bytes=()=>new TextEncoder().encode(JSON.stringify(frame)).length;
+  for(let n=0;n<1024;n++) {
+    frame.observations.push({key:"github:optional-check:"+n,resource:{source:"github",kind:"check",id:"optional:"+n},
+      revision:null,observed_at:frame.assembled_at,last_attempt_at:frame.assembled_at,availability:"current",reason:null,
+      coverage:{state:"complete",scope:"optional:"+n,returned_count:1,total_count:1,next_cursor:null,reason:null},
+      value:{producer:null,name:"fixture",head:"a".repeat(40),status:"completed",conclusion:"success",
+        url:"https://github.com/example/alpha/actions/runs/1?fixture="+"x".repeat(1800)}});
+    if(bytes()>MAX_PROJECTION_BYTES-128) {frame.observations.pop();break;}
+  }
+  parseProjection(frame);
+  let s=read(projectionState(frame.binding_epoch),1,frame);
+  const ids=s.view!.work.map(w=>w.issue_ref.id);
+  const cursor=s.view!.page.next_cursor;
+  s=reduceProjection(s,{type:"read_started",scope:"overview",sequence:2,request_id:id(12)});
+  s=reduceProjection(s,{type:"read_failed",scope:"overview",sequence:2,reason:"transport_failed"});
+  assert.ok(s.view,"A bounded read failure erased all known work");
+  assert.deepEqual(s.view.work.map(w=>w.issue_ref.id),ids);
+  assert.equal(s.view.page.next_cursor,cursor);
+  assert.ok(new TextEncoder().encode(JSON.stringify(s.view)).length<=MAX_PROJECTION_BYTES);
+  parseProjection(s.view);
 });

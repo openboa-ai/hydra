@@ -537,18 +537,6 @@ impl StandardReply {
 #[serde(untagged)]
 pub enum ReadPayload {V3(Projection),V2(Snapshot)}
 impl ReadPayload {
-    pub fn regresses_from(&self,previous:&Self)->bool {
-        let (Self::V3(current),Self::V3(previous))=(self,previous) else {return false;};
-        let old:HashMap<_,_>=previous.0["observations"].as_array().unwrap().iter()
-            .filter(|o|o["revision"]["kind"]=="monotonic")
-            .map(|o|(o["key"].as_str().unwrap(),o["revision"]["value"].as_str().unwrap())).collect();
-        current.0["observations"].as_array().unwrap().iter().any(|o| {
-            if o["revision"]["kind"]!="monotonic" {return false;}
-            let Some(prior)=old.get(o["key"].as_str().unwrap()) else {return false;};
-            let current=o["revision"]["value"].as_str().unwrap();
-            current.len()<prior.len() || (current.len()==prior.len() && current<*prior)
-        })
-    }
     pub fn parse(bytes:&[u8])->Result<Self,&'static str> {
         let value=read_json(bytes)?;
         match value["schema_version"].as_u64() {

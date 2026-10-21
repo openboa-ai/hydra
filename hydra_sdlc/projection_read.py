@@ -248,7 +248,7 @@ def _issue_rows(client, repository, limit, position):
     return rows, locations, complete, reason, None
 
 
-def _finish(frame, cfg, epoch, locations, project_locations):
+def _finish(frame, cfg, epoch, locations, project_locations, *, repository=None):
     original = frame
     for _ in range(8):
         frame = _bounded(frame)
@@ -263,6 +263,11 @@ def _finish(frame, cfg, epoch, locations, project_locations):
         present = {p.canonical(project['repository_ref']) for project in frame['projects']}
         omitted = next((row for row in original['projects'] if p.canonical(row['repository_ref']) not in present), None)
         if omitted is not None:
+            # Repository-scoped requests cannot consume an overview cursor.
+            # Optional query provenance is pruned first; if mandatory metadata
+            # still cannot fit, fail this source instead of inventing navigation.
+            if repository is not None:
+                raise p.ProjectionError('response_limit')
             index = project_locations[p.canonical(omitted['repository_ref'])]
             frame['page']['next_cursor'] = _cursor(cfg, epoch, None, {'project_index': index})
         if len(p.canonical(frame).encode()) <= p.MAX_BYTES:
@@ -326,6 +331,11 @@ def _bounded(frame):
     if size(frame) <= p.MAX_BYTES:
         return frame
     projects, work = len(frame['projects']), len(frame['work'])
+    # Query notes without a Fact/hint dependency are optional provenance. Keep
+    # whole work records and their exact repository before those redundant notes.
+    frame = _prune(frame, work, projects, query_count=0)
+    if size(frame) <= p.MAX_BYTES:
+        return frame
     empty = _prune(frame, 0, projects)
     if size(empty) > p.MAX_BYTES:
         candidate = prefix(projects, lambda n: _prune(frame, 0, n))
@@ -487,12 +497,15 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
         if value is not None:
             observed['coverage'] = _coverage(observed['coverage']['scope'], note['count'])
         observations[key] = observed
+        # A later note is the current observation for this exact query key.
+        # Its old hint cannot point at a newly recovered non-limited source.
+        frame['retry_hints'] = [h for h in frame['retry_hints'] if h['observation_key'] != key]
         if limited:
             remaining = response.remaining_wait()
             hint = {'observation_key': key, 'scope': scope,
                     'after_seconds': 60 if remaining is None else remaining,
                     'basis': 'fallback' if remaining is None else 'provider'}
-            frame['retry_hints'] = [h for h in frame['retry_hints'] if h['observation_key'] != key] + [hint]
+            frame['retry_hints'].append(hint)
     frame['projects'] = list(projects.values()); frame['work'] = list(work.values())
     frame['observations'] = list(observations.values())
     complete = all(row['coverage']['state'] == 'complete' for row in frame['projects'])
@@ -500,6 +513,6 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     frame['page'] = _coverage(page_scope + (':from:' + str(start_project) if start_project else ''), len(frame['projects']), complete,
                               None if complete else 'source_coverage_incomplete')
     frame['assembled_at'] = _now()
-    frame = _finish(frame, cfg, binding_epoch, locations, project_locations)
+    frame = _finish(frame, cfg, binding_epoch, locations, project_locations, repository=repository)
     p.encode(frame)
     return frame

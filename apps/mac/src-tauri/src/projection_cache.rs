@@ -114,6 +114,9 @@ impl ReadCache {
             Ok(value)=>value,
             Err(reason)=>{self.failed(ticket);return Err(reason);}
         };
+        if !matches!(payload,ReadPayload::V3(_)) {
+            self.failed(ticket);return Err("projection_schema_mismatch");
+        }
         let value=serde_json::to_value(&payload).map_err(|_|"invalid_response")?;
         if value["schema_version"]==3 && (value["binding_epoch"]!=ticket.epoch || value["request_id"]!=ticket.request_id) {
             self.failed(ticket); return Err("read_binding_mismatch");
@@ -123,21 +126,23 @@ impl ReadCache {
             Err(reason)=>{self.failed(ticket);return Err(reason);}
         };
         if self.runtime.as_ref().is_some_and(|old|old!=&key) {
-            if !current {return Err("stale_read");}
+            if !current {
+                // The data is fenced, but this original request consumed the
+                // same connection's provider quota. Apply its hint only once.
+                let (_,seen)=self.ledger.iter_mut().find(|(t,_)|t.sequence==ticket.sequence).unwrap();
+                *seen=true;self.policy.observe(&payload,now,false);return Err("stale_read");
+            }
             // The response is a fresh, bound read of the new runtime. Invalidate
             // older cache/pending generations; retain the connection's quota wait.
-            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();self.ledger.clear();
+            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();
             self.orders.insert(ticket.scope.clone(),Order{issued:ticket.sequence,settled:0});
-            self.ledger.push_back((ticket.clone(),false));
         }
         let (_,seen)=self.ledger.iter_mut().find(|(t,_)|t.sequence==ticket.sequence).unwrap();
         *seen=true;
-        // Different read lanes can capture shared metadata at different times.
-        // Per-source reduction handles that overlap without discarding healthy sources.
-        let regressed=self.entries.get(&ticket.scope).is_some_and(|entry|payload.regresses_from(entry.payload.as_ref()));
-        self.policy.observe(&payload,now,current && !regressed);
+        // This raw cache preserves valid source frames. The source-aware reducer
+        // fences regressed observations without discarding independent facts.
+        self.policy.observe(&payload,now,current);
         if !current {return Err("stale_read");}
-        if regressed {self.failed(ticket);return Err("source_revision_regressed");}
         let size=serde_json::to_vec(&payload).map_err(|_|"invalid_response")?.len();
         if size>1_048_576 {self.failed(ticket);return Err("response_limit");}
         let now=self.clock(now);
@@ -209,6 +214,40 @@ mod tests {
         let mut frame:Value=serde_json::from_str(vectors[0]["wire"].as_str().unwrap()).unwrap();
         frame["request_id"]=Value::String(request_id.into());
         serde_json::to_vec(&frame).unwrap()
+    }
+    #[test]
+    fn same_scope_regression_cannot_discard_a_current_independent_source() {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut value:Value=serde_json::from_slice(&fixture(&request(2))).unwrap();
+        value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
+        value["observations"][0]["revision"]["value"]="10".into();
+        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        cache.accept(&first,&serde_json::to_vec(&value).unwrap(),now).unwrap();
+        value["observations"][0]["revision"]["value"]="0".into();value["request_id"]=request(3).into();
+        let issue=value["observations"].as_array_mut().unwrap().iter_mut().find(|o|o["resource"]["kind"]=="issue").unwrap();
+        issue["value"]["title"]="New current GitHub source".into();
+        let second=cache.issue("remote".into(),request(3),false).unwrap();
+        let accepted=cache.accept(&second,&serde_json::to_vec(&value).unwrap(),now)
+            .expect("A per-source regression discarded a healthy GitHub observation");
+        let read=serde_json::to_value(accepted.payload.as_ref()).unwrap();
+        assert!(read["observations"].as_array().unwrap().iter().any(|o|o["value"]["title"]=="New current GitHub source"));
+        assert!(!cache.get("remote",false,now).unwrap().stale);
+    }
+    #[test]
+    fn explicit_v3_route_rejects_a_real_v2_payload_without_clearing_other_sources() {
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_wire.py");
+        let output=Command::new("python3").arg("-I").arg(path).output().unwrap();assert!(output.status.success());
+        let vectors:Value=serde_json::from_slice(&output.stdout).unwrap();
+        let wire=vectors.as_array().unwrap().iter().find(|v|v["profile"]=="legacy" && v["accepted"]==true).unwrap()["wire"].as_str().unwrap();
+        assert!(matches!(ReadPayload::parse(wire.as_bytes()),Ok(ReadPayload::V2(_))));
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        cache.accept(&first,&fixture(&first.request_id),now).unwrap();
+        let mut legacy:Value=serde_json::from_str(wire).unwrap();legacy["runtime"]["code_digest"]="f".repeat(64).into();
+        let second=cache.issue("local".into(),request(3),false).unwrap();
+        assert_eq!(cache.accept(&second,&serde_json::to_vec(&legacy).unwrap(),now).unwrap_err(),"projection_schema_mismatch");
+        assert!(!cache.get("remote",false,now).unwrap().stale);
+        assert!(cache.get("local",true,now).is_none());
     }
     #[test]
     fn old_success_or_failure_cannot_erase_new_settled_scope() {
@@ -313,7 +352,7 @@ mod tests {
         cache.clock_resumed();assert_eq!(cache.remote_wait(now+Duration::from_secs(100),true),Ok(3500));
     }
     #[test]
-    fn monotonic_revisions_are_compared_as_unbounded_decimal_strings_before_cache_replacement() {
+    fn raw_cache_preserves_full_decimal_tokens_for_the_source_aware_consumer() {
         let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
         let bytes=fixture(&request(2));let mut value:Value=serde_json::from_slice(&bytes).unwrap();
         value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
@@ -321,12 +360,12 @@ mod tests {
         value["observations"][0]["revision"]["value"]=high.clone().into();
         let ticket=cache.issue("local".into(),request(2),false).unwrap();
         cache.accept(&ticket,&serde_json::to_vec(&value).unwrap(),now).unwrap();
-        value["observations"][0]["revision"]["value"]=low.into();value["request_id"]=request(3).into();
+        value["observations"][0]["revision"]["value"]=low.clone().into();value["request_id"]=request(3).into();
         let ticket=cache.issue("local".into(),request(3),false).unwrap();
-        assert_eq!(cache.accept(&ticket,&serde_json::to_vec(&value).unwrap(),now).unwrap_err(),"source_revision_regressed");
-        let retained=cache.get("local",true,now).unwrap();assert!(retained.stale);
+        cache.accept(&ticket,&serde_json::to_vec(&value).unwrap(),now).unwrap();
+        let retained=cache.get("local",true,now).unwrap();assert!(!retained.stale);
         let retained=serde_json::to_value(retained.payload.as_ref()).unwrap();
-        assert_eq!(retained["observations"][0]["revision"]["value"],high);
+        assert_eq!(retained["observations"][0]["revision"]["value"],low);
     }
     #[test]
     fn older_shared_metadata_in_an_independent_read_does_not_discard_new_github_data() {
@@ -365,5 +404,28 @@ mod tests {
         assert_eq!(cache.accept(&old,&fixture(&old.request_id),now).unwrap_err(),"stale_read");
         assert!(!cache.get("local",true,now).unwrap().stale);
         assert_eq!(cache.remote_wait(now,true),Ok(600));
+    }
+    #[test]
+    fn late_old_runtime_hint_holds_the_same_connection_without_restoring_old_data() {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        cache.accept(&first,&fixture(&first.request_id),now).unwrap();
+        let old=cache.issue("old-remote".into(),request(3),false).unwrap();
+        let fresh=cache.issue("local".into(),request(4),false).unwrap();
+        let mut next:Value=serde_json::from_slice(&fixture(&fresh.request_id)).unwrap();
+        next["runtime"]["code_digest"]="f".repeat(64).into();
+        cache.accept(&fresh,&serde_json::to_vec(&next).unwrap(),now).unwrap();
+        let mut limited:Value=serde_json::from_slice(&fixture(&old.request_id)).unwrap();
+        let mut o=limited["observations"].as_array().unwrap().iter().find(|o|o["resource"]["source"]=="github").unwrap().clone();
+        o["key"]="query:late-runtime".into();o["reason"]="provider_wait".into();
+        limited["observations"].as_array_mut().unwrap().push(o);
+        limited["retry_hints"]=serde_json::json!([{"observation_key":"query:late-runtime","scope":format!("github:registered-read:{EPOCH}"),"after_seconds":600,"basis":"provider"}]);
+        let bytes=serde_json::to_vec(&limited).unwrap();
+        assert_eq!(cache.accept(&old,&bytes,now).unwrap_err(),"stale_read");
+        assert_eq!(cache.remote_wait(now,true),Ok(600));
+        assert_eq!(cache.accept(&old,&bytes,now+Duration::from_secs(100)).unwrap_err(),"stale_read");
+        assert_eq!(cache.remote_wait(now+Duration::from_secs(100),true),Ok(500));
+        let retained=serde_json::to_value(cache.get("local",true,now).unwrap().payload.as_ref()).unwrap();
+        assert_eq!(retained["runtime"]["code_digest"],"f".repeat(64));
     }
 }

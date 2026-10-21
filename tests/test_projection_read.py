@@ -65,6 +65,59 @@ def issue(number=7, body='A useful request without a fixed template.'):
 
 
 class ProjectionReadTests(unittest.TestCase):
+    def test_deep_successful_comment_histories_do_not_evict_the_selected_repository(self):
+        from hydra_sdlc.github import ACTIVE_LABEL
+        rows = [issue(n) for n in range(1, 41)]
+        for row in rows:
+            row['labels'] = [ACTIVE_LABEL]
+        fixture = ReadFixture({('example/alpha', 'open', True): rows})
+        transport = fixture.client.transport
+        def deep_history(method, path, payload):
+            value = transport(method, path, payload)
+            if urlsplit(path).path.endswith('/comments'):
+                page = int(parse_qs(urlsplit(path).query)['page'][0])
+                if page <= 50:
+                    return [{'id': page * 100 + n, 'body': 'ordinary discussion',
+                             'user': {'id': 9, 'login': 'contributor'}} for n in range(100)]
+            return value
+        fixture.client.transport = deep_history
+        value = fixture.read(repository='example/alpha')
+        self.assertGreater(len(fixture.calls), 2000)
+        self.assertLessEqual(len(p.encode(value)), p.MAX_BYTES)
+        self.assertEqual([row['repository_ref']['id'] for row in value['projects']], ['101'],
+                         'Unreferenced query provenance evicted the selected repository')
+        self.assertEqual({w['issue_ref']['id'] for w in value['work']},
+                         {'101:' + str(n) for n in range(1, 41)})
+        self.assertIsNone(value['page']['next_cursor'], 'A repository read returned an overview-only cursor')
+        self.assertIsNone(value['projects'][0]['coverage']['next_cursor'])
+
+    def test_later_exact_query_success_removes_an_expired_zero_wait_hint(self):
+        from hydra_sdlc.github import ACTIVE_LABEL
+        from hydra_sdlc.github_read import parse_response
+        from test_github_projection_read import http
+        rows = [issue(1), issue(2)]
+        for row in rows:
+            row['labels'] = [ACTIVE_LABEL]
+        fixture = ReadFixture({('example/alpha', 'open', True): rows})
+        original = fixture.client.read_response
+        users = []
+        def response(path):
+            value = original(path)
+            if path == '/user':
+                users.append(path)
+                if len(users) == 1:
+                    return parse_response(http(200, [('Retry-After', '0')], value.value))
+            return value
+        fixture.client.read_response = response
+        try:
+            value = fixture.read(repository='example/alpha')
+        except p.ProjectionError:
+            self.fail('Exact-query recovery left an invalid stale retry hint in the frame')
+        self.assertEqual(len(users), 2)
+        self.assertEqual(value['retry_hints'], [])
+        self.assertEqual(len(value['work']), 2)
+        self.assertLessEqual(len(p.encode(value)), p.MAX_BYTES)
+
     def test_missing_description_and_actual_empty_source_remain_distinct(self):
         unread = issue(8)
         del unread['body']

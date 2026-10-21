@@ -132,3 +132,50 @@ Parent 7029761 passed all four jobs in run 39512490322 and security review witho
 its five code findings require this correction. Those results do not qualify the later head.
 Accepted P12 Rev4/CP8/NC8, the unchanged v2/default path and all live/native/P16 exclusions remain.
 Final-head CI/reviews, protected merge and main checks are separate and pending.
+
+
+## Bounded pages and source-local recovery -- 2026-10-21
+
+The explicit v3 cache route now rejects legacy v2 before runtime/cache changes;
+legacy decoding remains available on its separate compatibility path. Raw cache
+frames no longer reject an entire healthy response because one observation's
+monotonic revision regressed. The source-aware reducer retains/stales that source
+only, including full decimal tokens, while independent current GitHub data flows.
+A bounded original-request ledger retains late same-epoch provider waits across
+runtime changes without restoring old data or renewing a replayed hint. A real
+binding-epoch change still clears that connection's ledger and policy.
+
+Before omitting a repository/work, the producer drops optional unreferenced query
+provenance while retaining Fact/hint dependencies. Deep successful comment paging
+therefore keeps the selected repository and 40 work records after 2,000+ GETs.
+A selected repository never receives an overview-only recovery cursor. A later
+exact-query recovery removes its old zero-wait hint instead of invalidating export.
+
+The renderer first removes unreferenced provenance and evicts stale cached values
+before known work identities. When individually valid continuation pages no longer
+fit together, it rotates to the complete incoming page and its actual provider
+cursor. It does not invent a cursor inside a received page or silently omit newly
+read records. Actual producer pages traverse all 150 unique issues under the 1-MiB
+view budget. Cache eviction/window rotation never terminates or retires work;
+feedback, pending commands, source ordering and known provider waits stay separate.
+A read failure at the byte boundary retains known work and navigation.
+
+Published parent 0a98c26 reproduces seven actual assertions: two Python source
+assembly failures, three Rust cache/limit failures and two renderer continuation/
+failed-read failures. No import/compile/setup failure is counted as RED. The first
+capacity-run result parser expected the wrong assertion wording; its retained
+actual record-loss failure and the corrected unchanged-source rerun are separate.
+
+The final unchanged source/test bytes pass Python55, frontend87 and Rust35 with
+zero failures/errors/skips/ignored cases, plus typecheck/Vite build and the actual
+19-vector Python/Rust/TS wire. No full local kernel was repeated. Latest local
+fixture measurements: small 4 GET/8,444 bytes; 128-record prefix 5 GET/324,434 bytes;
+UTF-8 byte prefix 5 GET/1,038,843 bytes/55 work records with a usable cursor. These
+are fixture observations, not installed latency or native operation.
+
+The previous head passed all four jobs in
+[run 39517483650](https://github.com/openboa-ai/hydra/actions/runs/39517483650);
+that run does not qualify this later correction. P12 Rev4/CP8/NC8 and the existing
+authority/native exclusions are unchanged. Final-head CI and independent reviews,
+protected merge and main checks remain required; P16 still owns screen/action and
+actual running-screen integration. No runtime/authority was installed or activated.
