@@ -248,6 +248,12 @@ def _claims_decision_key(body, expected_key):
         position = end + 4
 
 
+def _relevant_decision_claim(body, prefix, expected_key):
+    if _INTENT in body or _RECEIPT in body:
+        return _claims_decision_key(body, expected_key)
+    return body.startswith(prefix)
+
+
 def observe_comments(rows, service_identity, expected_context, *, coverage_complete):
     """Fold exact service-owned duplicates, without accepting a private decision."""
     expected = parse_context(expected_context.body)
@@ -266,8 +272,8 @@ def observe_comments(rows, service_identity, expected_context, *, coverage_compl
         try:
             actor = _identity(row.get("user"))
         except InvalidPublicDecision:
-            if (isinstance(row.get("body"), str) and not row["body"].startswith(prefix)
-                    and not _claims_decision_key(row["body"], expected.key)):
+            if (isinstance(row.get("body"), str)
+                    and not _relevant_decision_claim(row["body"], prefix, expected.key)):
                 continue
             return DecisionObservation("unknown", "comment_actor_unavailable")
         if actor != service:
@@ -277,7 +283,7 @@ def observe_comments(rows, service_identity, expected_context, *, coverage_compl
         body = row.get("body")
         if not isinstance(body, str):
             return DecisionObservation("unknown", "incomplete_comment")
-        if ((not body.startswith(prefix) and not _claims_decision_key(body, expected.key))
+        if (not _relevant_decision_claim(body, prefix, expected.key)
                 or body in (prefix + "resolved", prefix + "resolved\n")):
             continue  # A legacy one-line receipt is not a versioned receipt.
         try:

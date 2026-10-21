@@ -432,5 +432,26 @@ class PublicDecisionGuardRegressionTests(unittest.TestCase):
                 self.assertEqual(parse_context(prepared.body).key[-1], round_number)
 
 
+    def test_full_key_actor_framing_and_body_size_relevance_matrix(self):
+        unrelated = EXPECTED.replace(b'"issue_number":4', b'"issue_number":5')
+        for actor_name, actor in (('service', ACTOR),
+                                  ('outsider', {'id': 99, 'login': 'outsider'}),
+                                  ('unknown', None)):
+            for selected in (True, False):
+                for prefixed in (False, True):
+                    for oversized in (False, True):
+                        body = EXPECTED if selected else unrelated
+                        if oversized:
+                            body = body.replace(b'\n', b'\n' + b'x' * (MAX_CONTEXT_BYTES + 1), 1)
+                        if prefixed:
+                            body = b'Operator note\n' + body
+                        expected = ('pair' if actor_name == 'outsider' or not selected
+                                    or (actor_name == 'service' and not prefixed and not oversized)
+                                    else 'unknown')
+                        with self.subTest(actor=actor_name, selected=selected,
+                                          prefixed=prefixed, oversized=oversized):
+                            self.assertEqual(self.observe([comment(70, body, user=actor)]).status, expected)
+
+
 if __name__ == "__main__":
     unittest.main()
