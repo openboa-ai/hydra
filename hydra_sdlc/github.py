@@ -242,6 +242,11 @@ class GitHub:
             raise GitHubError("Incomplete repository identity")
         return data
 
+    def native_issue_planning_read(self, repo, source, planning, expected_source_digest):
+        """Observe exact Issue-source priority without adoption or dispatch."""
+        from .github_issue_planning import read_issue_priority
+        return read_issue_priority(self, repo, source, planning, expected_source_digest)
+
     def native_relation_read(self, repo, source, relation):
         """Observe one native relation without writes or stored edge state."""
         from .github_relations import read_relation
