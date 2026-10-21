@@ -170,20 +170,8 @@ def _work(issue, admission):
 
 
 def _progress(source, issue_ref, repository):
-    record = source['record']
-    value = {key: None for key in p.SOURCE_FIELDS['progress'].split()}
-    value['issue_ref'] = issue_ref
-    for key in ('attempt_id', 'phase', 'native_step', 'head', 'contract_revision', 'branch',
-                'expected_head', 'expected_base', 'published_head', 'wait_reason',
-                'next_action', 'pending_action'):
-        value[key] = record.get(key)
-    number = record.get('pr_number')
-    if type(number) is int and 1 <= number <= p.MAX_INTEGER:
-        value['pr_ref'] = _ref('github', 'pull_request', repository + ':' + str(number))
-    # Missing cleanup/binding/completion facts remain null, not fabricated empty success.
-    p.source_value('progress', value)
-    resource = {**source['resource'], 'kind': 'progress'}
-    return value, resource
+    value = p.progress_source_value(source['record'], issue_ref, repository)
+    return value, {**source['resource'], 'kind': 'progress'}
 
 
 

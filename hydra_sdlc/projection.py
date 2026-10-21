@@ -318,6 +318,20 @@ def source_value(kind, value):
         nullable(value['step_nonce'], uid)
 
 
+def progress_source_value(record, issue_ref, repository):
+    value = {key: None for key in SOURCE_FIELDS['progress'].split()}
+    value['issue_ref'] = issue_ref
+    for key in ('attempt_id', 'phase', 'native_step', 'head', 'contract_revision', 'branch',
+                'expected_head', 'expected_base', 'published_head', 'wait_reason',
+                'next_action', 'pending_action'):
+        value[key] = record.get(key)
+    number = record.get('pr_number')
+    if type(number) is int and 1 <= number <= MAX_INTEGER:
+        value['pr_ref'] = {'source': 'github', 'kind': 'pull_request', 'id': repository + ':' + str(number)}
+    source_value('progress', value)
+    return value
+
+
 def observation(value):
     obj(value, 'key resource revision observed_at last_attempt_at availability coverage reason value')
     text(value['key'], 512)
@@ -659,6 +673,23 @@ def command_result(value, observations):
                 (value['action'] == 'workflow_step' and kind in {'checkpoint', 'decision', 'continuation',
                  'verification', 'verification_review', 'publication', 'delivery'}) or
                 (value['action'] == 'cleanup' and kind == 'cleanup'))
+
+    if value['action'] == 'workflow_step' and value['receipt'] is not None and 'progress_ref' in value['receipt']:
+        progress = value['receipt']['progress_ref']
+        expected = str(value['target']['repository_id']) + ':' + str(value['target']['issue_number'])
+        require(progress['source'] == 'github')
+        if progress['kind'] == 'progress':
+            require(progress['id'] == expected)
+        else:
+            require(progress['kind'] == 'issue_comment')
+            proofs = [observations[e['observation_key']] for e in value['observed_refs']
+                if observations[e['observation_key']]['resource'] ==
+                   {'source': 'github', 'kind': 'progress', 'id': progress['id']}]
+            require(len(proofs) == 1)
+            proof = proofs[0]
+            require(proof['availability'] == 'current' and proof['coverage']['state'] == 'complete'
+                    and proof['value'] is not None and proof['value']['issue_ref'] ==
+                    {'source': 'github', 'kind': 'issue', 'id': expected})
 
 
 def receipt(value, observations):

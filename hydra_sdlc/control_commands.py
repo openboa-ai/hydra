@@ -320,9 +320,9 @@ def _observation(command, runtime, snapshot, repository, suffix, observed_at):
     }
 
 
-def _reply(command, runtime, epoch, outcome, reason, *, observation=None, required_next='refresh', receipt=None):
-    observations = [] if observation is None else [observation]
-    refs = [{'observation_key': o['key'], 'revision': dict(o['revision'])} for o in observations]
+def _reply(command, runtime, epoch, outcome, reason, *, observation=None, required_next='refresh', receipt=None, progress_observation=None):
+    observations = ([] if observation is None else [observation]) + ([] if progress_observation is None else [progress_observation])
+    refs = [{'observation_key': o['key'], 'revision': copy.deepcopy(o['revision'])} for o in observations]
     applied = outcome == 'applied'
     return {
         'command_schema': 1, 'runtime': runtime, 'binding_epoch': epoch,
@@ -509,10 +509,35 @@ async def execute_checkpoint_command(config_path, command, *, context_provider, 
     except OperationDenied as exc:
         return _reply(command, runtime, epoch, 'waiting' if exc.reason == 'operation_state_busy' else 'rejected', exc.reason)
     from .coordinator import HostBusy
+    progress_observation = None
+    def observe_progress(source):
+        nonlocal progress_observation
+        from datetime import datetime, timezone
+        from . import projection as p
+        p.require(type(source) is dict and type(source.get('record')) is dict)
+        record, locator = source['record'], source.get('resource')
+        p.require(type(record.get('repository_id')) is int and record['repository_id'] == target['repository_id']
+                  and type(record.get('issue_number')) is int and record['issue_number'] == target['issue_number'])
+        p.ref(locator)
+        p.require(locator['source'] == 'github' and locator['kind'] == 'issue_comment'
+                  and re.fullmatch(re.escape(repository) + r'/comments/[1-9][0-9]*', locator['id']) is not None)
+        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        key = 'command:' + command['request_id'] + ':progress-readback'
+        issue_ref = {'source': 'github', 'kind': 'issue',
+                     'id': str(target['repository_id']) + ':' + str(target['issue_number'])}
+        progress_observation = {'key': key, 'resource': {**locator, 'kind': 'progress'},
+            'revision': None, 'observed_at': now, 'last_attempt_at': now, 'availability': 'current',
+            'coverage': {'state': 'complete', 'scope': key, 'returned_count': 1,
+                         'total_count': 1, 'next_cursor': None, 'reason': None}, 'reason': None,
+            'value': p.progress_source_value(record, issue_ref, str(target['repository_id']))}
+        p.observation(progress_observation)
+
     try:
         receipt = await controller._checkpoint_only(repository, target['issue_number'], expected['assignment'],
             command['parameters']['outcome'], repository_id=target['repository_id'],
-            admission_revision=expected['admission_revision'], before_effect=validate)
+            admission_revision=expected['admission_revision'], before_effect=validate, source_observer=observe_progress)
+        if progress_observation is None or receipt['progress_ref'] != {**progress_observation['resource'], 'kind': 'issue_comment'}:
+            raise ValueError('Checkpoint progress readback unconfirmed')
     except OperationDenied as exc:
         if exc.reason == 'unsupported_phase':
             return _reply(command, runtime, epoch, 'rejected', exc.reason, required_next='open_source')
@@ -520,4 +545,4 @@ async def execute_checkpoint_command(config_path, command, *, context_provider, 
                       exc.reason, required_next='reconcile')
     except (OSError, RuntimeError, ValueError, HostBusy):
         return _reply(command, runtime, epoch, 'unknown', 'checkpoint_unconfirmed', required_next='reconcile')
-    return _reply(command, runtime, epoch, 'applied', None, receipt=receipt)
+    return _reply(command, runtime, epoch, 'applied', None, receipt=receipt, progress_observation=progress_observation)

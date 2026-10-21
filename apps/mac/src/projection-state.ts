@@ -10,11 +10,12 @@ type Query = { sequence: number; request_id: string; keys: Set<string> };
 type Command = { request_id: string; effect_key: string | null; action: string; target: Record<string, unknown>;
   operation?: "preserve" | "archive" | "retire" | "remove_schedule";
   parameters?: Record<string, unknown>; assignment?: Record<string, unknown> | null; repository_name?: string };
+type CapturedCommand = Command & {command_binding_epoch:string;command_runtime_key:string|null};
 type RetryWindow = { received_at: number; after_seconds: number; basis: "provider" | "fallback"; failures: Map<string, { count: number; frame: string }> };
-type Feedback = Command & { outcome: CommandResult["outcome"]; reason: string | null; receipt: unknown };
+type Feedback = CapturedCommand & { outcome: CommandResult["outcome"]; reason: string | null; receipt: unknown };
 export interface ProjectionState {
   binding_epoch: string; source_slots: Map<string, Slot>; selected_ref: ResourceRef | null;
-  pending_commands: Map<string, Command>; feedback: Map<string, Feedback>;
+  pending_commands: Map<string, CapturedCommand>; feedback: Map<string, Feedback>;
   queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null; runtime_sequence:number; page_sequence:number;
   read_context: {scope:string|null;sequence:number};
   retry_windows: Map<string, RetryWindow>; last_now: number; error: string | null;
@@ -96,6 +97,22 @@ function workflowReceipt(pending:Command,result:CommandResult) {
     valid(ref.source==="github" && ref.kind==="pull_request" &&
       ref.id===String(pending.target.repository_id)+":"+String(p.pr_number));
   }
+}
+function correlateResult(state:ProjectionState,pending:CapturedCommand,reply:Record<string,unknown>):CommandResult {
+  const r=reply.request as CommandResult;
+  const identity=runtime({runtime:reply.runtime as ProjectionV3["runtime"]});
+  valid(reply.binding_epoch===state.binding_epoch && reply.binding_epoch===pending.command_binding_epoch &&
+    (state.runtime_key===null || identity===state.runtime_key) &&
+    (pending.command_runtime_key===null || identity===pending.command_runtime_key) &&
+    r.request_id===pending.request_id && r.action===pending.action && json(r.target)===json(pending.target));
+  if(pending.action==="cleanup" && r.receipt!==null){
+    const receipt=r.receipt as Record<string,unknown>;
+    valid(json(receipt.resource)===json(pending.target.resource) && receipt.operation===pending.operation);
+  }
+  if(pending.action==="workflow_step" && r.receipt!==null)workflowReceipt(pending,r);
+  if(pending.action==="admission_set" && r.receipt!==null)
+    admissionReceipt(pending,r,reply.observations as Observation[],(reply.runtime as ProjectionV3["runtime"]).control_binding_digest);
+  return r;
 }
 function uint(n: number) { valid(Number.isSafeInteger(n) && n >= 0); }
 export function compareRevisions(left:Revision|null,right:Revision|null):number|null {
@@ -479,6 +496,17 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         state.view.retry_hints = structuredClone(frame.retry_hints);
       }
       state.view.request = currentRequest;
+      if(currentRequest && frame.request && event.response.sequence===state.runtime_sequence && !event.response.stale){
+        const saved=state.pending_commands.get(currentRequest.request_id) ?? state.feedback.get(currentRequest.request_id);
+        if(saved && (!("outcome" in saved) || saved.outcome==="unknown" || saved.outcome==="waiting")){
+          try{
+            const result=correlateResult(state,saved,{runtime:frame.runtime,binding_epoch:frame.binding_epoch,
+              request:currentRequest,observations:frame.observations});
+            state.pending_commands.delete(result.request_id);
+            state.feedback.set(result.request_id,{...saved,outcome:result.outcome,reason:result.reason,receipt:result.receipt});
+          }catch{/* Unrelated or unverified read-backs preserve the original effect hold. */}
+        }
+      }
       refreshFacts(state,changed,incoming,event.sequence,event.response.sequence);
       window = {frame:windowFrame,sequence:event.sequence,received_sequence:event.response.sequence};
       if (state.error !== "read_policy_capacity_held") state.error = null; break;
@@ -531,26 +559,14 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         valid(size({parameters,assignment:event.assignment,effect_key:event.effect_key,target:event.target})<=4096);
         workflow={parameters:structuredClone(parameters),assignment:structuredClone(event.assignment)};
       }
-      state.pending_commands.set(event.request_id, { request_id:event.request_id,effect_key:event.effect_key,
+      state.pending_commands.set(event.request_id, { command_binding_epoch:state.binding_epoch,command_runtime_key:state.runtime_key,request_id:event.request_id,effect_key:event.effect_key,
         action:event.action,target:structuredClone(event.target),...workflow,...(event.action==="cleanup"?{operation:event.operation}:{}) }); break;
     }
     case "command_result": {
       const pending = state.pending_commands.get(event.request_id); if (!pending) return previous;
       let result: CommandResult | null = null;
       try {
-        const reply = parseStandardReply(event.reply);
-        const r = reply.request as CommandResult;
-        valid((state.runtime_key === null || runtime({runtime:reply.runtime as ProjectionV3["runtime"]}) === state.runtime_key) &&
-          reply.binding_epoch === state.binding_epoch && r.request_id === pending.request_id &&
-          r.action === pending.action && json(r.target) === json(pending.target));
-        if (pending.action==="cleanup" && r.receipt!==null) {
-          const receipt=r.receipt as Record<string,unknown>;
-          valid(json(receipt.resource)===json(pending.target.resource) && receipt.operation===pending.operation);
-        }
-        if (pending.action==="workflow_step" && r.receipt!==null) workflowReceipt(pending,r);
-        if (pending.action==="admission_set" && r.receipt!==null)
-          admissionReceipt(pending,r,reply.observations as Observation[],(reply.runtime as ProjectionV3["runtime"]).control_binding_digest);
-        result = r;
+        result=correlateResult(state,pending,parseStandardReply(event.reply));
       } catch { /* A bad/lost receipt cannot become a failure-to-send or an applied Fact. */ }
       state.pending_commands.delete(event.request_id);
       state.feedback.set(event.request_id, { ...pending, outcome:result?.outcome ?? "unknown",

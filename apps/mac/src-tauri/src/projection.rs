@@ -527,7 +527,24 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
         need((v["action"]=="admission_set" && k=="admission") ||
           (v["action"]=="workflow_step" && ["checkpoint","decision","continuation","verification","verification_review","publication","delivery"].contains(&k)) ||
           (v["action"]=="cleanup" && k=="cleanup"))?;
-    } Ok(())
+    }
+    if v["action"]=="workflow_step" && v["receipt"].get("progress_ref").is_some() {
+        let progress=&v["receipt"]["progress_ref"];
+        let expected=format!("{}:{}",v["target"]["repository_id"],v["target"]["issue_number"]);
+        need(progress["source"]=="github")?;
+        if progress["kind"]=="progress" {need(progress["id"]==expected)?;}
+        else {
+            need(progress["kind"]=="issue_comment")?;
+            let proofs:Vec<_>=v["observed_refs"].as_array().ok_or(INVALID)?.iter()
+                .filter_map(|e|index.get(e["observation_key"].as_str()?))
+                .filter(|o|o["resource"]["source"]=="github" && o["resource"]["kind"]=="progress" &&
+                    o["resource"]["id"]==progress["id"]).collect();
+            need(proofs.len()==1)?;let proof=proofs[0];
+            need(proof["availability"]=="current" && proof["coverage"]["state"]=="complete" &&
+                proof["value"]["issue_ref"]==serde_json::json!({"source":"github","kind":"issue","id":expected}))?;
+        }
+    }
+    Ok(())
 }
 fn observations(value:&Value)->Result<Index<'_>,&'static str> {
     let rows=value.as_array().ok_or(INVALID)?; need(rows.len()<=4096)?; let mut index=HashMap::new();
@@ -828,4 +845,20 @@ mod qualified_fact_tests {
         }
         assert!(failures.is_empty(),"Qualified claim mismatches: {}",failures.join(", "));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn workflow_progress_receipt_target_and_source_proofs() {
+    let path=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_workflow_progress.py");
+    let output=std::process::Command::new("python3").arg("-I").arg(path).output().unwrap();
+    assert!(output.status.success(),"actual workflow fixture failed: {}",String::from_utf8_lossy(&output.stderr));
+    let cases:Value=serde_json::from_slice(&output.stdout).unwrap();
+    let rows=cases.as_array().unwrap();assert_eq!(rows.len(),134);let mut failures=Vec::new();
+    for row in rows {
+        let bytes=row["wire"].as_str().unwrap().as_bytes();
+        let accepted=if row["profile"]=="projection" {Projection::parse(bytes).is_ok()} else {StandardReply::parse(bytes).is_ok()};
+        if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
+    }
+    assert!(failures.is_empty(),"workflow progress target/proof mismatches: {:?}",failures);
 }

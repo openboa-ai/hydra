@@ -533,6 +533,23 @@ function commandResult(value: unknown, index: Index): void {
     (v.action === "admission_set" && kind === "admission") ||
     (v.action === "workflow_step" && ["checkpoint", "decision", "continuation", "verification", "verification_review", "publication", "delivery"].includes(String(kind))) ||
     (v.action === "cleanup" && kind === "cleanup"));
+  if (v.action === "workflow_step" && kind !== null && Object.hasOwn(plain(v.receipt), "progress_ref")) {
+    const progress = plain(plain(v.receipt).progress_ref), target = plain(v.target);
+    const expected = String(target.repository_id) + ":" + String(target.issue_number);
+    requireValue(progress.source === "github");
+    if (progress.kind === "progress") requireValue(progress.id === expected);
+    else {
+      requireValue(progress.kind === "issue_comment");
+      const proofs = (v.observed_refs as unknown[]).map(e => index.get(String(plain(e).observation_key))!)
+        .filter(o => { const resource=plain(o.resource); return resource.source === "github" &&
+          resource.kind === "progress" && resource.id === progress.id; });
+      requireValue(proofs.length === 1);
+      const proof=proofs[0]!;
+      requireValue(proof.availability === "current" && plain(proof.coverage).state === "complete" &&
+        proof.value !== null && canonical(plain(proof.value).issue_ref) ===
+        canonical({source:"github",kind:"issue",id:expected}));
+    }
+  }
 }
 function observations(value: unknown): Index {
   const index: Index = new Map();

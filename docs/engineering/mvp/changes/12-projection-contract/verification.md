@@ -810,3 +810,44 @@ planning blobs are preserved and the same P12 frontend/Rust source bytes retain
 their 338/55 passing checks. All 313 selected combined Python 3.14.2 methods pass
 without failures/errors/skips. Current final-head CI and independent reviews
 remain mandatory; no earlier head is promoted to final delivery evidence.
+
+
+## Workflow receipt target proof and read-back recovery
+
+The target/receipt and feedback recovery requirements in unchanged CP8 also cover
+the two findings on parent `df378ffb52ae776f28aeabdaca8e9407b4091f31`.
+
+Canonical GitHub progress refs must identify the requested numeric repository and
+Issue. P05's real checkpoint instead returns its authenticated issue-comment
+locator; that existing locator is preserved. An opaque comment receipt now needs
+one explicitly cited current/complete progress observation of that same locator,
+with an issue_ref matching the target. Python, Rust and TypeScript enforce this
+same proof. The actual checkpoint supplies its already-read retired source through
+an internal observer; no additional HTTP read, wire key or authority is introduced.
+The shared progress normalizer exports only the existing allowlisted source fields.
+
+The reducer shares correlation between direct replies and accepted read-backs.
+It captures binding/runtime and sanitized intent pins, resolves matching pending,
+unknown or waiting feedback, and preserves terminal history. Unrelated, stale,
+older, changed-binding/runtime or mismatched-intent responses retain the original
+effect hold. No reducer event dispatches an effect.
+
+One shared literal matrix has 66 cases across all six progress-bearing receipt
+kinds. Both wire profiles plus actual checkpoint producer bytes yield 134 vectors.
+Immutable parent checks reproduce 109 Python assertion failures, four failing
+frontend methods and one failing Rust method, without test errors/skips. The
+initial Rust test-placement compiler error did not reach tests and is excluded.
+The same frozen oracles pass after correction.
+
+A separate prepublication failure test reproduced one retained private summary
+when the new public observer failed after step retirement. The summary is now
+retired before invoking that observer; the response remains unknown and the real
+retired source/ticket state is preserved. Final Python 3.14.2 impact checks pass
+370 methods, including checkpoint-only and MCP regressions, without failures,
+errors or skips. Frontend/Rust regression checks pass 343/56 methods plus build;
+their unchanged consumer bytes were rechecked with current actual producer bytes
+after the cleanup adjustment. Current-head CI and independent reviews remain
+required before protected merge and actual-main verification.
+
+These are deterministic source/producer/consumer results. Installed/native
+qualification, full v1 acceptance and actual remote operation remain separate.
