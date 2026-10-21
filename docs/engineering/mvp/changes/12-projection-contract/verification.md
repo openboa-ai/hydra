@@ -392,7 +392,7 @@ This increment retains P12 Rev4 / CP8 / NC8 and closes four observed implementat
 
 The published-parent regressions reproduced 33 assertion failures across source ownership, credential wait scope, cleanup feedback and unissued cursor privilege, with zero setup errors/skips in the corrected RED run. A separate shared cleanup-resource regression adds one actual parent failure while its normal control passes. The initial fixture setup diagnostics are retained separately and are not counted as product RED. The same requirement oracles remain in the final tests; fixture metadata now explicitly identifies issued cursors and internal read context.
 
-Final local checks: Python 3.14.2 source/HTTP/CLI/control/identity suites, frontend, Rust, TypeScript/build. The shared producer set includes the earlier 23 vectors plus exact/foreign cleanup-resource cases (25 total); one independent owner matrix covers all 13 known kinds and all four source labels in the three consumers.
+Initial local checks: Python 3.12.7 source/HTTP/CLI/control/identity suites, frontend, Rust, TypeScript/build. The shared producer set includes the earlier 23 vectors plus exact/foreign cleanup-resource cases (25 total); one independent owner matrix covers all 13 known kinds and all four source labels in the three consumers.
 
 - python: SUMMARY 286 0 0 0; Ran 286 tests in 9.916s. Log SHA-256 `a0373878b6d92b47fe9a8be0b1fb91923f13a7aff0163afa6356ba7115c3c93e`.
 
@@ -403,3 +403,10 @@ Final local checks: Python 3.14.2 source/HTTP/CLI/control/identity suites, front
 - build: TypeScript and Vite build passed. Log SHA-256 `2b282b48b6be2a25ee2d77b25d56acf7c41c6a5b76c73fabf14b841f9026a2b6`.
 
 Local source tests do not establish installed operation, native question/answer attribution, remote control authority or full P12/v1 completion. Final-head hosted CI and independent code/security review remain required. No service was installed or activated for this increment.
+
+
+### Local interpreter evidence correction
+
+The initial scoped Python run used the shell-selected Python 3.12.7. The preceding version label is corrected; its 286-method result and log digest remain historical evidence. The same published source/test bytes were subsequently checked in the declared isolated Python 3.14.2 runtime, with child `python3` pinned to that same runtime: 286 methods passed, zero failures/errors/skips, in 9.972 seconds. Log SHA-256 `e81992d7d309330fece5d3387c55e98608ef439cd2bb2b0f8e25390210ff9e04`.
+
+No implementation, oracle, requirement pin or protected check changes for this correction. The exact f3e4cb0 hosted run 39544070488 also passed all four jobs, including Python 3.11 and 3.14.2; that hosted result is distinct from the local run and does not qualify a later head automatically.
