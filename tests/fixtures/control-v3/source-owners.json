@@ -1,0 +1,15 @@
+{
+  "repository": "github",
+  "issue": "github",
+  "progress": "github",
+  "pull_request": "github",
+  "check": "github",
+  "review": "github",
+  "native_task_metadata": "codex",
+  "native_history_page": "codex",
+  "native_task": "codex",
+  "native_schedule": "codex",
+  "resource": "resource_provider",
+  "admission": "hydra",
+  "ownership": "hydra"
+}

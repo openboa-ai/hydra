@@ -35,6 +35,8 @@ def parser():
             command.add_argument("--storage-provider", help="Trusted installed host module:factory")
             command.add_argument("--knowledge-repo", help="Private knowledge repository configured by the host operator")
             command.add_argument("--timeout", type=float, default=1800 if name == "run" else None)
+    read_context = sub.add_parser("read-context", help="Internal read-policy context; no HTTP or control effect")
+    read_context.add_argument("--binding-epoch", required=True)
     identity = sub.add_parser("identity", help="Report this runtime's source and configuration identity")
     identity.add_argument("--config", type=Path)
     control = sub.add_parser("control", help="Inspect or change installed admission controls")
@@ -47,9 +49,23 @@ def parser():
     control.add_argument("--projection-schema", type=int, choices=(2, 3), default=2)
     control.add_argument("--binding-epoch")
     control.add_argument("--request-id")
+    control.add_argument("--credential-scope", help="Expected opaque read context; never a credential or grant")
     control.add_argument("--repository", help="Registered read scope; never a mutation target")
     control.add_argument("--cursor", help="Opaque continuation for this exact registered read scope")
     return p
+
+
+def read_connection_context(binding_epoch):
+    from .projection import uid
+    from .github import GitHub, GitHubError
+    uid(binding_epoch)
+    client = GitHub()
+    try:
+        with client.read_budget(seconds=2, requests=0):
+            scope = client.connection_scope(binding_epoch)
+    except GitHubError:
+        scope = None
+    return {'scope': scope}
 
 
 def _provider(value):
@@ -77,8 +93,11 @@ def operate_control(args):
         kwargs = {'binding_epoch': fields[0], 'request_id': fields[1], 'repository': fields[2], 'refresh': args.refresh}
         if fields[3] is not None:
             kwargs['cursor'] = fields[3]
+        scope = getattr(args, 'credential_scope', None)
+        if scope is not None:
+            kwargs['credential_scope'] = scope
         return read_projection(load_host_config(args.config), **kwargs)
-    if schema != 2 or any(value is not None for value in fields):
+    if schema != 2 or any(value is not None for value in fields) or getattr(args, "credential_scope", None) is not None:
         raise ValueError("Unsupported control read profile")
     from .control import control_result, load_host_config
     return control_result(load_host_config(args.config), action=args.action,
@@ -94,6 +113,10 @@ def _control_json(args, result):
 
 async def operate(args, *, github=None, workspace=None, execute=None, capabilities=None,
                   operations=None, emit=print):
+    if args.command == "read-context":
+        result = read_connection_context(args.binding_epoch)
+        emit(json.dumps(result, ensure_ascii=False))
+        return result
     if args.command == "identity":
         from .control import load_host_config, control_from_config
         cfg = load_host_config(args.config) if args.config else None

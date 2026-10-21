@@ -47,11 +47,22 @@ struct Bridge {
     mutation: Mutex<()>,
     local_read: Mutex<()>,
     remote_read: Mutex<()>,
+    context_probe: Mutex<()>,
     record_open: Mutex<()>,
     quitting: AtomicBool,
     exit_confirmed: AtomicBool,
 }
 
+fn read_context_scope(bytes:&[u8])->Option<String> {
+    if bytes.len()>1024 {return None;}
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Context {scope:Option<String>}
+    let context:Context=serde_json::from_slice(bytes).ok()?;
+    let scope=context.scope?;
+    let suffix=scope.strip_prefix("github:read:")?;
+    (suffix.len()==64 && suffix.bytes().all(|c|c.is_ascii_digit() || (b'a'..=b'f').contains(&c))).then_some(scope)
+}
 impl Bridge {
     fn new() -> Self {
         Self {
@@ -60,6 +71,7 @@ impl Bridge {
             mutation: Mutex::new(()),
             local_read: Mutex::new(()),
             remote_read: Mutex::new(()),
+            context_probe: Mutex::new(()),
             record_open: Mutex::new(()),
             quitting: AtomicBool::new(false),
             exit_confirmed: AtomicBool::new(false),
@@ -81,6 +93,24 @@ impl Bridge {
         if cursor.is_some_and(|c|c.len()>2048 || c.is_empty() || !c.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_')) || (cursor.is_some() && repository.is_some() && !refresh) {
             return Err(BridgeError::new("invalid_cursor"));
         }
+        {
+            let _probe=self.context_probe.lock().await;
+            let due={
+                let mut state=self.projection.lock().await;
+                let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+                if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
+                cache.context_probe_due(Instant::now())
+            };
+            if due {
+                let scope=match bounded_output(launch.read_context_command(epoch),Duration::from_secs(3)).await {
+                    Ok(bytes)=>read_context_scope(&bytes),Err(_)=>None,
+                };
+                let mut state=self.projection.lock().await;
+                let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+                if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
+                cache.context_changed(scope).map_err(BridgeError::new)?;
+            }
+        }
         let scope=format!("{}:{}:{}",if refresh {"remote"}else{"local"},repository.unwrap_or("overview"),cursor.unwrap_or(""));
         let ticket={
             let mut state=self.projection.lock().await;
@@ -95,8 +125,10 @@ impl Bridge {
             if refresh {cache.remote_started(now);}else{cache.local_started(now);}
             ticket
         };
-        let output=bounded_output(launch.projection_command(&ticket.epoch,&ticket.request_id,refresh,repository,cursor),
-            Duration::from_secs(if refresh {60}else{15})).await;
+        let credential_scope=ticket.credential_scope.clone();
+        let mut command=launch.projection_command(&ticket.epoch,&ticket.request_id,refresh,repository,cursor);
+        if refresh {command.arg("--credential-scope").arg(credential_scope.ok_or_else(||BridgeError::new("read_context_unavailable"))?);}
+        let output=bounded_output(command,Duration::from_secs(if refresh {60}else{15})).await;
         let mut state=self.projection.lock().await;
         let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
         match output {
@@ -550,11 +582,24 @@ mod tests {
                 o["key"]="query:provider-hold".into();o["reason"]="provider_wait".into();
                 value["observations"].as_array_mut().unwrap().push(o);
                 value["retry_hints"]=serde_json::json!([{"observation_key":"query:provider-hold",
-                    "scope":format!("github:registered-read:{epoch}"),"after_seconds":600,"basis":"provider"}]);
+                    "scope":format!("github:read:{}","a".repeat(64)),"after_seconds":600,"basis":"provider"}]);
             }
+            value["page"]["next_cursor"]="continuation_page".into();
             let config=root.join("frame.json");fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();
             let runtime=root.join("runtime");
-            fs::write(&runtime,b"#!/usr/bin/env python3\nimport json,sys\na=sys.argv\np=a[a.index('--config')+1]\nv=json.load(open(p))\nv['request_id']=a[a.index('--request-id')+1]\nv['binding_epoch']=a[a.index('--binding-epoch')+1]\nwith open(p+'.calls','a') as f: f.write('read\\n')\nprint(json.dumps(v))\n").unwrap();
+            fs::write(&runtime,br#"#!/usr/bin/env python3
+import json,sys
+a=sys.argv
+if 'read-context' in a:
+ print(json.dumps({'scope':'github:read:'+'a'*64}))
+ sys.exit(0)
+p=a[a.index('--config')+1]
+v=json.load(open(p))
+v['request_id']=a[a.index('--request-id')+1]
+v['binding_epoch']=a[a.index('--binding-epoch')+1]
+with open(p+'.calls','a') as f: f.write('read\n')
+print(json.dumps(v))
+"#).unwrap();
             fs::set_permissions(&runtime,fs::Permissions::from_mode(0o700)).unwrap();
             let mut bridge=Bridge::new();
             bridge.launch=Ok(LaunchConfig{runtime,config,home:root.as_os_str().into()});
@@ -575,6 +620,8 @@ mod tests {
         let first=f.read(remote,None,false).await.unwrap();
         let repeated=f.read(remote,None,true).await.unwrap();
         assert!(repeated.cached);assert_eq!(repeated.sequence,first.sequence);assert_eq!(f.count(),1);
+        assert_eq!(f.read(remote,Some("altered_page"),false).await.unwrap_err().code,"source_wait");
+        assert_eq!(f.count(),1,"An unissued cursor invoked the core reader");
         let next=f.read(remote,Some("continuation_page"),false).await;
         assert!(next.is_ok(),"Ordinary poll floor held an unread continuation: {:?}",next.err());
         let next=next.unwrap();assert!(!next.cached);assert!(next.sequence>first.sequence);assert_eq!(f.count(),2);

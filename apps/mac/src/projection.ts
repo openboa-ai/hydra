@@ -278,7 +278,10 @@ function observation(value: unknown): void {
   const v = object(value, "key resource revision observed_at last_attempt_at availability coverage reason value");
   text(v.key, 512); ref(v.resource); const resource = plain(v.resource);
   requireValue(typeof resource.kind === "string" && Object.hasOwn(sourceFields, resource.kind));
-  if ((resource.kind as string).startsWith("native_")) requireValue(resource.source === "codex");
+  const owners:Record<string,string>={repository:"github",issue:"github",progress:"github",pull_request:"github",check:"github",review:"github",
+    native_task_metadata:"codex",native_history_page:"codex",native_task:"codex",native_schedule:"codex",
+    resource:"resource_provider",admission:"hydra",ownership:"hydra"};
+  requireValue(resource.source===owners[resource.kind]);
   nullable(v.revision, revision); nullable(v.observed_at, timestamp); timestamp(v.last_attempt_at);
   one(v.availability, "current stale unavailable unsupported"); coverage(v.coverage); nullable(v.reason, code);
   const c = plain(v.coverage);
@@ -454,6 +457,8 @@ function commandResult(value: unknown, index: Index): void {
   refs(v.effect_refs); list(v.observed_refs, e => { evidenceIn(e, index); });
   one(v.required_next, "none refresh reconcile open_source"); nullable(v.receipt, r => receipt(r, index));
   const kind = v.receipt === null ? null : plain(v.receipt).kind;
+  if (kind!==null && v.action==="cleanup")
+    requireValue(canonical(plain(v.receipt).resource)===canonical(plain(v.target).resource));
   if (v.outcome === "applied" && ["workflow_step", "cleanup"].includes(v.action))
     requireValue(v.receipt !== null);
   if (v.action === "admission_set" || ["checkpoint", "decision"].includes(String(kind)))

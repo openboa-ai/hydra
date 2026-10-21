@@ -14,6 +14,9 @@ import uuid
 MAX_BYTES = 1_048_576
 MAX_INTEGER = 9_007_199_254_740_991
 SOURCES = {'github', 'codex', 'resource_provider', 'hydra'}
+SOURCE_OWNERS = {**dict.fromkeys(('repository', 'issue', 'progress', 'pull_request', 'check', 'review'), 'github'),
+                 **dict.fromkeys(('native_task_metadata', 'native_history_page', 'native_task', 'native_schedule'), 'codex'),
+                 'resource': 'resource_provider', 'admission': 'hydra', 'ownership': 'hydra'}
 MODES = {'running', 'paused', 'stopped'}
 SOURCE_FIELDS = {
     'repository': 'numeric_id full_name url contract_ref',
@@ -320,8 +323,7 @@ def observation(value):
     text(value['key'], 512)
     ref(value['resource'])
     require(value['resource']['kind'] in SOURCE_FIELDS)
-    if value['resource']['kind'].startswith('native_'):
-        require(value['resource']['source'] == 'codex')
+    require(value['resource']['source'] == SOURCE_OWNERS[value['resource']['kind']])
     nullable(value['revision'], revision)
     nullable(value['observed_at'], timestamp)
     timestamp(value['last_attempt_at'])
@@ -555,6 +557,8 @@ def command_result(value, observations):
         require((value['receipt'] is not None) == (value['outcome'] == 'applied'))
     if value['receipt'] is not None:
         kind = value['receipt']['kind']
+        if value['action'] == 'cleanup':
+            require(value['receipt']['resource'] == value['target']['resource'])
         require((value['action'] == 'admission_set' and kind == 'admission') or
                 (value['action'] == 'workflow_step' and kind in {'checkpoint', 'decision', 'continuation',
                  'verification', 'verification_review', 'publication', 'delivery'}) or

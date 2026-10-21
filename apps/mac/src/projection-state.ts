@@ -7,19 +7,20 @@ import {
 type Slot = { latest_issued_seq: number; latest_settled_seq: number; observation: Observation;
   query_scope: string; received_at: number; stale: boolean; frame: string; received_sequence:number };
 type Query = { sequence: number; request_id: string; keys: Set<string> };
-type Command = { request_id: string; effect_key: string; action: string; target: Record<string, unknown> };
+type Command = { request_id: string; effect_key: string; action: string; target: Record<string, unknown>; operation?: "preserve" | "archive" | "retire" | "remove_schedule" };
 type RetryWindow = { received_at: number; after_seconds: number; basis: "provider" | "fallback"; failures: Map<string, { count: number; frame: string }> };
 type Feedback = Command & { outcome: CommandResult["outcome"]; reason: string | null; receipt: unknown };
 export interface ProjectionState {
   binding_epoch: string; source_slots: Map<string, Slot>; selected_ref: ResourceRef | null;
   pending_commands: Map<string, Command>; feedback: Map<string, Feedback>;
   queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null; runtime_sequence:number;
+  read_context: {scope:string|null;sequence:number};
   retry_windows: Map<string, RetryWindow>; last_now: number; error: string | null;
 }
 export type ProjectionEvent =
   | { type: "read_started"; scope: string; sequence: number; request_id: string; observation_keys?: string[] }
   | { type: "read_succeeded"; scope: string; sequence: number; now: number;
-      response: { payload: unknown; age_ms: number; cached: boolean; stale: boolean; sequence: number } }
+      response: { payload: unknown; age_ms: number; cached: boolean; stale: boolean; sequence: number; read_context: {scope:string|null;sequence:number} } }
   | { type: "read_failed"; scope: string; sequence: number; reason: string }
   | ({ type: "command_started" } & Command)
   | { type: "command_result"; request_id: string; reply: unknown }
@@ -50,7 +51,7 @@ export function compareRevisions(left:Revision|null,right:Revision|null):number|
 export function projectionState(binding_epoch: string): ProjectionState {
   valid(uuid.test(binding_epoch));
   return { binding_epoch, source_slots: new Map(), selected_ref: null, pending_commands: new Map(),
-    feedback: new Map(), retry_windows: new Map(), queries: new Map(), view: null, runtime_key: null, runtime_sequence:0, last_now: 0, error: null };
+    feedback: new Map(), read_context:{scope:null,sequence:0}, retry_windows: new Map(), queries: new Map(), view: null, runtime_key: null, runtime_sequence:0, last_now: 0, error: null };
 }
 function stale(state: ProjectionState, keys: Iterable<string>, reason: string) {
   for (const k of keys) {
@@ -226,6 +227,22 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       if (frame.binding_epoch !== state.binding_epoch || (!event.response.cached && frame.request_id !== query.request_id)) {
         failed(state,event.scope,event.sequence,"read_binding_mismatch"); break;
       }
+      const context=event.response.read_context;
+      if (context) {
+        uint(context.sequence);
+        valid(Object.keys(context).sort().join(",")==="scope,sequence" &&
+          (context.scope===null || (typeof context.scope==="string" && [...context.scope].length>0 && [...context.scope].length<=256 && !/[\x00-\x1f\x7f]/.test(context.scope))));
+        if (context.sequence<state.read_context.sequence) {state.queries.delete(event.scope);break;}
+        valid(context.sequence!==state.read_context.sequence || context.scope===state.read_context.scope);
+        if (context.sequence>state.read_context.sequence) {
+          const affected=[...state.source_slots].filter(([,slot])=>slot.observation.resource.source==="github").map(([key])=>key);
+          stale(state,affected,"credential_context_changed");
+          refreshFacts(state,new Set(affected),new Set(),Number.MAX_SAFE_INTEGER);
+          state.read_context={...context};
+        }
+      } else {
+        failed(state,event.scope,event.sequence,"read_context_unavailable");break;
+      }
       const identity = runtime(frame);
       const windowFrame = structuredClone(frame);
       if (state.runtime_key !== null && state.runtime_key !== identity) {
@@ -241,13 +258,16 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       if (event.now < state.last_now) stale(state,state.source_slots.keys(),"clock_resumed");
       const origin = Math.max(state.last_now,event.now)-event.response.age_ms;
       if (!event.response.cached) {
-        for (const window of state.retry_windows.values()) for (const o of frame.observations) {
-          if (o.availability === "current" && o.coverage.state === "complete" &&
+        for (const [identity,window] of state.retry_windows) for (const o of frame.observations) {
+          const [source,scope]=JSON.parse(identity) as [string,string];
+          if (source===o.resource.source && (source!=="github" || context?.scope===scope) &&
+              o.availability === "current" && o.coverage.state === "complete" &&
               o.reason !== "rate_limited" && o.reason !== "provider_wait") window.failures.delete(o.key);
         }
       }
       for (const hint of frame.retry_hints) {
         const o=frame.observations.find(o=>o.key===hint.observation_key)!;
+        if (context && o.resource.source==="github" && hint.scope!==context.scope) continue;
         const k=json([o.resource.source,hint.scope]);
         if (!state.retry_windows.has(k) && state.retry_windows.size>=256) {state.error="read_policy_capacity_held";continue;}
         const window=state.retry_windows.get(k) ?? {received_at:origin,after_seconds:0,basis:hint.basis,failures:new Map()};
@@ -411,8 +431,10 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       for (const [id,f] of state.feedback) if (state.pending_commands.size+state.feedback.size>=16 &&
           (f.outcome === "applied" || f.outcome === "rejected")) state.feedback.delete(id);
       valid(state.pending_commands.size + state.feedback.size < 16);
+      if (event.action==="cleanup") valid(["preserve","archive","retire","remove_schedule"].includes(event.operation ?? ""));
+      else valid(event.operation===undefined);
       state.pending_commands.set(event.request_id, { request_id:event.request_id,effect_key:event.effect_key,
-        action:event.action,target:structuredClone(event.target) }); break;
+        action:event.action,target:structuredClone(event.target),...(event.action==="cleanup"?{operation:event.operation}:{}) }); break;
     }
     case "command_result": {
       const pending = state.pending_commands.get(event.request_id); if (!pending) return previous;
@@ -423,6 +445,10 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         valid((state.runtime_key === null || runtime({runtime:reply.runtime as ProjectionV3["runtime"]}) === state.runtime_key) &&
           reply.binding_epoch === state.binding_epoch && r.request_id === pending.request_id &&
           r.action === pending.action && json(r.target) === json(pending.target));
+        if (pending.action==="cleanup" && r.receipt!==null) {
+          const receipt=r.receipt as Record<string,unknown>;
+          valid(json(receipt.resource)===json(pending.target.resource) && receipt.operation===pending.operation);
+        }
         result = r;
       } catch { /* A bad/lost receipt cannot become a failure-to-send or an applied Fact. */ }
       state.pending_commands.delete(event.request_id);

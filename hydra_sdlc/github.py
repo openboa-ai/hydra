@@ -19,6 +19,12 @@ ACTIVE_LABEL = "hydra:active"
 MAX_COLLECTION_BYTES = 8_000_000
 
 
+def read_credential_scope(binding_epoch, fingerprint):
+    # A per-binding opaque rate-policy key, never identity or command authority.
+    return 'github:read:' + hashlib.sha256(b'hydra-read-context-v1\0' +
+        binding_epoch.encode('ascii') + b'\0' + fingerprint).hexdigest()
+
+
 class GitHubError(RuntimeError):
     def __init__(self, reason, *, status=None, uncertain=False, read_response=None):
         super().__init__(reason)
@@ -167,7 +173,7 @@ class GitHub:
     def _gh(self, method, path, payload):
         return self._gh_request(method, path, payload)
 
-    def _gh_request(self, method, path, payload, *, include_headers=False):
+    def _credential(self):
         try:
             token = subprocess.run(
                 ["gh", "auth", "token", "--hostname", "github.com", "--user", self.user],
@@ -175,8 +181,22 @@ class GitHub:
             ).stdout.strip()
             if not token:
                 raise GitHubError("GitHub authentication unavailable")
+            return token
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise GitHubError("GitHub authentication unavailable") from exc
+
+    def connection_scope(self, binding_epoch):
+        return read_credential_scope(binding_epoch, hashlib.sha256(self._credential().encode()).digest())
+
+    def _credential_selected(self, fingerprint):
+        pass
+
+    def _gh_request(self, method, path, payload, *, include_headers=False):
+        try:
+            token = self._credential()
             env = {**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com", "GH_PROMPT_DISABLED": "1"}
             fingerprint = hashlib.sha256(token.encode()).digest()
+            self._credential_selected(fingerprint)
             # Select credentials each call, but avoid doubling every polling API
             # request with the same credential's immutable account identity.
             if self._authenticated_fingerprint != fingerprint:

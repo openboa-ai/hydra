@@ -55,6 +55,11 @@ impl LaunchConfig {
         })
     }
 
+    pub fn read_context_command(&self,epoch:&str)->Command {
+        let mut command=Command::new(&self.runtime);
+        command.args(["-I","-m","hydra_sdlc.cli","read-context","--binding-epoch",epoch]);
+        command.current_dir("/").env_clear().env("HOME",&self.home).env("PATH",CHILD_PATH);command
+    }
     pub fn projection_command(&self, epoch:&str, request:&str, refresh:bool, repository:Option<&str>, cursor:Option<&str>) -> Command {
         let mut command=self.command(None,None,refresh);
         command.args(["--projection-schema","3","--binding-epoch",epoch,"--request-id",request]);

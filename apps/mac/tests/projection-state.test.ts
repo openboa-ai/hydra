@@ -16,7 +16,7 @@ function read(state:ProjectionState,sequence:number,frame=structuredClone(base),
   frame.request_id=id(sequence+10);
   state=reduceProjection(state,{type:"read_started",scope,sequence,request_id:frame.request_id});
   return reduceProjection(state,{type:"read_succeeded",scope,sequence,now,
-    response:{payload:JSON.stringify(frame),age_ms,cached,stale:false,sequence:wireSequence}});
+    response:{read_context:{scope:"fixture:read",sequence:1},payload:JSON.stringify(frame),age_ms,cached,stale:false,sequence:wireSequence}});
 }
 test("late successes and failures cannot replace a newer source or erase another project",()=>{
   let s=projectionState(base.binding_epoch);
@@ -25,7 +25,7 @@ test("late successes and failures cannot replace a newer source or erase another
   const expected=JSON.stringify(s.view), old=structuredClone(base);old.request_id=id(11);
   s=reduceProjection(s,{type:"read_failed",scope:"overview",sequence:1,reason:"transport_failed"});
   s=reduceProjection(s,{type:"read_succeeded",scope:"overview",sequence:1,now:4000,
-    response:{payload:old,age_ms:0,cached:false,stale:false,sequence:1}});
+    response:{read_context:{scope:"fixture:read",sequence:1},payload:old,age_ms:0,cached:false,stale:false,sequence:1}});
   assert.equal(JSON.stringify(s.view),expected);
   assert.equal(s.view?.projects.length,2);
 });
@@ -135,7 +135,7 @@ test("untrusted visible text and a native-only reply never become a decision or 
   const native=vectors.find(v=>v.name==="native-only-reply-never-enters-standard-pipeline")!;
   const next=reduceProjection(s,{type:"read_started",scope:"overview",sequence:2,request_id:id(12)});
   const rejected=reduceProjection(next,{type:"read_succeeded",scope:"overview",sequence:2,now:2000,
-    response:{payload:native.wire,age_ms:0,cached:false,stale:false,sequence:2}});
+    response:{read_context:{scope:"fixture:read",sequence:1},payload:native.wire,age_ms:0,cached:false,stale:false,sequence:2}});
   assert.equal(rejected.error,"invalid_response");
   assert.equal(JSON.stringify(rejected.view).includes("SYNTHETIC_NATIVE_PAYLOAD_CANARY"),false);
 });

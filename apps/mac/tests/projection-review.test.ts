@@ -2,19 +2,83 @@ import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 import test from "node:test";
+import {readFileSync} from "node:fs";
 import {MAX_PROJECTION_BYTES,parseProjection,parseStandardReply,type ProjectionV3} from "../src/projection.ts";
-import {projectionState,reduceProjection,type ProjectionState} from "../src/projection-state.ts";
+import {projectionState,reduceProjection,retryWait,type ProjectionState} from "../src/projection-state.ts";
 const emitter=fileURLToPath(new URL("../../../tests/fixtures/control-v3/emit_wire.py",import.meta.url));
 const result=spawnSync("python3",["-I",emitter],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
 assert.equal(result.status,0);
 const vectors=JSON.parse(result.stdout) as {accepted:boolean;profile:string;wire:string}[];
 const base=parseProjection(vectors.find(v=>v.accepted && v.profile==="projection")!.wire);
 const id=(n:number)=>"00000000-0000-4000-8000-"+n.toString(16).padStart(12,"0");
+test("credential contexts fence late frames and preserve the previous scope's recovery responsibility",()=>{
+  function apply(state:ProjectionState,n:number,scope:string,contextSequence:number,limited:boolean,local=false,cached=false) {
+    const frame=structuredClone(base),request_id=id(n+970);
+    frame.request_id=request_id;
+    if (local) {frame.observations=frame.observations.filter(o=>o.resource.source==="hydra");frame.work=[];frame.projects=[];frame.relations=[];}
+    else {
+      const o=structuredClone(frame.observations.find(o=>o.resource.source==="github")!);
+      o.key="query:credential-fixture";o.reason=limited?"rate_limited":null;frame.observations.push(o);
+      frame.retry_hints=limited?[{observation_key:o.key,scope,after_seconds:60,basis:"fallback"}]:[];
+    }
+    state=reduceProjection(state,{type:"read_started",scope:"overview",sequence:n,request_id});
+    return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
+      response:{payload:frame,age_ms:0,cached,stale:false,sequence:cached?1:n,
+        read_context:{scope,sequence:contextSequence}}});
+  }
+  let s=projectionState(base.binding_epoch);
+  for (let n=1;n<=6;n++) s=apply(s,n,"connection:alpha",1,true);
+  assert.equal(retryWait(s,"github","connection:alpha",6000).explicit_recovery,true);
+  const githubKey=s.view!.observations.find(o=>o.resource.source==="github")!.key;
+  s=apply(s,7,"connection:beta",2,false,true,true);
+  assert.equal(s.read_context.scope,"connection:beta","Cached local payload lost the newer context metadata");
+  assert.equal(s.source_slots.get(githubKey)!.stale,true);
+  assert.ok([...s.source_slots.values()].some(slot=>slot.observation.resource.source==="hydra" && !slot.stale));
+  s=apply(s,8,"connection:alpha",1,false);
+  assert.equal(s.read_context.scope,"connection:beta","A late reply restored the old credential context");
+  assert.equal(s.source_slots.get(githubKey)!.stale,true,"A late old-credential frame restored stale facts");
+  s=apply(s,9,"connection:beta",2,false);
+  assert.equal(s.source_slots.get(githubKey)!.stale,false,"Fresh current-credential data could not recover");
+  assert.equal(retryWait(s,"github","connection:alpha",9000).explicit_recovery,true,
+    "A different credential cleared the previous credential's failure counter");
+  s=apply(s,10,"connection:alpha",3,false);
+  assert.equal(retryWait(s,"github","connection:alpha",10000).explicit_recovery,false,
+    "An actual matching-scope recovery failed to clear its own counter");
+});
+test("every unavailable observation kind retains its exact source owner",()=>{
+  const owners=JSON.parse(readFileSync(new URL("../../../tests/fixtures/control-v3/source-owners.json",import.meta.url),"utf8")) as Record<string,string>;
+  for (const [kind,owner] of Object.entries(owners)) for (const source of ["github","codex","resource_provider","hydra"]) {
+    const frame=structuredClone(base),o=frame.observations[0]!;
+    frame.projects=[];frame.work=[];frame.relations=[];frame.retry_hints=[];frame.observations=[o];
+    o.resource={source,kind,id:"fixture"} as typeof o.resource;
+    o.revision=null;o.value=null;o.observed_at=null;o.availability="unavailable";o.reason="fixture_unavailable";
+    o.coverage={...o.coverage,state:"unavailable",returned_count:0,total_count:null,next_cursor:null,reason:"fixture_unavailable"};
+    if (source===owner) parseProjection(frame);
+    else assert.throws(()=>parseProjection(frame),`Foreign ${source} impersonated ${kind}`);
+  }
+});
+for (const mismatch of ["none","resource","operation"] as const)
+test(`cleanup feedback matches the requested resource and operation (${mismatch})`,()=>{
+  const reply=JSON.parse(vectors.find(v=>v.accepted && v.profile==="standard")!.wire);
+  const resource={source:"resource_provider",kind:"workspace",id:"fixture-a"};
+  const target={kind:"owned_resource",repository_id:101,issue_number:7,source_attempt:base.binding_epoch,resource};
+  reply.request={request_id:id(950),action:"cleanup",target,outcome:"applied",reason:null,
+    effect_refs:[],observed_refs:[],required_next:"none",receipt:{kind:"cleanup",resource:structuredClone(resource),
+      operation:"archive",result:"archived",evidence_refs:[]}};
+  let s=reduceProjection(projectionState(base.binding_epoch),{type:"command_started",request_id:id(950),
+    effect_key:"cleanup:fixture-a",action:"cleanup",target,operation:"archive"} as Parameters<typeof reduceProjection>[1]);
+  if (mismatch==="resource") reply.request.receipt.resource.id="fixture-b";
+  if (mismatch==="operation") {reply.request.receipt.operation="retire";reply.request.receipt.result="retired";}
+  s=reduceProjection(s,{type:"command_result",request_id:id(950),reply});
+  assert.equal(s.feedback.get(id(950))!.outcome,mismatch==="none"?"applied":"unknown",
+    "An unrelated cleanup effect became verified feedback");
+  assert.equal(s.view,null,"Command feedback created a source Fact");
+});
 function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   frame.request_id=id(n+10);
   state=reduceProjection(state,{type:"read_started",scope:"overview",sequence:n,request_id:frame.request_id});
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
-    response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
+    response:{read_context:{scope:"fixture:read",sequence:1},payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
 for (const afterFailure of [false,true])
 test(`cached overview cannot erase newer detail or failed coverage (failed=${afterFailure})`,()=>{
@@ -27,7 +91,7 @@ test(`cached overview cannot erase newer detail or failed coverage (failed=${aft
     if (!cached) frame.request_id=request_id;
     state=reduceProjection(state,{type:"read_started",scope,sequence,request_id});
     return reduceProjection(state,{type:"read_succeeded",scope,sequence,now:sequence*1000,
-      response:{payload:JSON.stringify(frame),age_ms:cached?1000:0,cached,stale:false,sequence:bridge}});
+      response:{read_context:{scope:"fixture:read",sequence:1},payload:JSON.stringify(frame),age_ms:cached?1000:0,cached,stale:false,sequence:bridge}});
   }
   let s=apply(projectionState(frames[0]!.binding_epoch),"overview",1,1,frames[0]!);
   s=apply(s,"alpha-detail",2,2,frames[1]!);
@@ -54,7 +118,7 @@ test(`a late cached old runtime cannot roll back the accepted generation (empty=
     if (!cached) frame.request_id=request_id;
     state=reduceProjection(state,{type:"read_started",scope:"overview",sequence:n,request_id});
     return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
-      response:{payload:JSON.stringify(frame),age_ms:cached?1000:0,cached,stale:false,sequence:bridge}});
+      response:{read_context:{scope:"fixture:read",sequence:1},payload:JSON.stringify(frame),age_ms:cached?1000:0,cached,stale:false,sequence:bridge}});
   }
   let s=apply(projectionState(base.binding_epoch),1,1,base);
   const newer=structuredClone(base);newer.runtime.code_digest="f".repeat(64);
@@ -269,7 +333,7 @@ test("a valid new runtime starts a fresh source generation and fences old pendin
   assert.equal(s.pending_commands.size,0);assert.equal(s.feedback.get(id(90))!.outcome,"unknown");
   const old=structuredClone(base);old.request_id=id(12);
   s=reduceProjection(s,{type:"read_succeeded",scope:"old-independent",sequence:2,now:4000,
-    response:{payload:old,age_ms:0,cached:false,stale:false,sequence:2}});
+    response:{read_context:{scope:"fixture:read",sequence:1},payload:old,age_ms:0,cached:false,stale:false,sequence:2}});
   assert.equal(s.view!.runtime.code_digest,"f".repeat(64));
 });
 test("complete refresh prunes absent work and its source while partial refresh retains it",()=>{
@@ -291,7 +355,7 @@ test("display casing cannot duplicate a registered repository on a local-only po
   let s=read(projectionState(base.binding_epoch),1,initial);
   const local=structuredClone(base);local.work=[];
   for (const o of local.observations) if (o.resource.source==="github") {
-    o.value=null;o.observed_at=null;o.availability="unavailable";o.reason="not_requested";
+    o.revision=null;o.value=null;o.observed_at=null;o.availability="unavailable";o.reason="not_requested";
     o.coverage={...o.coverage,state:"unavailable",returned_count:0,total_count:null,next_cursor:null,reason:"not_requested"};
   }
   local.projects[0]!.repository_ref={source:"github",kind:"repository",id:"requested:example/alpha"};

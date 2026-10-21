@@ -5,11 +5,13 @@ import base64
 import binascii
 import hashlib
 import time
+import uuid
+from types import MethodType
 from urllib.parse import urlencode
 
 from . import projection as p
 from .control import control_from_config, observe_coordinator, _repository
-from .github import GitHub, GitHubError, ACTIVE_LABEL
+from .github import GitHub, GitHubError, ACTIVE_LABEL, read_credential_scope
 from .github_read import ReadResponse
 from .operations import OperationDenied
 from .runtime_identity import capture_runtime_identity
@@ -27,8 +29,36 @@ class ProjectionClient(GitHub):
         self.context = None
         self.held = None
         self.requests = 0
+        self.read_scope = None
+        self.binding_epoch = None
+        self.context_changed = False
+        self._injected_context = uuid.uuid4().bytes
+
+    def bind_context(self, binding_epoch, expected=None):
+        self.notes = []
+        self.context = None
+        self.held = None
+        self.requests = 0
+        self.binding_epoch = binding_epoch
+        self.context_changed = False
+        if expected is not None:
+            p.text(expected, 256)
+        own = (isinstance(self.transport, MethodType) and self.transport.__self__ is self
+               and self.transport.__func__ is GitHub._gh)
+        self.read_scope = expected if own else expected or read_credential_scope(binding_epoch, self._injected_context)
+
+    def _credential_selected(self, fingerprint):
+        if self.binding_epoch is None:
+            raise GitHubError('Read scope unavailable')
+        scope = read_credential_scope(self.binding_epoch, fingerprint)
+        if self.read_scope is not None and self.read_scope != scope:
+            self.context_changed = True
+            raise GitHubError('Read credential context changed')
+        self.read_scope = scope
 
     def api(self, method, path, payload=None):
+        if self.context_changed:
+            raise GitHubError('Read credential context changed')
         if method != 'GET' or payload is not None:
             raise GitHubError('Read-only client rejects effects')
         if self.held is not None and self.held.remaining_wait() != 0:
@@ -352,7 +382,7 @@ def _bounded(frame):
     return candidate
 
 
-def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository=None, github=None, cursor=None):
+def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository=None, github=None, cursor=None, credential_scope=None):
     """Read a registered scope; no admission mutation, model call or native wake."""
     p.uid(binding_epoch); p.uid(request_id)
     p.require(type(refresh) is bool)
@@ -408,6 +438,7 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
         'retry_hints': [], 'request': None}
     client = github or ProjectionClient()
     p.require(isinstance(client, ProjectionClient))
+    client.bind_context(binding_epoch, credential_scope)
     contexts, projects, work, locations, project_locations = {}, {}, {}, {}, {}
     with client.read_budget(seconds=45, requests=4096) as total:
         for index, address in enumerate(repos):
@@ -487,7 +518,9 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             project_locations[p.canonical(project['repository_ref'])] = start_project + index
             projects[p.canonical(project['repository_ref'])] = project
             observations[repo_observation['key']] = repo_observation
-    scope = 'github:registered-read:' + binding_epoch
+    if client.context_changed:
+        raise GitHubError('Read credential context changed')
+    scope = client.read_scope
     for note in client.notes:
         context = contexts[note['context']]
         key = 'github:query:' + hashlib.sha256(note['path'].encode('utf-8')).hexdigest()
@@ -504,7 +537,7 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
         # A later note is the current observation for this exact query key.
         # Its old hint cannot point at a newly recovered non-limited source.
         frame['retry_hints'] = [h for h in frame['retry_hints'] if h['observation_key'] != key]
-        if limited:
+        if limited and scope is not None:
             remaining = response.remaining_wait()
             hint = {'observation_key': key, 'scope': scope,
                     'after_seconds': 60 if remaining is None else remaining,

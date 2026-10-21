@@ -1240,6 +1240,98 @@
       "delete": [],
       "expected": [],
       "duplicate": null
+    },
+    {
+      "name": "cleanup-exact-resource",
+      "profile": "projection",
+      "accepted": true,
+      "changes": [
+        {
+          "path": [
+            "request"
+          ],
+          "value": {
+            "request_id": "00000000-0000-4000-8000-000000000002",
+            "action": "cleanup",
+            "target": {
+              "kind": "owned_resource",
+              "repository_id": 101,
+              "issue_number": 7,
+              "source_attempt": "00000000-0000-4000-8000-000000000001",
+              "resource": {
+                "source": "resource_provider",
+                "kind": "workspace",
+                "id": "fixture-a"
+              }
+            },
+            "outcome": "applied",
+            "reason": null,
+            "effect_refs": [],
+            "observed_refs": [],
+            "required_next": "none",
+            "receipt": {
+              "kind": "cleanup",
+              "resource": {
+                "source": "resource_provider",
+                "kind": "workspace",
+                "id": "fixture-a"
+              },
+              "operation": "archive",
+              "result": "archived",
+              "evidence_refs": []
+            }
+          }
+        }
+      ],
+      "delete": [],
+      "duplicate": null,
+      "expected": []
+    },
+    {
+      "name": "cleanup-foreign-resource",
+      "profile": "projection",
+      "accepted": false,
+      "changes": [
+        {
+          "path": [
+            "request"
+          ],
+          "value": {
+            "request_id": "00000000-0000-4000-8000-000000000002",
+            "action": "cleanup",
+            "target": {
+              "kind": "owned_resource",
+              "repository_id": 101,
+              "issue_number": 7,
+              "source_attempt": "00000000-0000-4000-8000-000000000001",
+              "resource": {
+                "source": "resource_provider",
+                "kind": "workspace",
+                "id": "fixture-a"
+              }
+            },
+            "outcome": "applied",
+            "reason": null,
+            "effect_refs": [],
+            "observed_refs": [],
+            "required_next": "none",
+            "receipt": {
+              "kind": "cleanup",
+              "resource": {
+                "source": "resource_provider",
+                "kind": "workspace",
+                "id": "fixture-b"
+              },
+              "operation": "archive",
+              "result": "archived",
+              "evidence_refs": []
+            }
+          }
+        }
+      ],
+      "delete": [],
+      "duplicate": null,
+      "expected": []
     }
   ],
   "reader": {

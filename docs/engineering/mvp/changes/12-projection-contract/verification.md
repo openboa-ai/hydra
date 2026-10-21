@@ -376,3 +376,30 @@ required final-head hosted CI; no installed/native operation is claimed.
 
 P12 Rev4, CP8 and NC8 pins remain unchanged. Final-head CI, completed independent
 code/security reviews, protected merge and actual-main checks remain required.
+
+
+## Credential context, source ownership and continuation closure
+
+This increment retains P12 Rev4 / CP8 / NC8 and closes four observed implementation gaps.
+
+- A local, model-free context probe uses only the existing selected credential and no HTTP. It returns a per-binding opaque policy scope, never a token, identity proof or control grant. The bridge serializes probes, checks at most once per five seconds and bounds each process to three seconds; the credential selection itself has a two-second budget. Unknown context holds remote reads while local admission remains available.
+- Every actual projection API request checks the selected credential against its invocation context before HTTP. Mid-read rotation ends that observation. The bridge preserves each scope's provider waits/fallback counters, fences late prior-context remote results and retains independent local facts. Returning to a credential restores its remaining policy. Ordinary polling floors remain.
+- Internal CachedRead metadata carries the current context order independently of the cached payload sequence. The renderer requires that metadata, stales only affected GitHub facts, fences old contexts and clears failure counters only on an actual matching-scope recovery. CP3 and StandardCommandReplyV1 are unchanged.
+- Exact accepted continuation tokens are tied to the originating cached scope/sequence, consumed when issued and held in at most 64 bounded entries. Unknown, modified, wrong-scope, replayed or evicted lineage receives the ordinary floor. Provider waits apply to all continuations. Cache eviction grants no resource retirement.
+- All 13 Observation kinds enforce their source owner in Python/Rust/TypeScript, including unavailable values. Cleanup receipt resources must match their targets in all three consumers; the renderer also retains and compares the requested cleanup operation. Correct receipts and receipt-free waits remain valid.
+
+### Evidence
+
+The published-parent regressions reproduced 33 assertion failures across source ownership, credential wait scope, cleanup feedback and unissued cursor privilege, with zero setup errors/skips in the corrected RED run. A separate shared cleanup-resource regression adds one actual parent failure while its normal control passes. The initial fixture setup diagnostics are retained separately and are not counted as product RED. The same requirement oracles remain in the final tests; fixture metadata now explicitly identifies issued cursors and internal read context.
+
+Final local checks: Python 3.14.2 source/HTTP/CLI/control/identity suites, frontend, Rust, TypeScript/build. The shared producer set includes the earlier 23 vectors plus exact/foreign cleanup-resource cases (25 total); one independent owner matrix covers all 13 known kinds and all four source labels in the three consumers.
+
+- python: SUMMARY 286 0 0 0; Ran 286 tests in 9.916s. Log SHA-256 `a0373878b6d92b47fe9a8be0b1fb91923f13a7aff0163afa6356ba7115c3c93e`.
+
+- frontend: ℹ tests 113; ℹ pass 113; ℹ fail 0; ℹ skipped 0. Log SHA-256 `0c6beaff9b453bfb1128650b2ce49e2e08110592d9ec572e3df24b04d9c3d84b`.
+
+- rust: test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.22s. Log SHA-256 `ab5b17ee707dc0504b49954826e1311ede72f5161cc9506031a9852d6950dee8`.
+
+- build: TypeScript and Vite build passed. Log SHA-256 `2b282b48b6be2a25ee2d77b25d56acf7c41c6a5b76c73fabf14b841f9026a2b6`.
+
+Local source tests do not establish installed operation, native question/answer attribution, remote control authority or full P12/v1 completion. Final-head hosted CI and independent code/security review remain required. No service was installed or activated for this increment.

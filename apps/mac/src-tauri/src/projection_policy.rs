@@ -28,13 +28,16 @@ fn successful(o: &Value) -> bool {
 }
 impl ReadPolicy {
     // Called once for a newly received validated response. Cache replay never calls it.
-    pub fn observe(&mut self, payload: &ReadPayload, now: Instant, recover: bool) {
+    #[cfg(test)]
+    pub fn observe(&mut self,payload:&ReadPayload,now:Instant,recover:bool) {self.observe_scoped(payload,now,recover,None);}
+    pub fn observe_scoped(&mut self, payload: &ReadPayload, now: Instant, recover: bool, credential_scope:Option<&str>) {
         let value = serde_json::to_value(payload).expect("sealed read serializes");
         if value["schema_version"] != 3 { return; }
         let observations = value["observations"].as_array().expect("validated observations");
-        for ((source, _), gate) in &mut self.gates {
+        for ((source, scope), gate) in &mut self.gates {
             for observation in observations {
-                if recover && observation["resource"]["source"] == *source && successful(observation) {
+                if recover && (source!="github" || credential_scope==Some(scope.as_str())) &&
+                    observation["resource"]["source"] == *source && successful(observation) {
                     gate.failures.remove(observation["key"].as_str().unwrap());
                 }
             }

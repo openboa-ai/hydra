@@ -18,7 +18,12 @@ pub struct ReadTicket {
     pub request_id: String,
     pub sequence: u64,
     detail: bool,
+    pub credential_scope:Option<String>,
+    context_sequence:u64,
+    remote:bool,
 }
+#[derive(Clone, Debug, Serialize)]
+pub struct ReadContext {pub scope:Option<String>,pub sequence:u64}
 #[derive(Clone, Debug, Serialize)]
 pub struct CachedRead {
     #[serde(serialize_with = "serialize_payload")]
@@ -27,6 +32,7 @@ pub struct CachedRead {
     pub cached: bool,
     pub stale: bool,
     pub sequence: u64,
+    pub read_context:ReadContext,
 }
 fn serialize_payload<S:Serializer>(value:&Arc<ReadPayload>,serializer:S)->Result<S::Ok,S::Error> {
     value.as_ref().serialize(serializer)
@@ -47,6 +53,9 @@ pub struct ReadCache {
     policy:ReadPolicy,
     remote_started:Option<Instant>,
     local_started:Option<Instant>,
+    continuations:VecDeque<(String,String,u64)>,
+    context:ReadContext,
+    last_context_probe:Option<Instant>,
 }
 fn uuid(value:&str)->bool {
     value.len()==36 && value.bytes().enumerate().all(|(i,c)| if [8,13,18,23].contains(&i) {
@@ -64,12 +73,13 @@ impl ReadCache {
     pub fn new(epoch:String)->Result<Self,&'static str> {
         if !uuid(&epoch) {return Err("binding_invalid");}
         Ok(Self {epoch,runtime:None,next:0,orders:HashMap::new(),entries:HashMap::new(),
-            lru:VecDeque::new(),bytes:0,last_clock:None,ledger:VecDeque::new(),policy:ReadPolicy::default(),remote_started:None,local_started:None})
+            lru:VecDeque::new(),bytes:0,last_clock:None,ledger:VecDeque::new(),policy:ReadPolicy::default(),remote_started:None,local_started:None,continuations:VecDeque::new(),context:ReadContext{scope:None,sequence:0},last_context_probe:None})
     }
     pub fn binding_changed(&mut self,epoch:String)->Result<(),&'static str> {
         if !uuid(&epoch) || epoch==self.epoch {return Err("binding_invalid");}
         self.epoch=epoch; self.runtime=None; self.orders.clear(); self.entries.clear();
         self.lru.clear(); self.bytes=0; self.last_clock=None; self.ledger.clear();
+        self.continuations.clear();self.context=ReadContext{scope:None,sequence:0};self.last_context_probe=None;
         self.policy=ReadPolicy::default(); self.remote_started=None; self.local_started=None; Ok(())
     }
     fn clock(&mut self,now:Instant)->Instant {
@@ -90,7 +100,10 @@ impl ReadCache {
         }
         let sequence=self.next.checked_add(1).filter(|n|*n<=MAX_SEQUENCE).ok_or("sequence_exhausted")?;
         self.next=sequence; self.orders.entry(scope.clone()).or_default().issued=sequence;
-        let ticket=ReadTicket{scope,epoch:self.epoch.clone(),request_id,sequence,detail};
+        let remote=scope.starts_with("remote:");
+        let ticket=ReadTicket{scope,epoch:self.epoch.clone(),request_id,sequence,detail,
+            credential_scope:self.context.scope.clone(),context_sequence:self.context.sequence,remote};
+        self.continuations.retain(|(scope,_,_)|scope!=&ticket.scope);
         self.ledger.push_back((ticket.clone(),false,None));
         while self.ledger.len()>64 {self.ledger.pop_front();}
         Ok(ticket)
@@ -121,6 +134,19 @@ impl ReadCache {
         if value["schema_version"]==3 && (value["binding_epoch"]!=ticket.epoch || value["request_id"]!=ticket.request_id) {
             self.failed(ticket); return Err("read_binding_mismatch");
         }
+        if ticket.remote {
+            if ticket.credential_scope.is_none() {self.failed(ticket);return Err("read_context_unavailable");}
+            for hint in value["retry_hints"].as_array().unwrap() {
+                let observation=value["observations"].as_array().unwrap().iter().find(|o|o["key"]==hint["observation_key"]).unwrap();
+                if observation["resource"]["source"]=="github" && hint["scope"].as_str()!=ticket.credential_scope.as_deref() {
+                    self.failed(ticket);return Err("read_context_mismatch");
+                }
+            }
+            if ticket.context_sequence!=self.context.sequence {
+                let (_,seen,_)=self.ledger.iter_mut().find(|(t,_,_)|t.sequence==ticket.sequence).unwrap();*seen=true;
+                self.policy.observe_scoped(&payload,now,false,ticket.credential_scope.as_deref());return Err("stale_read");
+            }
+        }
         let key=match runtime_key(&payload) {
             Ok(value)=>value,
             Err(reason)=>{self.failed(ticket);return Err(reason);}
@@ -130,11 +156,11 @@ impl ReadCache {
                 // The data is fenced, but this original request consumed the
                 // same connection's provider quota. Apply its hint only once.
                 let (_,seen,_)=self.ledger.iter_mut().find(|(t,_,_)|t.sequence==ticket.sequence).unwrap();
-                *seen=true;self.policy.observe(&payload,now,false);return Err("stale_read");
+                *seen=true;self.policy.observe_scoped(&payload,now,false,ticket.credential_scope.as_deref());return Err("stale_read");
             }
             // The response is a fresh, bound read of the new runtime. Invalidate
             // older cache/pending generations; retain the connection's quota wait.
-            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();
+            self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();self.continuations.clear();
             self.orders.insert(ticket.scope.clone(),Order{issued:ticket.sequence,settled:0});
             let started=self.ledger.iter().find(|(t,_,_)|t.sequence==ticket.sequence).and_then(|(_,_,start)|*start);
             self.remote_started=None;self.local_started=None;
@@ -146,7 +172,7 @@ impl ReadCache {
         *seen=true;
         // This raw cache preserves valid source frames. The source-aware reducer
         // fences regressed observations without discarding independent facts.
-        self.policy.observe(&payload,now,current);
+        self.policy.observe_scoped(&payload,now,current,ticket.credential_scope.as_deref());
         if !current {return Err("stale_read");}
         let size=serde_json::to_vec(&payload).map_err(|_|"invalid_response")?.len();
         if size>1_048_576 {self.failed(ticket);return Err("response_limit");}
@@ -158,30 +184,48 @@ impl ReadCache {
         self.entries.insert(ticket.scope.clone(),Entry{payload:payload.clone(),received:now,
             bytes:size,detail:ticket.detail,stale:false,sequence:ticket.sequence});
         self.bytes+=size; self.touch(&ticket.scope); self.bound();
-        Ok(CachedRead{payload,age_ms:0,cached:false,stale:false,sequence:ticket.sequence})
+        self.remember_continuations(ticket,&value);
+        Ok(CachedRead{payload,age_ms:0,cached:false,stale:false,sequence:ticket.sequence,read_context:self.context.clone()})
     }
     pub fn get(&mut self,scope:&str,local:bool,now:Instant)->Option<CachedRead> {
         let now=self.clock(now);
         let entry=self.entries.get(scope)?;
         let age=now.saturating_duration_since(entry.received);
         let result=CachedRead{payload:entry.payload.clone(),age_ms:age.as_millis().min(MAX_SEQUENCE as u128) as u64,
-            cached:true,stale:entry.stale || age>=Duration::from_secs(if local {15}else{60}),sequence:entry.sequence};
+            cached:true,stale:entry.stale || age>=Duration::from_secs(if local {15}else{60}),sequence:entry.sequence,read_context:self.context.clone()};
         self.touch(scope); Some(result)
     }
     pub fn epoch(&self)->&str {&self.epoch}
+    pub fn context_probe_due(&mut self,now:Instant)->bool {
+        if self.last_context_probe.is_some_and(|at|now.saturating_duration_since(at)<Duration::from_secs(5)) {return false;}
+        self.last_context_probe=Some(now);true
+    }
+    pub fn context_changed(&mut self,scope:Option<String>)->Result<(),&'static str> {
+        if scope.as_ref().is_some_and(|s|s.is_empty() || s.chars().count()>256 || s.chars().any(|c|c<'\u{20}' || c=='\u{7f}')) {return Err("read_context_invalid");}
+        if self.context.scope==scope {return Ok(());}
+        self.context.sequence=self.context.sequence.checked_add(1).filter(|n|*n<=MAX_SEQUENCE).ok_or("sequence_exhausted")?;
+        self.context.scope=scope;
+        let scopes:Vec<_>=self.entries.keys().filter(|s|s.starts_with("remote:")).cloned().collect();
+        for scope in scopes {self.remove(&scope);}
+        self.orders.retain(|scope,_|!scope.starts_with("remote:"));
+        self.continuations.retain(|(scope,_,_)|!scope.starts_with("remote:"));
+        Ok(())
+    }
     pub fn read_held(&self,now:Instant,remote:bool,scope:&str,continuation:bool,explicit_recovery:bool)->Result<bool,&'static str> {
-        let continuation=continuation && !self.entries.contains_key(scope);
+        if remote && self.context.scope.is_none() {return Err("read_context_unavailable");}
+        let continuation=continuation && !self.entries.contains_key(scope) && self.continuations.iter().any(|(next,parent,sequence)|
+            next==scope && self.entries.get(parent).is_some_and(|entry|entry.sequence==*sequence && !entry.stale));
         if remote && continuation {
             // A cursor advances the bounded read; it is not an ordinary poll.
             // Connection quotas and exhausted automatic retries still apply.
-            return self.policy.wait_seconds("github",&format!("github:registered-read:{}",self.epoch),now,explicit_recovery)
+            return self.policy.wait_seconds("github",self.context.scope.as_deref().ok_or("read_context_unavailable")?,now,explicit_recovery)
                 .map(|seconds|seconds>0);
         }
         if remote {self.remote_wait(now,explicit_recovery).map(|seconds|seconds>0)}
         else {Ok(!continuation && self.local_wait(now))}
     }
     pub fn remote_wait(&self,now:Instant,explicit_recovery:bool)->Result<u64,&'static str> {
-        let quota=self.policy.wait_seconds("github",&format!("github:registered-read:{}",self.epoch),now,explicit_recovery)?;
+        let quota=self.policy.wait_seconds("github",self.context.scope.as_deref().ok_or("read_context_unavailable")?,now,explicit_recovery)?;
         let poll=self.remote_started.map(|start|Duration::from_secs(60).saturating_sub(now.saturating_duration_since(start)))
             .unwrap_or(Duration::ZERO);
         Ok(quota.max(poll.as_secs()+u64::from(poll.subsec_nanos()!=0)))
@@ -198,10 +242,34 @@ impl ReadCache {
         if let Some((_,_,start))=self.ledger.back_mut() {*start=Some((false,now));}
     }
 
+    fn remember_continuations(&mut self,ticket:&ReadTicket,value:&Value) {
+        let Some(lane)=ticket.scope.split(':').next().filter(|lane|["remote","local"].contains(lane)) else {return;};
+        let mut targets=Vec::new();
+        if let Some(cursor)=value["page"]["next_cursor"].as_str() {
+            let repository=ticket.scope.split(':').nth(1).unwrap_or("overview");
+            targets.push((repository.to_owned(),cursor.to_owned()));
+        }
+        for project in value["projects"].as_array().unwrap() {
+            if let Some(cursor)=project["coverage"]["next_cursor"].as_str() {
+                if let Some(name)=value["observations"].as_array().unwrap().iter()
+                    .find(|o|o["resource"]==project["repository_ref"] && o["resource"]["kind"]=="repository")
+                    .and_then(|o|o["value"]["full_name"].as_str()) {
+                    targets.push((name.to_ascii_lowercase(),cursor.to_owned()));
+                }
+            }
+        }
+        for (repository,cursor) in targets {
+            let scope=format!("{lane}:{repository}:{cursor}");
+            self.continuations.retain(|(next,_,_)|next!=&scope);
+            self.continuations.push_back((scope,ticket.scope.clone(),ticket.sequence));
+            while self.continuations.len()>64 {self.continuations.pop_front();}
+        }
+    }
     fn touch(&mut self,scope:&str) {
         self.lru.retain(|key|key!=scope); self.lru.push_back(scope.to_owned());
     }
     fn remove(&mut self,scope:&str) {
+        self.continuations.retain(|(_,parent,_)|parent!=scope);
         if let Some(entry)=self.entries.remove(scope) {self.bytes-=entry.bytes;}
         self.lru.retain(|key|key!=scope);
         if self.orders.get(scope).is_some_and(|order|order.issued==order.settled) {
@@ -227,6 +295,10 @@ mod tests {
     use super::*;
     use std::{path::PathBuf,process::Command};
     const EPOCH:&str="00000000-0000-4000-8000-000000000001";
+    fn test_cache()->ReadCache {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();
+        cache.context_changed(Some(format!("github:registered-read:{EPOCH}"))).unwrap();cache
+    }
     fn request(n:u32)->String {format!("00000000-0000-4000-8000-{n:012x}")}
     fn fixture(request_id:&str)->Vec<u8> {
         let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_wire.py");
@@ -238,8 +310,69 @@ mod tests {
         serde_json::to_vec(&frame).unwrap()
     }
     #[test]
+    fn credential_rotation_keeps_per_scope_waits_fences_old_remote_and_preserves_local_cache() {
+        let mut cache=test_cache();let now=Instant::now();
+        let scope_a="connection:alpha";let scope_b="connection:beta";
+        cache.context_changed(Some(scope_a.into())).unwrap();
+        let local=cache.issue("local:overview:".into(),request(60),false).unwrap();
+        cache.accept(&local,&fixture(&request(60)),now).unwrap();
+        let old=cache.issue("remote:overview:".into(),request(61),false).unwrap();cache.remote_started(now);
+        let mut value:Value=serde_json::from_slice(&fixture(&request(61))).unwrap();
+        let mut o=value["observations"].as_array().unwrap().iter().find(|o|o["resource"]["source"]=="github").unwrap().clone();
+        o["key"]="query:limited".into();o["reason"]="provider_wait".into();
+        value["observations"].as_array_mut().unwrap().push(o);
+        value["retry_hints"]=serde_json::json!([{"observation_key":"query:limited","scope":scope_a,"after_seconds":3600,"basis":"provider"}]);
+        cache.context_changed(Some(scope_b.into())).unwrap();
+        assert_eq!(cache.accept(&old,&serde_json::to_vec(&value).unwrap(),now).unwrap_err(),"stale_read");
+        assert!(cache.get("remote:overview:",false,now).is_none());
+        assert_eq!(cache.remote_wait(now+Duration::from_secs(60),false),Ok(0),"Credential B inherited A's provider wait");
+        let retained=cache.get("local:overview:",true,now).unwrap();
+        assert_eq!(retained.read_context.scope.as_deref(),Some(scope_b));
+        assert!(!retained.stale,"Credential rotation invalidated independent local facts");
+        cache.context_changed(Some(scope_a.into())).unwrap();
+        assert_eq!(cache.remote_wait(now+Duration::from_secs(60),true),Ok(3540),"Rotation back erased an unexpired wait");
+        cache.context_changed(None).unwrap();
+        assert_eq!(cache.read_held(now,true,"remote:overview:",false,true),Err("read_context_unavailable"));
+        assert_eq!(cache.read_held(now,false,"local:overview:",false,false),Ok(false));
+        assert!(cache.context_probe_due(now));assert!(!cache.context_probe_due(now+Duration::from_secs(4)));
+        assert!(cache.context_probe_due(now+Duration::from_secs(5)));
+    }
+    #[test]
+    fn continuation_privileges_require_exact_issued_lineage_and_are_consumed() {
+        let mut cache=test_cache();let now=Instant::now();
+        let mut frame:Value=serde_json::from_slice(&fixture(&request(50))).unwrap();
+        frame["page"]["next_cursor"]="issued_cursor".into();
+        let ticket=cache.issue("remote:overview:".into(),request(50),false).unwrap();cache.remote_started(now);
+        cache.accept(&ticket,&serde_json::to_vec(&frame).unwrap(),now).unwrap();
+        assert_eq!(cache.read_held(now,true,"remote:overview:issued_cursor",true,false),Ok(false));
+        assert_eq!(cache.read_held(now,true,"remote:overview:altered_cursor",true,false),Ok(true),"Forged continuation bypassed the poll floor");
+        assert_eq!(cache.read_held(now,true,"remote:example/other:issued_cursor",true,false),Ok(true));
+        let next=cache.issue("remote:overview:issued_cursor".into(),request(51),false).unwrap();cache.remote_started(now);
+        cache.failed(&next);
+        assert_eq!(cache.read_held(now,true,"remote:overview:issued_cursor",true,false),Ok(true),"Consumed continuation replayed its privilege");
+        assert_eq!(cache.read_held(now+Duration::from_secs(60),true,"remote:overview:altered_cursor",true,false),Ok(false));
+    }
+    #[test]
+    fn every_observation_kind_has_the_shared_exact_source_owner() {
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/source-owners.json");
+        let owners:Value=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        for (kind,owner) in owners.as_object().unwrap() {
+            for source in ["github","codex","resource_provider","hydra"] {
+                let mut frame:Value=serde_json::from_slice(&fixture(&request(52))).unwrap();
+                let mut o=frame["observations"][0].clone();
+                o["resource"]=serde_json::json!({"source":source,"kind":kind,"id":"fixture"});
+                o["revision"]=Value::Null;o["value"]=Value::Null;o["observed_at"]=Value::Null;o["availability"]="unavailable".into();
+                o["reason"]="fixture_unavailable".into();
+                o["coverage"]=serde_json::json!({"state":"unavailable","scope":"fixture","returned_count":0,"total_count":null,"next_cursor":null,"reason":"fixture_unavailable"});
+                frame["projects"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);frame["relations"]=serde_json::json!([]);
+                frame["retry_hints"]=serde_json::json!([]);frame["observations"]=serde_json::json!([o]);
+                assert_eq!(ReadPayload::parse(&serde_json::to_vec(&frame).unwrap()).is_ok(),owner==source,"Foreign source impersonated {kind}");
+            }
+        }
+    }
+    #[test]
     fn same_scope_regression_cannot_discard_a_current_independent_source() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let mut value:Value=serde_json::from_slice(&fixture(&request(2))).unwrap();
         value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
         value["observations"][0]["revision"]["value"]="10".into();
@@ -262,7 +395,7 @@ mod tests {
         let vectors:Value=serde_json::from_slice(&output.stdout).unwrap();
         let wire=vectors.as_array().unwrap().iter().find(|v|v["profile"]=="legacy" && v["accepted"]==true).unwrap()["wire"].as_str().unwrap();
         assert!(matches!(ReadPayload::parse(wire.as_bytes()),Ok(ReadPayload::V2(_))));
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let first=cache.issue("remote".into(),request(2),false).unwrap();
         cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let mut legacy:Value=serde_json::from_str(wire).unwrap();legacy["runtime"]["code_digest"]="f".repeat(64).into();
@@ -273,7 +406,7 @@ mod tests {
     }
     #[test]
     fn old_success_or_failure_cannot_erase_new_settled_scope() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap(); let now=Instant::now();
+        let mut cache=test_cache(); let now=Instant::now();
         let old=cache.issue("github:alpha".into(),request(2),false).unwrap();
         let latest=cache.issue("github:alpha".into(),request(3),false).unwrap();
         cache.accept(&latest,&fixture(&latest.request_id),now).unwrap();
@@ -283,7 +416,7 @@ mod tests {
     }
     #[test]
     fn failure_stales_only_its_scope_and_cached_reads_do_not_renew_age() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap(); let now=Instant::now();
+        let mut cache=test_cache(); let now=Instant::now();
         for (scope,n) in [("github:alpha",2),("github:beta",3)] {
             let ticket=cache.issue(scope.into(),request(n),false).unwrap();
             cache.accept(&ticket,&fixture(&ticket.request_id),now).unwrap();
@@ -297,7 +430,7 @@ mod tests {
     }
     #[test]
     fn binding_clock_and_response_echo_are_explicit_fences() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap(); let now=Instant::now();
+        let mut cache=test_cache(); let now=Instant::now();
         let ticket=cache.issue("local".into(),request(2),false).unwrap();
         assert_eq!(cache.accept(&ticket,&fixture(&request(3)),now).unwrap_err(),"read_binding_mismatch");
         let ticket=cache.issue("local".into(),request(4),false).unwrap();
@@ -309,7 +442,7 @@ mod tests {
     }
     #[test]
     fn detail_lru_is_bounded_and_eviction_is_not_resource_completion() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap(); let now=Instant::now();
+        let mut cache=test_cache(); let now=Instant::now();
         for n in 2..20 {
             let scope=format!("detail:{n}");
             let ticket=cache.issue(scope,request(n),true).unwrap();
@@ -324,7 +457,7 @@ mod tests {
     }
     #[test]
     fn pending_read_metadata_is_bounded_and_finished_failures_release_capacity() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();
+        let mut cache=test_cache();
         let mut tickets=Vec::new();
         for n in 1..=16 {tickets.push(cache.issue(format!("pending:{n}"),request(n+1),false).unwrap());}
         assert_eq!(cache.issue("overflow".into(),request(30),false).unwrap_err(),"read_capacity_held");
@@ -334,7 +467,7 @@ mod tests {
     }
     #[test]
     fn serialized_cache_capacity_evicts_whole_details_before_four_mebibytes() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let mut value:Value=serde_json::from_slice(&fixture(&request(2))).unwrap();
         let original=value["observations"].as_array().unwrap().iter().find(|o|o["resource"]["kind"]=="issue").unwrap().clone();
         for n in 1..=120 {
@@ -356,7 +489,7 @@ mod tests {
     }
     #[test]
     fn late_original_hint_still_holds_quota_but_cannot_replace_new_data_or_renew_on_replay() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let old=cache.issue("github:alpha".into(),request(2),false).unwrap();
         let latest=cache.issue("github:alpha".into(),request(3),false).unwrap();
         cache.accept(&latest,&fixture(&latest.request_id),now).unwrap();
@@ -375,7 +508,7 @@ mod tests {
     }
     #[test]
     fn raw_cache_preserves_full_decimal_tokens_for_the_source_aware_consumer() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let bytes=fixture(&request(2));let mut value:Value=serde_json::from_slice(&bytes).unwrap();
         value["projects"]=serde_json::json!([]);value["work"]=serde_json::json!([]);value["relations"]=serde_json::json!([]);
         let high="1".to_owned()+&"0".repeat(200);let low="9".repeat(200);
@@ -391,7 +524,7 @@ mod tests {
     }
     #[test]
     fn older_shared_metadata_in_an_independent_read_does_not_discard_new_github_data() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let remote=cache.issue("remote".into(),request(2),false).unwrap();
         let local=cache.issue("local".into(),request(3),false).unwrap();
         let mut value:Value=serde_json::from_slice(&fixture(&local.request_id)).unwrap();
@@ -408,7 +541,7 @@ mod tests {
     }
     #[test]
     fn current_runtime_change_recovers_a_generation_without_late_rollback_or_quota_reset() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let first=cache.issue("remote".into(),request(2),false).unwrap();
         let mut value:Value=serde_json::from_slice(&fixture(&first.request_id)).unwrap();
         let mut o=value["observations"].as_array().unwrap().iter().find(|o|o["resource"]["source"]=="github").unwrap().clone();
@@ -429,7 +562,7 @@ mod tests {
     }
     #[test]
     fn local_generation_replacement_releases_old_remote_poll_floor() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let first=cache.issue("remote".into(),request(2),false).unwrap();
         cache.remote_started(now);cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let started=now+Duration::from_secs(1);
@@ -444,7 +577,7 @@ mod tests {
     }
     #[test]
     fn remote_generation_replacement_retains_its_own_start_but_not_old_local_floor() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let first=cache.issue("local".into(),request(2),false).unwrap();
         cache.local_started(now);cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let started=now+Duration::from_secs(1);
@@ -458,7 +591,7 @@ mod tests {
     }
     #[test]
     fn late_old_runtime_hint_holds_the_same_connection_without_restoring_old_data() {
-        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let mut cache=test_cache();let now=Instant::now();
         let first=cache.issue("remote".into(),request(2),false).unwrap();
         cache.accept(&first,&fixture(&first.request_id),now).unwrap();
         let old=cache.issue("old-remote".into(),request(3),false).unwrap();

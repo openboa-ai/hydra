@@ -244,7 +244,12 @@ fn observation(v: &Value) -> R {
     object(v,"key resource revision observed_at last_attempt_at availability coverage reason value")?;
     text(&v["key"],512,false,false)?; reference(&v["resource"])?;
     let kind=string(&v["resource"]["kind"])?; source_fields(kind)?;
-    if kind.starts_with("native_") {need(v["resource"]["source"]=="codex")?;}
+    let owner=match kind {
+        "repository"|"issue"|"progress"|"pull_request"|"check"|"review"=>"github",
+        "native_task_metadata"|"native_history_page"|"native_task"|"native_schedule"=>"codex",
+        "resource"=>"resource_provider", "admission"|"ownership"=>"hydra", _=>return Err(INVALID),
+    };
+    need(v["resource"]["source"]==owner)?;
     optional(&v["revision"],revision)?; optional(&v["observed_at"],timestamp)?; timestamp(&v["last_attempt_at"])?;
     one(&v["availability"],"current stale unavailable unsupported")?; coverage(&v["coverage"])?; optional(&v["reason"],code)?;
     if v["availability"]=="current" || v["availability"]=="stale" {
@@ -406,6 +411,7 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
     list(&v["observed_refs"],|e| evidence_in(e,index).map(|_|()),4096)?;
     one(&v["required_next"],"none refresh reconcile open_source")?; optional(&v["receipt"],|r| receipt(r,index))?;
     let kind=v["receipt"].get("kind").and_then(Value::as_str);
+    if kind.is_some() && v["action"]=="cleanup" {need(v["receipt"]["resource"]==v["target"]["resource"])?;}
     if v["outcome"]=="applied" && ["workflow_step","cleanup"].contains(&string(&v["action"])?) {
         need(!v["receipt"].is_null())?;
     }
