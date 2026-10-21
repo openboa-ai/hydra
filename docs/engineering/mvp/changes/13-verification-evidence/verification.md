@@ -869,3 +869,41 @@ No full local kernel or native qualification is claimed. P13 Rev4/VF11 and the
 selected-source scope are unchanged. Final-head CI, actual hosted artifacts,
 independent code/security review, scoped CODEOWNER approval, protected merge
 and main checks remain required.
+
+## Bound worker startup, source profile and terminal control
+
+Worker bootstraps now execute the script bytes verified by the parent against the
+pinned snapshot. The same private temporary input channel carries those finite
+bytes and the request; no mutable pathname is executed before verification.
+The selected-source profile rejects tracked repository bytecode and native-extension
+importables before selected effects. Declared runtime/dependency imports keep their
+existing boundary; this is not an OS sandbox or hostile-program authentication.
+
+Fresh-exec source metadata has a separate bound derived from the finite snapshot,
+while the existing accepted selector/pins allowance remains intact. An accepted
+230,000-character method with 1,000 supported Python source paths executes and
+validates without shrinking the manifest limit. No new persistent map is introduced.
+
+Selector infrastructure/cancellation outcomes require explicit private control
+records or actual signal termination. Ordinary numeric exits 75/130/143, including
+shutdown after a valid packet, are failed test evidence and do not suppress later
+independent selectors. Existing genuine signal, infrastructure, cleanup and
+publication outcomes retain their separate meaning. During final status emission,
+late signals latch after work classification rather than escaping through the
+structured terminal JSON write. A finalized publication keeps its original outcome.
+
+Five finalized methods reproduced eighteen actual published-parent assertions:
+worker script substitution, two unsupported binary input forms, fresh metadata
+capacity, two late terminal signals and twelve numeric-exit/profile/phase variants.
+The same final test bytes pass all 79 collector and 9 capability-completion methods
+on Python 3.14.2 in 160.862 seconds: 88 methods, zero failures/errors/skips.
+Normal collection/export, supported helpers, full manifest, source substitution,
+actual signals and independent later execution remain covered.
+
+Published parent 001fc61 passed all four jobs in
+[run 39533337242](https://github.com/openboa-ai/hydra/actions/runs/39533337242),
+and both hosted selected-source reports were validated against the actual checked
+merge commit, source tree, policy and manifest. Those results do not qualify this
+later correction. P13 Rev4/VF11 and all native/full-v1 exclusions remain unchanged.
+Final-head CI/artifacts, independent reviews, scoped CODEOWNER approval, protected
+merge and actual-main checks remain required.

@@ -52,6 +52,8 @@ REASONS = {"passed", "test_failure", "test_error", "required_skipped", "expected
            "unexpected_success", "interrupted", "not_executed", "collection_invalid"}
 _REASON_CODES = tuple(sorted(REASONS))
 _SELECTOR_PACKET = struct.Struct('!4s10I')
+_CONTROL_INTERRUPTED = b'HYC1:interrupted'
+_CONTROL_ENVIRONMENT = b'HYC1:environment'
 EXCLUSIONS = {"unselected_v1_requirements", "live_model_evaluation", "native_operation",
               "verify_only_command", "trusted_ci_attestation"}
 LIMITATIONS = sorted(EXCLUSIONS)
@@ -386,6 +388,10 @@ def verify_snapshot(root, revision, *, signatures=None, remember=False):
     digest = hashlib.sha256()
     for relative in sorted(paths, key=lambda path: path.as_posix()):
         path = root / relative
+        # This evidence profile binds Python source loaders. Repository bytecode
+        # and native extensions require another qualified execution profile.
+        require(not any(path.name.endswith(suffix) for suffix in
+                importlib.machinery.BYTECODE_SUFFIXES + importlib.machinery.EXTENSION_SUFFIXES))
         if path.is_symlink():
             require(path.resolve().is_relative_to(root))
             mode, data = '120000', os.readlink(path).encode('utf-8')
@@ -428,12 +434,13 @@ def install_termination_handler(publication=None):
             # Python ignores exceptions from atexit and after-fork callbacks.
             # Preserve termination even before the forked child installs its
             # own handler. This pid is a live fork relation, not native authority.
+            signal.signal(signum, signal.SIG_DFL)
+            os.kill(getpid(), signum)
             exit_child(128 + signum)
-        if publication is None or publication["result"] is None:
+        if publication is None or (publication["result"] is None and not publication.get('terminal', False)):
             raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
-    if publication is None:
-        signal.signal(signal.SIGINT, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
 
 
 class Result(unittest.TestResult):
@@ -613,7 +620,7 @@ class _SelectorExit(BaseException):
 def _import_entries(root, files):
     return [[str(Path(path).relative_to(root)), list(identity), size, digest.hex(), link]
             for path, identity, size, digest, link in files
-            if link or Path(path).suffix == '.py']
+            if link or any(path.endswith(suffix) for suffix in importlib.machinery.SOURCE_SUFFIXES)]
 
 
 def _install_source_reader(root, entries):
@@ -635,7 +642,7 @@ def _install_source_reader(root, entries):
                 and all(type(value) is int and value >= 0 for value in identity))
         require(type(size) is int and size >= 0 and type(link) is bool)
         require(isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest))
-        require(link or path.suffix == '.py')
+        require(link or any(path.name.endswith(suffix) for suffix in importlib.machinery.SOURCE_SUFFIXES))
         pinned[relative] = (str(root / path), tuple(identity), size, bytes.fromhex(digest), link)
 
     def source_path(path):
@@ -667,7 +674,7 @@ def _install_source_reader(root, entries):
         if path.suffix in {'.pyc', '.pyo'}:
             # Force SourceFileLoader to consume verified source, never cache.
             raise OSError('repository bytecode unavailable')
-        if path.suffix == '.py':
+        if any(path.name.endswith(suffix) for suffix in importlib.machinery.SOURCE_SUFFIXES):
             return _read_snapshot_file(*source_path(path))
         return original(loader, str(path))
 
@@ -742,23 +749,27 @@ def _emit_selector(root, selector, descriptor):
     # may legitimately patch json.dumps/JSONEncoder; they never serialize their
     # own verdict. The pristine orchestrator constructs all JSON.
     global _SELECTOR_SHUTDOWN_STARTED
-    pack, write, close = _SELECTOR_PACKET.pack, os.write, os.close
+    pack, write = _SELECTOR_PACKET.pack, os.write
     codes = _REASON_CODES
-    try:
-        outcome, invoked, finished = execute_selector(root, selector)
-        _SELECTOR_SHUTDOWN_STARTED = True
-        mask = 0
-        for bit, reason in enumerate(codes):
-            if reason in outcome['reasons']:
-                mask |= 1 << bit
-        data = pack(b'HYD1', outcome['collected'], outcome['executed'], outcome['completed'],
-                    outcome['subtests'], invoked, finished, mask, *sys.version_info[:3])
-        while data:
-            count = write(descriptor, data)
-            require(count > 0)
-            data = data[count:]
-    finally:
-        close(descriptor)
+    outcome, invoked, finished = execute_selector(root, selector)
+    _SELECTOR_SHUTDOWN_STARTED = True
+    mask = 0
+    for bit, reason in enumerate(codes):
+        if reason in outcome['reasons']:
+            mask |= 1 << bit
+    data = pack(b'HYD1', outcome['collected'], outcome['executed'], outcome['completed'],
+                outcome['subtests'], invoked, finished, mask, *sys.version_info[:3])
+    while data:
+        count = write(descriptor, data)
+        require(count > 0)
+        data = data[count:]
+
+
+def _emit_control(descriptor, data):
+    while data:
+        count = os.write(descriptor, data)
+        require(count > 0)
+        data = data[count:]
 
 
 def _selector_result(data, selector):
@@ -778,6 +789,7 @@ def _selector_result(data, selector):
 
 
 def _fork_selector_main(root, selector, write_fd, compiled, source_files):
+    result_fd = None
     try:
         os.dup2(write_fd, 1)
         with open(os.devnull, 'rb') as empty:
@@ -799,11 +811,18 @@ def _fork_selector_main(root, selector, write_fd, compiled, source_files):
         _emit_selector(root, selector, result_fd)
         return 0
     except KeyboardInterrupt:
+        if result_fd is not None:
+            _emit_control(result_fd, _CONTROL_INTERRUPTED)
         return 128 + signal.SIGINT
     except (OSError, subprocess.TimeoutExpired):
+        if result_fd is not None:
+            _emit_control(result_fd, _CONTROL_ENVIRONMENT)
         return _ENVIRONMENT_EXIT
     except BaseException:
         return 2
+    finally:
+        if result_fd is not None:
+            os.close(result_fd)
 
 
 class _ForkedSelector:
@@ -845,7 +864,7 @@ class _ForkedSelector:
             os.kill(self.pid, signal.SIGKILL)
 
 
-def _worker_main():
+def _worker_main(*, input_limit=_WORKER_INPUT_LIMIT):
     """Private child entry: stdout here is a supervisor pipe, never public stdout."""
     try:
         result_fd = quiet()
@@ -857,7 +876,7 @@ def _worker_main():
         return _ENVIRONMENT_EXIT
     selector = None
     try:
-        request = decode_json(sys.stdin.buffer.read(_WORKER_INPUT_LIMIT + 1), limit=_WORKER_INPUT_LIMIT)
+        request = decode_json(sys.stdin.buffer.read(input_limit + 1), limit=input_limit)
         require(type(request) is dict and set(request) == {"root", "pins", "selector", "source_files"})
         root = Path(request["root"]).resolve()
         require(Path(__file__).resolve() == regular(root, SCRIPT))
@@ -869,17 +888,29 @@ def _worker_main():
         else:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
             _install_source_reader(root, request['source_files'])
-            _emit_selector(root, selector, result_fd)
+            try:
+                _emit_selector(root, selector, result_fd)
+            except KeyboardInterrupt:
+                _emit_control(result_fd, _CONTROL_INTERRUPTED)
+                return 128 + signal.SIGINT
+            except (OSError, subprocess.TimeoutExpired):
+                _emit_control(result_fd, _CONTROL_ENVIRONMENT)
+                return _ENVIRONMENT_EXIT
+            finally:
+                os.close(result_fd)
             return 0
     except _SelectorExit as ended:
         return ended.code
     except KeyboardInterrupt:
         if selector is not None:
-            # _emit_selector closes its packet channel on every exit. Return a
-            # cancellation status instead of writing JSON through that closed fd.
+            _emit_control(result_fd, _CONTROL_INTERRUPTED)
+            os.close(result_fd)
             return 128 + signal.SIGINT
         report = {"worker_interrupted": True}
     except (OSError, subprocess.TimeoutExpired):
+        if selector is not None:
+            _emit_control(result_fd, _CONTROL_ENVIRONMENT)
+            os.close(result_fd)
         return _ENVIRONMENT_EXIT
     except BaseException:
         os.close(result_fd)
@@ -900,17 +931,32 @@ def isolated_worker(root, pins, *, selector=None, compiled=None, source_files=No
         require(source_files is not None)
         return _capture_worker(_ForkedSelector(root, selector, compiled or {}, source_files),
                                group=False, selector=selector)
-    bootstrap = "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_worker_main']())"
+    # Transfer verified script bytes, never execute a mutable pathname first.
+    if source_files is None:
+        source_files = verify_snapshot(root, pins['source_revision'], remember=True)[1]
+    script_entry = next(entry for entry in source_files if Path(entry[0]) == root / SCRIPT)
+    script = _read_snapshot_file(*script_entry)
+    bootstrap = ("import sys; n=int(sys.argv[1]); source=sys.stdin.buffer.read(n); "
+        "assert len(source)==n; scope={'__name__':'hydra_verification_worker','__file__':sys.argv[3]}; "
+        "exec(compile(source,sys.argv[3],'exec'),scope); "
+        "raise SystemExit(scope['_worker_main'](input_limit=int(sys.argv[2])))")
     envelope = json.dumps({'root': str(root), 'pins': pins, 'selector': None}, ensure_ascii=True).encode('ascii')
     require(len(envelope) <= _INPUT_LIMIT)
+    metadata = _import_entries(root, source_files) if selector is not None else None
+    metadata_bytes = len(json.dumps(metadata, ensure_ascii=True).encode('ascii'))
+    # Source metadata has a separate finite bound derived from this snapshot;
+    # it does not consume the accepted selector/pins transport allowance.
+    request_limit = _WORKER_INPUT_LIMIT + metadata_bytes
     request = json.dumps({"root": str(root), "pins": pins, "selector": selector,
-        "source_files": _import_entries(root, source_files) if source_files is not None else None},
+        "source_files": metadata},
         ensure_ascii=True).encode("ascii")
-    require(len(request) <= _WORKER_INPUT_LIMIT)
+    require(len(request) <= request_limit)
     with tempfile.TemporaryFile() as channel:
+        channel.write(script)
         channel.write(request)
         channel.seek(0)
-        child = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(root / SCRIPT)],
+        child = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(len(script)),
+            str(request_limit), str(root / SCRIPT)],
             stdin=channel, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             close_fds=True, start_new_session=selector is None)
         return _capture_worker(child, group=selector is None, selector=selector)
@@ -935,10 +981,18 @@ def _capture_worker(child, *, group, selector=None):
         if remaining <= 0:
             raise EnvironmentUnavailable()
         returncode = child.wait(timeout=remaining)
-        if returncode in {-signal.SIGTERM, -signal.SIGINT, 128 + signal.SIGTERM, 128 + signal.SIGINT}:
+        if returncode in {-signal.SIGTERM, -signal.SIGINT}:
             raise KeyboardInterrupt()
-        if returncode == _ENVIRONMENT_EXIT:
-            raise EnvironmentUnavailable()
+        if selector is None:
+            if returncode in {128 + signal.SIGTERM, 128 + signal.SIGINT}:
+                raise KeyboardInterrupt()
+            if returncode == _ENVIRONMENT_EXIT:
+                raise EnvironmentUnavailable()
+        else:
+            if data == _CONTROL_INTERRUPTED and returncode in {128 + signal.SIGTERM, 128 + signal.SIGINT}:
+                raise KeyboardInterrupt()
+            if data == _CONTROL_ENVIRONMENT and returncode == _ENVIRONMENT_EXIT:
+                raise EnvironmentUnavailable()
         if selector is not None:
             # A selected implementation can crash before returning its packet,
             # or during private shutdown after a complete packet. Preserve only
@@ -1138,7 +1192,7 @@ def main():
         except OSError:
             pass
         return 2
-    publication = {"result": None}
+    publication = {"result": None, "terminal": False}
     reason, code = "invalid_input", 2
     try:
         install_termination_handler(publication)
@@ -1184,6 +1238,10 @@ def main():
             reason, code = "environment_unavailable", 2
     except Exception:
         pass
+    finally:
+        # The work phase has ended. Late signals latch without raising through
+        # the terminal JSON write; published results retain their commit point.
+        publication['terminal'] = True
     if publication["result"] is not None:
         reason, code = publication["result"]
     elif _TERMINATION_REQUESTED:

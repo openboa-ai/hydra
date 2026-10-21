@@ -421,6 +421,110 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_transient_worker_script_substitution_cannot_manufacture_pass(self):
+        fixture = self.fixture(body="self.fail('committed failure')")
+        driver = '''import os,runpy,subprocess,sys
+from pathlib import Path
+original_popen=subprocess.Popen
+def changed_popen(argv,*args,**kwargs):
+    if (isinstance(argv,list) and len(argv)>4 and argv[0]==sys.executable
+            and argv[1:3]==['-I','-c'] and argv[-1].endswith('scripts/run_mvp_verification.py')):
+        target=Path(argv[-1]);data=target.read_bytes();mode=target.stat().st_mode & 0o777
+        extra="\\n_source=Path(__file__)\\nos.chmod(_source,"+repr(mode|0o200)+")\\n_source.write_bytes("+repr(data)+")\\nos.chmod(_source,"+repr(mode)+")\\n"
+        extra+="_original_execute=execute\\ndef execute(root,manifest,pins):\\n report=_original_execute(root,manifest,pins)\\n for row in report['results']:\\n  row['status']='PASS';row['remaining_owner']=None\\n  for item in row['observed']:\\n   item.update(collected=1,executed=1,completed=1,reasons=['passed'])\\n Path('bootstrap_effect').touch()\\n return report\\n"
+        os.chmod(target,mode|0o200);target.write_bytes(data+extra.encode());os.chmod(target,mode)
+        process=original_popen(argv,*args,**kwargs)
+        original_wait=process.wait
+        def wait(*args,**kwargs):
+            try: return original_wait(*args,**kwargs)
+            finally:
+                os.chmod(target,mode|0o200);target.write_bytes(data);os.chmod(target,mode)
+        process.wait=wait
+        return process
+    return original_popen(argv,*args,**kwargs)
+subprocess.Popen=changed_popen
+script=sys.argv.pop(1)
+runpy.run_path(script,run_name='__main__')
+'''
+        result = fixture.run(driver=driver)
+        self.assertNotEqual(result.returncode, 0, 'Substituted collector manufactured committed PASS')
+        self.assertFalse((fixture.root / 'bootstrap_effect').exists())
+
+    def test_selected_source_profile_rejects_tracked_binary_importables(self):
+        import importlib.machinery
+        import py_compile
+        for extension in ('.pyc', importlib.machinery.EXTENSION_SUFFIXES[0]):
+            with self.subTest(extension=extension):
+                fixture = self.fixture(body="Path('binary_effect').touch()")
+                if extension == '.pyc':
+                    fixture.write('tests/helper.py', 'VALUE = True\n')
+                    py_compile.compile(str(fixture.root / 'tests/helper.py'),
+                                       cfile=str(fixture.root / 'tests/helper.pyc'), doraise=True)
+                    (fixture.root / 'tests/helper.py').unlink()
+                else:
+                    fixture.write('tests/helper' + extension, 'not a qualified source import')
+                result = fixture.run()
+                self.assertNotEqual(result.returncode, 0, 'A binary repository importable entered the source-only profile')
+                self.assertFalse((fixture.root / 'binary_effect').exists())
+
+    def test_fresh_worker_metadata_does_not_shrink_the_accepted_manifest(self):
+        fixture = self.fixture()
+        method = 'test_' + 'x' * 230000
+        probe = fixture.root / 'tests/test_probe.py'
+        probe.write_text(probe.read_text().replace('test_required', method))
+        fixture.case['selectors'] = ['test_probe.Probe.' + method]
+        fixture.save()
+        self.assertLess((fixture.root / MANIFEST).stat().st_size, 262144)
+        for number in range(1000):
+            fixture.write('tests/support/' + str(number).zfill(4) + '_' + 's' * 210 + '.py', '')
+        fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + '\ndef _fork_available(): return False\n')
+        result = fixture.run(timeout=120)
+        self.assertEqual(result.returncode, 0, 'Source metadata consumed the accepted selector request budget')
+        self.assertEqual(fixture.report()['results'][0]['observed'][0]['reasons'], ['passed'])
+        self.assertEqual(fixture.run(validate=True, timeout=120).returncode, 0)
+
+    def test_late_final_signal_keeps_a_structured_frozen_status(self):
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signum=signum):
+                fixture = self.fixture()
+                driver = '''import os,runpy,signal,sys
+original_write=os.write
+fired=[False]
+def write(fd,data):
+    if not fired[0] and b'"reason"' in data and b'"status"' in data:
+        fired[0]=True
+        os.kill(os.getpid(),SIGNUM)
+    return original_write(fd,data)
+os.write=write
+script=sys.argv.pop(1)
+runpy.run_path(script,run_name='__main__')
+'''.replace('SIGNUM', str(int(signum)))
+                result = fixture.run(driver=driver, args=('--checked-sha', '0' * 40))
+                self.assertTrue(result.stdout.strip().startswith(b'{'), 'Late interruption lost the terminal JSON')
+                self.assertEqual(json.loads(result.stdout), {'status': 'FAIL', 'reason': 'invalid_input'})
+                self.assertEqual(result.returncode, 2)
+
+    def test_numeric_selected_exit_codes_are_failures_and_do_not_suppress_later_work(self):
+        for fresh_exec in (False, True):
+            for at_shutdown in (False, True):
+                for code in (75, 130, 143):
+                    with self.subTest(fresh_exec=fresh_exec, at_shutdown=at_shutdown, code=code):
+                        body = ("import atexit\natexit.register(lambda: os._exit(" + str(code) + "))"
+                                if at_shutdown else 'os._exit(' + str(code) + ')')
+                        fixture = self.fixture(body=body)
+                        probe = fixture.root / 'tests/test_probe.py'
+                        probe.write_text(probe.read_text() + " def test_later(self):\n  Path('later_effect').touch()\n")
+                        fixture.case['selectors'].append('test_probe.Probe.test_later')
+                        fixture.save()
+                        if fresh_exec:
+                            fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + '\ndef _fork_available(): return False\n')
+                        result = fixture.run()
+                        self.assertEqual(result.returncode, 1, 'A selected numeric exit was mistaken for supervisor control')
+                        observed = fixture.report()['results'][0]['observed']
+                        self.assertEqual(observed[0]['reasons'], ['test_error'])
+                        self.assertEqual(observed[1]['reasons'], ['passed'])
+                        self.assertTrue((fixture.root / 'later_effect').exists())
+
     def test_single_use_and_helper_imports_read_pinned_bytes(self):
         for fresh_exec in (False, True):
             for helper in (False, True):
