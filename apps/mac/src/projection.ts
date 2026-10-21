@@ -389,6 +389,38 @@ function readiness(value: unknown): void {
   }, 100);
   one(v.authority, "confirmed missing unknown"); nullable(v.trust_reason, code);
 }
+function unmappedFact(value:unknown,check:Check,index:Index):void {
+  fact(value,check,index);requireValue((value as Fact<unknown>).value===null);
+}
+function readinessFact(value:unknown,index:Index,issue:unknown):void {
+  fact(value,readiness,index);const f=value as Fact<ObjectValue>;if(f.value===null)return;
+  const v=f.value,target=issue as ResourceRef;
+  requireValue(canonical(v.source_ref)===canonical(target) && v.disposition==="propose" &&
+    v.authority==="unknown" && v.interpretation_ref===null && v.binding_ref===null);
+  requireValue(canonical(v.extracted)===canonical({purpose_excerpt:null,requirement_refs:[],scope_excerpt:null}));
+  requireValue(f.evidence.some(e=>{
+    const source=evidenceIn(e,index);
+    return target.source==="github" && target.kind==="issue" && canonical(source.resource)===canonical(target) &&
+      canonical(source.revision)===canonical(v.source_revision);
+  }));
+}
+function projectWorkRefs(value:unknown,repository:unknown):void {
+  const seen=new Set<string>();list(value,item=>{
+    requireValue(canonical(issueRepository(item))===canonical(repository));unique(seen,item);
+  },128);
+}
+function parentRelation(value:unknown,index:Index):void {
+  const v=object(value,"from to kind evidence");issueRepository(v.from);issueRepository(v.to);
+  requireValue(v.kind==="parent");fact({value:"relation",evidence:v.evidence,reason:null},()=>{},index);
+  requireValue((v.evidence as EvidenceRef[]).some(e=>{
+    const source=evidenceIn(e,index),parents=source.value?.parent_refs;
+    return canonical(source.resource)===canonical(v.from) && source.resource.kind==="issue" &&
+      Array.isArray(parents) && parents.some(parent=>{
+        const p=plain(parent);
+        return canonical(v.to)===canonical({source:"github",kind:"issue",id:String(p.repository_id)+":"+String(p.issue_number)});
+      });
+  }));
+}
 function decision(value: unknown, index: Index): void {
   const v = object(value, "question answer acceptance application");
   // No implemented source mapping qualifies these axes. Metadata cannot enable it.
@@ -566,6 +598,13 @@ function inputValue(input: unknown): ObjectValue {
   try { bytes = new TextEncoder().encode(JSON.stringify(v)).length; } catch { throw new ProjectionError(); }
   requireValue(bytes <= MAX_PROJECTION_BYTES); return v;
 }
+function boundCommandResult(value:unknown,index:Index,binding:unknown):void {
+  commandResult(value,index);const result=plain(value);
+  if(result.receipt===null)return;
+  const receipt=plain(result.receipt);if(receipt.kind!=="admission")return;
+  const source=evidenceIn(receipt.readback,index);
+  requireValue(typeof binding==="string" && canonical(source.resource)===canonical({source:"hydra",kind:"admission",id:binding}));
+}
 export function parseProjection(input: unknown): ProjectionV3 {
   const v = inputValue(input);
   object(v, "schema_version runtime binding_epoch request_id assembled_at observations projects work relations page capabilities retry_hints request");
@@ -585,25 +624,22 @@ export function parseProjection(input: unknown): ProjectionV3 {
   list(v.projects, item => {
     const p = object(item, "repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs");
     kindRef(p.repository_ref, "repository"); unique(projects, p.repository_ref);
-    list(p.goal_refs, goalRef, 100); list(p.work_refs, ref, 128);
-    admissionFact(p.admission, index,repositoryNames(p.repository_ref,index),plain(v.runtime).control_binding_digest); fact(p.execution, execution, index);
+    list(p.goal_refs, goalRef, 100); projectWorkRefs(p.work_refs,p.repository_ref);
+    admissionFact(p.admission, index,repositoryNames(p.repository_ref,index),plain(v.runtime).control_binding_digest); unmappedFact(p.execution, execution, index);
     refs(p.attention_refs); coverage(p.coverage); refs(p.source_refs);
   }, 1024);
   list(v.work, item => {
     const w = object(item, "issue_ref goal_refs spec_refs requirement_refs readiness stage admission execution wait decision delivery result cleanup next_action task_refs resource_refs evidence_refs");
     kindRef(w.issue_ref, "issue"); unique(work, w.issue_ref); list(w.goal_refs, goalRef, 100);
     list(w.spec_refs, requirementRef, 100); list(w.requirement_refs, requirementRef, 100);
-    fact(w.readiness, readiness, index); fact(w.stage, x => one(x, "prepare design implement verify deliver observe complete"), index);
-    admissionFact(w.admission, index,repositoryNames(issueRepository(w.issue_ref),index),plain(v.runtime).control_binding_digest); fact(w.execution, execution, index); fact(w.wait, wait, index);
-    decision(w.decision, index); fact(w.delivery, x => one(x, "candidate published merged post_merge_verified deployment_observed"), index);
-    fact(w.result, x => one(x, "incomplete complete cancelled"), index); fact(w.cleanup, x => one(x, "not_required pending complete"), index);
-    fact(w.next_action, x => nextAction(x, index), index);
+    readinessFact(w.readiness,index,w.issue_ref); unmappedFact(w.stage, x => one(x, "prepare design implement verify deliver observe complete"), index);
+    admissionFact(w.admission, index,repositoryNames(issueRepository(w.issue_ref),index),plain(v.runtime).control_binding_digest); unmappedFact(w.execution, execution, index); unmappedFact(w.wait, wait, index);
+    decision(w.decision, index); unmappedFact(w.delivery, x => one(x, "candidate published merged post_merge_verified deployment_observed"), index);
+    unmappedFact(w.result, x => one(x, "incomplete complete cancelled"), index); unmappedFact(w.cleanup, x => one(x, "not_required pending complete"), index);
+    unmappedFact(w.next_action, x => nextAction(x, index), index);
     refs(w.task_refs); refs(w.resource_refs); list(w.evidence_refs, e => { evidenceIn(e, index); });
   }, 512);
-  list(v.relations, item => {
-    const r = object(item, "from to kind evidence"); ref(r.from); ref(r.to); one(r.kind, "parent depends_on implements verifies delivers");
-    fact({ value: "relation", evidence: r.evidence, reason: null }, () => {}, index);
-  });
+  list(v.relations,item=>parentRelation(item,index));
   coverage(v.page);
   list(v.capabilities, item => {
     const c = object(item, "source operation state actor qualification_ref reason");
@@ -611,13 +647,13 @@ export function parseProjection(input: unknown): ProjectionV3 {
     one(c.actor, "core native_actor provider"); nullable(c.qualification_ref, x => text(x, 2048)); nullable(c.reason, code);
     requireValue(c.state === "available" ? c.qualification_ref !== null && c.reason === null : c.reason !== null);
   });
-  nullable(v.request, r => commandResult(r, index));
+  nullable(v.request, r => boundCommandResult(r,index,plain(v.runtime).control_binding_digest));
   return v as unknown as ProjectionV3;
 }
 export function parseStandardReply(input: unknown): ObjectValue {
   const v = inputValue(input); object(v, "command_schema runtime binding_epoch request observations");
   requireValue(v.command_schema === 1); runtime(v.runtime); nullable(v.binding_epoch, uuid);
-  commandResult(v.request, observations(v.observations)); return v;
+  boundCommandResult(v.request,observations(v.observations),plain(v.runtime).control_binding_digest); return v;
 }
 export function parseReadOnlyProjection(input: unknown) {
   const v = inputValue(input);

@@ -383,6 +383,40 @@ fn readiness(v: &Value) -> R {
       text(&m["detail"],1024,true,true)?; optional(&m["owner_ref"],reference)},100)?;
     one(&v["authority"],"confirmed missing unknown")?; optional(&v["trust_reason"],code)
 }
+fn unmapped_fact(v:&Value,check:impl Fn(&Value)->R,index:&Index<'_>)->R {
+    fact(v,check,index)?;need(v["value"].is_null())
+}
+fn readiness_fact(v:&Value,index:&Index<'_>,issue:&Value)->R {
+    fact(v,readiness,index)?;let value=&v["value"];if value.is_null(){return Ok(());}
+    need(value["source_ref"]==*issue && value["disposition"]=="propose" && value["authority"]=="unknown" &&
+         value["interpretation_ref"].is_null() && value["binding_ref"].is_null())?;
+    need(value["extracted"]==serde_json::json!({"purpose_excerpt":null,"requirement_refs":[],"scope_excerpt":null}))?;
+    let mut matched=false;
+    for e in v["evidence"].as_array().ok_or(INVALID)? {
+        let source=evidence_in(e,index)?;
+        matched|=issue["source"]=="github" && issue["kind"]=="issue" && source["resource"]==*issue &&
+                  source["revision"]==value["source_revision"];
+    } need(matched)
+}
+fn project_work_refs(v:&Value,repository:&Value)->R {
+    let rows=v.as_array().ok_or(INVALID)?;need(rows.len()<=128)?;let mut seen=HashSet::new();
+    for item in rows {need(issue_repository(item)?==*repository)?;unique(&mut seen,item)?;}Ok(())
+}
+fn parent_relation(v:&Value,index:&Index<'_>)->R {
+    object(v,"from to kind evidence")?;issue_repository(&v["from"])?;issue_repository(&v["to"])?;
+    need(v["kind"]=="parent")?;
+    fact(&serde_json::json!({"value":"relation","evidence":v["evidence"],"reason":null}),|_|Ok(()),index)?;
+    let mut matched=false;
+    for e in v["evidence"].as_array().ok_or(INVALID)? {
+        let source=evidence_in(e,index)?;
+        if source["resource"]!=v["from"] || source["resource"]["kind"]!="issue" {continue;}
+        let Some(parents)=source["value"]["parent_refs"].as_array() else {continue;};
+        for parent in parents {
+            let id=format!("{}:{}",parent["repository_id"].as_u64().ok_or(INVALID)?,parent["issue_number"].as_u64().ok_or(INVALID)?);
+            matched|=v["to"]==serde_json::json!({"source":"github","kind":"issue","id":id});
+        }
+    }need(matched)
+}
 fn decision(v: &Value,index:&Index<'_>)->R {
     object(v,"question answer acceptance application")?;
     // No implemented source mapping qualifies these axes. Metadata cannot enable it.
@@ -498,6 +532,14 @@ fn observations(value:&Value)->Result<Index<'_>,&'static str> {
     let rows=value.as_array().ok_or(INVALID)?; need(rows.len()<=4096)?; let mut index=HashMap::new();
     for v in rows {observation(v)?; need(index.insert(string(&v["key"])?,v).is_none())?;} Ok(index)
 }
+fn bound_command_result(v:&Value,index:&Index<'_>,binding:&Value)->R {
+    command_result(v,index)?;let receipt=&v["receipt"];
+    if receipt["kind"]=="admission" {
+        let source=evidence_in(&receipt["readback"],index)?;
+        need(binding.is_string() && source["resource"]["source"]=="hydra" &&
+             source["resource"]["kind"]=="admission" && source["resource"]["id"]==*binding)?;
+    }Ok(())
+}
 fn validate_frame(v:&Value)->R {
     object(v,"schema_version runtime binding_epoch request_id assembled_at observations projects work relations page capabilities retry_hints request")?;
     need(v["schema_version"]==3)?; runtime(&v["runtime"])?; uuid(&v["binding_epoch"])?; uuid(&v["request_id"])?; timestamp(&v["assembled_at"])?;
@@ -516,8 +558,8 @@ fn validate_frame(v:&Value)->R {
     for p in rows {
         object(p,"repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs")?;
         kind_ref(&p["repository_ref"],"repository")?; unique(&mut projects,&p["repository_ref"])?;
-        list(&p["goal_refs"],goal_ref,100)?; list(&p["work_refs"],reference,128)?;
-        admission_fact(&p["admission"],&index,&repository_names(&p["repository_ref"],&index)?,&v["runtime"]["control_binding_digest"])?; fact(&p["execution"],execution,&index)?;
+        list(&p["goal_refs"],goal_ref,100)?; project_work_refs(&p["work_refs"],&p["repository_ref"])?;
+        admission_fact(&p["admission"],&index,&repository_names(&p["repository_ref"],&index)?,&v["runtime"]["control_binding_digest"])?; unmapped_fact(&p["execution"],execution,&index)?;
         refs(&p["attention_refs"])?; coverage(&p["coverage"])?; refs(&p["source_refs"])?;
     }
     let mut works=HashSet::new();
@@ -526,18 +568,15 @@ fn validate_frame(v:&Value)->R {
         object(w,"issue_ref goal_refs spec_refs requirement_refs readiness stage admission execution wait decision delivery result cleanup next_action task_refs resource_refs evidence_refs")?;
         kind_ref(&w["issue_ref"],"issue")?; unique(&mut works,&w["issue_ref"])?;
         list(&w["goal_refs"],goal_ref,100)?; list(&w["spec_refs"],requirement_ref,100)?; list(&w["requirement_refs"],requirement_ref,100)?;
-        fact(&w["readiness"],readiness,&index)?; fact(&w["stage"],|x| one(x,"prepare design implement verify deliver observe complete"),&index)?;
-        admission_fact(&w["admission"],&index,&repository_names(&issue_repository(&w["issue_ref"])?,&index)?,&v["runtime"]["control_binding_digest"])?; fact(&w["execution"],execution,&index)?;
-        fact(&w["wait"],waiting,&index)?; decision(&w["decision"],&index)?;
-        fact(&w["delivery"],|x| one(x,"candidate published merged post_merge_verified deployment_observed"),&index)?;
-        fact(&w["result"],|x| one(x,"incomplete complete cancelled"),&index)?; fact(&w["cleanup"],|x| one(x,"not_required pending complete"),&index)?;
-        fact(&w["next_action"],|x| next_action(x,&index),&index)?; refs(&w["task_refs"])?; refs(&w["resource_refs"])?;
+        readiness_fact(&w["readiness"],&index,&w["issue_ref"])?; unmapped_fact(&w["stage"],|x| one(x,"prepare design implement verify deliver observe complete"),&index)?;
+        admission_fact(&w["admission"],&index,&repository_names(&issue_repository(&w["issue_ref"])?,&index)?,&v["runtime"]["control_binding_digest"])?; unmapped_fact(&w["execution"],execution,&index)?;
+        unmapped_fact(&w["wait"],waiting,&index)?; decision(&w["decision"],&index)?;
+        unmapped_fact(&w["delivery"],|x| one(x,"candidate published merged post_merge_verified deployment_observed"),&index)?;
+        unmapped_fact(&w["result"],|x| one(x,"incomplete complete cancelled"),&index)?; unmapped_fact(&w["cleanup"],|x| one(x,"not_required pending complete"),&index)?;
+        unmapped_fact(&w["next_action"],|x| next_action(x,&index),&index)?; refs(&w["task_refs"])?; refs(&w["resource_refs"])?;
         list(&w["evidence_refs"],|e| evidence_in(e,&index).map(|_|()),4096)?;
     }
-    list(&v["relations"],|r| {
-        object(r,"from to kind evidence")?; reference(&r["from"])?; reference(&r["to"])?; one(&r["kind"],"parent depends_on implements verifies delivers")?;
-        fact(&serde_json::json!({"value":"relation","evidence":r["evidence"],"reason":null}),|_|Ok(()),&index)
-    },4096)?;
+    list(&v["relations"],|r| parent_relation(r,&index),4096)?;
     coverage(&v["page"])?;
     list(&v["capabilities"],|c| {
         object(c,"source operation state actor qualification_ref reason")?; one(&c["source"],"github codex resource_provider hydra")?;
@@ -545,7 +584,7 @@ fn validate_frame(v:&Value)->R {
         optional(&c["qualification_ref"],|x| text(x,2048,false,false))?; optional(&c["reason"],code)?;
         need(if c["state"]=="available" {!c["qualification_ref"].is_null() && c["reason"].is_null()} else {!c["reason"].is_null()})
     },4096)?;
-    optional(&v["request"],|r| command_result(r,&index))
+    optional(&v["request"],|r| bound_command_result(r,&index,&v["runtime"]["control_binding_digest"]))
 }
 
 #[derive(Clone,Copy)]
@@ -609,7 +648,7 @@ impl StandardReply {
     pub fn parse(bytes:&[u8])->Result<Self,&'static str> {
         let v=read_json(bytes)?; object(&v,"command_schema runtime binding_epoch request observations")?;
         need(v["command_schema"]==1)?; runtime(&v["runtime"])?; optional(&v["binding_epoch"],uuid)?;
-        command_result(&v["request"],&observations(&v["observations"])?)?; Ok(Self(v))
+        bound_command_result(&v["request"],&observations(&v["observations"])?,&v["runtime"]["control_binding_digest"])?; Ok(Self(v))
     }
 }
 #[derive(Clone,Debug,Serialize)]
@@ -766,4 +805,26 @@ mod tests {
         assert!(failures.is_empty(),"derived fact/source mismatches: {:?}",failures);
     }
 
+}
+
+#[cfg(test)]
+mod qualified_fact_tests {
+    use super::{Projection,StandardReply};
+    use serde_json::Value;
+    use std::{path::PathBuf,process::Command};
+    #[test]
+    fn qualified_view_claims_use_actual_python_positive_encoders_and_literal_oracles() {
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_qualified.py");
+        let output=Command::new("python3").arg("-I").arg(path).output().unwrap();
+        assert!(output.status.success(),"Actual positive encoder failed: {}",String::from_utf8_lossy(&output.stderr));
+        let values:Value=serde_json::from_slice(&output.stdout).unwrap();let rows=values.as_array().unwrap();
+        assert_eq!(rows.len(),862);
+        let mut failures=Vec::new();
+        for row in rows {
+            let wire=row["wire"].as_str().unwrap().as_bytes();
+            let accepted=if row["profile"]=="projection" {Projection::parse(wire).is_ok()}else{StandardReply::parse(wire).is_ok()};
+            if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{} {}",row["name"],row["profile"]));}
+        }
+        assert!(failures.is_empty(),"Qualified claim mismatches: {}",failures.join(", "));
+    }
 }

@@ -320,9 +320,10 @@ def _prune(frame, work_count, project_count, query_count=None):
             selected.append(row)
     value['work'] = selected
     work_refs = {p.canonical(row['issue_ref']) for row in selected}
+    omitted_work = {p.canonical(row['issue_ref']) for row in frame['work']} - work_refs
     for project in value['projects']:
         before = project['work_refs']
-        project['work_refs'] = [ref for ref in before if p.canonical(ref) in work_refs]
+        project['work_refs'] = [ref for ref in before if p.canonical(ref) not in omitted_work]
         if len(before) != len(project['work_refs']):
             project['coverage'] = _coverage(project['coverage']['scope'], len(project['work_refs']), False, 'response_limit')
     evidence_keys = {hint['observation_key'] for hint in value['retry_hints']}
@@ -335,8 +336,9 @@ def _prune(frame, work_count, project_count, query_count=None):
         elif type(item) is list:
             for child in item:
                 refs(child)
-    refs(value['projects']); refs(value['work'])
+    refs(value['projects']); refs(value['work']); refs(value['relations'])
     resources = {p.canonical(ref) for row in value['projects'] for ref in row['source_refs']}
+    resources.update(p.canonical(ref) for row in value['projects'] for ref in row['work_refs'])
     observations, queries = [], []
     for item in value['observations']:
         if item['key'] in evidence_keys or item['resource']['source'] == 'hydra':
@@ -344,7 +346,7 @@ def _prune(frame, work_count, project_count, query_count=None):
         elif p.canonical(item['resource']) in resources:
             (queries if item['key'].startswith('github:query:') else observations).append(item)
     value['observations'] = observations + queries[:query_count]
-    if work_count < len(frame['work']) or project_count < len(frame['projects']) or query_count is not None:
+    if len(value['work']) < len(frame['work']) or len(value['projects']) < len(frame['projects']):
         value['page'] = _coverage(frame['page']['scope'], len(value['projects']), False, 'response_limit')
     return value
 

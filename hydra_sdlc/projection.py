@@ -518,6 +518,45 @@ def readiness(value):
     nullable(value['trust_reason'], code)
 
 
+def unmapped_fact(value, validator, observations):
+    fact(value, validator, observations)
+    require(value['value'] is None)
+
+
+def readiness_fact(value, observations, issue):
+    fact(value, readiness, observations)
+    if value['value'] is None:
+        return
+    v = value['value']
+    # The implemented mapping exposes a visible, uninterpreted Issue proposal.
+    # Accepted authority and extracted requirements need their own source mapping.
+    require(v['source_ref'] == issue and v['disposition'] == 'propose'
+            and v['authority'] == 'unknown' and v['interpretation_ref'] is None
+            and v['binding_ref'] is None)
+    require(v['extracted'] == {'purpose_excerpt': None, 'requirement_refs': [], 'scope_excerpt': None})
+    require(any(observations[e['observation_key']]['resource'] == issue
+                and issue['source'] == 'github' and issue['kind'] == 'issue'
+                and observations[e['observation_key']]['revision'] == v['source_revision']
+                for e in value['evidence']))
+
+
+def project_work_refs(values, repository):
+    array(values, lambda item: require(issue_repository(item) == repository), 128)
+    require(len({canonical(item) for item in values}) == len(values))
+
+
+def parent_relation(value, observations):
+    obj(value, 'from to kind evidence')
+    issue_repository(value['from']); issue_repository(value['to'])
+    require(value['kind'] == 'parent')
+    fact({'value': 'relation', 'evidence': value['evidence'], 'reason': None}, lambda _: None, observations)
+    require(any(o['resource'] == value['from'] and o['resource']['kind'] == 'issue'
+                and any(value['to'] == {'source': 'github', 'kind': 'issue',
+                        'id': str(parent['repository_id']) + ':' + str(parent['issue_number'])}
+                        for parent in (o['value']['parent_refs'] or []))
+                for e in value['evidence'] for o in [observations[e['observation_key']]]))
+
+
 def decision(value, observations):
     obj(value, 'question answer acceptance application')
     # No implemented SourceValue mapping qualifies a decision axis. A typed
@@ -702,6 +741,15 @@ def observations_index(values):
     return indexed
 
 
+def bound_command_result(value, observations, binding):
+    command_result(value, observations)
+    receipt = value['receipt']
+    if receipt is not None and receipt['kind'] == 'admission':
+        source = observations[receipt['readback']['observation_key']]
+        require(binding is not None and source['resource'] ==
+                {'source': 'hydra', 'kind': 'admission', 'id': binding})
+
+
 def standard_reply(value):
     # A native handoff is never traversed, cached, echoed or downgraded here.
     require(type(value) is dict)
@@ -711,7 +759,8 @@ def standard_reply(value):
     require(type(value['command_schema']) is int and value['command_schema'] == 1)
     runtime(value['runtime'])
     nullable(value['binding_epoch'], uid)
-    command_result(value['request'], observations_index(value['observations']))
+    bound_command_result(value['request'], observations_index(value['observations']),
+                         value['runtime']['control_binding_digest'])
     return value
 
 
@@ -743,10 +792,10 @@ def validate_frame(value):
         obj(v, 'repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs')
         kind_ref(v['repository_ref'], 'repository')
         array(v['goal_refs'], goal_ref, 100)
-        array(v['work_refs'], ref, 128)
+        project_work_refs(v['work_refs'], v['repository_ref'])
         admission_fact(v['admission'], observations, repository_names(v['repository_ref'], observations),
                        value['runtime']['control_binding_digest'])
-        fact(v['execution'], execution, observations)
+        unmapped_fact(v['execution'], execution, observations)
         array(v['attention_refs'], ref)
         coverage(v['coverage'])
         array(v['source_refs'], ref)
@@ -768,7 +817,10 @@ def validate_frame(value):
             'next_action': lambda w: next_action(w, observations),
         }
         for key, validator in facts.items():
-            fact(v[key], validator, observations)
+            if key == 'readiness':
+                readiness_fact(v[key], observations, v['issue_ref'])
+            else:
+                unmapped_fact(v[key], validator, observations)
         admission_fact(v['admission'], observations, repository_names(issue_repository(v['issue_ref']), observations),
                        value['runtime']['control_binding_digest'])
         decision(v['decision'], observations)
@@ -779,13 +831,7 @@ def validate_frame(value):
             require(e['observation_key'] in observations and observations[e['observation_key']]['revision'] == e['revision'])
     array(value['work'], work, 512)
     require(len({canonical(v['issue_ref']) for v in value['work']}) == len(value['work']))
-    def relation(v):
-        obj(v, 'from to kind evidence')
-        ref(v['from'])
-        ref(v['to'])
-        one(v['kind'], {'parent', 'depends_on', 'implements', 'verifies', 'delivers'})
-        fact({'value': 'relation', 'evidence': v['evidence'], 'reason': None}, lambda w: None, observations)
-    array(value['relations'], relation)
+    array(value['relations'], lambda v: parent_relation(v, observations))
     coverage(value['page'])
     def capability(v):
         obj(v, 'source operation state actor qualification_ref reason')
@@ -801,7 +847,7 @@ def validate_frame(value):
             require(v['reason'] is not None)
     array(value['capabilities'], capability)
     if value['request'] is not None:
-        command_result(value['request'], observations)
+        bound_command_result(value['request'], observations, value['runtime']['control_binding_digest'])
     return value
 
 

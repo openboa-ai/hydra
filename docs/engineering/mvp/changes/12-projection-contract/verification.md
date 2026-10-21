@@ -6,7 +6,63 @@ This record describes local deterministic evidence. Final-head hosted CI and cod
 reviews, protected merge and main checks are separate. No installed/native/live qualification
 or completed v1 outcome is claimed.
 
-## Current correction: derived facts and retained repository identity
+## Current correction: qualified claims and membership preservation
+
+This increment corrects seven findings on published parent
+da082c6203ff246720b9a540d975e02e99d2ad65 under unchanged P12 Rev4 / CP8 / NC8.
+Public wire fields, command authority and installed/native activation are unchanged.
+
+- Projection and standard replies bind every admission receipt readback to the
+  runtime's exact Hydra admission resource. Tracked feedback checks the same
+  binding before accepting the requested mode. Foreign-store diagnostic data
+  cannot establish an applied receipt for this control store.
+- Known readiness references/revises an evidence observation of its enclosing
+  Issue. The implemented mapping exposes the original visible Issue as a
+  proposal with unknown authority and no claimed interpretation, binding or
+  extracted requirements. Qualified intake/authority mappings remain later work.
+- Project work refs are unique canonical GitHub Issue refs in that repository.
+  An unresolved repository can retain an empty membership without inventing a
+  numeric binding. Local gate propagation cannot cross repository membership.
+- Current producers already leave project execution and work stage, execution,
+  wait, delivery, result, cleanup and next_action unknown. The three consumers
+  now reject supplied known claims for these unimplemented view mappings.
+  All thirteen typed SourceValue variants remain readable: a source record alone
+  cannot invent a work binding, acceptance, delivery or complete resource scope.
+- Parent edges require the exact child and explicit parent ref in the citing
+  Issue payload. The other relation kinds have no implemented mapping. Parent
+  visibility does not change accepted delegation or grant an effect. The current
+  reader does not activate native parent collection; P11 integration remains open.
+- Local polls preserve retained remote page coverage and its original source age.
+  Scoped repository coverage cannot replace the host overview; a host overview
+  can replace a previously scoped view. Existing binding/runtime fences remain.
+- Optional query-provenance eviction preserves complete membership, unresolved
+  detail refs and retained relation evidence. Actual omitted work/project records
+  still produce partial response-limit coverage. No truncation declares completion.
+
+One literal 431-case matrix supplies 862 projection/standard profiles. It includes
+all thirteen source variants, current/unknown view claims, readiness/source/work
+correlation, exact parent payloads, repository membership and active-store receipts.
+Every positive profile is serialized by the actual Python encoder. Actual reader,
+pruner and reducer sequences verify local/remote membership and optional-byte
+eviction, including membership refs without expanded work records.
+
+The immutable published parent reproduces 385 Python assertion failures across
+six methods, four failing frontend methods and one aggregate Rust matrix failure,
+with zero setup errors/skips/cancellations. The final Python/frontend oracles were
+rechecked on a pristine parent after correcting a prerequisite: local reads may
+emit unavailable GitHub placeholders but do not emit current GitHub observations.
+Membership preservation requirements and matrix acceptance flags are unchanged.
+The normal locked frontend build completed before Rust RED.
+
+Final local checks pass: 257 selected Python 3.14.2 methods, 331 frontend tests,
+all 54 Rust 1.94.1 tests and TypeScript/Vite build under Node 24.5.0. Final runs
+have zero failures/errors/skips/cancellations. Exact new-head hosted CI,
+independent reviews, protected merge and actual-main checks remain required.
+Unsupported-view rejection is not completion of its source integrations. Actual
+remote control/Q&A, session recovery, acceptance, delivery, resource scope and
+two-project v1 operating acceptance remain required under their owned changes.
+
+## Earlier correction: derived facts and retained repository identity
 
 This increment corrects four findings on published parent
 e58ca8e036eebaf061d6be963664b20aee9ec605 under unchanged P12 Rev4 / CP8 / NC8.

@@ -42,13 +42,14 @@ const runtime = (view: Pick<ProjectionV3,"runtime">) => json([view.runtime.versi
   view.runtime.config_digest, view.runtime.control_binding_digest]);
 const unknown = (reason: string): Fact<never> => ({ value: null, evidence: [], reason });
 function valid(condition: unknown): asserts condition { if (!condition) throw new ProjectionError(); }
-function admissionReceipt(pending:Command,result:CommandResult,observations:Observation[]) {
+function admissionReceipt(pending:Command,result:CommandResult,observations:Observation[],binding:unknown) {
   const desired=pending.parameters?.mode;
   valid(typeof desired==="string" && ["running","paused","stopped"].includes(desired));
   const receipt=result.receipt as {kind:string;readback:{observation_key:string}};
   valid(receipt.kind==="admission");
   const observation=observations.find(o=>o.key===receipt.readback.observation_key);
-  valid(observation?.value && observation.resource.source==="hydra");
+  valid(typeof binding==="string" && observation?.value && observation.resource.source==="hydra" &&
+    observation.resource.kind==="admission" && observation.resource.id===binding);
   const value=observation.value;
   let actual=value.global_mode;
   if (pending.target.kind==="repository") {
@@ -466,7 +467,11 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         removeWork(state,evicted,changed);
         state.view.relations = merge(state.view.relations,frame.relations,x=>json([x.from,x.kind,x.to]));
         state.view.assembled_at = frame.assembled_at; state.view.request_id = frame.request_id;
-        state.view.capabilities = structuredClone(frame.capabilities); state.view.page = structuredClone(frame.page);
+        state.view.capabilities = structuredClone(frame.capabilities);
+        const domain=(scope:string)=>scope.startsWith("registered-projects;")?scope.replace(/:from:[0-9]+$/,""):scope;
+        const localRead=event.scope==="local" || event.scope.startsWith("local:");
+        if(!localRead && (domain(frame.page.scope)===domain(state.view.page.scope) ||
+            domain(frame.page.scope)==="registered-projects;overview")) state.view.page=structuredClone(frame.page);
         state.view.retry_hints = structuredClone(frame.retry_hints);
       }
       refreshFacts(state,changed,incoming,event.sequence,event.response.sequence);
@@ -539,7 +544,7 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
         }
         if (pending.action==="workflow_step" && r.receipt!==null) workflowReceipt(pending,r);
         if (pending.action==="admission_set" && r.receipt!==null)
-          admissionReceipt(pending,r,reply.observations as Observation[]);
+          admissionReceipt(pending,r,reply.observations as Observation[],(reply.runtime as ProjectionV3["runtime"]).control_binding_digest);
         result = r;
       } catch { /* A bad/lost receipt cannot become a failure-to-send or an applied Fact. */ }
       state.pending_commands.delete(event.request_id);
