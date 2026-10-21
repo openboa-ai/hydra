@@ -116,3 +116,6 @@ parent/graph coverage, requirement/revision/delivery/main-CI/observed-stage
 evidence, optional planning, goal aggregation and common effect-guard integration.
 Legacy behavior is unchanged. Native qualification and actual operating acceptance
 remain separate from these deterministic source fixtures.
+
+The next [native relation reader stage](reader.md) connects fixed provider queries
+to these values and records its separate deterministic and scoped live evidence.
