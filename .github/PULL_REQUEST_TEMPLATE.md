@@ -1,19 +1,19 @@
-## 핵심 요약
+## Summary
 
-<!-- 변경 이유·핵심 변경·효과를 먼저 짧게 요약하세요. 몇 문장이나 불릿이면 충분하며 줄 수는 고정하지 않습니다. -->
+<!-- Briefly explain the problem, the main change, and its effect. Use a few sentences or bullets; there is no fixed line count. Write the description in English. -->
 
-## 변경 내용
+## Changes
 
-<!-- 무엇이 어떻게 달라지는지 설명하세요. 중요한 동작·설계 선택과 이번 변경의 경계를 포함합니다. -->
+<!-- Explain what changes and how it behaves. Include material design choices and the boundary of this PR. -->
 
-## 검증
+## Verification
 
-<!-- 요구사항에 연결한 검증 결과와 원본 링크를 적으세요. 로컬 확인, 현재 커밋의 CI, 코드·보안 리뷰를 구분하고 지적 사항의 처리 결과를 남깁니다. 시각적 변경에는 실제 실행 화면 근거를 포함합니다. -->
+<!-- Link requirement-based results and original evidence. Distinguish local checks, CI for the current commit, and code/security reviews; explain how findings were resolved. Include running-screen evidence for visual changes. -->
 
-## 남은 범위
+## Remaining work
 
-<!-- 미검증 동작·제한·후속 작업·필요한 사람의 결정을 적으세요. 머지, 배포, 실제 운영 확인은 각각 구분합니다. 남은 항목이 없으면 없다고 명시합니다. -->
+<!-- State unverified behavior, limitations, follow-up work, and any required human decision. Keep merge, deployment, and observed operation distinct. Explicitly say when no items remain. -->
 
-## 관련 설계와 근거
+## Design and evidence
 
-<!-- 작업 Issue, 수용된 spec.md의 정확한 판본, 구현·검증 근거를 연결하세요. -->
+<!-- Link the work Issue, the exact accepted spec.md revision, and implementation/verification evidence. -->
