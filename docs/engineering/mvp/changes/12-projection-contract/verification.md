@@ -342,3 +342,37 @@ the required final-head hosted kernel/Mac/hygiene CI still applies.
 P12 Rev4, CP8 and NC8 pins remain unchanged. No interface redesign, native command
 activation, installation or operating qualification is claimed. Final-head CI,
 independent code/security reviews, protected merge and actual-main checks remain.
+
+
+## Causal cached pages and runtime poll floors -- 2026-10-21
+
+Project absence, source fields and whole-page replacement now respect the original
+bridge sequence rather than a later renderer request number. Older cached project
+pages retain newer work, its source bytes, current coverage and independent user
+selection. Failed alias reconciliation preserves both existing and attempted source
+references, allowing the same ordering rule to hold newer partial coverage. Current
+local admission and independent projects remain separately usable. Conflicting
+unversioned cached content retains the existing conservative dependent-fact hold.
+A genuinely newer complete source still prunes absent work from the display; that
+absence does not prove resource termination or replace the user's selection.
+
+Runtime identity has a small connection-local sequence fence even when its source
+page is empty. Late cached old generations cannot roll it back, while a genuinely
+new generation remains recoverable. Generation replacement resets stale ordinary
+local/remote poll starts and restores the current read's actual start from the
+existing bounded request ledger. Provider quota/backoff is retained separately;
+clock/cache/detail behavior and public wire types are unchanged. No persistent
+project/source map or authority is added.
+
+Six actual parent assertions failed before the fix: two real producer/reducer
+cache/detail/failed-alias cases, two cached runtime cases including an empty page,
+and two actual Rust cache generation/poll cases. Final test bytes are unchanged
+between RED and GREEN, including the Rust test tail on the unchanged parent prefix.
+All 106 frontend and 41 Rust tests pass, along with TypeScript/build and the shared
+23 Python-emitted wire vectors. Existing null-revision holds, quotas, ordinary floors,
+continuation, source capacity and normal fresh-complete pruning remain covered.
+Unchanged Python source/HTTP paths retain their earlier local checks and must pass
+required final-head hosted CI; no installed/native operation is claimed.
+
+P12 Rev4, CP8 and NC8 pins remain unchanged. Final-head CI, completed independent
+code/security reviews, protected merge and actual-main checks remain required.

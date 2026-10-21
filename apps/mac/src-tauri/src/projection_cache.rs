@@ -43,7 +43,7 @@ pub struct ReadCache {
     lru:VecDeque<String>,
     bytes:usize,
     last_clock:Option<Instant>,
-    ledger:VecDeque<(ReadTicket,bool)>,
+    ledger:VecDeque<(ReadTicket,bool,Option<(bool,Instant)>)>,
     policy:ReadPolicy,
     remote_started:Option<Instant>,
     local_started:Option<Instant>,
@@ -91,7 +91,7 @@ impl ReadCache {
         let sequence=self.next.checked_add(1).filter(|n|*n<=MAX_SEQUENCE).ok_or("sequence_exhausted")?;
         self.next=sequence; self.orders.entry(scope.clone()).or_default().issued=sequence;
         let ticket=ReadTicket{scope,epoch:self.epoch.clone(),request_id,sequence,detail};
-        self.ledger.push_back((ticket.clone(),false));
+        self.ledger.push_back((ticket.clone(),false,None));
         while self.ledger.len()>64 {self.ledger.pop_front();}
         Ok(ticket)
     }
@@ -107,7 +107,7 @@ impl ReadCache {
     }
     pub fn accept(&mut self,ticket:&ReadTicket,bytes:&[u8],now:Instant)->Result<CachedRead,&'static str> {
         let current=self.current(ticket);
-        let original=self.ledger.iter().any(|(t,seen)|!seen && t.sequence==ticket.sequence &&
+        let original=self.ledger.iter().any(|(t,seen,_)|!seen && t.sequence==ticket.sequence &&
             t.request_id==ticket.request_id && t.scope==ticket.scope && t.epoch==ticket.epoch);
         if ticket.epoch!=self.epoch || !original {return Err("stale_read");}
         let payload=match ReadPayload::parse(bytes) {
@@ -129,15 +129,20 @@ impl ReadCache {
             if !current {
                 // The data is fenced, but this original request consumed the
                 // same connection's provider quota. Apply its hint only once.
-                let (_,seen)=self.ledger.iter_mut().find(|(t,_)|t.sequence==ticket.sequence).unwrap();
+                let (_,seen,_)=self.ledger.iter_mut().find(|(t,_,_)|t.sequence==ticket.sequence).unwrap();
                 *seen=true;self.policy.observe(&payload,now,false);return Err("stale_read");
             }
             // The response is a fresh, bound read of the new runtime. Invalidate
             // older cache/pending generations; retain the connection's quota wait.
             self.entries.clear();self.lru.clear();self.bytes=0;self.orders.clear();
             self.orders.insert(ticket.scope.clone(),Order{issued:ticket.sequence,settled:0});
+            let started=self.ledger.iter().find(|(t,_,_)|t.sequence==ticket.sequence).and_then(|(_,_,start)|*start);
+            self.remote_started=None;self.local_started=None;
+            if let Some((remote,at))=started {
+                if remote {self.remote_started=Some(at);}else{self.local_started=Some(at);}
+            }
         }
-        let (_,seen)=self.ledger.iter_mut().find(|(t,_)|t.sequence==ticket.sequence).unwrap();
+        let (_,seen,_)=self.ledger.iter_mut().find(|(t,_,_)|t.sequence==ticket.sequence).unwrap();
         *seen=true;
         // This raw cache preserves valid source frames. The source-aware reducer
         // fences regressed observations without discarding independent facts.
@@ -181,11 +186,17 @@ impl ReadCache {
             .unwrap_or(Duration::ZERO);
         Ok(quota.max(poll.as_secs()+u64::from(poll.subsec_nanos()!=0)))
     }
-    pub fn remote_started(&mut self,now:Instant) {self.remote_started=Some(now);}
+    pub fn remote_started(&mut self,now:Instant) {
+        self.remote_started=Some(now);
+        if let Some((_,_,start))=self.ledger.back_mut() {*start=Some((true,now));}
+    }
     pub fn local_wait(&self,now:Instant)->bool {
         self.local_started.is_some_and(|start|now.saturating_duration_since(start)<Duration::from_secs(5))
     }
-    pub fn local_started(&mut self,now:Instant) {self.local_started=Some(now);}
+    pub fn local_started(&mut self,now:Instant) {
+        self.local_started=Some(now);
+        if let Some((_,_,start))=self.ledger.back_mut() {*start=Some((false,now));}
+    }
 
     fn touch(&mut self,scope:&str) {
         self.lru.retain(|key|key!=scope); self.lru.push_back(scope.to_owned());
@@ -415,6 +426,35 @@ mod tests {
         assert_eq!(cache.accept(&old,&fixture(&old.request_id),now).unwrap_err(),"stale_read");
         assert!(!cache.get("local",true,now).unwrap().stale);
         assert_eq!(cache.remote_wait(now,true),Ok(600));
+    }
+    #[test]
+    fn local_generation_replacement_releases_old_remote_poll_floor() {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let first=cache.issue("remote".into(),request(2),false).unwrap();
+        cache.remote_started(now);cache.accept(&first,&fixture(&first.request_id),now).unwrap();
+        let started=now+Duration::from_secs(1);
+        let local=cache.issue("local".into(),request(3),false).unwrap();cache.local_started(started);
+        let mut value:Value=serde_json::from_slice(&fixture(&local.request_id)).unwrap();
+        value["runtime"]["code_digest"]="f".repeat(64).into();
+        cache.accept(&local,&serde_json::to_vec(&value).unwrap(),started).unwrap();
+        assert!(cache.get("remote",false,started).is_none());
+        assert_eq!(cache.remote_wait(started,false),Ok(0),"An invalidated generation held an empty remote cache");
+        assert!(cache.local_wait(started+Duration::from_secs(4)));
+        assert!(!cache.local_wait(started+Duration::from_secs(5)));
+    }
+    #[test]
+    fn remote_generation_replacement_retains_its_own_start_but_not_old_local_floor() {
+        let mut cache=ReadCache::new(EPOCH.into()).unwrap();let now=Instant::now();
+        let first=cache.issue("local".into(),request(2),false).unwrap();
+        cache.local_started(now);cache.accept(&first,&fixture(&first.request_id),now).unwrap();
+        let started=now+Duration::from_secs(1);
+        let remote=cache.issue("remote".into(),request(3),false).unwrap();cache.remote_started(started);
+        let mut value:Value=serde_json::from_slice(&fixture(&remote.request_id)).unwrap();
+        value["runtime"]["code_digest"]="f".repeat(64).into();
+        cache.accept(&remote,&serde_json::to_vec(&value).unwrap(),started+Duration::from_secs(1)).unwrap();
+        assert!(!cache.local_wait(started+Duration::from_secs(1)),"A new generation retained the unrelated old local poll");
+        assert_eq!(cache.remote_wait(started+Duration::from_secs(1),false),Ok(59));
+        assert_eq!(cache.remote_wait(started+Duration::from_secs(60),false),Ok(0));
     }
     #[test]
     fn late_old_runtime_hint_holds_the_same_connection_without_restoring_old_data() {

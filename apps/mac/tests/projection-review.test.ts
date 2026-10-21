@@ -16,6 +16,61 @@ function read(state:ProjectionState,n:number,frame=structuredClone(base)) {
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
     response:{payload:JSON.stringify(frame),age_ms:0,cached:false,stale:false,sequence:n}});
 }
+for (const afterFailure of [false,true])
+test(`cached overview cannot erase newer detail or failed coverage (failed=${afterFailure})`,()=>{
+  const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nold=ReadFixture({('example/beta','open',False):[issue(4)]}).read()\ndetail=ReadFixture({('example/alpha','open',False):[issue(7),issue(8)]}).read(repository='example/alpha')\nfailed=ReadFixture(fail=lambda _: RuntimeError('fixture unavailable')).read(repository='example/alpha')\nfresh=ReadFixture({('example/alpha','open',False):[issue(7)],('example/beta','open',False):[issue(4)]}).read()\nprint(json.dumps([old,detail,failed,fresh]))\n";
+  const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
+  assert.equal(r.status,0,r.stderr);
+  const frames=(JSON.parse(r.stdout) as ProjectionV3[]).map(parseProjection);
+  function apply(state:ProjectionState,scope:string,sequence:number,bridge:number,source:ProjectionV3,cached=false) {
+    const frame=structuredClone(source),request_id=id(sequence+100);
+    if (!cached) frame.request_id=request_id;
+    state=reduceProjection(state,{type:"read_started",scope,sequence,request_id});
+    return reduceProjection(state,{type:"read_succeeded",scope,sequence,now:sequence*1000,
+      response:{payload:JSON.stringify(frame),age_ms:cached?1000:0,cached,stale:false,sequence:bridge}});
+  }
+  let s=apply(projectionState(frames[0]!.binding_epoch),"overview",1,1,frames[0]!);
+  s=apply(s,"alpha-detail",2,2,frames[1]!);
+  const selected=s.view!.work.find(w=>w.issue_ref.id==="101:8")!.issue_ref;
+  s=reduceProjection(s,{type:"selection_changed",selected_ref:selected});
+  if (afterFailure) s=apply(s,"alpha-detail",3,3,frames[2]!);
+  const before=structuredClone(s.view!.projects.find(p=>p.repository_ref.id==="101")!.coverage);
+  s=apply(s,"overview",4,1,frames[0]!,true);
+  assert.ok(s.view!.work.some(w=>w.issue_ref.id==="101:8"),"Older cached absence erased newer work");
+  assert.ok(s.view!.work.some(w=>w.issue_ref.id==="102:4"),"An independent project was discarded");
+  assert.deepEqual(s.selected_ref,selected);
+  assert.deepEqual(s.view!.projects.find(p=>p.repository_ref.id==="101")!.coverage,before,
+    "Older cached coverage replaced the newer project observation");
+  parseProjection(s.view);
+  s=apply(s,"overview",5,4,frames[3]!);
+  assert.deepEqual(s.view!.work.map(w=>w.issue_ref.id).sort(),["101:7","102:4"]);
+  assert.deepEqual(s.selected_ref,selected,"Source absence must not replace the user's independent selection");
+  parseProjection(s.view);
+});
+for (const empty of [false,true])
+test(`a late cached old runtime cannot roll back the accepted generation (empty=${empty})`,()=>{
+  function apply(state:ProjectionState,n:number,bridge:number,source:ProjectionV3,cached=false) {
+    const frame=structuredClone(source),request_id=id(n+600);
+    if (!cached) frame.request_id=request_id;
+    state=reduceProjection(state,{type:"read_started",scope:"overview",sequence:n,request_id});
+    return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:n,now:n*1000,
+      response:{payload:JSON.stringify(frame),age_ms:cached?1000:0,cached,stale:false,sequence:bridge}});
+  }
+  let s=apply(projectionState(base.binding_epoch),1,1,base);
+  const newer=structuredClone(base);newer.runtime.code_digest="f".repeat(64);
+  if (empty) {
+    newer.projects=[];newer.work=[];newer.relations=[];newer.observations=[];newer.retry_hints=[];
+    newer.page={...newer.page,state:"complete",returned_count:0,total_count:0,next_cursor:null,reason:null};
+    parseProjection(newer);
+  }
+  s=apply(s,2,2,newer);
+  s=apply(s,3,1,base,true);
+  assert.equal(s.view!.runtime.code_digest,newer.runtime.code_digest,"A cached old generation replaced the accepted runtime");
+  const fresh=structuredClone(base);fresh.runtime.code_digest="e".repeat(64);
+  s=apply(s,4,3,fresh);
+  assert.equal(s.view!.runtime.code_digest,fresh.runtime.code_digest,"A fresh runtime generation could not recover");
+  parseProjection(s.view);
+});
 test("failed identity refresh preserves partial coverage while local polling reuses the numeric repository",()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nfirst=ReadFixture({('example/alpha','open',False):[issue()]}).read(repository='example/alpha')\nfailed=ReadFixture(fail=lambda _: RuntimeError('fixture unavailable')).read(repository='example/alpha')\nlocal=ReadFixture().read(repository='example/alpha',refresh=False)\nprint(json.dumps([first,failed,local]))\n";
   const r=spawnSync("python3",["-I","-c",code],{encoding:"utf8",timeout:60000,maxBuffer:4194304});

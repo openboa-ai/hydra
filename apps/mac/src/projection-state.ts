@@ -13,7 +13,7 @@ type Feedback = Command & { outcome: CommandResult["outcome"]; reason: string | 
 export interface ProjectionState {
   binding_epoch: string; source_slots: Map<string, Slot>; selected_ref: ResourceRef | null;
   pending_commands: Map<string, Command>; feedback: Map<string, Feedback>;
-  queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null;
+  queries: Map<string, Query>; view: ProjectionV3 | null; runtime_key: string | null; runtime_sequence:number;
   retry_windows: Map<string, RetryWindow>; last_now: number; error: string | null;
 }
 export type ProjectionEvent =
@@ -50,7 +50,7 @@ export function compareRevisions(left:Revision|null,right:Revision|null):number|
 export function projectionState(binding_epoch: string): ProjectionState {
   valid(uuid.test(binding_epoch));
   return { binding_epoch, source_slots: new Map(), selected_ref: null, pending_commands: new Map(),
-    feedback: new Map(), retry_windows: new Map(), queries: new Map(), view: null, runtime_key: null, last_now: 0, error: null };
+    feedback: new Map(), retry_windows: new Map(), queries: new Map(), view: null, runtime_key: null, runtime_sequence:0, last_now: 0, error: null };
 }
 function stale(state: ProjectionState, keys: Iterable<string>, reason: string) {
   for (const k of keys) {
@@ -229,11 +229,15 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       const identity = runtime(frame);
       const windowFrame = structuredClone(frame);
       if (state.runtime_key !== null && state.runtime_key !== identity) {
+        if (state.runtime_sequence>=event.response.sequence) {
+          state.queries.delete(event.scope);break;
+        }
         for (const [id,c] of state.pending_commands) state.feedback.set(id,{...c,outcome:"unknown",reason:"runtime_binding_changed",receipt:null});
         state.pending_commands.clear();state.queries.clear();state.source_slots.clear();
         state.view=null;state.selected_ref=null;
       }
       state.runtime_key = identity;
+      state.runtime_sequence=Math.max(state.runtime_sequence,event.response.sequence);
       if (event.now < state.last_now) stale(state,state.source_slots.keys(),"clock_resumed");
       const origin = Math.max(state.last_now,event.now)-event.response.age_ms;
       if (!event.response.cached) {
@@ -262,6 +266,54 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       }
       const now = Math.max(state.last_now,event.now); state.last_now = now;
       const changed = new Set<string>(), marker = frame.binding_epoch + ":" + event.response.sequence;
+      // Resolve display aliases before comparing project causality. Failed reads
+      // keep both source references, so their newer attempt cannot be replaced
+      // by an older complete cached page. Local admission remains independent.
+      for (const p of frame.projects) if (p.repository_ref.id.startsWith("requested:")) {
+        const address=p.repository_ref.id.slice("requested:".length).toLowerCase();
+        const observed=[...state.source_slots.values()].find(s=>s.observation.resource.kind==="repository" &&
+          typeof s.observation.value?.full_name==="string" && s.observation.value.full_name.toLowerCase()===address &&
+          !s.observation.resource.id.startsWith("requested:"));
+        const old=state.view?.projects.find(old=>observed && key(old.repository_ref)===key(observed.observation.resource));
+        if (old) {
+          const coverage=p.coverage,sourceRefs=p.source_refs;
+          Object.assign(p,structuredClone(old),{admission:p.admission});
+          if (coverage.reason!=="not_requested") {
+            p.coverage=coverage;
+            p.source_refs=[...new Map([...p.source_refs,...sourceRefs].map(ref=>[key(ref),ref])).values()];
+          }
+        }
+      }
+      const olderProjects=new Set<string>(),olderRefs=new Set<string>(),olderIndexes=new Set<number>();
+      frame.projects.forEach((p,index)=>{
+        const prior=state.view?.projects.find(old=>key(old.repository_ref)===key(p.repository_ref));
+        const refs=[...p.source_refs,...(prior?.source_refs ?? [])].filter(ref=>ref.source==="github");
+        const matches=(ref:ResourceRef)=>refs.some(r=>key(r)===key(ref)) ||
+          (ref.source==="github" && ref.id.startsWith(p.repository_ref.id+":"));
+        if ([...state.source_slots.values()].some(s=>matches(s.observation.resource) && s.received_sequence>event.response.sequence)) {
+          olderProjects.add(p.repository_ref.id);olderIndexes.add(index);
+          for (const ref of refs) olderRefs.add(key(ref));
+        }
+      });
+      if (olderProjects.size) {
+        const older=(ref:ResourceRef)=>ref.source==="github" && (olderRefs.has(key(ref)) ||
+          [...olderProjects].some(id=>ref.id.startsWith(id+":")));
+        for (const o of frame.observations) if (older(o.resource)) {
+          const current=state.source_slots.get(o.key)?.observation;
+          // Keep the newer source bytes, but retain the existing conservative
+          // fact hold when an unversioned source has conflicting cached content.
+          if (current && current.revision===null && o.revision===null && json(current.value)!==json(o.value))
+            changed.add(o.key);
+        }
+        for (const value of [frame,windowFrame]) {
+          value.projects=value.projects.filter((_,index)=>!olderIndexes.has(index));
+          value.work=value.work.filter(w=>!older(w.issue_ref));
+          value.relations=value.relations.filter(r=>!older(r.from) && !older(r.to));
+          value.observations=value.observations.filter(o=>!older(o.resource));
+          value.retry_hints=value.retry_hints.filter(h=>value.observations.some(o=>o.key===h.observation_key));
+          value.page={...value.page,state:"partial",returned_count:value.projects.length,total_count:null,reason:"source_changed"};
+        }
+      }
       for (const observation of frame.observations) {
         const old = state.source_slots.get(observation.key);
         if (old && (old.latest_issued_seq > event.sequence || old.latest_settled_seq > event.sequence || old.received_sequence > event.response.sequence)) continue;
@@ -291,20 +343,6 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       // This does not refresh repository identity, coverage, progress or authority.
       const resolvedAliases=new Map<string,ResourceRef>();
       for (const p of frame.projects) {
-        if (p.repository_ref.id.startsWith("requested:")) {
-          const address=p.repository_ref.id.slice("requested:".length);
-          const observed=[...state.source_slots.values()].find(s=>s.observation.resource.kind === "repository" &&
-            typeof s.observation.value?.full_name === "string" && s.observation.value.full_name.toLowerCase() === address.toLowerCase() &&
-            !s.observation.resource.id.startsWith("requested:"));
-          const old=state.view?.projects.find(p=>observed && key(p.repository_ref) === key(observed.observation.resource));
-          if (old) {
-            const coverage=p.coverage;
-            Object.assign(p,structuredClone(old),{admission:p.admission});
-            // Only intentional local polling reuses earlier remote coverage.
-            // Failed reads keep their actual partial/unavailable observation.
-            if (coverage.reason!=="not_requested") p.coverage=coverage;
-          }
-        }
         const observed=[...state.source_slots.values()].find(s=>key(s.observation.resource)===key(p.repository_ref) &&
           s.observation.resource.kind==="repository" && typeof s.observation.value?.full_name==="string");
         if (observed) resolvedAliases.set("requested:"+(observed.observation.value!.full_name as string).toLowerCase(),p.repository_ref);
