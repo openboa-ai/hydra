@@ -46,7 +46,7 @@ def _hex(value, length):
 
 def _text(value, limit):
     return (type(value) is str and 1 <= len(value) <= limit
-            and not any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in value))
+            and not any(ord(c) < 32 or 127 <= ord(c) <= 159 or 0xD800 <= ord(c) <= 0xDFFF for c in value))
 
 
 def _path(value):
@@ -253,7 +253,9 @@ def parse_delegation_change(raw):
     _require(type(raw) in {str, bytes}, 'invalid_json')
     try:
         data = raw.encode('utf-8') if type(raw) is str else raw
-        _require(len(data) <= 262144, 'input_limit')
+        # Covers the worst compact escaped form of every accepted character and
+        # collection bound, including non-BMP strings, with framing headroom.
+        _require(len(data) <= 524288, 'input_limit')
         value = _json_object(data.decode('utf-8'))
     except UnicodeError as exc:
         raise WorkRecordError('invalid_json') from exc
@@ -262,8 +264,7 @@ def parse_delegation_change(raw):
     _object(source, {'kind', 'handle', 'revision'})
     _require(source['kind'] == 'native_instruction')
     for field, limit in (('handle', 2048), ('revision', 512)):
-        _require(_text(source[field], limit)
-                 and not any(0x80 <= ord(c) <= 0x9f for c in source[field]))
+        _require(_text(source[field], limit))
     target = value['target']
     _object(target, {'kind', 'repository_id', 'issue_number'})
     _require(type(target['kind']) is str and target['kind'] in {'goal', 'work'})

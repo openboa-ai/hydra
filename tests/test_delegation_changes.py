@@ -24,6 +24,32 @@ def requirement(n=0):
 
 
 class DelegationChangeParsingTests(unittest.TestCase):
+    def test_requirement_paths_and_selectors_reject_c1_controls(self):
+        for field in ('path', 'selector'):
+            for control in ('\x80', '\x85'):
+                with self.subTest(field=field, control=repr(control)):
+                    ref = requirement()
+                    ref[field] = 'docs/' + control + 'spec.md'
+                    self.rejected(instruction({'kind': 'amend', 'requirements': [ref]}))
+
+    def test_maximum_escaped_astral_input_keeps_the_same_normalized_value(self):
+        value = instruction({'kind': 'amend', 'requirements': [requirement(n) for n in range(50)]})
+        value['source_ref'].update(handle='🚀' * 2048, revision='🚀' * 512)
+        for n, ref in enumerate(value['change']['requirements']):
+            ref.update(path='🚀' * 512, selector='🚀' * 157 + f'{n:03}')
+        plain = json.dumps(value, ensure_ascii=False)
+        escaped = json.dumps(value)
+        self.assertLess(len(plain.encode()), 262144)
+        self.assertGreater(len(escaped.encode()), 262144)
+        self.assertLessEqual(len(escaped.encode()), 524288)
+        parsed = parse_delegation_change(plain)
+        try:
+            encoded = parse_delegation_change(escaped)
+        except WorkRecordError:
+            self.fail('Equivalent accepted strings were rejected solely because JSON escaped them')
+        self.assertEqual(encoded.value, value)
+        self.assertEqual(encoded.digest, parsed.digest)
+
     def parse(self, value):
         return parse_delegation_change(json.dumps(value, ensure_ascii=False))
 
@@ -126,7 +152,7 @@ class DelegationChangeParsingTests(unittest.TestCase):
         malformed = [raw[:-1] + ',"change":{"kind":"cancel"}}',
             raw.replace('"revision": "opaque:r1"', '"revision":"r1","revision":"r2"'),
             '{"x":NaN}', '{"x":Infinity}', '{', b'\xff', '\ufeff' + raw,
-            '[' * 1200 + '0' + ']' * 1200, ' ' * 262144 + raw,
+            '[' * 1200 + '0' + ']' * 1200, ' ' * 524288 + raw,
             {'source_ref': CANARY}, None]
         for value in malformed:
             with self.subTest(kind=type(value).__name__, length=len(value) if value is not None else 0):
