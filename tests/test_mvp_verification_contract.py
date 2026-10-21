@@ -421,6 +421,91 @@ def assert_ci_contract(text):
 class VerificationProcessBoundaryTests(unittest.TestCase):
     fixture = VerificationCollectorTests.fixture
 
+    def test_late_binary_resolution_cannot_replace_pinned_source(self):
+        import importlib.machinery
+        import math
+        suffix = next(s for s in importlib.machinery.EXTENSION_SUFFIXES if math.__file__.endswith(s))
+        for fresh_exec in (False, True):
+            for binary in ('bytecode', 'extension'):
+                with self.subTest(fresh_exec=fresh_exec, binary=binary):
+                    name = 'helper' if binary == 'bytecode' else 'math'
+                    check = 'helper.VALUE' if binary == 'bytecode' else "hasattr(math, 'pi')"
+                    fixture = self.fixture(body="sys.modules.pop(" + repr(name) + ", None)\nimport " + name +
+                                           "\nself.assertTrue(" + check + ")\nPath('binary_import_effect').touch()")
+                    fixture.write('tests/' + name + '.py', 'VALUE = False\n')
+                    self.assertEqual(fixture.run(output='normal.json').returncode, 1)
+                    hook = '''
+original_emit=_emit_selector
+def late_binary(root,selector,descriptor):
+    import py_compile,shutil
+    directory=root/'tests'
+    mode=directory.stat().st_mode & 0o777
+    original=directory/(NAME+'.py')
+    target=directory/(NAME+SUFFIX)
+    with tempfile.TemporaryDirectory(prefix='binary-source-fixture-') as temporary:
+        temporary=Path(temporary)
+        os.chmod(directory,mode|0o200)
+        if BINARY=='bytecode':
+            fake=temporary/'helper.py';fake.write_text('VALUE = True\\n')
+            compiled=temporary/'helper.pyc'
+            py_compile.compile(str(fake),cfile=str(compiled),doraise=True)
+            original.rename(temporary/'original.py')
+            shutil.copyfile(compiled,target)
+        else:
+            shutil.copyfile(EXTENSION,target)
+        os.chmod(directory,mode)
+        try: return original_emit(root,selector,descriptor)
+        finally:
+            os.chmod(directory,mode|0o200)
+            target.unlink(missing_ok=True)
+            if BINARY=='bytecode': (temporary/'original.py').rename(original)
+            os.chmod(directory,mode)
+_emit_selector=late_binary
+'''
+                    values = {'NAME': name, 'SUFFIX': '.pyc' if binary == 'bytecode' else suffix,
+                              'BINARY': binary, 'EXTENSION': math.__file__}
+                    prefix = '\n' + '\n'.join(key + '=' + repr(value) for key, value in values.items()) + '\n'
+                    if fresh_exec:
+                        prefix += '\ndef _fork_available(): return False\n'
+                    fixture.write(SCRIPT, (fixture.root / SCRIPT).read_text() + prefix + hook)
+                    result = fixture.run(output='fault.json')
+                    self.assertNotEqual(result.returncode, 0, 'A late binary loader substituted unpinned source')
+                    self.assertFalse((fixture.root / 'binary_import_effect').exists())
+
+    def test_read_only_validation_consumes_pinned_fixture_revision(self):
+        fixture = self.fixture()
+        self.assertEqual(fixture.run().returncode, 0)
+        self.assertEqual(fixture.run(validate=True).returncode, 0)
+        raw = (fixture.root / fixture.case['fixture']).read_bytes()
+        changed = raw.replace(b'Synthetic', b'SynthetiX')
+        self.assertNotEqual(raw, changed)
+        self.assertEqual(len(raw), len(changed))
+        report = fixture.report()
+        report['results'][0]['fixture_revision'] = digest(changed)
+        fixture.json('artifacts/mvp-verification/report.json', report)
+        saved = (fixture.root / 'artifacts/mvp-verification/report.json').read_bytes()
+        driver = '''import os,runpy,sys
+from pathlib import Path
+script=sys.argv.pop(1)
+scope=runpy.run_path(script)
+scope=scope['main'].__globals__
+original=scope['validate']
+def transient(report,root,manifest,pins,*args,**kwargs):
+    target=root/manifest['cases'][0]['fixture']
+    raw=target.read_bytes();changed=raw.replace(b'Synthetic',b'SynthetiX')
+    mode=target.stat().st_mode & 0o777
+    os.chmod(target,mode|0o200);target.write_bytes(changed);os.chmod(target,mode)
+    try: return original(report,root,manifest,pins,*args,**kwargs)
+    finally:
+        os.chmod(target,mode|0o200);target.write_bytes(raw);os.chmod(target,mode)
+scope['validate']=transient
+raise SystemExit(scope['main']())
+'''
+        result = fixture.run(validate=True, driver=driver)
+        self.assertNotEqual(result.returncode, 0, 'Transient fixture bytes validated a counterfeit revision')
+        self.assertEqual((fixture.root / fixture.case['fixture']).read_bytes(), raw)
+        self.assertEqual((fixture.root / 'artifacts/mvp-verification/report.json').read_bytes(), saved)
+
     def test_transient_worker_script_substitution_cannot_manufacture_pass(self):
         fixture = self.fixture(body="self.fail('committed failure')")
         driver = '''import os,runpy,subprocess,sys

@@ -907,3 +907,39 @@ merge commit, source tree, policy and manifest. Those results do not qualify thi
 later correction. P13 Rev4/VF11 and all native/full-v1 exclusions remain unchanged.
 Final-head CI/artifacts, independent reviews, scoped CODEOWNER approval, protected
 merge and actual-main checks remain required.
+
+## Default resolution and immutable semantic inputs
+
+Default in-snapshot import resolution now permits only the verified source loader.
+Late extension, orphan bytecode and other non-source loaders are rejected before
+execution; the guard stays at PathFinder's normal position so built-in/frozen
+priority is preserved. Existing verified source reads and compiled selectors remain.
+The regression uses actual runtime extension/bytecode loaders in both fork and
+fresh-exec profiles, with normal committed-source failures as controls. Native
+runtime binaries are copied only into temporary fixtures, not shipped or published.
+
+Collector-owned manifest, requirement, policy and fixture revision inputs now come
+from the immutable checked Git objects. The already validated manifest crosses the
+existing private worker channel; it is not reinterpreted from a mutable snapshot.
+The worker's fixture revisions consume the existing remembered byte signatures.
+Read-only report validation therefore cannot accept a transient snapshot fixture
+hash under the original source revision. Normal report validation still passes and
+the invalid artifact/source remain unchanged. This binds collector-controlled input
+and default Python import reads; it does not seal arbitrary test filesystem/network
+I/O or authenticate hostile test programs. No authority or persistent map is added.
+
+Two finalized methods reproduce five actual assertions on published dbdff3b:
+four late binary loader/profile cases and one counterfeit fixture revision accepted
+by the read-only consumer. The same final test bytes pass all 81 collector and
+9 capability-completion methods on Python 3.14.2 in 174.749 seconds: 90 methods,
+zero failures/errors/skips. Normal source, helper links, metadata capacity, true
+signals, numeric exits, private/public boundaries and full manifest remain covered.
+
+Published dbdff3b passed all four jobs in
+[run 39536793984](https://github.com/openboa-ai/hydra/actions/runs/39536793984).
+Both hosted reports were validated against the actual checked merge tree and exact
+invocation pins. Its declared source base and newer checked merge parent were
+recorded separately rather than treating the artifact as current delivery authority.
+Those reports do not qualify this correction. P13 Rev4/VF11 exclusions remain.
+Final-head CI/artifacts, independent reviews, scoped CODEOWNER approval, protected
+merge and actual-main checks remain required.

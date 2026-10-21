@@ -164,8 +164,13 @@ def section_anchors(text):
     return anchors
 
 
-def load_manifest(root):
-    value = read_json(regular(root, MANIFEST))
+def _input_bytes(root, relative, read_input):
+    regular(root, relative)
+    return read_input(relative)
+
+
+def load_manifest(root, *, read_input):
+    value = decode_json(_input_bytes(root, MANIFEST, read_input).decode('utf-8'))
     require(type(value) is dict and set(value) == {"schema_version", "scope", "excluded", "cases"})
     require(type(value["schema_version"]) is int and value["schema_version"] == VERSION)
     require(value["scope"] == "selected_source_d" and value["excluded"] == LIMITATIONS)
@@ -183,7 +188,7 @@ def load_manifest(root):
             require(isinstance(ref["path"], str) and re.fullmatch(r"docs/[a-z0-9_/-]+\.md", ref["path"]))
             require(isinstance(ref["section"], str) and re.fullmatch(r"[a-z0-9-]{1,96}", ref["section"]))
             require(isinstance(ref["revision"], str) and DIGEST.fullmatch(ref["revision"]))
-            document = regular(root, ref["path"]).read_bytes()
+            document = _input_bytes(root, ref["path"], read_input)
             require(sha256(document) == ref["revision"])
             require(ref["section"] in section_anchors(document.decode("utf-8")))
         require(type(case["selectors"]) is list and 0 < len(case["selectors"]) <= _MAX_SELECTORS)
@@ -194,7 +199,7 @@ def load_manifest(root):
             regular(root, "tests/" + selector.split(".")[0] + ".py")
         require(isinstance(case["fixture"], str) and re.fullmatch(
             r"tests/fixtures/mvp/verification/[a-z0-9_-]+\.json", case["fixture"]))
-        fixture = read_json(regular(root, case["fixture"]))
+        fixture = decode_json(_input_bytes(root, case["fixture"], read_input).decode('utf-8'))
         require(type(fixture) is dict and set(fixture) == {"case_id", "kind", "scenarios",
             "preconditions", "events", "expected", "forbidden_effects", "oracle", "scope"})
         require(fixture["case_id"] == case["case_id"] and fixture["kind"] == "D")
@@ -210,7 +215,7 @@ def load_manifest(root):
     return value
 
 
-def binding(root, manifest, checked, base, source, *, inputs=None):
+def binding(root, manifest, checked, base, source, *, inputs=None, read_input):
     head = git(root, "rev-parse", "HEAD").decode("ascii").strip()
     require(SHA.fullmatch(head) and (checked is None or checked == head))
     for revision in (base, source):
@@ -257,8 +262,8 @@ def binding(root, manifest, checked, base, source, *, inputs=None):
     inputs = root if inputs is None else inputs
     return {"candidate_head": head, "source_head": source or head, "base_sha": base,
             "base_reason": None if base else "not_supplied", "source_revision": "sha256:" + digest.hexdigest(),
-            "manifest_revision": sha256(regular(inputs, MANIFEST).read_bytes()),
-            "policy_revision": sha256(regular(inputs, POLICY).read_bytes())}
+            "manifest_revision": sha256(_input_bytes(inputs, MANIFEST, read_input)),
+            "policy_revision": sha256(_input_bytes(inputs, POLICY, read_input))}
 
 
 def importable_paths(root):
@@ -578,6 +583,7 @@ def execute(root, manifest, pins):
     entries, interrupted = [], False
     signatures = verify_snapshot(root, pins['source_revision'], remember=True)
     compiled = _compile_selected(root, manifest, signatures) if _fork_available() else {}
+    pinned = {str(Path(entry[0]).relative_to(root)): entry for entry in signatures[1]}
     run_alias = "verification-" + secrets.token_hex(16)
     for case in manifest["cases"]:
         started, outcomes = now(), []
@@ -600,7 +606,7 @@ def execute(root, manifest, pins):
         entries.append({"case_id": case["case_id"], "status": status, "kind": "D",
             "candidate_head": pins["candidate_head"], "base_sha": pins["base_sha"],
             "spec_revision": case["requirements"], "policy_revision": pins["policy_revision"],
-            "fixture_revision": sha256(regular(root, case["fixture"]).read_bytes()),
+            "fixture_revision": sha256(_read_snapshot_file(*pinned[case['fixture']])),
             "environment": execution_environment(),
             "command_or_runbook": {"runner": SCRIPT, "selectors": case["selectors"]},
             "started_at": started, "finished_at": now(), "observed": outcomes,
@@ -679,6 +685,18 @@ def _install_source_reader(root, entries):
         return original(loader, str(path))
 
     importlib.machinery.SourceFileLoader.get_data = get_data
+    class SourceOnlyFinder:
+        def find_spec(self, fullname, path=None, target=None):
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+            if spec is not None and isinstance(spec.origin, str):
+                origin = Path(os.path.abspath(spec.origin))
+                if origin.is_relative_to(root):
+                    require(isinstance(spec.loader, importlib.machinery.SourceFileLoader))
+            return spec
+
+    # Preserve built-in/frozen priority and avoid resolving twice around a race.
+    position = sys.meta_path.index(importlib.machinery.PathFinder)
+    sys.meta_path.insert(position, SourceOnlyFinder())
 
 
 class _CompiledLoader(importlib.machinery.SourceFileLoader):
@@ -877,16 +895,18 @@ def _worker_main(*, input_limit=_WORKER_INPUT_LIMIT):
     selector = None
     try:
         request = decode_json(sys.stdin.buffer.read(input_limit + 1), limit=input_limit)
-        require(type(request) is dict and set(request) == {"root", "pins", "selector", "source_files"})
+        require(type(request) is dict and set(request) == {"root", "pins", "selector", "source_files", "manifest"})
         root = Path(request["root"]).resolve()
         require(Path(__file__).resolve() == regular(root, SCRIPT))
         selector = request["selector"]
         if selector is None:
             require(request['source_files'] is None)
-            manifest = load_manifest(root)
+            manifest = request['manifest']
+            require(type(manifest) is dict)
             report = execute(root, manifest, request["pins"])
         else:
             require(isinstance(selector, str) and SELECTOR.fullmatch(selector))
+            require(request['manifest'] is None)
             _install_source_reader(root, request['source_files'])
             try:
                 _emit_selector(root, selector, result_fd)
@@ -920,7 +940,7 @@ def _worker_main(*, input_limit=_WORKER_INPUT_LIMIT):
     return 0
 
 
-def isolated_worker(root, pins, *, selector=None, compiled=None, source_files=None):
+def isolated_worker(root, pins, *, selector=None, compiled=None, source_files=None, manifest=None):
     """Bounded private transport; selected imports never inherit public handles.
 
     This is output/process separation, not a sandbox for same-user code. Only the
@@ -948,7 +968,7 @@ def isolated_worker(root, pins, *, selector=None, compiled=None, source_files=No
     # it does not consume the accepted selector/pins transport allowance.
     request_limit = _WORKER_INPUT_LIMIT + metadata_bytes
     request = json.dumps({"root": str(root), "pins": pins, "selector": selector,
-        "source_files": metadata},
+        "source_files": metadata, "manifest": manifest},
         ensure_ascii=True).encode("ascii")
     require(len(request) <= request_limit)
     with tempfile.TemporaryFile() as channel:
@@ -1030,15 +1050,15 @@ def _capture_worker(child, *, group, selector=None):
         child.stdout.close()
 
 
-def isolated_execute(root, manifest, pins):
+def isolated_execute(root, manifest, pins, *, read_input):
     # Validate in the supervisor, independently of every selected import/run.
-    report = isolated_worker(root, pins)
-    validate(report, root, manifest, pins)
+    report = isolated_worker(root, pins, manifest=manifest)
+    validate(report, root, manifest, pins, read_input=read_input)
     require(all(row["environment"] == execution_environment() for row in report["results"]))
     return report
 
 
-def validate(report, root, manifest, pins):
+def validate(report, root, manifest, pins, *, read_input):
     """Strict same-revision consumer; this does not authenticate a CI producer."""
     require(type(report) is dict and set(report) == {"schema_version", "scope", "excluded", "run_alias", "binding", "results"})
     require(isinstance(report["run_alias"], str) and RUN.fullmatch(report["run_alias"]))
@@ -1052,7 +1072,7 @@ def validate(report, root, manifest, pins):
         require(row["case_id"] == case["case_id"] and row["kind"] == "D")
         require(row["candidate_head"] == pins["candidate_head"] and row["base_sha"] == pins["base_sha"])
         require(row["spec_revision"] == case["requirements"] and row["policy_revision"] == pins["policy_revision"])
-        require(row["fixture_revision"] == sha256(regular(root, case["fixture"]).read_bytes()))
+        require(row["fixture_revision"] == sha256(_input_bytes(root, case["fixture"], read_input)))
         env = row["environment"]
         require(type(env) is dict and set(env) == {"python", "execution"} and env["execution"] == "local_subprocess")
         require(isinstance(env["python"], str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", env["python"]))
@@ -1210,21 +1230,27 @@ def main():
         require(git(root, "rev-parse", "--show-toplevel").decode().strip() == str(root))
         head = git(root, "rev-parse", "HEAD").decode("ascii").strip()
         require(SHA.fullmatch(head) and (args.checked_sha is None or args.checked_sha == head))
+        def read_input(relative):
+            # Semantic inputs come from immutable checked Git objects, not
+            # transient snapshot bytes. The snapshot remains the code/run view.
+            return git(root, 'cat-file', 'blob', head + ':' + relative)
         with source_snapshot(root, head) as snapshot:
             # Parse every definition from pinned Git inputs before selecting or
             # executing methods; live manifest replacement cannot select work.
-            manifest = load_manifest(snapshot)
-            pins = binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot)
+            manifest = load_manifest(snapshot, read_input=read_input)
+            pins = binding(root, manifest, args.checked_sha, args.base_sha, args.source_head,
+                           inputs=snapshot, read_input=read_input)
             require(pins["candidate_head"] == head)
             verify_snapshot(snapshot, pins['source_revision'])
             if args.validate_report:
-                passed = validate(read_report(root, args.validate_report), snapshot, manifest, pins)
+                passed = validate(read_report(root, args.validate_report), snapshot, manifest, pins, read_input=read_input)
             else:
                 artifact_path(root, args.output, create=True)
-                report = isolated_execute(snapshot, manifest, pins)
-                require(binding(root, manifest, args.checked_sha, args.base_sha, args.source_head, inputs=snapshot) == pins)
+                report = isolated_execute(snapshot, manifest, pins, read_input=read_input)
+                require(binding(root, manifest, args.checked_sha, args.base_sha, args.source_head,
+                                inputs=snapshot, read_input=read_input) == pins)
                 verify_snapshot(snapshot, pins['source_revision'])
-                passed = validate(report, snapshot, manifest, pins)
+                passed = validate(report, snapshot, manifest, pins, read_input=read_input)
                 reason = "export_failed"
                 outcome = ("passed", 0) if passed else ("required_evidence_incomplete", 1)
                 export(root, args.output, report, publication=publication, outcome=outcome)
