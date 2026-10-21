@@ -479,7 +479,11 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
         one(&v["boundary"],"progress_recorded assignment_returned existing_result_reconciled")?;
     }
     if ["verification","verification_review","publication","delivery"].contains(&kind) {candidate(&v["candidate"])?;}
-    if kind=="verification" {one(&v["verdict"],"passed failed")?; optional(&v["review"],|x| one(x,"pending accepted failed not_required"))?;}
+    if kind=="verification" {
+        one(&v["verdict"],"passed failed")?; optional(&v["review"],|x| one(x,"pending accepted failed not_required"))?;
+        // P13 must qualify an invocation observation before this receipt is supported.
+        return Err("unsupported_verification_observation");
+    }
     if kind=="verification_review" {
         assignment(&v["assignment"])?;
         for k in ["attempt_id","head","contract_revision"] {need(v["assignment"][k]==v["candidate"][k])?;}
@@ -510,6 +514,18 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
     list(&v["observed_refs"],|e| evidence_in(e,index).map(|_|()),4096)?;
     one(&v["required_next"],"none refresh reconcile open_source")?; optional(&v["receipt"],|r| receipt(r,index))?;
     let kind=v["receipt"].get("kind").and_then(Value::as_str);
+    if v["action"]=="workflow_step" && matches!(kind,Some("publication"|"delivery")) {
+        let pr=&v["receipt"]["pr_ref"];
+        if !pr.is_null() {
+            need(pr["source"]=="github" && pr["kind"]=="pull_request")?;
+            let (repository,number)=string(&pr["id"])?.split_once(':').ok_or(INVALID)?;
+            let repository_id=repository.parse::<u64>().map_err(|_|INVALID)?;
+            let pr_number=number.parse::<u64>().map_err(|_|INVALID)?;
+            need(repository_id>0 && repository_id<=MAX_INTEGER && pr_number>0 && pr_number<=MAX_INTEGER &&
+                repository_id.to_string()==repository && pr_number.to_string()==number &&
+                v["target"]["repository_id"].as_u64()==Some(repository_id))?;
+        }
+    }
     if kind.is_some() && v["action"]=="cleanup" {need(v["receipt"]["resource"]==v["target"]["resource"])?;}
     if v["outcome"]=="applied" && ["workflow_step","cleanup"].contains(&string(&v["action"])?) {
         need(!v["receipt"].is_null())?;
@@ -861,4 +877,20 @@ fn workflow_progress_receipt_target_and_source_proofs() {
         if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
     }
     assert!(failures.is_empty(),"workflow progress target/proof mismatches: {:?}",failures);
+}
+
+#[cfg(test)]
+#[test]
+fn workflow_source_receipt_identity_and_invocation_proofs() {
+    let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_workflow_source_receipts.py");
+    let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
+    assert!(output.status.success(),"source vector producer failed: {}",String::from_utf8_lossy(&output.stderr));
+    let values:Value=serde_json::from_slice(&output.stdout).unwrap();let rows=values.as_array().unwrap();
+    assert_eq!(rows.len(),82);let mut failures=Vec::new();
+    for row in rows {
+        let bytes=row["wire"].as_str().unwrap().as_bytes();
+        let accepted=if row["profile"]=="standard" {StandardReply::parse(bytes).is_ok()}else{Projection::parse(bytes).is_ok()};
+        if accepted!=row["accepted"].as_bool().unwrap(){failures.push(format!("{}:{}",row["name"],row["profile"]));}
+    }
+    assert!(failures.is_empty(),"source identity/invocation mismatches: {:?}",failures);
 }

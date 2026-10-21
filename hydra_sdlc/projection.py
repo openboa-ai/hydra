@@ -667,6 +667,16 @@ def command_result(value, observations):
         require((value['receipt'] is not None) == (value['outcome'] == 'applied'))
     if value['receipt'] is not None:
         kind = value['receipt']['kind']
+        if value['action'] == 'workflow_step' and kind in {'publication', 'delivery'}:
+            pr = value['receipt']['pr_ref']
+            if pr is not None:
+                require(pr['source'] == 'github' and pr['kind'] == 'pull_request')
+                locator = re.fullmatch(r'([1-9][0-9]*):([1-9][0-9]*)', pr['id'])
+                require(locator is not None)
+                repository, number = map(int, locator.groups())
+                integer(repository, 1)
+                integer(number, 1)
+                require(repository == value['target']['repository_id'])
         if value['action'] == 'cleanup':
             require(value['receipt']['resource'] == value['target']['resource'])
         require((value['action'] == 'admission_set' and kind == 'admission') or
@@ -737,6 +747,8 @@ def receipt(value, observations):
     if kind == 'verification':
         one(value['verdict'], {'passed', 'failed'})
         nullable(value['review'], lambda v: one(v, {'pending', 'accepted', 'failed', 'not_required'}))
+        # P13 must qualify an invocation observation before this receipt is supported.
+        raise ProjectionError('unsupported_verification_observation')
     if kind == 'verification_review':
         assignment(value['assignment'])
         require(all(value['assignment'][k] == value['candidate'][k] for k in ('attempt_id', 'head', 'contract_revision')))

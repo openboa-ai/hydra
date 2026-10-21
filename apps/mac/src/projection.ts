@@ -490,7 +490,11 @@ function receipt(value: unknown, index: Index): void {
     one(v.boundary, "progress_recorded assignment_returned existing_result_reconciled");
   }
   if (["verification", "verification_review", "publication", "delivery"].includes(v.kind)) candidate(v.candidate);
-  if (v.kind === "verification") { one(v.verdict, "passed failed"); nullable(v.review, x => one(x, "pending accepted failed not_required")); }
+  if (v.kind === "verification") {
+    one(v.verdict, "passed failed"); nullable(v.review, x => one(x, "pending accepted failed not_required"));
+    // P13 must qualify an invocation observation before this receipt is supported.
+    throw new ProjectionError("unsupported_verification_observation");
+  }
   if (v.kind === "verification_review") {
     assignment(v.assignment); const a = plain(v.assignment), c = plain(v.candidate);
     requireValue(["attempt_id", "head", "contract_revision"].every(k => a[k] === c[k])); one(v.review, "accepted failed pending");
@@ -519,6 +523,18 @@ function commandResult(value: unknown, index: Index): void {
   refs(v.effect_refs); list(v.observed_refs, e => { evidenceIn(e, index); });
   one(v.required_next, "none refresh reconcile open_source"); nullable(v.receipt, r => receipt(r, index));
   const kind = v.receipt === null ? null : plain(v.receipt).kind;
+  if (v.action === "workflow_step" && ["publication", "delivery"].includes(String(kind))) {
+    const pr = plain(v.receipt).pr_ref;
+    if (pr !== null) {
+      const locator = plain(pr);
+      requireValue(locator.source === "github" && locator.kind === "pull_request");
+      const parts = /^([1-9][0-9]*):([1-9][0-9]*)$/.exec(String(locator.id));
+      requireValue(parts !== null);
+      const repository = Number(parts[1]), number = Number(parts[2]);
+      integer(repository, 1); integer(number, 1);
+      requireValue(repository === plain(v.target).repository_id);
+    }
+  }
   if (kind!==null && v.action==="cleanup")
     requireValue(canonical(plain(v.receipt).resource)===canonical(plain(v.target).resource));
   if (v.outcome === "applied" && ["workflow_step", "cleanup"].includes(v.action))

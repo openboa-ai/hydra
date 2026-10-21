@@ -553,7 +553,8 @@
           },
           "required_next": "none"
         }
-      }
+      },
+      "accepted": false
     },
     {
       "name": "verify-review",

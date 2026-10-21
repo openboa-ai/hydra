@@ -851,3 +851,50 @@ required before protected merge and actual-main verification.
 
 These are deterministic source/producer/consumer results. Installed/native
 qualification, full v1 acceptance and actual remote operation remain separate.
+
+
+## Mac fixture recovery and workflow source qualification
+
+This recovery reuses unchanged P12 Rev4 and CP8. The parent is published source
+`118c8725f547e75f29afd0a5d46ed3e0c4ec7fc1`. Its Mac CI failed while the actual
+checkpoint fixture constructed settings under an aliased temporary root. An
+isolated Python 3.14.2 control without site packages passed; the same actual
+fixture failed with an aliased TMPDIR. A new platform regression reproduces one
+assertion failure on the parent, without test errors or skips. The fixture now
+resolves its temporary root before setup. The installed-settings safety guard is
+unchanged. Positive producer vectors require an applied checkpoint and Python
+>=3.14; controlled fixture errors retain their diagnostic cause.
+
+Two review findings on the same parent concerned workflow source qualification.
+Publication and delivery receipts now require a canonical GitHub pull-request
+locator from the requested numeric repository, with a positive safe PR number.
+This applies to partial receipts as well as applied responses. Branch-only
+publication may still have a null PR; PR-ready stages cannot.
+
+CP8 also requires verification performed by the current invocation. P12 has no
+qualified invocation SourceValue mapping. All three decoders now explicitly reject
+verification receipts until P13 supplies that mapping, including replies that
+claim a matching candidate, progress reference or unrelated successful check.
+Unknown/rejected replies without a receipt remain valid. Independent native
+review-checkpoint receipts retain their existing exact-assignment contract.
+The former synthetic verification-success expectations are corrected to rejection;
+they never qualified an actual verification invocation. This correction does not
+complete P13, and does not remove invocation qualification from v1 acceptance.
+
+A new shared literal matrix has 41 cases and 82 producer/consumer wire vectors.
+Frozen parent checks reproduce 60 Python assertion failures, two failing frontend
+methods and one failing Rust method, without errors or skips. The unchanged new
+oracles pass after correction. They cover foreign/malformed/unsafe PR locators,
+partial publication, both verification verdicts, fabricated source proofs, and
+explicit unknown/rejected responses. The reducer cannot promote invalid replies
+to applied feedback or source facts. Existing 66-case/134-profile workflow target
+and actual-checkpoint tests remain, with unsupported run receipts rejected.
+
+Final local checks on Python 3.14.2 pass 372 selected methods. Frontend and Rust
+regressions pass 345 and 57 methods, plus theme, frontend and native builds, without
+failures/errors/skips. New-head remote CI, independent reviews, protected merge and
+actual-main checks remain required. The parent's successful Python/hygiene jobs,
+failed Mac job and older review/artifact results are historical evidence.
+
+No runtime authority, installed source selection, native question handling or
+actual remote operation is qualified by these deterministic checks.

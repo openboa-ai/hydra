@@ -1,6 +1,7 @@
 """Shared workflow target/source oracles include the actual checkpoint producer."""
 from pathlib import Path
-import copy,json,unittest
+import copy,json,sys,tempfile,unittest
+from unittest.mock import patch
 import test_checkpoint_only as fixture
 from hydra_sdlc import projection as p
 from hydra_sdlc.control_commands import AdmissionCallContext
@@ -10,7 +11,11 @@ EPOCH='00000000-0000-4000-8000-000000000001'
 
 
 class CaptureCheckpoint(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp=fixture.CheckpointOnlyTests.asyncSetUp
+    async def asyncSetUp(self):
+        # Installed settings reject symlinked paths; only fixture roots are resolved.
+        physical=str(Path(tempfile.gettempdir()).resolve(strict=True))
+        with patch('tempfile.tempdir',physical):
+            await fixture.CheckpointOnlyTests.asyncSetUp(self)
     new_controller=fixture.CheckpointOnlyTests.new_controller
     result=fixture.CheckpointOnlyTests.result
     checkpoint=fixture.CheckpointOnlyTests.checkpoint
@@ -28,10 +33,16 @@ class CaptureCheckpoint(unittest.IsolatedAsyncioTestCase):
 
 
 def actual_checkpoint():
+    if sys.version_info < (3,14):
+        raise AssertionError('Actual checkpoint fixture requires Python >=3.14; got '+sys.version.split()[0])
     case=CaptureCheckpoint('capture')
     result=unittest.TestResult()
     case.run(result)
-    if result.errors or result.failures:raise AssertionError('Actual checkpoint fixture failed')
+    if result.errors or result.failures:
+        details='\n'.join(message for _,message in result.errors+result.failures)
+        raise AssertionError('Actual checkpoint fixture failed:\n'+details[-4000:])
+    if case.reply['request']['outcome']!='applied' or case.reply['request']['receipt']['kind']!='checkpoint':
+        raise AssertionError('Actual checkpoint fixture did not produce an applied checkpoint')
     return case.reply
 
 

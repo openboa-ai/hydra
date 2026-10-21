@@ -39,7 +39,7 @@ function scenario(name:string){
 }
 
 test("matching read-backs resolve unknown feedback for every supported command kind",()=>{
-  for(const row of commands){const f=scenario(row.name);f.start();f.result({});
+  for(const row of commands.filter((row:any)=>row.accepted!==false)){const f=scenario(row.name);f.start();f.result({});
     assert.equal(f.state.feedback.get(row.event.request_id)?.outcome,"unknown");
     f.read(f.command.reply,2);
     assert.equal(f.state.error,null,row.name);
@@ -51,7 +51,7 @@ test("matching read-backs resolve unknown feedback for every supported command k
 
 test("unrelated, stale or changed-context read-backs retain unknown effect ownership",()=>{
   for(const change of ["id","target","operation","candidate","runtime","binding","stale","older"]){
-    const f=scenario("verify-run");f.start();f.result({});let reply=structuredClone(f.command.reply);
+    const f=scenario("publication");f.start();f.result({});let reply=structuredClone(f.command.reply);
     if(change==="id")reply.request.request_id=id(123);
     if(change==="target"){reply.request.target.issue_number=99;reply.request.receipt.progress_ref.id="101:99";}
     if(change==="operation")reply=structuredClone(commands.find((r:any)=>r.name==="continue").reply);

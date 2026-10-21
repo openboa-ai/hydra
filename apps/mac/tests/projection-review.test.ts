@@ -458,7 +458,8 @@ function workflowReply(operation:string) {
     action:"workflow_step",target:{repository_id:101,issue_number:7},parameters,assignment:expected}};
 }
 function workflowFeedback(value:ReturnType<typeof workflowReply>) {
-  parseStandardReply(value.reply); // Every negative case is a valid wire reply.
+  if(value.reply.request.receipt.kind==="verification")assert.throws(()=>parseStandardReply(value.reply));
+  else parseStandardReply(value.reply); // Supported receipts still require exact intent correlation.
   const started=reduceProjection(projectionState(base.binding_epoch),value.start as Parameters<typeof reduceProjection>[1]);
   const state=reduceProjection(started,{type:"command_result",request_id:id(850),reply:value.reply});
   assert.equal(state.view,null,"Feedback manufactured a source Fact");
@@ -498,8 +499,9 @@ test(`workflow ${operation} accepts only its own receipt (mismatch=${mismatch})`
   const value=workflowReply(operation);
   if (mismatch) value.start.parameters.operation="checkpoint_only";
   const feedback=workflowFeedback(value);
-  assert.equal(feedback.outcome,mismatch?"unknown":"applied");
-  if (mismatch) assert.equal(feedback.receipt,null);
+  const supported=!mismatch && operation!=="verify_only";
+  assert.equal(feedback.outcome,supported?"applied":"unknown");
+  if (!supported) assert.equal(feedback.receipt,null);
 });
 test("workflow correlation snapshots pins without retaining private summaries",()=>{
   const value=workflowReply("checkpoint_only");

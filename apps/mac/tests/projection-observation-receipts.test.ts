@@ -14,8 +14,8 @@ function seeded(){
   return reduceProjection(state,{type:"read_succeeded",scope:"overview",sequence:1,now:1000,
     response:{payload:frame,age_ms:0,cached:false,stale:false,sequence:1,read_context:{scope:"fixture:read",sequence:1}}});
 }
-function applied(c:any,state:ProjectionState=seeded()){
-  parseStandardReply(c.reply);
+function applied(c:any,state:ProjectionState=seeded(),supported=true){
+  if(supported)parseStandardReply(c.reply);else assert.throws(()=>parseStandardReply(c.reply));
   const before=JSON.stringify(state.view);
   state=reduceProjection(state,c.event);
   state=reduceProjection(state,{type:"command_result",request_id:c.event.request_id,reply:c.reply});
@@ -72,7 +72,8 @@ for(const ref of [
   {source:"github",kind:"pull_request",id:"fixture-pr"},
 ])test("delivery exact PR "+JSON.stringify(ref),()=>{
   const c=sample("delivery");c.reply.request.receipt.pr_ref=ref;
-  assert.equal(applied(c)?.outcome,ref.source==="github" && ref.kind==="pull_request" && ref.id==="101:9"?"applied":"unknown");
+  const supported=ref.source==="github" && ref.kind==="pull_request" && /^101:[1-9][0-9]*$/.test(ref.id);
+  assert.equal(applied(c,seeded(),supported)?.outcome,supported && ref.id==="101:9"?"applied":"unknown");
 });
 test("delivery snapshots the requested PR and cannot infer a missing number",()=>{
   const c=sample("delivery");c.reply.request.receipt.pr_ref={source:"github",kind:"pull_request",id:"101:9"};

@@ -136,7 +136,7 @@
       "name": "verify-run:canonical",
       "command": "verify-run",
       "mode": "canonical",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "verify-run:foreign_repository",
@@ -172,7 +172,7 @@
       "name": "verify-run:opaque_matching",
       "command": "verify-run",
       "mode": "opaque_matching",
-      "accepted": true
+      "accepted": false
     },
     {
       "name": "verify-run:opaque_wrong_work",
