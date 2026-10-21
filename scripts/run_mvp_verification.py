@@ -1093,6 +1093,7 @@ def validate(report, root, manifest, pins, *, read_input):
         env = row["environment"]
         require(type(env) is dict and set(env) == {"python", "execution"} and env["execution"] == "local_subprocess")
         require(isinstance(env["python"], str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", env["python"]))
+        require(tuple(map(int, env["python"].split("."))) >= (3, 14, 0))
         require(row["command_or_runbook"] == {"runner": SCRIPT, "selectors": case["selectors"]})
         require(row["evidence_refs"] == [{"kind": "same_run", "case_id": case["case_id"], "run_alias": report["run_alias"]}])
         require(row["limitations"] == LIMITATIONS)

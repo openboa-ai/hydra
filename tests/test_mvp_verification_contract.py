@@ -142,6 +142,32 @@ class VerificationCollectorTests(unittest.TestCase):
         self.assertEqual(report["excluded"], EXCLUSIONS)
         self.assertEqual(fixture.run(validate=True, args=args).returncode, 0)
 
+    def test_report_python_floor_preserves_supported_versions_without_rerun(self):
+        fixture = self.fixture(body="with Path('effect').open('a') as stream: stream.write('once')")
+        self.assertEqual(fixture.run().returncode, 0)
+        original = fixture.report()
+        versions = (("3.13.9", 2), ("3.14.0", 0), ("3.9.99", 2),
+                    ("3.14.2", 0), ("2.99.99", 2), ("3.15.0", 0),
+                    ("4.0.0", 0), ("3.14", 2), ("3.14.0rc1", 2))
+        target = fixture.root / "artifacts/mvp-verification/report.json"
+        for version, expected in versions:
+            with self.subTest(python=version):
+                report = copy.deepcopy(original)
+                report["results"][0]["environment"]["python"] = version
+                fixture.json("artifacts/mvp-verification/report.json", report)
+                saved = target.read_bytes()
+                result = fixture.run(validate=True)
+                self.assertEqual(result.returncode, expected)
+                self.assertEqual(json.loads(result.stdout),
+                    {"status": "PASS", "reason": "passed"} if expected == 0 else
+                    {"status": "FAIL", "reason": "invalid_input"})
+                self.assertEqual(target.read_bytes(), saved)
+                self.assertEqual((fixture.root / "effect").read_text(), "once")
+        fixture.json("artifacts/mvp-verification/report.json", original)
+        self.assertEqual(fixture.run(validate=True).returncode, 0)
+        self.assertEqual((fixture.root / "effect").read_text(), "once")
+
+
     def test_versioned_manifest_executes_five_actual_source_methods(self):
         fixture = self.fixture()
         shutil.copytree(ROOT / "hydra_sdlc", fixture.root / "hydra_sdlc",

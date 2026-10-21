@@ -9,6 +9,29 @@ consumer. It does not complete P13-R8, activate `workflow_step.verify_only`, exp
 a native command, or qualify native review/completion. P13 as a whole remains
 incomplete pending the separate execution stage and applicable live L/O evidence.
 
+## Reported Python compatibility
+
+The read-only report consumer now parses each reported Python version numerically
+and requires at least 3.14.0, matching the accepted package compatibility floor.
+Validation retains the existing three-component version syntax and accepts later
+supported versions without requiring equality with the consumer's interpreter.
+This is an evidence-consistency check, not authentication of a report's producer.
+
+The same final subprocess regression reproduces three assertion failures on the
+published parent `94437dc`: otherwise valid PASS reports claiming Python 3.13.9,
+3.9.99, and 2.99.99 were accepted. The correction rejects those reports while
+accepting 3.14.0, 3.14.2, 3.15.0, and 4.0.0. Malformed versions remain rejected.
+Each read preserves the report bytes and the single original test effect, and the
+original unmodified report still passes. Three focused methods pass on Python
+3.14.2 with zero failures, errors, or skips.
+The combined collector, capability-completion, Python-baseline, and stored-output
+impact suite passes all 102 methods with zero failures, errors, or skips.
+
+Final-commit CI, independent consumption of the actual hosted report, code/security
+reviews, existing CODEOWNER approval, protected merge, and actual-main checks remain
+separate delivery gates. P13-R8 and native/full-v1 operating acceptance remain open.
+
+
 ## Implemented boundary
 
 The stdlib collector loads a closed manifest containing original requirement
