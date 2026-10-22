@@ -107,9 +107,11 @@ The login service executes this same CLI and is enabled only after real qualific
 connection writer and its later operating qualification. Their first source
 increment accepts profile-1 declarations and an empty registry. Admission version 2
 binds one trusted configuration path and defaults unprepared projects to stopped.
-Each effect re-reads that safe configuration and rejects missing, foreign or stale
-loaded bindings. Pending disconnect prevents new work while a current, separately
-authorized limiting or cleanup operation retains its own guards.
+Each business effect re-reads that safe configuration and requires a current
+connected declaration. Missing, foreign or stale loaded bindings prevent new
+work. Separately authorized exact cleanup or limiting may survive only an existing
+declaration's connected-to-disconnect-requested transition; other configuration
+changes and reconnection still reject the cached controller.
 
 Optional run/serve `--config` must match the existing host, workspace, lock,
 providers and targets before any provider import. Legacy configuration retains its
@@ -117,6 +119,10 @@ existing meaning; legacy schema-2 control operations reject the new profile befo
 mutation. The public admission observation derives `default_project_mode` from the
 actual store format and never exports its private configuration path. Python, Rust
 and TypeScript preserve the same default and reject contradictory derived facts.
+If a current connection gate blocks an otherwise-running project, its project and
+work facts cite a scoped unavailable admission observation. Independent projects
+retain their current facts; the original mode snapshot is not rewritten as stopped.
+MCP status also uses a closed public controls view without the trusted locator.
 
 This prerequisite does not expose the configuration writer, migrate an installed
 store, restart a controller or activate a native capability. Subsequent connection

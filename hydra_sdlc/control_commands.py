@@ -32,6 +32,8 @@ _STORE_REASONS = frozenset({
     'operation_state_unavailable', 'operation_state_changed', 'operation_state_revision_exhausted',
     'operation_state_repository_invalid', 'operation_state_repository_unregistered',
     'operation_state_action_invalid', 'operation_state_path_invalid',
+    'connection_binding_required', 'connection_config_changed', 'connection_config_unavailable',
+    'project_connection_unprepared', 'project_disconnect_requested',
 })
 
 

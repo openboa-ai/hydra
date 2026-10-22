@@ -160,13 +160,16 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
     if getattr(args, 'config', None) is not None:
         from .control import load_host_config, control_from_config
         installed = load_host_config(args.config)
+        canonical_targets = [repo.casefold() for repo in targets]
+        knowledge_repo = getattr(args, 'knowledge_repo', None)
         if (args.host_alias != installed['host_alias']
                 or str(args.workspace_root.expanduser().absolute()) != installed['workspace_root']
                 or str(args.lock_path.expanduser().absolute()) != installed['lock_path']
                 or any(getattr(args, key, None) != installed.get(key) for key in
-                       ('lifecycle_provider', 'storage_provider', 'knowledge_repo'))
-                or not set(targets).issubset(installed['repos'])
-                or args.command == 'serve' and tuple(args.repos) != tuple(installed['repos'])):
+                       ('lifecycle_provider', 'storage_provider'))
+                or (knowledge_repo.casefold() if knowledge_repo is not None else None) != installed.get('knowledge_repo')
+                or not set(canonical_targets).issubset(installed['repos'])
+                or args.command == 'serve' and tuple(canonical_targets) != tuple(installed['repos'])):
             raise ValueError('Execution arguments differ from installed configuration')
     operations = operations if operations is not None else (
         control_from_config(installed) if installed is not None else OperatingControl(args.lock_path, targets))

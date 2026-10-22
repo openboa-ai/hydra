@@ -22,9 +22,11 @@ effect-guard prerequisites for the subsequent configuration writer.
 
 ## Independent deterministic controls
 
-The ten-case core/CLI oracle set runs on the immutable main runtime:
-nine purpose failures, one preserved legacy success, zero errors/skips. The same
-unchanged set passes on the implementation. Two additional legacy-control cases
+The initial ten-case core/CLI oracle set runs on immutable main with nine purpose
+failures, one preserved legacy success and zero errors/skips, then passes on the
+first source candidate. The review follow-up retains its outcome assertions and
+explicitly declares the independent connected project in two positive fixtures;
+missing declarations now have separate negative cases. Two additional legacy-control cases
 reproduce unsupported status/mutation behavior before correction and pass
 afterward, with no mode change. Two actual-read cases reproduce false current
 admission under a different/missing binding and pass after the producer fence.
@@ -47,10 +49,10 @@ Final local impact checks use Python 3.14.2 and Node 24.5.0:
 
 | Scope | Result |
 | --- | --- |
-| Python control, operations, CLI, runtime, projection, MCP and connection impact | 272 methods pass; zero failures, errors or skips |
-| Complete frontend suite, including nine shared connection cases | 361 methods pass; zero failures, errors or skips |
+| Python control, operations, CLI, runtime, projection, MCP and connection impact | 320 methods pass; zero failures, errors or skips |
+| Complete frontend suite, including both shared connection matrices | 367 methods pass; zero failures, errors or skips |
 | TypeScript check and frontend production build | Pass |
-| Complete Rust suite, including the same nine source cases | 68 methods pass; zero failures or ignored methods; build succeeds |
+| Complete Rust suite, including both source matrices | 69 methods pass; zero failures or ignored methods; build succeeds |
 
 These checks preserve the frozen core and wire oracles and bind the tested source
 and fixture digests. A missing frontend build in the first Rust negative-control
@@ -63,6 +65,29 @@ manifest failure. Refreshing only its two exact specification digests makes the
 unchanged collector and the two related CI boundary checks pass. The selected-D
 manifest retains its original five selectors and acceptance scope; it does not
 claim full P17 or native acceptance.
+
+## Independent review corrections
+
+Nine regression methods reproduce eight failing assertions/subtests on the
+published parent, with zero errors or skips; the unchanged nine methods pass on
+the corrections. They cover an unprepared Resume and running override, the actual
+admission-command reply, current project/work permission, exact cached cleanup
+and Stop, rejected mixed/reconnecting configuration changes, case-insensitive
+run/serve targets and the actual MCP SDK status response's public boundary.
+
+Six additional wire cases feed the real temporary config/store/read producer to
+Python, Rust and TypeScript. A disconnect or unprepared running override yields
+unknown permission for that project while the independent connected project stays
+allowed. Connected and host-Pause controls still progress normally. Forged allowed
+claims cannot use the unavailable project source; the stored running mode remains
+visible without a fabricated stopped override.
+
+Parent CI collected 1,737 methods with one stale metadata assertion and eight
+explicit skips. The old control-wire test hardcoded CP revision 9. It now compares
+the fixture revision and digest with the actual maintained document. An injected
+stale revision still reproduces one purpose failure; restoring the current bytes
+passes all three original wire checks. The final Python impact selection includes
+all control and MCP suites so this consumer is checked locally as well as in CI.
 
 ## Remaining responsibilities
 

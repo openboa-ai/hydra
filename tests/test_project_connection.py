@@ -93,7 +93,8 @@ class ConnectionBindingTests(unittest.IsolatedAsyncioTestCase):
                     load_host_config(self.path)
 
     def test_v2_only_explicit_current_project_override_can_run(self):
-        control = self.state(self.load())
+        cfg = self.load(self.text() + f'[project_connections."{BETA}"]\ndesired="connected"\n')
+        control = self.state(cfg)
         ledger = []
         self.assertIsNone(self.effect(control, ALPHA, ledger))
         self.assertIsNotNone(self.effect(control, BETA, ledger))
@@ -102,9 +103,10 @@ class ConnectionBindingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(BETA, control.snapshot()['projects'], 'Do not fabricate a stored override')
 
     def test_cached_writer_holds_after_desired_change_and_current_beta_can_continue(self):
-        cfg = self.load()
+        beta = f'[project_connections."{BETA}"]\ndesired="connected"\n'
+        cfg = self.load(self.text() + beta)
         old = self.state(cfg, projects={ALPHA: 'running', BETA: 'running'})
-        self.write(self.text(desired='disconnect_requested'))
+        self.write(self.text(desired='disconnect_requested') + beta)
         ledger = []
         self.assertIsNotNone(self.effect(old, ALPHA, ledger))
         current = control_from_config(load_host_config(self.path))

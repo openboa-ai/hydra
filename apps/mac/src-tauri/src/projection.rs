@@ -988,3 +988,22 @@ mod connection_default_regressions {
         assert!(mismatches.is_empty(),"Connection-default contract mismatches: {:?}",mismatches);
     }
 }
+
+#[cfg(test)]
+mod connection_guard_regressions {
+    use super::*;
+    #[test]
+    fn actual_python_source_preserves_connection_guards_and_other_projects() {
+        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/control-v3/emit_connection_guards.py");
+        let output = std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
+        assert!(output.status.success(), "Actual connection guard source failed: {}", String::from_utf8_lossy(&output.stderr));
+        let cases: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let rows = cases.as_array().unwrap();
+        assert_eq!(rows.len(), 6);
+        for row in rows {
+            assert_eq!(Projection::parse(row["wire"].as_str().unwrap().as_bytes()).is_ok(),
+                row["accepted"].as_bool().unwrap(), "{}", row["name"]);
+        }
+    }
+}

@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from .connection_profile import default_project_mode
+from .connection_profile import default_project_mode, connection_reason, restrictive_connection_change
 
 
 MAX_SETTINGS_BYTES = 65536
@@ -407,14 +407,17 @@ class OperatingControl:
             cfg = load_host_config(binding['path'])
             current = _configuration(cfg)
             valid_lock = Path(cfg['lock_path']).with_name(Path(cfg['lock_path']).name + '.operations.lock')
-            if (current != self._loaded_configuration or current.get('connection_schema') != 1
+            compatible_cleanup = ((cleanup or limiting)
+                and restrictive_connection_change(self._loaded_configuration, current))
+            if ((current != self._loaded_configuration and not compatible_cleanup)
+                    or current.get('connection_schema') != 1
                     or valid_lock != self.control_lock_path or not self.repos.issubset(cfg['repos'])):
                 raise OperationDenied('connection_config_changed')
             if repository is not None and repository not in cfg['repos']:
                 raise OperationDenied('operation_state_repository_unregistered')
-            if (repository is not None and not cleanup and not limiting and
-                    cfg['project_connections'].get(repository, {}).get('desired') == 'disconnect_requested'):
-                raise OperationDenied('project_disconnect_requested')
+            reason = connection_reason(cfg, repository)
+            if reason and not cleanup and not limiting:
+                raise OperationDenied(reason)
         except (ValueError, TypeError, OSError):
             raise OperationDenied('connection_config_unavailable') from None
 
