@@ -217,9 +217,9 @@ _operating_scope = ContextVar("hydra_operating_scope", default=None)
 
 
 @contextmanager
-def operation_scope(control, repository):
+def operation_scope(control, repository, *, expected_revision=None):
     """Bind host admission settings to one parent-side repository operation."""
-    token = _operating_scope.set((control, repository) if control is not None else None)
+    token = _operating_scope.set((control, repository, expected_revision) if control is not None else None)
     try:
         yield
     finally:
@@ -238,8 +238,8 @@ def operation_guard():
     if current is None:
         yield
     else:
-        control, repository = current
-        with control.guard(repository):
+        control, repository, revision = current
+        with control.guard(repository) if revision is None else control.guard(repository, expected_revision=revision):
             yield
 
 

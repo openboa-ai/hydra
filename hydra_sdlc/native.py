@@ -71,6 +71,10 @@ class NativeRunner(Runner):
         self.summaries = {}
         self.pending_verifications = {}
         self.review_steps = {}
+        # These links live exactly as long as the private verification/review
+        # caches. A matching candidate key does not identify an invocation.
+        self.verification_runs = {}
+        self.review_runs = {}
 
     def _verify_candidate(self, path, config, evidence_key):
         if evidence_key in self.pending_verifications:
@@ -129,6 +133,10 @@ class NativeRunner(Runner):
                 raise RuntimeError("Native retirement is unconfirmed")
             confirm_native_assignment(step)
             self.consumed.add(step)
+            self.review_runs.pop(step, None)
+            key = self.review_steps.get(step)
+            if key is not None:
+                self.verification_runs.pop(key, None)
         return source if checkpoint_only else clean
 
     async def step(self, repo, number):
@@ -191,8 +199,15 @@ class NativeRunner(Runner):
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
         scope = assignment_scope(repo, number, record["attempt_id"], state["head"], record["contract_revision"])
+        if self._verification_scope.get() is not None:
+            from .native_verification import validate_assignment
+            validate_assignment({**recovery, 'action': 'native_task', 'phase': phase,
+                'spec_revision': record.get('spec_revision'), 'cwd': str(path),
+                'mode': 'read_only' if 'review' in phase else 'workspace_write', 'prompt': task},
+                repo, number, {k: record[k] for k in ('attempt_id', 'head', 'contract_revision')})
         try:
-            self._effect(repo, register_native_assignment, step, scope)
+            self._effect(repo, register_native_assignment, step, scope,
+                _checkpoint_effect='review_assignment' if self._verification_scope.get() is not None else None)
         except OperationDenied:
             raise
         except (RuntimeError, ValueError, OSError):
@@ -226,6 +241,8 @@ class NativeRunner(Runner):
             with self._guard(repo):
                 if phase == "change_review":
                     self.review_steps[step] = evidence_key
+                    if self._verification_scope.get() is not None:
+                        self.review_runs[step] = self.verification_runs.get(evidence_key)
                 return None, {"repository": repo, "issue": number, "action": "native_task",
                     "attempt_id": record["attempt_id"], "step_id": step, "phase": phase,
                     "head": state["head"], "contract_revision": record["contract_revision"],
@@ -563,9 +580,11 @@ class NativeController:
                     self.runner.consumed.add(step_id)
                     self.runner._record(repo, n, fresh)
                     self.runner.summaries.pop(step_id, None)
+                    self.runner.review_runs.pop(step_id, None)
                     key = self.runner.review_steps.pop(step_id, None)
                     if key is not None:
                         self.runner.pending_verifications.pop(key, None)
+                        self.runner.verification_runs.pop(key, None)
                     return self._continuation(repo, n, record, {"action": "waiting", "reason": fresh["wait_reason"]})
             # Persist only the bounded outcome; raw summaries remain private and
             # cannot authorize delivery. Interrupted read-back keeps ownership.
