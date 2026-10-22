@@ -23,7 +23,9 @@ The existing-host control passed before implementation; the seven missing
 lifecycle outcomes failed through purpose assertions with no skipped method.
 The unchanged eight methods passed after implementation. A further keyboard
 recovery test reproduced one assertion failure alongside two valid controls;
-the same three methods passed after correction.
+the same three methods passed after correction. A separate valid overview/project
+case reproduced one continuation-scope assertion on the published parent; the
+unchanged case passes after correction. All original eleven methods are preserved.
 
 | Case | Required outcome | Local result |
 | --- | --- | --- |
@@ -38,17 +40,18 @@ the same three methods passed after correction.
 | Keyboard recovery | Recover the refresh control when no later interaction owns focus | PASS |
 | Expired evidence | Retain source text; disable original navigation from stale evidence | PASS |
 | Later keyboard interaction | Read completion cannot steal focus from another project | PASS |
+| Source continuation scope | An overview continuation cannot become a project continuation; the original overview page remains available | PASS |
 
 Commands from `apps/mac`:
 
 ```sh
-node --experimental-strip-types --test tests/tower.test.ts tests/tower-events.test.ts
+node --experimental-strip-types --test tests/tower.test.ts tests/tower-events.test.ts tests/tower-pagination.test.ts
 npm test
 npm run build
 npm run verify:theme
 ```
 
-Local results: 11 lifecycle methods, 363 complete frontend methods, TypeScript/Vite
+Local results: 12 lifecycle methods, 364 complete frontend methods, TypeScript/Vite
 build and theme verification pass. The existing suite includes actual Python
 producer/TypeScript consumer fixtures, using Python 3.14.2 in this verification.
 No Rust source changed. Required remote/native build checks remain part of CI;
@@ -65,7 +68,7 @@ The browser reported no page errors or external page requests. No native Hydra o
 Codex operation was dispatched, and the one-shot browser was closed afterward.
 
 Built JavaScript SHA-256:
-`b12148574f5c48dc825feceb780aaaa79e7fc7798d4e8c4a68497974c11a6cce`.
+`d19cae05c5fd1c3dd114ce3905fe5ec67a6d59eca09e7374eedb2a7de50bdcf3`.
 Built CSS SHA-256:
 `962520c3b8fd8dee16ea02c69d3cd1b02eb85d7cabaa3d1f738b19233f1b0da9`.
 Overview screenshot SHA-256:

@@ -269,7 +269,7 @@ export function mountControlTower(root: HTMLElement): void {
           detail.append(card);
         }
       }
-      const cursor = project?.coverage.next_cursor ?? view.page.next_cursor;
+      const cursor = project ? project.coverage.next_cursor : view.page.next_cursor;
       if (cursor) {
         const more = button('Read next source page', 'Read next source page', () => { void read(true, true, cursor); });
         more.disabled = remoteBusy; detail.append(more);
