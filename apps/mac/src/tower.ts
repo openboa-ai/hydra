@@ -106,12 +106,12 @@ export function mountControlTower(root: HTMLElement): void {
         return;
       }
       const view = projectedView(state, Date.now());
-      const name = id && view ? repositoryName(view, id) : null;
+      const name = id && view ? repositoryName(view, id)?.toLowerCase() ?? null : null;
       if (id && !name) { notice = 'Source refresh unavailable: the current repository identity is unconfirmed.'; return; }
-      scope = `${remote ? 'github' : 'hydra'}:${id ?? 'overview'}:${cursor ? 'page' : 'first'}`;
+      scope = `${remote ? 'github' : 'local'}:${id ?? 'overview'}:${cursor ? 'page' : 'first'}`;
       requestSequence = ++sequence;
       const requestId = crypto.randomUUID();
-      const keys = [...state.source_slots].filter(([,slot]) =>
+      const keys = cursor ? [] : [...state.source_slots].filter(([,slot]) =>
         slot.observation.resource.source === (remote ? 'github' : 'hydra') &&
         (!id || slot.observation.resource.id === id || slot.observation.resource.id.startsWith(id + ':')))
         .map(([key]) => key);
@@ -170,7 +170,7 @@ export function mountControlTower(root: HTMLElement): void {
     const issue = Number(ref.id.split(':')[1]);
     const open = button('Open original issue', 'Open original issue', () => {
       // The native bridge re-reads and validates this exact Issue before opening it.
-      void invoke('open_record', {repository: name, kind: 'issue', issue, expectedPr: null})
+      void invoke('open_record', {repository: name.toLowerCase(), kind: 'issue', issue, expectedPr: null})
         .catch(() => { notice = 'The original source could not be opened. Refresh to reconcile it.'; render(); });
     });
     const repoSource = metadata(view, {source: 'github', kind: 'repository', id: id!});
