@@ -1,6 +1,6 @@
 # P05 — 후속 실행 없이 원 단계 checkpoint 완료
 
-상태: 설계 후보 · revision 2 · 2026-10-19. P05는 계획 ID이며 실제 PR 번호가 아니다.
+Status: Design contract, revision 3, 2026-10-22. Operating acceptance remains separate.
 수용 판본·구현 head·검증 결과는 [공통 변경 절차](../README.md)에 연결한다. 현재 실행 증거는 NOT RUN이다.
 검토 기준은 CP revision 7·EX revision 7다. 구현 시작 때 수용한 immutable 판본을 고정한다.
 
@@ -126,3 +126,17 @@ core다. MCP 여섯 번째 도구·transport 인증·native 종료 증거 adapte
   progress-only writer는 discovery label 변경을 포함하지 않는다.
 
 실행·회귀·미실행 범위와 판본은 [검증 기록](verification.md)에 남긴다.
+
+## Standalone admission-provider wiring
+
+Standalone STDIO main supplies P02's optional installation-scoped admission provider
+using the same fixed absolute host-config locator as the controller and command core.
+Only the official SDK's injected Context reaches this internal provider. It ignores
+request/client/task metadata and grants only admission_set for explicitly configured
+numeric scopes. create_server's embedded default remains no provider/no grant.
+There is no checkpoint grant or ended-task proof in this profile; checkpoint_only
+and all other operations retain their own existing authority requirements. Missing
+SDK caller-context support still refuses writes. Preserve legacy tools, closed input
+schema, privacy middleware, unknown-effect replies and the existing STDIO transport.
+P02 owns parser/digest/revocation tests; this consumer owns actual SDK and main-wiring
+tests. Neither fixture success nor policy adoption is installed/native qualification.

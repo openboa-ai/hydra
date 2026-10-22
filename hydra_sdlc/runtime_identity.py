@@ -15,6 +15,7 @@ import stat
 import uuid
 
 from . import __version__
+from .native_admission import parse_admission_profile
 
 MAX_SOURCE_FILES = 128
 MAX_SOURCE_DIRS = 64
@@ -25,7 +26,8 @@ MAX_DIRECTORY_ENTRIES = 256
 _REPOSITORY = re.compile(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9_.-]{1,100}\Z")
 _PROVIDER = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z", re.ASCII)
 _CONFIG_FIELDS = frozenset({"repos", "host_alias", "workspace_root", "lock_path",
-    "lifecycle_provider", "storage_provider", "knowledge_repo", "runtime_python", "project_threads"})
+    "lifecycle_provider", "storage_provider", "knowledge_repo", "runtime_python", "project_threads",
+    "native_admission_control"})
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
@@ -205,6 +207,8 @@ def _configuration(cfg):
         if repo not in repos or not isinstance(thread, str) or str(uuid.UUID(thread)) != thread:
             raise ValueError("invalid thread")
     value["project_threads"] = dict(threads)
+    if "native_admission_control" in cfg:
+        value["native_admission_control"] = parse_admission_profile(cfg["native_admission_control"])
     return value
 
 

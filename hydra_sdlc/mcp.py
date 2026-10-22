@@ -41,8 +41,8 @@ def create_server(controller, *, command_config_path=None, command_context_provi
                   command_ended_provider=None, subscriptions=None):
     """Create the SDK server; command providers are trusted internal dependencies.
 
-    No installed native grant/termination adapter is supplied by this module.
-    The versioned endpoint is inactive by default, regardless of request metadata.
+    Embedded callers have no grant by default. Standalone main supplies only the
+    optional protected installation profile; request metadata never grants scope.
     """
     from mcp.server import MCPServer
     from mcp.server.mcpserver.tools import Tool
@@ -173,8 +173,11 @@ def main():
     # Protocol output belongs exclusively to the official SDK.
     from mcp.server.subscriptions import InMemorySubscriptionBus
     from .mcp_stdio import run_stdio
+    from .native_admission import installation_admission_provider
+    config_path = args.config.expanduser().absolute()
     subscriptions = InMemorySubscriptionBus()
-    server = create_server(controller_from_file(args.config), command_config_path=args.config,
+    server = create_server(controller_from_file(config_path), command_config_path=config_path,
+                           command_context_provider=installation_admission_provider(config_path),
                            subscriptions=subscriptions)
     run_stdio(server, subscriptions)
 

@@ -20,10 +20,12 @@ from datetime import datetime, timezone
 from .coordinator import observe_coordinator, residual_workers
 from .operations import MAX_PROJECTS, MAX_REVISION, OperatingControl, OperationDenied
 from .runtime_identity import capture_runtime_identity
+from .native_admission import parse_admission_profile
 
 
 _CONFIG_KEYS = {"repos", "host_alias", "workspace_root", "lock_path", "lifecycle_provider",
-                "storage_provider", "knowledge_repo", "runtime_python", "project_threads"}
+                "storage_provider", "knowledge_repo", "runtime_python", "project_threads",
+                "native_admission_control"}
 _REPOSITORY = re.compile(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9_.-]{1,100}\Z")
 _CODE = re.compile(r"[a-z0-9][a-z0-9_-]{0,119}\Z")
 _PROVIDER = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z", re.ASCII)
@@ -153,6 +155,8 @@ def load_host_config(path):
                     or not isinstance(thread, str) or str(uuid.UUID(thread)) != thread):
                 raise ValueError("Invalid installed project threads")
         cfg["project_threads"] = threads
+        if "native_admission_control" in cfg:
+            cfg["native_admission_control"] = parse_admission_profile(cfg["native_admission_control"])
         return cfg
     except (OSError, ValueError, TypeError, RuntimeError, UnicodeError):
         raise ValueError("Invalid installed host settings") from None

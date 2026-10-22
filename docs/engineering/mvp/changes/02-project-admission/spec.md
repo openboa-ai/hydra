@@ -1,9 +1,9 @@
 # P02 — 프로젝트 admission의 정확한 변경
 
-상태: 설계 후보 · revision 4 · 2026-10-19. P02는 계획 ID이며 실제 PR 번호가 아니다.
+Status: Design contract, revision 5, 2026-10-22. Operating acceptance remains separate.
 수용 판본·구현 head·검증 결과는 구현 시 [공통 변경 절차](../README.md)에 따라 기존 작업에 연결한다.
 이 문서는 전체 완료·설치 성공을 선언하지 않는다. 저장 계층의 부분 구현은 [검증 기록](verification.md)에 구분한다.
-검토 기준은 CP revision 7와 통합 spec의 R 요구다. 구현 시작 때 수용한 immutable 판본을 고정한다.
+The accepted increment uses CP revision 9 and the integrated R requirements; pin immutable specifications before implementation.
 
 ## 1. 목적·요구·범위
 
@@ -17,7 +17,7 @@ revision에서만 변경한다. 응답을 잃어도 원래 요청의 성공과 �
 | 포함 | project Pause/Resume, 동일 mode 무쓰기, host 제한, 응답 유실, bounded effect와 Pause의 순서 |
 | 제외 | 실제 native interrupt/resume, 전체 v3 UI, 질문 결정, 새 설정 DB·명령 journal |
 | 입출력 정본 | [CP §8](../../contracts/control-plane.md#8-command-envelope와-공통-guard)의 admission_set·CommandReplyV1·admission receipt |
-| 현재 차이 | legacy `set_mode`와 별도로 CAS 및 typed admission core의 source 후보가 있다. 검증 범위는 기록의 exact 파일 판본에 한정하며 transport/native 권한 연결은 미구현이다 |
+| Current increment | Existing CAS and typed admission gain the protected shared-installation STDIO adapter. Source evidence is revision-bound; installed/native qualification remains separate. |
 
 ## 2. 선행과 변경 소유
 
@@ -196,3 +196,60 @@ admission store version=1과 legacy set_mode/v2 응답 의미를 유지한다. �
 소급 표시하지 않는다. 재시작 뒤 현재 설정은 복원하지만 사라진 request receipt는 발명하지 않는다.
 unsafe state는 초기화하지 않고 원래 파일/owner를 보존한다. 캐시나 DB로 복구 기록을 추가하지 않는다.
 다음 P05/P12에는 handler 판본·지원 action·시험 증거를 연결하고, native/UI 구현 여부는 별도로 남긴다.
+
+## Installation-scoped STDIO admission profile
+
+This increment completes the authority adapter for project Pause and explicit Resume.
+The existing protected host configuration may contain `native_admission_control`:
+
+```toml
+[native_admission_control]
+schema_version = 1
+enabled = true
+repository_ids = [101]
+# expires_at = "2030-01-01T00:00:00Z"
+```
+
+The principal is every launcher or agent able to use this trusted installation's
+STDIO connection and protected host configuration. This is an explicitly shared
+principal, without a per-human or per-worker authentication claim. Registered names,
+client metadata, task IDs and request arrival cannot grant authority by themselves.
+The profile is absent by default. Its schema is closed: exact integer version 1,
+strict boolean `enabled`, a list of zero through MAX_PROJECTS unique positive numeric
+repository IDs within the command integer range, and optional UTC-second expiry in
+`YYYY-MM-DDTHH:MM:SSZ` form. Boolean IDs, native TOML datetime objects, unknown keys,
+duplicates, noncanonical or impossible timestamps and over-limit values are invalid.
+An empty set grants no repository. An omitted expiry lasts until operator revocation.
+
+The existing safe loader validates the profile. Semantic config identity includes
+all profile fields with repository order normalized; absence preserves legacy config
+identity. The provider is bound once to the command server's absolute config locator,
+re-reads it at both existing authority checks, and returns only native admission_set
+scope. Each installation grant carries the semantic config digest of the same
+validated settings snapshot that supplied its scope. Before CAS, the core rejects
+a mismatch between that grant and its loaded configuration as `stale_runtime`.
+Equivalent formatting and repository-ID ordering preserve the same identity.
+Registered-name/current-numeric-ID matching, runtime/admission expectations,
+nonblocking CAS and durable read-back remain in the common command core.
+
+Removal, disablement, scope removal, expiry, unsafe/unreadable settings or a changed
+runtime invalidate the affected command. Expectations are never silently refreshed.
+Expiry at the current instant is expired. Revocation does not change admission state
+or undo completed effects. The last authority read and the CAS are separate sources;
+a revocation immediately after that read is not atomically coupled to the CAS.
+
+Standalone STDIO main injects this optional provider. Embedded create_server callers
+retain default deny unless they explicitly supply a trusted provider. No new wire
+operation, listener, credential, scheduler, permission store or provider callback from
+request data is introduced. This scope excludes host/global controls, project Stop,
+native turn control, decision_apply, checkpoint, execution, delivery and protected
+approvals. Answers, wakes and continuations cannot implicitly Resume a project.
+
+Acceptance: actual temporary admission storage and the official SDK must demonstrate
+Pause, read-back and a separate fresh-expectation Resume while preserving host/beta;
+invalid/disabled/expired/foreign scopes and unsupported actions have zero effects;
+source-time revocation/config replacement is rejected; main wiring and five legacy
+tools remain covered. Freeze independent positive and forbidden-effect cases before
+code, observe meaningful RED then GREEN and relevant regression, and retain exact-head
+CI and independent reviews. Installed/native operation and deployment selection are
+separate evidence and remain NOT RUN until the actual chosen installation is exercised.

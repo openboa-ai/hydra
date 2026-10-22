@@ -1,8 +1,8 @@
 {
   "contract": {
     "path": "docs/engineering/mvp/contracts/control-plane.md",
-    "revision": 8,
-    "sha256": "d64b7a80ac07b496b4c4e1641bab671bdbf03adb113923af6f80a023c19239a9"
+    "revision": 9,
+    "sha256": "b82792481dc6042b79307f78685f7b1b8e11863e425ec6fef9c73afd65eaa291"
   },
   "cases": [
     {

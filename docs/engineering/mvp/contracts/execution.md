@@ -1,6 +1,6 @@
 # 실행·검증·전달·복구 계약
 
-Revision: 7 · 상태: 검토 후보 · 2026-10-19 · 작업 기록: Issue #3
+Revision: 8; design contract, 2026-10-22. Installation authority increment.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 구현할 동작과
 검증 기준을 정의한다. 현재 코드가 모두 충족한다는 선언이 아니며 코드·설치·예약 실행을 재개하지 않는다.
@@ -718,3 +718,14 @@ EX-O04–O06과 전체 v1.0.0의 다른 계약 증거가 필요하다. `NOT RUN`
 상세 구현은 현재 책임을 유지하는 작은 변경으로 한다: 기존 identity/전이 TC 확정 → 새 control-plane
 명령의 효과 상한과 legacy 호환 → provider qualification 결과 연결 → recovery/discovery 통합 → 실제 운영 증거.
 공통 runner 전면 재작성, 영속 데이터 복제, 자동 scheduler 추가는 이 계약에 포함되지 않는다.
+
+## Shared-installation project admission
+
+P02's explicitly enabled STDIO installation profile can delegate project Pause and
+explicit Resume to all agents sharing that connection. It does not authenticate
+human intent or grant host control, native turn control, decision application or
+workflow effects. A separate current admission_set(running) command is still required;
+answer reception, wake, retry and ordinary continuation cannot issue an implicit
+Resume. Host Pause/Stop remains dominant. Revoking the profile does not clear a
+project's Pause or terminate native work. Preserve exact expectations and original
+effect read-back; the profile adds no command journal or lifecycle mirror.
