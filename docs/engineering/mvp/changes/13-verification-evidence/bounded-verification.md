@@ -44,6 +44,19 @@ releasing its ticket. It does not invoke legacy checkpoint or continuation.
 
 ## Execution and recovery
 
+The final private assignment return rechecks current configuration, admission and
+handoff grants after the last source read. Revocation during that read leaves the
+review recoverable and returns no private assignment or verifier output.
+Reply construction remains inside the original coordinator ownership. A handoff
+is marked returned only after the final reply guard. A previously returned
+assignment keeps that status when a later retry lacks handoff grants.
+
+If only handoff authority is lost, a never-returned review assignment can be
+retired through the fixed original-source operation under remaining workflow
+authority, policy and admission. Loss of workflow authority or an unknown source
+preserves its ticket for authorized recovery. This is logical assignment cleanup;
+it does not infer task termination or retire a previously returned assignment.
+
 Workflow dispatch compares the controller's loaded configuration identity with
 the current host configuration. A new digest cannot relabel already-loaded
 storage or lifecycle providers; changed bindings require controller restart.
@@ -79,6 +92,13 @@ handoff and the exact original progress observation; cleanup preserves Pause.
 An uncertain retirement write is read back once before confirming its matching
 ticket. Missing, changed or incomplete source remains unknown without reposting.
 
+A confirmed accepted review adds the existing verified-candidate marker only
+after exact source retirement. A later ordinary invocation can continue toward
+delivery without rerunning D or requesting the same review. A failed judgment
+records correction debt and the existing retry budget for that later invocation;
+the bounded command itself does not start correction. An ACK-loss retry does not
+charge another correction attempt. Missing invocation proof grants no marker.
+
 The fixed scope permits registered verification, its local checkpoint, progress
 recording and the qualified independent review assignment. Publication intents,
 workspace publication and other provider writes are rejected below dispatch.
@@ -103,6 +123,11 @@ independent effect spies and the pinned MCP SDK:
 - `test_native_verify_only_review.py`: loaded providers, unhanded ticket recovery,
   final-record ACK loss/retry, foreign same-pin progress and retirement ACK loss,
   with unchanged-provider and pre-write-failure controls.
+- `test_native_verify_only_return.py`: final-source-read grant revocation, normal
+  private handoff and same-request recovery without a second D invocation.
+- `test_native_verify_only_lifecycle.py`: accepted-review continuation, failed-review
+  correction debt and cap, missing proof, never-returned assignment cleanup and
+  preservation of previously returned or foreign-source assignments.
 
 The first source CI ran all 1,637 methods successfully in 583.313 seconds with
 eight explicit skips, but exhausted the ten-minute job budget before evidence
@@ -110,6 +135,10 @@ export. The kernel job now has a fifteen-minute execution budget, including
 setup and export. Required checks, test cases, their own deadlines, permissions
 and pinned trusted tooling are unchanged. The cancelled run is not a green CI
 result; final-source CI and its evidence export must complete independently.
+The next 1,645-method run took 590.679 seconds and exposed the stale ten-minute
+capacity assertion. The bounded capacity test now uses that measured baseline,
+two minutes of setup/export reserve and the fifteen-minute outer limit. Individual
+test deadlines and product acceptance assertions retain their existing meaning.
 
 Run these with the repository's supported Python 3.14+ interpreter and pinned MCP
 dependency; then run the affected legacy command, native, ownership and admission

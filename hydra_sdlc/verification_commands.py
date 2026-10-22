@@ -78,6 +78,11 @@ async def execute_verification_command(config_path, command, *, context_provider
     observed = None
 
     def reply(outcome, reason, receipt=None, assignment=None, required_next='reconcile'):
+        if assignment is not None:
+            # The last source read can outlive the previous grant observation.
+            before_effect()
+            if not allow_handoff():
+                raise OperationDenied('review_handoff_unavailable')
         value = c._reply(command, runtime, epoch, outcome, reason, receipt=receipt,
                          progress_observation=observed, required_next=required_next)
         # Verification is an actual effect even while its independent review
@@ -161,13 +166,12 @@ async def execute_verification_command(config_path, command, *, context_provider
 
     from .native_verification import execute
     try:
-        result = await execute(controller, repository, target['issue_number'], params,
+        return await execute(controller, repository, target['issue_number'], params,
             expected['assignment'], repository_id=target['repository_id'],
             admission_revision=expected['admission_revision'], before_effect=before_effect,
             allow_handoff=allow_handoff, source_observer=observe, request_id=command['request_id'],
             request_digest=hashlib.sha256(json.dumps(command, sort_keys=True,
-                separators=(',', ':'), ensure_ascii=False).encode()).hexdigest())
-        return reply(**result)
+                separators=(',', ':'), ensure_ascii=False).encode()).hexdigest(), finalize_reply=reply)
     except OperationDenied as exc:
         outcome = ('unknown' if exc.reason in {'assignment_unattributed', 'verification_invocation_unattributed'} else
                    'rejected' if exc.reason in {'stale_candidate', 'unsupported_phase', 'request_conflict'} else 'waiting')

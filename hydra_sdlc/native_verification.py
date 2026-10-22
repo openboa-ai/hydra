@@ -146,7 +146,7 @@ def _valid_results(workspace, path, config, results):
 
 async def execute(controller, repo, number, params, assignment, *, repository_id,
                   admission_revision, before_effect, allow_handoff, source_observer,
-                  request_id, request_digest):
+                  request_id, request_digest, finalize_reply):
     runner, pin = controller.runner, params['candidate']
     policy = runner._policy_scope.set(None)
     ceiling = runner._checkpoint_ceiling.set((repo, admission_revision, before_effect, {}))
@@ -185,6 +185,7 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                 lock = dict(native_step=prior_run.ticket[0], native_scope=prior_run.ticket[1])
         with operation_scope(runner.operations, repo, expected_revision=admission_revision), \
              coordinator_lock(controller.lock_path, **lock):
+            cleanup_attempted = False
             try:
                 before_effect()
                 bound_assignment = (prior_run.assignment or prior_run.draft) if prior_run is not None else assignment
@@ -198,16 +199,27 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                     repository_id, bound_assignment)
                 key = (repo, number, pin['head'], config['blob_sha'])
                 if prior_run is not None:
-                    return _resume_run(controller, repo, number, params, prior_run, config, path,
+                    result = _resume_run(controller, repo, number, params, prior_run, config, path,
                         spec_digest, key, repository_id, before_effect, allow_handoff, source_observer)
-                if params['stage'] == 'review_checkpoint':
-                    return _finish(controller, repo, number, params, assignment, record,
+                elif params['stage'] == 'review_checkpoint':
+                    result = _finish(controller, repo, number, params, assignment, record,
                         config, path, spec_digest, key, before_effect, source_observer)
-                return await _run(controller, repo, number, params, record, config, path,
-                    spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
-                    request_id, request_digest)
+                else:
+                    result = await _run(controller, repo, number, params, record, config, path,
+                        spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
+                        request_id, request_digest)
+                if result.get('assignment') is None:
+                    cleanup_attempted = True
+                    _release_unhanded_ticket(runner, repo, number, boundary.run, source_observer)
+                # Construct the guarded private reply before leaving ownership.
+                # A prior delivered assignment stays delivered across retries.
+                value = finalize_reply(**result)
+                if result.get('assignment') is not None:
+                    boundary.run.assignment = result['assignment']
+                return value
             finally:
-                _release_unrecorded_ticket(runner, repo, number, boundary.run, source_observer)
+                if not cleanup_attempted:
+                    _release_unhanded_ticket(runner, repo, number, boundary.run, source_observer)
     finally:
         runner._verification_scope.reset(verification)
         runner._checkpoint_ceiling.reset(ceiling)
@@ -321,7 +333,6 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     if assignment:
         _candidate(controller, repo, number, pin, repository_id, assignment)
     source = _source(runner, repo, number, proof.expected_record, observer)
-    proof.assignment = assignment
     return _run_reply(pin, proof, source, assignment)
 
 
@@ -367,19 +378,36 @@ def _resume_run(controller, repo, number, params, proof, config, path, spec_dige
     if proof.draft is not None and source['record'].get('native_step') is not None:
         assignment = _handoff(controller, repo, number, pin, proof, key,
             repository_id, before_effect, allow_handoff)
-    proof.assignment = assignment
     return _run_reply(pin, proof, source, assignment)
 
 
-def _release_unrecorded_ticket(runner, repo, number, proof, observer):
-    """Release only a positively born, never handed-off, unrecorded local ticket."""
+def _release_unhanded_ticket(runner, repo, number, proof, observer):
+    """Reconcile only a positively born assignment never returned to its caller."""
     if proof is None or proof.ticket is None or proof.assignment is not None:
         return
     try:
         if proof.verification_record is None:
             return
-        source = _source(runner, repo, number, proof.verification_record, observer)
+        try:
+            source = _source(runner, repo, number, proof.expected_record, observer)
+        except RuntimeError:
+            source = _source(runner, repo, number, proof.verification_record, observer)
         if source['record'].get('native_step') is not None:
+            step = source['record']['native_step']
+            if proof.draft is None or step != proof.ticket[0]:
+                return
+            # This fixed recording still requires current workflow authority,
+            # protected policy and admission. Revocation of all workflow grants
+            # leaves the source and ticket intact for authorized recovery.
+            source = runner._retire_assignment(repo, number, source['record'],
+                checkpoint_only=True, reconcile_write=True, phase='implementation_done',
+                pending_action=None, wait_reason='native_assignment_pending', next_action='change_review')
+            observer(source)
+            key = runner.review_steps.pop(step, None)
+            if key is not None:
+                runner.pending_verifications.pop(key, None)
+            proof.ticket, proof.draft = None, None
+            proof.expected_record = source['record']
             return
         # No native execution was handed out and the exact original progress
         # proves no assignment was recorded. This is local ticket cleanup, not
@@ -420,8 +448,15 @@ def _finish(controller, repo, number, params, assignment, record, config, path,
         ('verification_evidence_unknown', 'verification'))
     values = {'native_outcome': outcome, 'phase': 'change_review_done', 'pending_action': None,
         'checkpoint': 'locally_verified' if accepted else None,
-        'resume_phase': 'change_review' if outcome == 'needs_decision' else None,
+        'resume_phase': ('change_review' if outcome == 'needs_decision' else
+                         'correction' if outcome == 'failed' else None),
         'wait_reason': wait, 'next_action': next_action}
+    if outcome == 'failed':
+        attempts = record.get('correction_attempt') or 0
+        if record.get('native_outcome') != 'failed':
+            attempts = max(attempts + (record.get('correction_reason') == 'review_findings'),
+                runner.failures.get((repo, number, 'review_findings'), 0) + 1)
+        values.update(correction_reason='review_findings', correction_attempt=attempts or 1)
     if any(record.get(k) != v for k, v in values.items()):
         record = runner._record(repo, number, record, **values)
     _source(runner, repo, number, record, observer)
@@ -436,6 +471,8 @@ def _finish(controller, repo, number, params, assignment, record, config, path,
         _candidate(controller, repo, number, params['candidate'], config['repository_id'], assignment)
     source = runner._retire_assignment(repo, number, record, checkpoint_only=True, reconcile_write=True)
     observer(source)
+    if review == 'accepted':
+        runner.verified_heads.add(key)
     runner.summaries.pop(step, None)
     runner.review_steps.pop(step, None)
     runner.review_runs.pop(step, None)
