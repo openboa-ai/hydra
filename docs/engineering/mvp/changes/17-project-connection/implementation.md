@@ -41,6 +41,15 @@ Old schema-2 control operations reject this new profile before any mutation.
 MCP status emits a closed public controls view, preserving the actual store
 version and stopped default without exposing the trusted configuration locator.
 
+The actual MCP configuration factory also accepts an explicitly empty registry.
+Its controller returns no registered projects and preserves removed stopped
+overrides in the public controls view. Exact allowlist membership still precedes
+every begin, checkpoint and delivery entry; an empty tuple permits no Issue URL.
+Legacy host configuration retains its nonempty requirement. The configured CLI
+read projection remains available, and an unregistered run target is rejected
+before provider loading. Zero registered projects is not evidence of zero native
+activity, completed resource cleanup or permission to Quit.
+
 During a disconnect's desired-first crash window, the actual store can still say
 running. The producer retains that source fact and supplies a scoped unavailable
 admission observation for the affected project's connection guard. Project and

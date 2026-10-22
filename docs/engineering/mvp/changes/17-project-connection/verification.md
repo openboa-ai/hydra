@@ -45,11 +45,14 @@ already present are refreshed; case IDs, inputs, expected outcomes, metadata sha
 and validators remain unchanged. The same reference check then passes and guards
 all declared CP references together.
 
-Final local impact checks use Python 3.14.2 and Node 24.5.0:
+Local checks use Python 3.14.2 and Node 24.5.0. The final Python selection
+includes the native workflow suite. Frontend and Rust results are retained from
+the preceding source; their source and fixtures are unchanged by the final
+Python-only service correction.
 
 | Scope | Result |
 | --- | --- |
-| Python control, operations, CLI, runtime, projection, MCP and connection impact | 324 methods pass; zero failures, errors or skips |
+| Python control, operations, CLI, runtime, projection, MCP, native and connection impact | 369 methods pass; zero failures, errors or skips |
 | Complete frontend suite, including both shared connection matrices | 369 methods pass; zero failures, errors or skips |
 | TypeScript check and frontend production build | Pass |
 | Complete Rust suite, including both source matrices | 69 methods pass; zero failures or ignored methods; build succeeds |
@@ -108,6 +111,27 @@ The preceding source `ad7203c` passes [Repository CI](https://github.com/openboa
 and 69 Rust methods, builds and trusted hygiene pass. Its selected-D export passes
 within its declared scope. Final-source CI and independent review remain required
 for the receipt correction.
+
+## Empty-registry service boundary
+
+Seven independent controls exercise the actual configuration factory, in-memory
+MCP SDK client, legacy work entries and configured CLI. The published parent
+reproduces three purpose failures with zero errors/skips; the same seven controls
+pass after the native controller accepts an empty registered scope. Status keeps
+removed stopped overrides without exposing the trusted path. Begin, checkpoint
+and delivery reject every target before callbacks or GitHub access. Legacy empty
+configuration still fails, normal nonempty scope remains exact, the empty CLI
+projection validates and an unregistered run fails before provider loading.
+
+An initial SDK fixture used the wrong list-result accessor. That preparation error
+is preserved separately and is not counted as behavioral RED. Correcting only the
+accessor, with all expected tool names and outcomes unchanged, reproduces the
+three parent failures and passes the corrected source.
+
+The preceding source `035affe` passes [Repository CI](https://github.com/openboa-ai/hydra/actions/runs/39846682928):
+1,751 Python methods collected, 1,743 pass and eight explicit skips. Mac checks,
+builds, trusted hygiene and selected-D export pass. These are parent results;
+the empty-service correction requires its own final-source CI and review.
 
 ## Remaining responsibilities
 
