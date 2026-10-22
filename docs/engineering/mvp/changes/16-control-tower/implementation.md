@@ -49,6 +49,19 @@ manufacture empty success. Read failure feedback belongs to the source and query
 that failed; local polling, another project or another query cannot acknowledge
 it. Matching recovery clears its own feedback. This bounded transient feedback
 contains no provider error text and is invalidated with its connection/runtime.
+Read lanes belong to request generations. Clock, binding and runtime boundaries
+release only their display ownership; outstanding IPC promises remain accounted
+for until they settle, with at most two retained invocations per source lane.
+An old completion cannot clear a newer lane or confirm a newer clock recovery.
+The native bridge retains its existing serialization and provider budgets.
+
+Validated `requested:<address>` project aliases support read-only recovery before
+GitHub identity is available. They are not numeric mutation targets or original
+record authority. Shared binding preflight failure invalidates retained evidence
+and old read queries while preserving original records and unresolved effects.
+The reducer preserves an existing source failure cause when applying display TTL.
+Only an uncached, non-stale matching reply acknowledges a failed source refresh.
+
 Late responses cannot change the selected target.
 A binding replacement clears the old read context, selection and cached view
 before fresh data can be accepted. Read retries use the existing source policy;

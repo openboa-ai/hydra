@@ -23,6 +23,7 @@ export async function appFixture(frame=structuredClone(sourceFrame)) {
   let sequence=0, nonce=100, now=Date.parse(frame.assembled_at);
   const api={binding:frame.binding_epoch,frame,fail:false,
     deferred:null as null | ((args:Record<string,unknown>,sequence:number)=>Promise<unknown>|undefined),
+    beforeInvoke:null as null | ((method:string,args:Record<string,unknown>)=>unknown),
     calls,intervals};
   window.Date.now=()=>now;
   Object.defineProperty(window.crypto,'randomUUID',{value:()=>uid(++nonce)});
@@ -38,6 +39,8 @@ export async function appFixture(frame=structuredClone(sourceFrame)) {
   }
   const invoke=async(method:string,args:Record<string,unknown>={})=>{
     calls.push({method,args:structuredClone(args)});
+    const override=api.beforeInvoke?.(method,args);
+    if(override!==undefined)return await override;
     if(method==='projection_binding')return api.binding;
     if(method==='projection_clock_resumed')return null;
     if(method==='projection_status'){

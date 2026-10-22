@@ -35,10 +35,17 @@ function execution(value: unknown) {
 
 export function mountControlTower(root: HTMLElement): void {
   let state: ProjectionState | null = null;
-  let sequence = 0, localBusy = false, remoteBusy = false;
+  type ReadTicket = { remote: boolean; generation: number };
+  let sequence = 0;
+  let localBusy: ReadTicket | null = null, remoteBusy: ReadTicket | null = null;
+  const pendingReads = new Set<ReadTicket>();
   let lastLocal = 0, lastRemote = 0, previousTick = Date.now();
   let notice = '', focusVersion = 0, restoringFocus = false;
-  let clockVersion = 0, clockBusy = false, clockBlocked = false;
+  let readGeneration = 0, clockBusy = false, clockBlocked = false;
+  function releaseReadGeneration() {
+    readGeneration += 1; localBusy = null; remoteBusy = null;
+    // Fenced IPCs remain accounted for until their actual promises settle.
+  }
   const readFailures = new Map<string, string>();
   let omittedReadFailures = false;
   function clearReadFailures() { readFailures.clear(); omittedReadFailures = false; }
@@ -62,10 +69,21 @@ export function mountControlTower(root: HTMLElement): void {
   }
   async function recoverClock(): Promise<boolean> {
     if (clockBusy) return false;
+    const generation = readGeneration;
     clockBusy = true; render();
-    try { await invoke('projection_clock_resumed'); clockBlocked = false; return true; }
-    catch { notice = 'Source refresh unavailable after clock resume. Refresh explicitly to recover.'; return false; }
-    finally { clockBusy = false; render(); }
+    try {
+      await invoke('projection_clock_resumed');
+      if (generation !== readGeneration) return false;
+      clockBlocked = false; return true;
+    } catch {
+      if (generation === readGeneration)
+        notice = 'Source refresh unavailable after clock resume. Refresh explicitly to recover.';
+      return false;
+    } finally {
+      clockBusy = false; render();
+      if (generation !== readGeneration && clockBlocked)
+        void recoverClock().then(ok => { if (ok) void read(false); });
+    }
   }
 
   function repository(ref: ResourceRef | null): string | null {
@@ -78,8 +96,14 @@ export function mountControlTower(root: HTMLElement): void {
     const value = metadata(view, {source: 'github', kind: 'repository', id})?.value;
     return typeof value?.full_name === 'string' ? value.full_name : null;
   }
+  function readAddress(view: ProjectionV3, id: string): string | null {
+    // Requested aliases are validated read addresses, never numeric command targets.
+    const name = repositoryName(view, id) ?? (id.startsWith('requested:') ? id.slice(10) : null);
+    const normalized = name?.toLowerCase();
+    return normalized && /^[a-z0-9][a-z0-9-]{0,38}\/[a-z0-9_.-]{1,100}$/.test(normalized) ? normalized : null;
+  }
   function projectName(view: ProjectionV3, project: ProjectView) {
-    return repositoryName(view, project.repository_ref.id) ?? `Repository ${project.repository_ref.id}`;
+    return repositoryName(view, project.repository_ref.id) ?? readAddress(view, project.repository_ref.id) ?? `Repository ${project.repository_ref.id}`;
   }
   function select(ref: ResourceRef | null) {
     if (!state) return;
@@ -94,32 +118,39 @@ export function mountControlTower(root: HTMLElement): void {
     if (clockBlocked && (!manual || !await recoverClock())) return;
     if (!manual && document.visibilityState === 'hidden') return;
     if (remote && !manual && (wait().seconds > 0 || wait().explicit_recovery)) return;
-    if (remote) { remoteBusy = true; lastRemote = Date.now(); }
-    else { localBusy = true; lastLocal = Date.now(); }
-    const generation = clockVersion;
+    if ([...pendingReads].filter(ticket => ticket.remote === remote).length >= 2) {
+      notice = 'Prior source reads are still being reconciled. Retry when they settle.'; render(); return;
+    }
+    const ticket: ReadTicket = {remote, generation: readGeneration};
+    pendingReads.add(ticket);
+    if (remote) { remoteBusy = ticket; lastRemote = Date.now(); }
+    else { localBusy = ticket; lastLocal = Date.now(); }
+    const generation = ticket.generation;
     const focused = root.contains(document.activeElement) ? document.activeElement?.getAttribute('aria-label') : null;
     const focusIntent = focusVersion;
     const selected = state?.selected_ref ?? null;
     const id = remote ? repository(selected) : null;
     const oldEpoch = state?.binding_epoch;
-    const scope = `${remote ? 'github' : 'local'}:${id ?? 'overview'}:${cursor ? 'page' : 'first'}`;
-    const readTarget = id && state?.view ? repositoryName(state.view, id) ?? 'selected project' : 'overview';
+    const view = state ? projectedView(state, Date.now()) : null;
+    const name = id && view ? readAddress(view, id) : null;
+    const scope = `${remote ? 'github' : 'local'}:${name ?? id ?? 'overview'}:${cursor ? 'page' : 'first'}`;
+    const readTarget = id && view ? repositoryName(view, id) ?? name ?? 'selected project' : 'overview';
     const unavailable = `${remote ? 'GitHub' : 'Local'} ${readTarget}${cursor ? ' continuation' : ''} refresh unavailable. Prior observations are retained with uncertainty.`;
-    let epoch: string | undefined, requestSequence = 0;
+    let epoch: string | undefined, requestSequence = 0, bindingConfirmed = false;
     render();
     try {
       epoch = await invoke<string>('projection_binding');
-      if (generation !== clockVersion || (state && oldEpoch !== undefined && state.binding_epoch !== oldEpoch)) return;
-      if (!state) state = projectionState(epoch);
+      if (generation !== readGeneration || (state && oldEpoch !== undefined && state.binding_epoch !== oldEpoch)) return;
+      const bound = projectionState(epoch);
+      if (!state) state = bound;
       else if (state.binding_epoch !== epoch) {
         state = reduceProjection(state, {type: 'binding_changed', binding_epoch: epoch});
         state = reduceProjection(state, {type: 'selection_changed', selected_ref: null});
-        clearReadFailures();
+        releaseReadGeneration(); clearReadFailures();
         notice = 'Connection changed. Previous source data and selection were cleared. Refresh to inspect the current connection.';
         return;
       }
-      const view = projectedView(state, Date.now());
-      const name = id && view ? repositoryName(view, id)?.toLowerCase() ?? null : null;
+      bindingConfirmed = true;
       if (id && !name) { failRead(scope, unavailable + ' Repository identity is unconfirmed.'); return; }
       requestSequence = ++sequence;
       const requestId = crypto.randomUUID();
@@ -131,22 +162,34 @@ export function mountControlTower(root: HTMLElement): void {
         request_id: requestId, observation_keys: keys});
       const response = await invoke<ReadResponse>('projection_status', {epoch, requestId, refresh: remote,
         repository: name, cursor, explicitRecovery: manual});
-      if (generation !== clockVersion || state.binding_epoch !== epoch) return;
+      if (generation !== readGeneration || state.binding_epoch !== epoch) return;
       const previousRuntime = state.runtime_key;
       state = reduceProjection(state, {type: 'read_succeeded', scope, sequence: requestSequence,
         now: Date.now(), response});
-      if (previousRuntime !== null && state.runtime_key !== previousRuntime) clearReadFailures();
+      if (previousRuntime !== null && state.runtime_key !== previousRuntime) {
+        releaseReadGeneration(); clearReadFailures();
+      }
       if (state.error) failRead(scope, unavailable);
-      else { readFailures.delete(scope); if (manual) notice = ''; }
+      else if (!response.cached && !response.stale) {
+        readFailures.delete(scope); if (manual) notice = '';
+      }
     } catch {
       // Bridge error text may contain private paths or provider output.
-      if (generation !== clockVersion) return;
-      if (state && epoch === state.binding_epoch && requestSequence > 0)
-        state = reduceProjection(state, {type: 'read_failed', scope, sequence: requestSequence, reason: 'read_unavailable'});
-      if (!epoch || state?.binding_epoch === epoch) failRead(scope, unavailable);
+      if (generation !== readGeneration) return;
+      if (!bindingConfirmed) {
+        releaseReadGeneration();
+        if (state) state = reduceProjection(state, {type: 'binding_unavailable', now: Date.now()});
+        failRead(scope, unavailable);
+      } else if (state && epoch === state.binding_epoch) {
+        if (requestSequence > 0)
+          state = reduceProjection(state, {type: 'read_failed', scope, sequence: requestSequence, reason: 'read_unavailable'});
+        failRead(scope, unavailable);
+      }
     } finally {
-      if (remote) remoteBusy = false; else localBusy = false;
-      render(); restoreFocus(focused, focusIntent);
+      pendingReads.delete(ticket);
+      if (remote && remoteBusy === ticket) remoteBusy = null;
+      if (!remote && localBusy === ticket) localBusy = null;
+      render(); if (generation === readGeneration) restoreFocus(focused, focusIntent);
     }
   }
   function coverage(parent: HTMLElement, view: {coverage: ProjectView['coverage']}) {
@@ -251,7 +294,7 @@ export function mountControlTower(root: HTMLElement): void {
     const header = node('header', undefined, 'tower-header');
     const identity = node('div'); identity.append(node('p', 'HYDRA', 'eyebrow'), node('h1', 'Work lifecycle'));
     const refresh = button(remoteBusy ? 'Refreshing…' : 'Refresh sources', 'Refresh workflow sources', () => { void read(true, true); });
-    refresh.disabled = remoteBusy || clockBusy; header.append(identity, refresh); fragment.append(header);
+    refresh.disabled = remoteBusy !== null || clockBusy; header.append(identity, refresh); fragment.append(header);
     const messages = [notice, ...readFailures.values(), omittedReadFailures ?
       'Earlier read failures remain unconfirmed outside this bounded view. Inspect their sources to reconcile them.' : ''];
     const status = node('p', messages.filter(Boolean).join(' '), 'tower-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
@@ -288,7 +331,7 @@ export function mountControlTower(root: HTMLElement): void {
       const cursor = project ? project.coverage.next_cursor : view.page.next_cursor;
       if (cursor) {
         const more = button('Read next source page', 'Read next source page', () => { void read(true, true, cursor); });
-        more.disabled = remoteBusy; detail.append(more);
+        more.disabled = remoteBusy !== null; detail.append(more);
       }
       const retry = wait();
       if (retry.seconds || retry.explicit_recovery) detail.append(node('p', retry.seconds ?
@@ -296,13 +339,13 @@ export function mountControlTower(root: HTMLElement): void {
       layout.append(navigation, detail); fragment.append(layout);
       fragment.append(node('p', 'Read-only lifecycle view. Questions, answers and execution stay in their original systems. Additional controls require a qualified command path.', 'tower-boundary'));
     }
-    root.setAttribute('aria-busy', String(localBusy || remoteBusy)); root.replaceChildren(fragment);
+    root.setAttribute('aria-busy', String(localBusy !== null || remoteBusy !== null)); root.replaceChildren(fragment);
     restoreFocus(focused, interaction);
   }
   function tick() {
     const now = Date.now();
     if (now < previousTick || now - previousTick > 15_000) {
-      previousTick = now; clockVersion += 1; clockBlocked = true;
+      previousTick = now; releaseReadGeneration(); clockBlocked = true;
       if (state) {
         for (const [scope, query] of [...state.queries])
           state = reduceProjection(state, {type: 'read_failed', scope, sequence: query.sequence, reason: 'clock_resumed'});

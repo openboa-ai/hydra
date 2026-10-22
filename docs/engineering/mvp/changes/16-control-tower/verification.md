@@ -34,6 +34,13 @@ feedback-ownership review reproduced three assertions alongside one valid matchi
 recovery control. The same four cases pass after correction; the preceding
 seventeen lifecycle methods remain byte-for-byte unchanged.
 
+The recovery matrix extends the bridge fixture with an optional pre-invocation
+fault/defer hook after its unchanged operation ledger. Before production changes,
+all preceding 21 methods pass with the hook unused; their assertions are unchanged.
+The final new matrix reproduces nine purpose assertions alongside one valid
+read-only alias control. All ten unchanged recovery/diagnostic cases pass after
+correction. Earlier RED snapshots and the added cache case remain distinguishable.
+
 | Case | Required outcome | Local result |
 | --- | --- | --- |
 | Existing-entry control | Actual host entry renders; no mutation | PASS |
@@ -57,17 +64,27 @@ seventeen lifecycle methods remain byte-for-byte unchanged.
 | Error / another project | Another project source success cannot acknowledge the failed project query | PASS |
 | Error / another query | First-page success cannot acknowledge a failed continuation query | PASS |
 | Error / matching recovery | A matching remote query success clears its own feedback | PASS |
+| Alias / read-only control | Unresolved local aliases provide no original-Issue or mutation authority | PASS |
+| Alias / scoped recovery | The encoded normalized address reaches the fixed read bridge and resolves identity | PASS |
+| Binding / selected source | Preflight failure immediately disables retained original navigation | PASS |
+| Binding / shared source | Shared binding failure also invalidates another retained project | PASS |
+| Clock / remote lane | The current display lane is available while the old invocation remains pending | PASS |
+| Clock / old completion | Old completion cannot release a newer generation's pending lane | PASS |
+| Clock / local lane | Current local reconciliation can proceed before the fenced old invocation settles | PASS |
+| Clock / acknowledgement | A superseded clock acknowledgement triggers recovery for the current generation | PASS |
+| Recovery / cached reply | Cached or stale replies cannot acknowledge failed provider refresh | PASS |
+| Source diagnostic | An existing failure cause remains distinct from TTL expiry | PASS |
 
 Commands from `apps/mac`:
 
 ```sh
-node --experimental-strip-types --test tests/tower.test.ts tests/tower-events.test.ts tests/tower-pagination.test.ts tests/tower-review.test.ts tests/tower-feedback.test.ts
+node --experimental-strip-types --test tests/tower.test.ts tests/tower-events.test.ts tests/tower-pagination.test.ts tests/tower-review.test.ts tests/tower-feedback.test.ts tests/tower-controller.test.ts tests/tower-source-reason.test.ts
 npm test
 npm run build
 npm run verify:theme
 ```
 
-Local results: 21 lifecycle methods, 373 complete frontend methods, TypeScript/Vite
+Local results: 31 lifecycle methods, 383 complete frontend methods, TypeScript/Vite
 build and theme verification pass. The existing suite includes actual Python
 producer/TypeScript consumer fixtures, using Python 3.14.2 in this verification.
 No Rust source changed. Required remote/native build checks remain part of CI;
@@ -84,7 +101,7 @@ The browser reported no page errors or external page requests. No native Hydra o
 Codex operation was dispatched, and the one-shot browser was closed afterward.
 
 Built JavaScript SHA-256:
-`861ea14f8b9334cfe234b9ffbd6035d75a2f13596f2b3b62d2c28fc94da36163`.
+`b4d0db46a46df2a42bbaa7c9a3a03055ff9295a791c9ed7e814779e26c194a42`.
 Built CSS SHA-256:
 `962520c3b8fd8dee16ea02c69d3cd1b02eb85d7cabaa3d1f738b19233f1b0da9`.
 Overview screenshot SHA-256:
@@ -94,6 +111,15 @@ A further built-source screen follows a failed GitHub continuation with an
 actual Python local-producer reply. The continuation failure remains visible,
 with the retained project observations and next-page navigation. Its screenshot
 SHA-256 is `dd60b4b5b0b418743ce02419b080c28a000f773bab57615331d09a2c96ca794c`.
+
+The final recovery screens also verify immediate original-navigation disabling
+after binding failure, preserving the binding failure reason, and scoped recovery
+from an unresolved requested project using actual producer frames. The fixed
+bridge argument is `example/alpha`; no numeric command authority is inferred.
+Binding-failure screenshot SHA-256:
+`d6327915789784d0b6ab603149ec67931d9c12ce53b8a5bb98761dfec51bb62e`.
+Scoped recovery screenshot SHA-256:
+`cdb9a2ef5c1da5d4915d9858f1720bf2710cbc2c6a0e99d841a8e34a8d9e7e0e`.
 
 This is source-fixture screen evidence. It does not establish the installed
 runtime, authenticated remote answers, a real scoped command/read-back, actual
