@@ -15,6 +15,7 @@ from pathlib import Path
 from .control import control_from_config, load_host_config
 from .operations import MAX_PROJECTS, MAX_REVISION, OperationDenied, OperationUncertain
 from .runtime_identity import capture_runtime_identity
+from .connection_profile import project_mode
 
 
 _COMMAND_KEYS = {'command_schema', 'request_id', 'binding_epoch', 'action', 'target',
@@ -32,6 +33,8 @@ _STORE_REASONS = frozenset({
     'operation_state_unavailable', 'operation_state_changed', 'operation_state_revision_exhausted',
     'operation_state_repository_invalid', 'operation_state_repository_unregistered',
     'operation_state_action_invalid', 'operation_state_path_invalid',
+    'connection_binding_required', 'connection_config_changed', 'connection_config_unavailable',
+    'project_connection_unprepared', 'project_disconnect_requested',
 })
 
 
@@ -328,12 +331,13 @@ def _repository(github, names, identifier):
 
 
 def _observation(command, runtime, snapshot, repository, suffix, observed_at):
+    from .connection_profile import admission_value
     key = f"command:{command['request_id']}:admission-{suffix}"
     revision = {'kind': 'monotonic', 'value': str(snapshot['revision'])}
     mode = snapshot['global_mode']
-    project_mode = snapshot['projects'].get(repository, 'running')
+    mode_for_project = project_mode(snapshot, repository)
     reason = ('host_' + mode if mode != 'running' else
-              'project_' + project_mode if project_mode != 'running' else None)
+              'project_' + mode_for_project if mode_for_project != 'running' else None)
     return {
         'key': key,
         'resource': {'source': 'hydra', 'kind': 'admission', 'id': runtime['control_binding_digest']},
@@ -342,8 +346,7 @@ def _observation(command, runtime, snapshot, repository, suffix, observed_at):
         'coverage': {'state': 'complete', 'scope': key, 'returned_count': 1,
                      'total_count': 1, 'next_cursor': None, 'reason': None},
         'reason': None,
-        'value': {'revision': snapshot['revision'], 'global_mode': mode,
-                  'project_overrides': dict(snapshot['projects']), 'gate_reason': reason},
+        'value': admission_value(snapshot, reason),
     }
 
 
@@ -438,7 +441,7 @@ def execute_admission_command(config_path, command, *, context_provider, github)
     snapshot = readback.snapshot
     if snapshot['revision'] == expected['admission_revision']:
         reason = ('stronger_mode_retained' if mode == 'paused'
-                  and snapshot['projects'].get(repository) == 'stopped' else 'already_satisfied')
+                  and project_mode(snapshot, repository) == 'stopped' else 'already_satisfied')
     return _reply(command, current_runtime, epoch, 'applied', reason,
                   observation=_observation(command, current_runtime, snapshot, repository, 'readback', readback.observed_at))
 

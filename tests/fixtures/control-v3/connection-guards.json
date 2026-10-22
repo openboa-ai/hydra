@@ -1,0 +1,11 @@
+{
+  "fixture_version": 1,
+  "cases": [
+    {"name":"disconnect-keeps-stored-running-but-blocks-project","mode":"disconnect","accepted":true,"alpha":null,"beta":"allowed"},
+    {"name":"unprepared-running-override-is-not-permission","mode":"unprepared","accepted":true,"alpha":null,"beta":"allowed"},
+    {"name":"connected-current-projects-can-progress","mode":"connected","accepted":true,"alpha":"allowed","beta":"allowed"},
+    {"name":"host-pause-remains-the-known-limiting-mode","mode":"paused","accepted":true,"alpha":"paused","beta":"paused"},
+    {"name":"unavailable-disconnect-source-cannot-prove-allowed","mode":"forged_disconnect","accepted":false},
+    {"name":"unavailable-unprepared-source-cannot-prove-allowed","mode":"forged_unprepared","accepted":false}
+  ]
+}

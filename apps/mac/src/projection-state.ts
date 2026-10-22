@@ -1,6 +1,7 @@
 /** Source ordering and display state. No event in this reducer sends an effect. */
 import {
   MAX_PROJECTION_BYTES, ProjectionError, parseProjection, parseStandardReply, validateProjectionView,
+  projectAdmissionMode,
   type CommandResult, type Fact, type Observation, type ProjectionV3, type ResourceRef, type Revision,
 } from "./projection.ts";
 
@@ -57,8 +58,7 @@ function admissionReceipt(pending:Command,result:CommandResult,observations:Obse
   let actual=value.global_mode;
   if (pending.target.kind==="repository") {
     valid(pending.repository_name!==undefined);
-    const overrides=value.project_overrides as Record<string,unknown>;
-    actual=Object.hasOwn(overrides,pending.repository_name)?overrides[pending.repository_name]:"running";
+    actual=projectAdmissionMode(value,pending.repository_name);
     if (desired==="running") valid(value.global_mode==="running");
   } else valid(pending.target.kind==="host");
   valid(actual===desired || desired==="paused" && actual==="stopped");

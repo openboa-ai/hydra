@@ -129,9 +129,10 @@ def _observation(key, resource, scope, value, at, *, reason=None, revision=None)
 
 
 def _effective(snapshot, repository):
+    from .connection_profile import project_mode
     mode = snapshot['global_mode']
     if mode == 'running':
-        mode = snapshot['projects'].get(repository, 'running')
+        mode = project_mode(snapshot, repository)
     return {'running': 'allowed', 'paused': 'paused', 'stopped': 'stopped'}[mode]
 
 
@@ -540,9 +541,12 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     try:
         p.require(runtime['control_binding_digest'] is not None)
         snapshot = control.snapshot()
-        admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
-            'project_overrides': snapshot['projects'],
-            'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
+        check_connection = getattr(control, '_connection_guard', None)
+        if check_connection is not None:
+            check_connection(snapshot, None)
+        from .connection_profile import admission_value as public_admission
+        admission_value = public_admission(snapshot,
+            None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode'])
         p.source_value('admission', admission_value)
         admission = _observation('hydra:host:admission', admission_ref,
             'resource:host:admission', admission_value, at,
@@ -553,14 +557,30 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             'resource:host:admission', None, at,
             reason='admission_unavailable' if runtime['control_binding_digest'] else 'admission_binding_unavailable')
     observations.update({item['key']: item for item in (admission, ownership)})
-    gates = {}
+    gates, connection_failures = {}, {}
     if snapshot is not None:
+        from .connection_profile import connection_reason
         for address, context in contexts.items():
-            gates.setdefault(p.canonical(context['resource']), set()).add(_effective(snapshot, address))
+            key = p.canonical(context['resource'])
+            value = _effective(snapshot, address)
+            reason = (connection_reason(cfg, address)
+                      if snapshot.get('version') == 2 and value == 'allowed' else None)
+            if reason:
+                observed = _observation('hydra:project-admission:' + hashlib.sha256(address.encode()).hexdigest(),
+                    admission_ref, 'repository-admission:' + address, None, at, reason=reason)
+                observations[observed['key']] = observed
+                connection_failures.setdefault(key, []).append(observed)
+            else:
+                gates.setdefault(key, set()).add(value)
     for project in projects.values():
-        values = gates.get(p.canonical(project['repository_ref']), set())
+        key = p.canonical(project['repository_ref'])
+        values = gates.get(key, set())
         if snapshot is None:
             gate = p.unknown('admission_unavailable', [admission])
+        elif key in connection_failures:
+            failed = connection_failures[key]
+            reasons = {row['reason'] for row in failed}
+            gate = p.unknown(next(iter(reasons)) if len(reasons) == 1 else 'repository_binding_conflict', failed)
         elif len(values) != 1:
             gate = p.unknown('repository_binding_conflict', [admission])
         else:

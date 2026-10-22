@@ -21,11 +21,12 @@ from .coordinator import observe_coordinator, residual_workers
 from .operations import MAX_PROJECTS, MAX_REVISION, OperatingControl, OperationDenied
 from .runtime_identity import capture_runtime_identity
 from .native_admission import parse_admission_profile
+from .connection_profile import declarations
 
 
 _CONFIG_KEYS = {"repos", "host_alias", "workspace_root", "lock_path", "lifecycle_provider",
                 "storage_provider", "knowledge_repo", "runtime_python", "project_threads",
-                "native_admission_control"}
+                "native_admission_control", "connection_schema", "project_connections"}
 _REPOSITORY = re.compile(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9_.-]{1,100}\Z")
 _CODE = re.compile(r"[a-z0-9][a-z0-9_-]{0,119}\Z")
 _PROVIDER = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z", re.ASCII)
@@ -98,6 +99,11 @@ def _check_config_binding(path, binding, opened):
         os.close(current)
 
 
+class _HostConfig(dict):
+    """Loader provenance is private metadata, never another serialized setting."""
+    __slots__ = ('_source_path',)
+
+
 def load_host_config(path):
     """Load bounded installed TOML without importing provider factories.
 
@@ -132,12 +138,15 @@ def load_host_config(path):
                 or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", cfg["host_alias"])):
             raise ValueError("Invalid installed host settings")
         repos = cfg.get("repos")
-        if not isinstance(repos, list) or not 1 <= len(repos) <= MAX_PROJECTS:
+        if not isinstance(repos, list) or not (0 if 'connection_schema' in cfg else 1) <= len(repos) <= MAX_PROJECTS:
             raise ValueError("Invalid installed repository allowlist")
         canonical = [_repository(repo) for repo in repos]
         if len(set(canonical)) != len(canonical):
             raise ValueError("Duplicate installed repository identity")
         cfg["repos"] = canonical
+        connections = declarations(cfg, canonical)
+        if connections is not None:
+            cfg['project_connections'] = connections
         cfg["workspace_root"] = _path(cfg.get("workspace_root"), path.parent)
         cfg["lock_path"] = _path(cfg.get("lock_path", "~/.local/share/hydra/host.lock"), path.parent)
         if "runtime_python" in cfg:
@@ -157,7 +166,9 @@ def load_host_config(path):
         cfg["project_threads"] = threads
         if "native_admission_control" in cfg:
             cfg["native_admission_control"] = parse_admission_profile(cfg["native_admission_control"])
-        return cfg
+        loaded = _HostConfig(cfg)
+        loaded._source_path = str(path)
+        return loaded
     except (OSError, ValueError, TypeError, RuntimeError, UnicodeError):
         raise ValueError("Invalid installed host settings") from None
     finally:
@@ -168,7 +179,8 @@ def load_host_config(path):
 
 
 def control_from_config(cfg):
-    return OperatingControl(cfg["lock_path"], cfg["repos"])
+    return OperatingControl(cfg["lock_path"], cfg["repos"], configuration=cfg,
+                            config_path=getattr(cfg, '_source_path', None))
 
 
 def _public_code(value):
@@ -283,6 +295,8 @@ def _execution(mode, ownership, workers, unresolved, *, coverage, remote_complet
 
 
 def control_result(cfg, action="status", repository=None, refresh=False):
+    if 'connection_schema' in cfg:
+        raise ValueError('Connection profile requires its current control protocol')
     if not isinstance(action, str) or action not in {"status", "start", "pause", "resume", "stop"} or type(refresh) is not bool:
         raise ValueError("Invalid control request")
     if repository is not None:
