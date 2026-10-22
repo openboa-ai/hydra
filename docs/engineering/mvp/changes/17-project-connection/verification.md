@@ -133,6 +133,40 @@ The preceding source `035affe` passes [Repository CI](https://github.com/openboa
 builds, trusted hygiene and selected-D export pass. These are parent results;
 the empty-service correction requires its own final-source CI and review.
 
+## Integration with the delivered control tower
+
+Main `7cf2b89` completed all three required CI jobs before this integration.
+The normal Git merge preserves the preceding connection behavior and the
+delivered read-side interface. All existing producer, wire and app assertions
+are unchanged; the shared reducer keeps both admission-default correlation and
+binding/clock/source-failure recovery.
+
+Six additional app-entry cases use the actual configured Python producer. They
+cover a normal connected pair, pending disconnection, an unprepared connection,
+host Pause and two forged permission claims. Project and work admission are
+checked separately for both projects. Pending/unprepared alpha remains
+unconfirmed with its source reason while connected beta remains allowed. Forged
+allowed claims cannot produce a displayed project or a mutation.
+
+The combined local source passes all 406 frontend methods, the existing
+369-method Python impact selection with no failures/errors/skips, all 69 Rust
+methods, theme checks and frontend/native builds. The six cases verify the
+integration of existing behavior; no new feature-level RED is claimed.
+Final integration-head CI and independent reviews remain required.
+
+Built-source screens use actual connection-producer fixture bytes and a
+synthetic native bridge. They distinguish the connected pair, unconfirmed alpha
+and independently allowed beta. This remains source-fixture evidence; it does
+not establish installed configuration, remote control or native execution.
+The browser reported no page errors or unrelated page requests; the 390px
+mobile view has no horizontal overflow. The owned one-shot browser was closed.
+Built JavaScript SHA-256:
+`3c677f2e6ffd44a1557a506f99b0b68fb3b86830672ff9f80c7710062f28b9f5`.
+Pending-disconnect screenshot SHA-256:
+`7d665293e59f55130ac50242555fd9a4d8b07c21e11adfb16648086e6a3ebaa3`.
+Independent-project screenshot SHA-256:
+`e61f4d2b36ff2a2f123cf6ad74c0ef8f86ed5d656524e0a8283733ba44b777b2`.
+
 ## Remaining responsibilities
 
 This increment does not create or migrate an installed configuration. The next

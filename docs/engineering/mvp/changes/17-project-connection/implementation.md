@@ -73,6 +73,15 @@ missing-override outcomes. They use actual temporary settings and configuration
 files and the actual command/CLI boundaries. Existing legacy checks and the real
 producer/strict-consumer wire checks remain required.
 
+## Integration with the delivered read-side control tower
+
+The existing branch incorporates the qualified control-tower main `7cf2b89`.
+The shared reducer retains both the stopped-default receipt calculation and the
+delivered binding/clock/failure recovery behavior. Existing source and assertions
+from both increments are preserved. Six additional actual-entry cases feed the
+configured Python connection producer through the strict reducer and renderer;
+they add no new command, authority source or installation effect.
+
 ## Subsequent configuration writer and actual qualification
 
 The next increment uses this fresh guard and the same admission barrier for
