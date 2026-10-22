@@ -225,7 +225,11 @@ The existing safe loader validates the profile. Semantic config identity include
 all profile fields with repository order normalized; absence preserves legacy config
 identity. The provider is bound once to the command server's absolute config locator,
 re-reads it at both existing authority checks, and returns only native admission_set
-scope. Registered-name/current-numeric-ID matching, runtime/admission expectations,
+scope. Each installation grant carries the semantic config digest of the same
+validated settings snapshot that supplied its scope. Before CAS, the core rejects
+a mismatch between that grant and its loaded configuration as `stale_runtime`.
+Equivalent formatting and repository-ID ordering preserve the same identity.
+Registered-name/current-numeric-ID matching, runtime/admission expectations,
 nonblocking CAS and durable read-back remain in the common command core.
 
 Removal, disablement, scope removal, expiry, unsafe/unreadable settings or a changed

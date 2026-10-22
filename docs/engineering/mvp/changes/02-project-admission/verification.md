@@ -260,3 +260,25 @@ actual-main checks remain delivery gates. Actual selected-installation operation
 authenticated native Q&A/control/recovery, two-project acceptance and full v1 D/L/O
 remain unqualified. Deployment targets and actual activation are separate from
 policy adoption and local SDK success.
+
+### Review correction: bind the grant to its configuration snapshot
+
+A settings replacement during the final authority callback could previously
+authorize the target from new settings while CAS still used the previous repository
+mapping and control binding. Each installation grant now carries the semantic
+digest of the exact validated settings that supplied its scope. The admission core
+rejects a digest mismatch as `stale_runtime` before CAS. Internal legacy contexts
+retain their existing optional-binding behavior; this is not a new wire field.
+
+The frozen `test_native_admission_snapshot.py` reproduces four assertion failures
+against the published preceding head without errors or skips: host identity, lock
+path, registered repository set and granted numeric scope all change during the
+final provider read. All four must preserve prior admission bytes and return no
+receipt. A separate real-SDK positive control changes only formatting and ID order
+and still applies Pause. The unchanged two methods pass after correction, as do
+the original twelve profile methods and all 302 selected related regressions.
+
+This correction keeps P02 revision 5's authority and effect boundary. Exact-head CI,
+independent code/security reviews, protected merge and actual-main checks must be
+repeated for the corrected revision. No installed profile, runtime, native task,
+global control or workflow authority is activated by these source tests.

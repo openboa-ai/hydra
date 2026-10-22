@@ -42,6 +42,7 @@ class AdmissionCallContext:
     binding_epoch: str | None
     repository_ids: frozenset[int]
     operations: frozenset[str] = frozenset({'admission_set'})
+    config_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,9 @@ def _context(provider, command):
     if (type(context.operations) is not frozenset or not context.operations <=
             {'admission_set', 'workflow_step.checkpoint_only'}):
         return None, 'authority_unavailable'
+    if context.config_digest is not None and (type(context.config_digest) is not str
+                                              or not _DIGEST.fullmatch(context.config_digest)):
+        return None, 'authority_unavailable'
     if context.binding_epoch != command['binding_epoch']:
         return context, 'stale_binding'
     return context, None
@@ -387,7 +391,9 @@ def execute_admission_command(config_path, command, *, context_provider, github)
         return _reply(command, current_runtime, epoch,
                       'unknown' if repository_reason == 'repository_unavailable' else 'rejected', repository_reason)
     current_key = _runtime_key(current_runtime)
-    if current_key is None or current_key != expected['runtime_key']:
+    if (current_key is None or current_key != expected['runtime_key']
+            or context.config_digest is not None
+            and context.config_digest != current_runtime['config_digest']):
         return _reply(command, current_runtime, epoch, 'rejected',
                       'runtime_unavailable' if current_key is None else 'stale_runtime')
     mode = command['parameters']['mode']

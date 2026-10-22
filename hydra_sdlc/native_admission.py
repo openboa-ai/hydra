@@ -58,14 +58,19 @@ class InstallationAdmissionProvider:
             return None
         from .control import load_host_config
         from .control_commands import AdmissionCallContext
+        from .runtime_identity import capture_runtime_identity
         try:
-            profile = load_host_config(self._config_path).get('native_admission_control')
+            config = load_host_config(self._config_path)
+            profile = config.get('native_admission_control')
             if not profile or not profile['enabled']:
                 return None
             if 'expires_at' in profile and _now() >= _expiry(profile['expires_at']):
                 return None
+            digest = capture_runtime_identity(config)['config_digest']
+            if digest is None:
+                return None
             return AdmissionCallContext('native', None, frozenset(profile['repository_ids']),
-                                        frozenset({'admission_set'}))
+                                        frozenset({'admission_set'}), config_digest=digest)
         except Exception:
             # Unavailable settings never supply a grant or disclose raw diagnostics.
             return None
