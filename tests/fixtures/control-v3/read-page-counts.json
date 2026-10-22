@@ -1,0 +1,154 @@
+{
+  "cases": [
+    {
+      "name": "complete-membership",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": true
+    },
+    {
+      "name": "partial-membership",
+      "state": "partial",
+      "count": 2,
+      "total": null,
+      "accepted": true
+    },
+    {
+      "name": "empty-complete-with-projects",
+      "state": "complete",
+      "count": 0,
+      "total": 0,
+      "accepted": false
+    },
+    {
+      "name": "understated-membership",
+      "state": "partial",
+      "count": 1,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "overstated-membership",
+      "state": "partial",
+      "count": 3,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "unavailable-with-projects",
+      "state": "unavailable",
+      "count": 0,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "complete-work-membership",
+      "target": "project",
+      "refs": 1,
+      "state": "complete",
+      "count": 1,
+      "total": 1,
+      "accepted": true
+    },
+    {
+      "name": "partial-work-membership",
+      "target": "project",
+      "refs": 1,
+      "state": "partial",
+      "count": 1,
+      "total": null,
+      "accepted": true
+    },
+    {
+      "name": "missing-returned-work",
+      "target": "project",
+      "refs": 0,
+      "state": "complete",
+      "count": 1,
+      "total": 1,
+      "accepted": false
+    },
+    {
+      "name": "unreported-returned-work",
+      "target": "project",
+      "refs": 1,
+      "state": "partial",
+      "count": 0,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "overstated-returned-work",
+      "target": "project",
+      "refs": 1,
+      "state": "partial",
+      "count": 2,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "unavailable-with-work-membership",
+      "target": "project",
+      "refs": 1,
+      "state": "unavailable",
+      "count": 0,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-complete_empty",
+      "target": "work_membership",
+      "mode": "complete_empty",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-partial_empty",
+      "target": "work_membership",
+      "mode": "partial_empty",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-no_projects",
+      "target": "work_membership",
+      "mode": "no_projects",
+      "state": "complete",
+      "count": 0,
+      "total": 0,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-wrong_project",
+      "target": "work_membership",
+      "mode": "wrong_project",
+      "state": "complete",
+      "count": 1,
+      "total": 1,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-unexpanded",
+      "target": "work_membership",
+      "mode": "unexpanded",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": true
+    },
+    {
+      "name": "work-graph-empty_both",
+      "target": "work_membership",
+      "mode": "empty_both",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": true
+    }
+  ]
+}

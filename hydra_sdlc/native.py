@@ -281,7 +281,7 @@ class NativeController:
     async def advance(self, url, attempt_id, head, contract_revision):
         return await self._entry(url, self._advance, attempt_id, head, contract_revision)
 
-    async def _checkpoint_only(self, repo, number, assignment, outcome, *, repository_id, admission_revision, before_effect):
+    async def _checkpoint_only(self, repo, number, assignment, outcome, *, repository_id, admission_revision, before_effect, source_observer=None):
         """Internal, already-authorized original-phase completion. No dispatch."""
         runner = self.runner
         policy = runner._policy_scope.set(None)
@@ -358,6 +358,8 @@ class NativeController:
                         checkpoint=original_checkpoint)
                     observed = source['record']
                     runner.summaries.pop(assignment['step_id'], None)
+                    if source_observer is not None:
+                        source_observer(source)
                     return {'kind': 'checkpoint', 'assignment': dict(assignment), 'outcome': outcome,
                         'checkpoint_head': observed['head'], 'progress_ref': source['resource'],
                         'step_retired': True, 'ticket_released': True}

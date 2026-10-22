@@ -55,6 +55,19 @@ impl LaunchConfig {
         })
     }
 
+    pub fn read_context_command(&self,epoch:&str)->Command {
+        let mut command=Command::new(&self.runtime);
+        command.args(["-I","-m","hydra_sdlc.cli","read-context","--binding-epoch",epoch]);
+        command.current_dir("/").env_clear().env("HOME",&self.home).env("PATH",CHILD_PATH);command
+    }
+    pub fn projection_command(&self, epoch:&str, request:&str, refresh:bool, repository:Option<&str>, cursor:Option<&str>) -> Command {
+        let mut command=self.command(None,None,refresh);
+        command.args(["--projection-schema","3","--binding-epoch",epoch,"--request-id",request]);
+        if let Some(repository)=repository {command.arg("--repository").arg(repository);}
+        if let Some(cursor)=cursor {command.arg("--cursor").arg(cursor);}
+        command
+    }
+
     pub fn command(
         &self,
         action: Option<Action>,
@@ -186,6 +199,19 @@ pub async fn open_record_url(url: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn projection_is_an_explicit_read_profile_in_the_same_isolated_process_boundary() {
+        let launch=LaunchConfig{runtime:"/opt/example/bin/python3".into(),config:"/opt/example/host.toml".into(),home:"/Users/example".into()};
+        let command=launch.projection_command("00000000-0000-4000-8000-000000000001","00000000-0000-4000-8000-000000000002",true,Some("example/alpha"),Some("opaque_cursor"));
+        let command=command.as_std();
+        assert_eq!(command.get_args().collect::<Vec<_>>(),[
+            "-I","-m","hydra_sdlc.cli","control","status","--config","/opt/example/host.toml","--refresh",
+            "--projection-schema","3","--binding-epoch","00000000-0000-4000-8000-000000000001",
+            "--request-id","00000000-0000-4000-8000-000000000002","--repository","example/alpha","--cursor","opaque_cursor"
+        ].map(std::ffi::OsStr::new));
+        assert_eq!(command.get_current_dir(),Some(Path::new("/")));
+        assert_eq!(command.get_envs().count(),2);
+    }
     #[test]
     fn fixed_invocation_ignores_repository_environment_and_cwd() {
         let launch = LaunchConfig {

@@ -35,6 +35,8 @@ def parser():
             command.add_argument("--storage-provider", help="Trusted installed host module:factory")
             command.add_argument("--knowledge-repo", help="Private knowledge repository configured by the host operator")
             command.add_argument("--timeout", type=float, default=1800 if name == "run" else None)
+    read_context = sub.add_parser("read-context", help="Internal read-policy context; no HTTP or control effect")
+    read_context.add_argument("--binding-epoch", required=True)
     identity = sub.add_parser("identity", help="Report this runtime's source and configuration identity")
     identity.add_argument("--config", type=Path)
     control = sub.add_parser("control", help="Inspect or change installed admission controls")
@@ -44,7 +46,27 @@ def parser():
     target.add_argument("--all", action="store_true")
     target.add_argument("--project")
     control.add_argument("--refresh", action="store_true", help="Refresh read-only GitHub observations")
+    control.add_argument("--projection-schema", type=int, choices=(2, 3), default=2)
+    control.add_argument("--binding-epoch")
+    control.add_argument("--request-id")
+    control.add_argument("--credential-scope", help="Expected opaque read context; never a credential or grant")
+    control.add_argument("--repository-bindings", help="Internal retained numeric read hints; never a source grant")
+    control.add_argument("--repository", help="Registered read scope; never a mutation target")
+    control.add_argument("--cursor", help="Opaque continuation for this exact registered read scope")
     return p
+
+
+def read_connection_context(binding_epoch):
+    from .projection import uid
+    from .github import GitHub, GitHubError
+    uid(binding_epoch)
+    client = GitHub()
+    try:
+        with client.read_budget(seconds=2, requests=0):
+            scope = client.connection_scope(binding_epoch)
+    except GitHubError:
+        scope = None
+    return {'scope': scope}
 
 
 def _provider(value):
@@ -60,13 +82,47 @@ def operate_control(args):
             raise ValueError("Status does not take a mutation target")
     elif (not args.all and args.project is None) or args.refresh:
         raise ValueError("Mutation requires one explicit target and no remote refresh")
+    schema = getattr(args, "projection_schema", 2)
+    fields = [getattr(args, name, None) for name in ("binding_epoch", "request_id", "repository", "cursor")]
+    if schema == 3:
+        if args.action != "status":
+            raise ValueError("Projection profile is read-only")
+        from .projection import uid
+        uid(fields[0]); uid(fields[1])
+        from .control import load_host_config
+        from .projection_read import read_projection
+        kwargs = {'binding_epoch': fields[0], 'request_id': fields[1], 'repository': fields[2], 'refresh': args.refresh}
+        if fields[3] is not None:
+            kwargs['cursor'] = fields[3]
+        scope = getattr(args, 'credential_scope', None)
+        if scope is not None:
+            kwargs['credential_scope'] = scope
+        bindings = getattr(args, 'repository_bindings', None)
+        if bindings is not None:
+            from .projection import read_json, require
+            require(len(bindings.encode('utf-8')) <= 196608)
+            kwargs['repository_bindings'] = read_json(bindings)
+        return read_projection(load_host_config(args.config), **kwargs)
+    if schema != 2 or any(value is not None for value in fields) or getattr(args, "credential_scope", None) is not None or getattr(args, 'repository_bindings', None) is not None:
+        raise ValueError("Unsupported control read profile")
     from .control import control_result, load_host_config
     return control_result(load_host_config(args.config), action=args.action,
                           repository=args.project, refresh=args.refresh)
 
 
+def _control_json(args, result):
+    if getattr(args, "projection_schema", 2) == 3:
+        from .projection import encode
+        return encode(result).decode("utf-8")
+    return json.dumps(result, ensure_ascii=False)
+
+
 async def operate(args, *, github=None, workspace=None, execute=None, capabilities=None,
                   operations=None, emit=print):
+    if args.command == "read-context":
+        result = read_connection_context(args.binding_epoch)
+        emit(json.dumps(result, ensure_ascii=False))
+        return result
     if args.command == "identity":
         from .control import load_host_config, control_from_config
         cfg = load_host_config(args.config) if args.config else None
@@ -75,7 +131,10 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
         return result
     if args.command == "control":
         result = operate_control(args)
-        emit(json.dumps(result, ensure_ascii=False))
+        if getattr(args, "projection_schema", 2) == 3 and emit is print:
+            emit(_control_json(args, result), end="")
+        else:
+            emit(_control_json(args, result))
         return result
     if args.command != "status" and args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
         raise ValueError("Timeout must be finite and positive")
@@ -207,7 +266,8 @@ def main(argv=None):
         if args.command == "control":
             # Exclusive mode changes can wait for an admitted bounded call.
             # Keep this synchronous and outside the async worker event loop.
-            print(json.dumps(operate_control(args), ensure_ascii=False))
+            print(_control_json(args, operate_control(args)),
+                  end="" if getattr(args, "projection_schema", 2) == 3 else "\n")
         else:
             asyncio.run(operate(args))
         return 0

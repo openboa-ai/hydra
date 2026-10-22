@@ -1,0 +1,505 @@
+{
+  "contract": {
+    "path": "docs/engineering/mvp/contracts/control-plane.md",
+    "sha256": "d64b7a80ac07b496b4c4e1641bab671bdbf03adb113923af6f80a023c19239a9",
+    "requirements": [
+      "publication and delivery PR target identity",
+      "verification current invocation observation; unsupported until qualified"
+    ]
+  },
+  "cases": [
+    {
+      "name": "publication:same",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9"
+        }
+      }
+    },
+    {
+      "name": "publication:foreign",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "102:9"
+        }
+      }
+    },
+    {
+      "name": "publication:codex",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "codex",
+          "kind": "pull_request",
+          "id": "101:9"
+        }
+      }
+    },
+    {
+      "name": "publication:issue",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "issue",
+          "id": "101:9"
+        }
+      }
+    },
+    {
+      "name": "publication:leading_repository",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "0101:9"
+        }
+      }
+    },
+    {
+      "name": "publication:leading_number",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:09"
+        }
+      }
+    },
+    {
+      "name": "publication:zero",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:0"
+        }
+      }
+    },
+    {
+      "name": "publication:overflow",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9007199254740992"
+        }
+      }
+    },
+    {
+      "name": "publication:maximum",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9007199254740991"
+        }
+      }
+    },
+    {
+      "name": "publication:url",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "https://example.com/pr/9"
+        }
+      }
+    },
+    {
+      "name": "publication:empty",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": ""
+        }
+      }
+    },
+    {
+      "name": "publication:extra",
+      "command": "publication",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9:1"
+        }
+      }
+    },
+    {
+      "name": "delivery:same",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9"
+        }
+      }
+    },
+    {
+      "name": "delivery:foreign",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "102:9"
+        }
+      }
+    },
+    {
+      "name": "delivery:codex",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "codex",
+          "kind": "pull_request",
+          "id": "101:9"
+        }
+      }
+    },
+    {
+      "name": "delivery:issue",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "issue",
+          "id": "101:9"
+        }
+      }
+    },
+    {
+      "name": "delivery:leading_repository",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "0101:9"
+        }
+      }
+    },
+    {
+      "name": "delivery:leading_number",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:09"
+        }
+      }
+    },
+    {
+      "name": "delivery:zero",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:0"
+        }
+      }
+    },
+    {
+      "name": "delivery:overflow",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9007199254740992"
+        }
+      }
+    },
+    {
+      "name": "delivery:maximum",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9007199254740991"
+        }
+      }
+    },
+    {
+      "name": "delivery:url",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "https://example.com/pr/9"
+        }
+      }
+    },
+    {
+      "name": "delivery:empty",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": ""
+        }
+      }
+    },
+    {
+      "name": "delivery:extra",
+      "command": "delivery",
+      "accepted": false,
+      "receipt_patch": {
+        "pr_ref": {
+          "source": "github",
+          "kind": "pull_request",
+          "id": "101:9:1"
+        }
+      }
+    },
+    {
+      "name": "publication:null:branch_published",
+      "command": "publication",
+      "accepted": false,
+      "request_patch": {
+        "outcome": "waiting",
+        "required_next": "reconcile"
+      },
+      "receipt_patch": {
+        "pr_ref": null,
+        "stage": "branch_published"
+      }
+    },
+    {
+      "name": "publication:null:pr_ready",
+      "command": "publication",
+      "accepted": false,
+      "request_patch": {
+        "outcome": "waiting",
+        "required_next": "reconcile"
+      },
+      "receipt_patch": {
+        "pr_ref": null,
+        "stage": "pr_ready"
+      }
+    },
+    {
+      "name": "publication:null:publication_ready",
+      "command": "publication",
+      "accepted": false,
+      "request_patch": {
+        "outcome": "waiting",
+        "required_next": "reconcile"
+      },
+      "receipt_patch": {
+        "pr_ref": null,
+        "stage": "publication_ready"
+      }
+    },
+    {
+      "name": "verification:passed:applied:empty",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "empty",
+      "request_patch": {
+        "outcome": "applied"
+      },
+      "receipt_patch": {
+        "verdict": "passed"
+      }
+    },
+    {
+      "name": "verification:passed:applied:progress",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "progress",
+      "request_patch": {
+        "outcome": "applied"
+      },
+      "receipt_patch": {
+        "verdict": "passed"
+      }
+    },
+    {
+      "name": "verification:passed:applied:check",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "check",
+      "request_patch": {
+        "outcome": "applied"
+      },
+      "receipt_patch": {
+        "verdict": "passed"
+      }
+    },
+    {
+      "name": "verification:passed:waiting:empty",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "empty",
+      "request_patch": {
+        "outcome": "waiting"
+      },
+      "receipt_patch": {
+        "verdict": "passed"
+      }
+    },
+    {
+      "name": "verification:passed:waiting:progress",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "progress",
+      "request_patch": {
+        "outcome": "waiting"
+      },
+      "receipt_patch": {
+        "verdict": "passed"
+      }
+    },
+    {
+      "name": "verification:passed:waiting:check",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "check",
+      "request_patch": {
+        "outcome": "waiting"
+      },
+      "receipt_patch": {
+        "verdict": "passed"
+      }
+    },
+    {
+      "name": "verification:failed:applied:empty",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "empty",
+      "request_patch": {
+        "outcome": "applied"
+      },
+      "receipt_patch": {
+        "verdict": "failed"
+      }
+    },
+    {
+      "name": "verification:failed:applied:progress",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "progress",
+      "request_patch": {
+        "outcome": "applied"
+      },
+      "receipt_patch": {
+        "verdict": "failed"
+      }
+    },
+    {
+      "name": "verification:failed:applied:check",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "check",
+      "request_patch": {
+        "outcome": "applied"
+      },
+      "receipt_patch": {
+        "verdict": "failed"
+      }
+    },
+    {
+      "name": "verification:failed:waiting:empty",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "empty",
+      "request_patch": {
+        "outcome": "waiting"
+      },
+      "receipt_patch": {
+        "verdict": "failed"
+      }
+    },
+    {
+      "name": "verification:failed:waiting:progress",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "progress",
+      "request_patch": {
+        "outcome": "waiting"
+      },
+      "receipt_patch": {
+        "verdict": "failed"
+      }
+    },
+    {
+      "name": "verification:failed:waiting:check",
+      "command": "verify-run",
+      "accepted": false,
+      "proof": "check",
+      "request_patch": {
+        "outcome": "waiting"
+      },
+      "receipt_patch": {
+        "verdict": "failed"
+      }
+    },
+    {
+      "name": "verification:no_receipt:unknown",
+      "command": "verify-run",
+      "accepted": true,
+      "request_patch": {
+        "outcome": "unknown",
+        "receipt": null,
+        "reason": "verification_observation_unsupported",
+        "required_next": "open_source"
+      }
+    },
+    {
+      "name": "verification:no_receipt:rejected",
+      "command": "verify-run",
+      "accepted": true,
+      "request_patch": {
+        "outcome": "rejected",
+        "receipt": null,
+        "reason": "verification_observation_unsupported",
+        "required_next": "open_source"
+      }
+    }
+  ]
+}

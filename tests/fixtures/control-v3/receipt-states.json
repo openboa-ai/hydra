@@ -1,0 +1,1021 @@
+{
+  "fixture_version": 1,
+  "contract": {
+    "path": "docs/engineering/mvp/contracts/control-plane.md",
+    "revision": 8,
+    "sha256": "d64b7a80ac07b496b4c4e1641bab671bdbf03adb113923af6f80a023c19239a9"
+  },
+  "cases": [
+    {
+      "name": "publication-branch_published-pr-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"branch_published\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-branch_published-pr-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"branch_published\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-branch_published-pr-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"branch_published\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-branch_published-pr-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"branch_published\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-branch_published-pr-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"branch_published\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-branch_published-pr-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"branch_published\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-pr_ready-pr-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"pr_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-pr_ready-pr-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"pr_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-pr_ready-pr-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"pr_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-pr_ready-pr-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"pr_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-pr_ready-pr-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"pr_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-pr_ready-pr-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"pr_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-publication_ready-pr-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"publication_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-publication_ready-pr-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"publication_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-publication_ready-pr-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":null,\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"publication_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-publication_ready-pr-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"publication_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-publication_ready-pr-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"publication_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "publication-publication_ready-pr-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"publication\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"branch\":\"hydra/issue-7\",\"observed_remote_head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"review_request_refs\":[],\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"},\"stage\":\"publication_ready\"},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-none-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-none-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-none-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-pending-closed-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"pending\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-none-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-none-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-none-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-success-closed-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"success\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-none-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-none-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-none-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-failed-closed-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"failed\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-none-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-none-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-none-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":null,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-false-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-false-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-false-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":false,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-true-applied",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"applied\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-true-waiting",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"waiting\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    },
+    {
+      "name": "delivery-unknown-closed-true-unknown",
+      "accepted": false,
+      "wire": "{\"command_schema\":1,\"runtime\":{\"identity_schema\":1,\"package\":\"openboa-hydra-sdlc\",\"version\":\"0.2.1\",\"code_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"code_digest_scope\":\"package_sources_at_startup\",\"config_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"control_binding_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"identity_reason\":null},\"binding_epoch\":\"00000000-0000-4000-8000-000000000001\",\"observations\":[],\"request\":{\"request_id\":\"00000000-0000-4000-8000-000000000352\",\"action\":\"workflow_step\",\"target\":{\"repository_id\":101,\"issue_number\":7},\"outcome\":\"unknown\",\"reason\":null,\"effect_refs\":[],\"observed_refs\":[],\"receipt\":{\"kind\":\"delivery\",\"candidate\":{\"attempt_id\":\"00000000-0000-4000-8000-000000000320\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"contract_revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"pr_ref\":{\"source\":\"github\",\"kind\":\"pull_request\",\"id\":\"101:9\"},\"integration_base\":\"dddddddddddddddddddddddddddddddddddddddd\",\"merge_commit\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"post_merge\":\"unknown\",\"issue_closed\":true,\"progress_ref\":{\"source\":\"github\",\"kind\":\"progress\",\"id\":\"101:7\"}},\"required_next\":\"none\"}}"
+    }
+  ],
+  "commands": [
+    {
+      "name": "checkpoint",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": "checkpoint:00000000-0000-4000-8000-000000000320:00000000-0000-4000-8000-000000000321",
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "checkpoint_only",
+          "outcome": "candidate_ready",
+          "summary": "PRIVATE_CORRELATION_CANARY"
+        },
+        "assignment": {
+          "attempt_id": "00000000-0000-4000-8000-000000000320",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "step_id": "00000000-0000-4000-8000-000000000321",
+          "spec_revision": null
+        }
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:checkpoint:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:checkpoint-readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "implementation_done",
+              "native_step": null,
+              "head": "cccccccccccccccccccccccccccccccccccccccc",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "expected_base": "dddddddddddddddddddddddddddddddddddddddd",
+              "published_head": null,
+              "wait_reason": null,
+              "next_action": "verify_only",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:checkpoint:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "checkpoint",
+            "assignment": {
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "step_id": "00000000-0000-4000-8000-000000000321",
+              "spec_revision": null
+            },
+            "outcome": "candidate_ready",
+            "checkpoint_head": "cccccccccccccccccccccccccccccccccccccccc",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "step_retired": true,
+            "ticket_released": true
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "decision",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": "decision:00000000-0000-4000-8000-000000000320:3",
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "decision_apply",
+          "source_attempt": "00000000-0000-4000-8000-000000000320",
+          "round": 3,
+          "proposal_ref": {
+            "source": "github",
+            "kind": "progress",
+            "id": "101:7"
+          }
+        },
+        "assignment": null
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "decision",
+            "source_attempt": "00000000-0000-4000-8000-000000000320",
+            "round": 3,
+            "intent_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "context_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "resolved_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "resume_attempt": "00000000-0000-4000-8000-000000000322"
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "continue",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": null,
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "continue",
+          "progress": {
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "phase": "implementation_done"
+          },
+          "reply_profile": "standard_v1"
+        },
+        "assignment": null
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "assignment_returned"
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "verify-run",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": null,
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "verify_only",
+          "stage": "run",
+          "candidate": {
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "reply_profile": "standard_v1"
+        },
+        "assignment": null
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "verification",
+            "candidate": {
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "verdict": "passed",
+            "review": "not_required",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "evidence_refs": []
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "verify-review",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": "checkpoint:00000000-0000-4000-8000-000000000320:00000000-0000-4000-8000-000000000321",
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "verify_only",
+          "stage": "review_checkpoint",
+          "candidate": {
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "outcome": "candidate_ready",
+          "summary": "PRIVATE_CORRELATION_CANARY",
+          "reply_profile": "standard_v1"
+        },
+        "assignment": {
+          "attempt_id": "00000000-0000-4000-8000-000000000320",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "step_id": "00000000-0000-4000-8000-000000000321",
+          "spec_revision": null
+        }
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "verification_review",
+            "candidate": {
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "assignment": {
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "step_id": "00000000-0000-4000-8000-000000000321",
+              "spec_revision": null
+            },
+            "review": "accepted",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "evidence_refs": [],
+            "step_retired": true,
+            "ticket_released": true
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "publication",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": null,
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "publish_candidate",
+          "candidate": {
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "branch": "hydra/issue-7",
+          "expected_remote_head": null
+        },
+        "assignment": null
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "publication",
+            "candidate": {
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "branch": "hydra/issue-7",
+            "observed_remote_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "pr_ref": {
+              "source": "github",
+              "kind": "pull_request",
+              "id": "101:9"
+            },
+            "review_request_refs": [],
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "stage": "publication_ready"
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "delivery",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": null,
+        "action": "workflow_step",
+        "target": {
+          "repository_id": 101,
+          "issue_number": 7
+        },
+        "parameters": {
+          "operation": "deliver",
+          "candidate": {
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "pr_number": 9,
+          "integration_base": "dddddddddddddddddddddddddddddddddddddddd"
+        },
+        "assignment": null
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "delivery",
+            "candidate": {
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "pr_ref": {
+              "source": "github",
+              "kind": "pull_request",
+              "id": "101:9"
+            },
+            "integration_base": "dddddddddddddddddddddddddddddddddddddddd",
+            "merge_commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "post_merge": "success",
+            "issue_closed": true,
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            }
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "admission",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "effect_key": null,
+        "action": "admission_set",
+        "target": {
+          "kind": "repository",
+          "repository_id": 101
+        },
+        "parameters": {
+          "mode": "paused"
+        }
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000002",
+          "action": "admission_set",
+          "target": {
+            "kind": "repository",
+            "repository_id": 101
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [
+            {
+              "source": "hydra",
+              "kind": "admission",
+              "id": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ],
+          "observed_refs": [
+            {
+              "observation_key": "command:00000000-0000-4000-8000-000000000002:admission-readback",
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              }
+            }
+          ],
+          "receipt": {
+            "kind": "admission",
+            "readback": {
+              "observation_key": "command:00000000-0000-4000-8000-000000000002:admission-readback",
+              "revision": {
+                "kind": "monotonic",
+                "value": "7"
+              }
+            }
+          },
+          "required_next": "none"
+        },
+        "observations": [
+          {
+            "key": "command:00000000-0000-4000-8000-000000000002:admission-readback",
+            "resource": {
+              "source": "hydra",
+              "kind": "admission",
+              "id": "2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            "revision": {
+              "kind": "monotonic",
+              "value": "7"
+            },
+            "observed_at": "2026-10-21T00:00:00Z",
+            "last_attempt_at": "2026-10-21T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "command:00000000-0000-4000-8000-000000000002:admission-readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "revision": 7,
+              "global_mode": "paused",
+              "project_overrides": {
+                "example/alpha": "paused"
+              },
+              "gate_reason": "host_paused"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "cleanup",
+      "event": {
+        "type": "command_started",
+        "request_id": "00000000-0000-4000-8000-000000000352",
+        "effect_key": null,
+        "action": "cleanup",
+        "target": {
+          "kind": "owned_resource",
+          "repository_id": 101,
+          "issue_number": 7,
+          "source_attempt": "00000000-0000-4000-8000-000000000320",
+          "resource": {
+            "source": "resource_provider",
+            "kind": "workspace",
+            "id": "fixture-owned-workspace"
+          }
+        },
+        "operation": "archive"
+      },
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "cleanup",
+          "target": {
+            "kind": "owned_resource",
+            "repository_id": 101,
+            "issue_number": 7,
+            "source_attempt": "00000000-0000-4000-8000-000000000320",
+            "resource": {
+              "source": "resource_provider",
+              "kind": "workspace",
+              "id": "fixture-owned-workspace"
+            }
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [],
+          "receipt": {
+            "kind": "cleanup",
+            "resource": {
+              "source": "resource_provider",
+              "kind": "workspace",
+              "id": "fixture-owned-workspace"
+            },
+            "operation": "archive",
+            "result": "archived",
+            "evidence_refs": [
+              {
+                "source": "resource_provider",
+                "kind": "receipt",
+                "id": "fixture-exact-readback"
+              }
+            ]
+          },
+          "required_next": "none"
+        }
+      },
+      "accepted": false
+    }
+  ]
+}

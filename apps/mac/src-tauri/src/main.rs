@@ -1,8 +1,13 @@
 mod process;
 mod protocol;
+mod projection;
+mod projection_cache;
+mod projection_policy;
 
 use process::{bounded_output, LaunchConfig};
 use protocol::{Action, RecordKind, Snapshot, Target};
+use projection_cache::{CachedRead,ReadCache};
+use std::time::Instant;
 use serde::Serialize;
 use std::{
     sync::{
@@ -38,24 +43,99 @@ impl BridgeError {
 
 struct Bridge {
     launch: Result<LaunchConfig, &'static str>,
+    projection: Mutex<Result<ReadCache, &'static str>>,
     mutation: Mutex<()>,
     local_read: Mutex<()>,
     remote_read: Mutex<()>,
+    context_probe: Mutex<()>,
     record_open: Mutex<()>,
     quitting: AtomicBool,
     exit_confirmed: AtomicBool,
 }
 
+fn read_context_scope(bytes:&[u8])->Option<String> {
+    if bytes.len()>1024 {return None;}
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Context {scope:Option<String>}
+    let context:Context=serde_json::from_slice(bytes).ok()?;
+    let scope=context.scope?;
+    let suffix=scope.strip_prefix("github:read:")?;
+    (suffix.len()==64 && suffix.bytes().all(|c|c.is_ascii_digit() || (b'a'..=b'f').contains(&c))).then_some(scope)
+}
 impl Bridge {
     fn new() -> Self {
         Self {
             launch: LaunchConfig::from_arguments(std::env::args_os().skip(1)),
+            projection: Mutex::new(read_epoch().and_then(ReadCache::new)),
             mutation: Mutex::new(()),
             local_read: Mutex::new(()),
             remote_read: Mutex::new(()),
+            context_probe: Mutex::new(()),
             record_open: Mutex::new(()),
             quitting: AtomicBool::new(false),
             exit_confirmed: AtomicBool::new(false),
+        }
+    }
+
+    async fn projection_read(&self,epoch:&str,request:String,refresh:bool,repository:Option<&str>,cursor:Option<&str>,recovery:bool)->Result<CachedRead,BridgeError> {
+        if self.quitting.load(Ordering::Acquire) || self.exit_confirmed.load(Ordering::Acquire) {
+            return Err(BridgeError::new("quit_in_progress"));
+        }
+        if repository.is_some_and(|r|!protocol::repository_valid(r)) {
+            return Err(BridgeError::new("project_unregistered"));
+        }
+        let _lane=if refresh {self.remote_read.lock().await}else{self.local_read.lock().await};
+        if self.quitting.load(Ordering::Acquire) || self.exit_confirmed.load(Ordering::Acquire) {
+            return Err(BridgeError::new("quit_in_progress"));
+        }
+        let launch=self.launch.as_ref().map_err(|code|BridgeError::new(*code))?;
+        if cursor.is_some_and(|c|c.len()>2048 || c.is_empty() || !c.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_')) || (cursor.is_some() && repository.is_some() && !refresh) {
+            return Err(BridgeError::new("invalid_cursor"));
+        }
+        {
+            let _probe=self.context_probe.lock().await;
+            let due={
+                let mut state=self.projection.lock().await;
+                let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+                if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
+                cache.context_probe_due(Instant::now())
+            };
+            if due {
+                let scope=match bounded_output(launch.read_context_command(epoch),Duration::from_secs(3)).await {
+                    Ok(bytes)=>read_context_scope(&bytes),Err(_)=>None,
+                };
+                let mut state=self.projection.lock().await;
+                let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+                if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
+                cache.context_changed(scope).map_err(BridgeError::new)?;
+            }
+        }
+        let scope=format!("{}:{}:{}",if refresh {"remote"}else{"local"},repository.unwrap_or("overview"),cursor.unwrap_or(""));
+        let (ticket,repository_bindings)={
+            let mut state=self.projection.lock().await;
+            let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+            if cache.epoch()!=epoch {return Err(BridgeError::new("read_binding_mismatch"));}
+            let now=Instant::now();
+            let held=cache.read_held(now,refresh,&scope,cursor.is_some(),recovery).map_err(BridgeError::new)?;
+            if held {
+                return cache.get(&scope,!refresh,now).ok_or_else(||BridgeError::new("source_wait"));
+            }
+            let ticket=cache.issue(scope,request,repository.is_some()).map_err(BridgeError::new)?;
+            let bindings=if refresh {cache.repository_binding_hints().map_err(BridgeError::new)?}else{"{}".into()};
+            if refresh {cache.remote_started(now);}else{cache.local_started(now);}
+            (ticket,bindings)
+        };
+        let credential_scope=ticket.credential_scope.clone();
+        let mut command=launch.projection_command(&ticket.epoch,&ticket.request_id,refresh,repository,cursor);
+        if refresh {command.arg("--credential-scope").arg(credential_scope.ok_or_else(||BridgeError::new("read_context_unavailable"))?);}
+        if repository_bindings!="{}" {command.arg("--repository-bindings").arg(repository_bindings);}
+        let output=bounded_output(command,Duration::from_secs(if refresh {60}else{15})).await;
+        let mut state=self.projection.lock().await;
+        let cache=state.as_mut().map_err(|code|BridgeError::new(*code))?;
+        match output {
+            Ok(bytes)=>cache.accept(&ticket,&bytes,Instant::now()).map_err(BridgeError::new),
+            Err(code)=>{cache.failed(&ticket);Err(BridgeError::new(code))}
         }
     }
 
@@ -165,6 +245,37 @@ impl Bridge {
         }
         self.mutate_locked(action, &target).await
     }
+}
+
+// A fresh process connection identity, with no persisted task, credential or conversation state.
+fn read_epoch()->Result<String,&'static str> {
+    use std::io::Read;
+    let mut bytes=[0u8;16];
+    std::fs::File::open("/dev/urandom").and_then(|mut file|file.read_exact(&mut bytes))
+        .map_err(|_|"binding_unavailable")?;
+    bytes[6]=(bytes[6]&0x0f)|0x40;bytes[8]=(bytes[8]&0x3f)|0x80;
+    let hex=bytes.iter().map(|b|format!("{b:02x}")).collect::<String>();
+    Ok(format!("{}-{}-{}-{}-{}",&hex[..8],&hex[8..12],&hex[12..16],&hex[16..20],&hex[20..]))
+}
+
+#[tauri::command]
+async fn projection_binding(window:tauri::WebviewWindow,state:tauri::State<'_,Arc<Bridge>>)->Result<String,BridgeError> {
+    main_window(&window)?;
+    let cache=state.projection.lock().await;
+    Ok(cache.as_ref().map_err(|code|BridgeError::new(*code))?.epoch().to_owned())
+}
+#[tauri::command(rename_all="camelCase")]
+async fn projection_status(window:tauri::WebviewWindow,state:tauri::State<'_,Arc<Bridge>>,
+    epoch:String,request_id:String,refresh:bool,repository:Option<String>,cursor:Option<String>,explicit_recovery:bool)->Result<CachedRead,BridgeError> {
+    main_window(&window)?;
+    state.projection_read(&epoch,request_id,refresh,repository.as_deref(),cursor.as_deref(),explicit_recovery).await
+}
+#[tauri::command]
+async fn projection_clock_resumed(window:tauri::WebviewWindow,state:tauri::State<'_,Arc<Bridge>>)->Result<(),BridgeError> {
+    main_window(&window)?;
+    let mut cache=state.projection.lock().await;
+    cache.as_mut().map_err(|code|BridgeError::new(*code))?.clock_resumed();
+    Ok(())
 }
 
 fn main_window(window: &tauri::WebviewWindow) -> Result<(), BridgeError> {
@@ -362,6 +473,9 @@ fn main() {
         .manage(Arc::new(Bridge::new()))
         .invoke_handler(tauri::generate_handler![
             status,
+            projection_binding,
+            projection_status,
+            projection_clock_resumed,
             control,
             open_record,
             request_quit
@@ -450,6 +564,107 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    struct ProjectionFixture {root:std::path::PathBuf,epoch:String,bridge:Bridge}
+    #[cfg(unix)]
+    impl ProjectionFixture {
+        fn new(provider_wait:bool)->Self {
+            use std::{fs,os::unix::fs::PermissionsExt,path::PathBuf,process::Command};
+            let epoch=read_epoch().unwrap();
+            let root=std::env::temp_dir().join(format!("hydra-projection-read-{epoch}"));
+            fs::create_dir(&root).unwrap();
+            let emitter=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_wire.py");
+            let output=Command::new("python3").arg("-I").arg(emitter).output().unwrap();
+            assert!(output.status.success());
+            let vectors:serde_json::Value=serde_json::from_slice(&output.stdout).unwrap();
+            let mut value:serde_json::Value=serde_json::from_str(vectors[0]["wire"].as_str().unwrap()).unwrap();
+            if provider_wait {
+                let mut o=value["observations"].as_array().unwrap().iter()
+                    .find(|o|o["resource"]["source"]=="github").unwrap().clone();
+                o["key"]="query:provider-hold".into();o["reason"]="provider_wait".into();
+                value["observations"].as_array_mut().unwrap().push(o);
+                value["retry_hints"]=serde_json::json!([{"observation_key":"query:provider-hold",
+                    "scope":format!("github:read:{}","a".repeat(64)),"after_seconds":600,"basis":"provider"}]);
+            }
+            value["page"]["next_cursor"]="continuation_page".into();
+            let config=root.join("frame.json");fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();
+            let local_emitter=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_local_read.py");
+            let output=Command::new("python3").arg("-I").arg(local_emitter).arg(&epoch).output().unwrap();
+            assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+            let mut local:serde_json::Value=serde_json::from_slice(&output.stdout).unwrap();
+            local["page"]["next_cursor"]="continuation_page".into();
+            fs::write(root.join("frame.json.local"),serde_json::to_vec(&local).unwrap()).unwrap();
+            let runtime=root.join("runtime");
+            fs::write(&runtime,br#"#!/usr/bin/env python3
+import json,sys
+a=sys.argv
+if 'read-context' in a:
+ print(json.dumps({'scope':'github:read:'+'a'*64}))
+ sys.exit(0)
+p=a[a.index('--config')+1]
+v=json.load(open(p if '--refresh' in a else p+'.local'))
+v['request_id']=a[a.index('--request-id')+1]
+v['binding_epoch']=a[a.index('--binding-epoch')+1]
+if '--repository' in a:
+ r=a[a.index('--repository')+1]
+ ids={o['resource']['id'] for o in v['observations'] if o['resource']['kind']=='repository' and o['value'] and o['value'].get('full_name','').lower()==r}
+ v['projects']=[project for project in v['projects'] if project['repository_ref']['id'] in ids or project['repository_ref']['id']=='requested:'+r]
+ v['work']=[work for work in v['work'] if work['issue_ref']['id'].split(':')[0] in ids]
+ for project in v['projects']: project['coverage']['next_cursor']=v['page']['next_cursor']
+ v['page']['next_cursor']=None
+ v['page']['scope']='registered-projects;repository:'+r
+else:
+ v['page']['scope']='registered-projects;overview'
+v['page']['returned_count']=len(v['projects'])
+if v['page']['state']=='complete': v['page']['total_count']=len(v['projects'])
+with open(p+'.calls','a') as f: f.write('read\n')
+print(json.dumps(v))
+"#).unwrap();
+            fs::set_permissions(&runtime,fs::Permissions::from_mode(0o700)).unwrap();
+            let mut bridge=Bridge::new();
+            bridge.launch=Ok(LaunchConfig{runtime,config,home:root.as_os_str().into()});
+            bridge.projection=Mutex::new(Ok(ReadCache::new(epoch.clone()).unwrap()));
+            Self{root,epoch,bridge}
+        }
+        fn count(&self)->usize {std::fs::read_to_string(self.root.join("frame.json.calls")).unwrap().lines().count()}
+        async fn read(&self,remote:bool,cursor:Option<&str>,recovery:bool)->Result<CachedRead,BridgeError> {
+            self.bridge.projection_read(&self.epoch,read_epoch().unwrap(),remote,
+                if remote {Some("example/alpha")} else {None},cursor,recovery).await
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for ProjectionFixture {fn drop(&mut self){let _=std::fs::remove_dir_all(&self.root);}}
+    #[cfg(unix)]
+    async fn continuation_during_poll_floor(remote:bool) {
+        let f=ProjectionFixture::new(false);
+        let first=f.read(remote,None,false).await.unwrap();
+        let repeated=f.read(remote,None,true).await.unwrap();
+        assert!(repeated.cached);assert_eq!(repeated.sequence,first.sequence);assert_eq!(f.count(),1);
+        assert_eq!(f.read(remote,Some("altered_page"),false).await.unwrap_err().code,"invalid_cursor");
+        assert_eq!(f.count(),1,"An unissued cursor invoked the core reader");
+        let next=f.read(remote,Some("continuation_page"),false).await;
+        assert!(next.is_ok(),"Ordinary poll floor held an unread continuation: {:?}",next.err());
+        let next=next.unwrap();assert!(!next.cached);assert!(next.sequence>first.sequence);assert_eq!(f.count(),2);
+        let replay=f.read(remote,Some("continuation_page"),true).await.unwrap();
+        assert!(replay.cached);assert_eq!(replay.sequence,next.sequence);assert_eq!(f.count(),2);
+        let repeated=f.read(remote,None,false).await.unwrap();
+        assert!(repeated.cached);assert_eq!(f.count(),2);
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_continuation_is_not_a_repeat_poll() {continuation_during_poll_floor(false).await;}
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remote_continuation_is_not_a_repeat_poll() {continuation_during_poll_floor(true).await;}
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn continuation_and_manual_recovery_still_honor_provider_wait() {
+        let f=ProjectionFixture::new(true);f.read(true,None,false).await.unwrap();
+        for recovery in [false,true] {
+            assert_eq!(f.read(true,Some("continuation_page"),recovery).await.unwrap_err().code,"source_wait");
+        }
+        assert_eq!(f.count(),1);
+    }
     #[tokio::test]
     async fn queued_refresh_cannot_spawn_after_quit_fence() {
         let bridge = Arc::new(Bridge::new());
@@ -495,4 +710,49 @@ mod tests {
             assert!(!bundled_navigation(&tauri::Url::parse(input).unwrap()));
         }
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retained_repository_identity_reaches_fixed_reader_and_respects_context_fences() {
+        use std::fs;
+        let mut f=ProjectionFixture::new(false);
+        let runtime=f.root.join("runtime");let original=fs::read_to_string(&runtime).unwrap();
+        let script=original.replace("print(json.dumps(v))", "with open(p+'.arguments','a') as out: out.write(json.dumps(a)+'\\n')\nprint(json.dumps(v))");
+        assert_ne!(script,original);fs::write(&runtime,&script).unwrap();
+        fn hints(f:&ProjectionFixture)->serde_json::Value {
+            let raw=fs::read_to_string(f.root.join("frame.json.arguments")).unwrap();
+            let args:Vec<String>=serde_json::from_str(raw.lines().last().unwrap()).unwrap();
+            args.iter().position(|a|a=="--repository-bindings").map(|i|serde_json::from_str(&args[i+1]).unwrap())
+                .unwrap_or_else(||serde_json::json!({}))
+        }
+        async fn fresh(f:&ProjectionFixture)->Result<CachedRead,BridgeError> {
+            f.bridge.projection.lock().await.as_mut().unwrap().remote_started(Instant::now()-Duration::from_secs(61));
+            f.read(true,None,false).await
+        }
+        f.read(true,None,false).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}));
+        fresh(&f).await.unwrap();assert_eq!(hints(&f)["example/alpha"],101,"Retained numeric repository never reached the fixed reader");
+
+        fs::write(&runtime,script.replace("print(json.dumps(v))","print('{')")).unwrap();
+        assert!(fresh(&f).await.is_err());fs::write(&runtime,&script).unwrap();
+        fresh(&f).await.unwrap();assert_eq!(hints(&f)["example/alpha"],101,"Read failure forgot an identity pin");
+
+        {
+            let mut state=f.bridge.projection.lock().await;let cache=state.as_mut().unwrap();
+            cache.context_changed(Some(format!("github:read:{}","b".repeat(64)))).unwrap();
+            cache.context_probe_due(Instant::now()+Duration::from_secs(10));
+        }
+        fresh(&f).await.unwrap();assert_eq!(hints(&f)["example/alpha"],101,"Credential rotation forgot stable repository identity");
+
+        let epoch=read_epoch().unwrap();f.bridge.projection.lock().await.as_mut().unwrap().binding_changed(epoch.clone()).unwrap();f.epoch=epoch;
+        f.read(true,None,false).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"Another binding inherited repository pins");
+
+        let config=f.root.join("frame.json");let mut value:serde_json::Value=serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        value["runtime"]["code_digest"]="f".repeat(64).into();
+        for source in value["observations"].as_array_mut().unwrap().iter_mut().filter(|o|o["resource"]["kind"]=="repository") {
+            source["value"]=serde_json::Value::Null;source["observed_at"]=serde_json::Value::Null;source["availability"]="unavailable".into();
+            source["reason"]="fixture_unavailable".into();source["coverage"]=serde_json::json!({"state":"unavailable","scope":"fixture","returned_count":0,"total_count":null,"next_cursor":null,"reason":"fixture_unavailable"});
+        }
+        fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();fresh(&f).await.unwrap();
+        fresh(&f).await.unwrap();assert_eq!(hints(&f),serde_json::json!({}),"A new runtime reused old repository pins");
+    }
+
 }

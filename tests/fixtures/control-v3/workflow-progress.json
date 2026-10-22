@@ -1,0 +1,400 @@
+{
+  "cases": [
+    {
+      "name": "checkpoint:canonical",
+      "command": "checkpoint",
+      "mode": "canonical",
+      "accepted": true
+    },
+    {
+      "name": "checkpoint:foreign_repository",
+      "command": "checkpoint",
+      "mode": "foreign_repository",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:foreign_issue",
+      "command": "checkpoint",
+      "mode": "foreign_issue",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:wrong_source",
+      "command": "checkpoint",
+      "mode": "wrong_source",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:wrong_kind",
+      "command": "checkpoint",
+      "mode": "wrong_kind",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:opaque_unbound",
+      "command": "checkpoint",
+      "mode": "opaque_unbound",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:opaque_matching",
+      "command": "checkpoint",
+      "mode": "opaque_matching",
+      "accepted": true
+    },
+    {
+      "name": "checkpoint:opaque_wrong_work",
+      "command": "checkpoint",
+      "mode": "opaque_wrong_work",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:opaque_stale",
+      "command": "checkpoint",
+      "mode": "opaque_stale",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:opaque_partial",
+      "command": "checkpoint",
+      "mode": "opaque_partial",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:opaque_unselected",
+      "command": "checkpoint",
+      "mode": "opaque_unselected",
+      "accepted": false
+    },
+    {
+      "name": "continue:canonical",
+      "command": "continue",
+      "mode": "canonical",
+      "accepted": false
+    },
+    {
+      "name": "continue:foreign_repository",
+      "command": "continue",
+      "mode": "foreign_repository",
+      "accepted": false
+    },
+    {
+      "name": "continue:foreign_issue",
+      "command": "continue",
+      "mode": "foreign_issue",
+      "accepted": false
+    },
+    {
+      "name": "continue:wrong_source",
+      "command": "continue",
+      "mode": "wrong_source",
+      "accepted": false
+    },
+    {
+      "name": "continue:wrong_kind",
+      "command": "continue",
+      "mode": "wrong_kind",
+      "accepted": false
+    },
+    {
+      "name": "continue:opaque_unbound",
+      "command": "continue",
+      "mode": "opaque_unbound",
+      "accepted": false
+    },
+    {
+      "name": "continue:opaque_matching",
+      "command": "continue",
+      "mode": "opaque_matching",
+      "accepted": false
+    },
+    {
+      "name": "continue:opaque_wrong_work",
+      "command": "continue",
+      "mode": "opaque_wrong_work",
+      "accepted": false
+    },
+    {
+      "name": "continue:opaque_stale",
+      "command": "continue",
+      "mode": "opaque_stale",
+      "accepted": false
+    },
+    {
+      "name": "continue:opaque_partial",
+      "command": "continue",
+      "mode": "opaque_partial",
+      "accepted": false
+    },
+    {
+      "name": "continue:opaque_unselected",
+      "command": "continue",
+      "mode": "opaque_unselected",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:canonical",
+      "command": "verify-run",
+      "mode": "canonical",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:foreign_repository",
+      "command": "verify-run",
+      "mode": "foreign_repository",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:foreign_issue",
+      "command": "verify-run",
+      "mode": "foreign_issue",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:wrong_source",
+      "command": "verify-run",
+      "mode": "wrong_source",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:wrong_kind",
+      "command": "verify-run",
+      "mode": "wrong_kind",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:opaque_unbound",
+      "command": "verify-run",
+      "mode": "opaque_unbound",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:opaque_matching",
+      "command": "verify-run",
+      "mode": "opaque_matching",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:opaque_wrong_work",
+      "command": "verify-run",
+      "mode": "opaque_wrong_work",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:opaque_stale",
+      "command": "verify-run",
+      "mode": "opaque_stale",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:opaque_partial",
+      "command": "verify-run",
+      "mode": "opaque_partial",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:opaque_unselected",
+      "command": "verify-run",
+      "mode": "opaque_unselected",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:canonical",
+      "command": "verify-review",
+      "mode": "canonical",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:foreign_repository",
+      "command": "verify-review",
+      "mode": "foreign_repository",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:foreign_issue",
+      "command": "verify-review",
+      "mode": "foreign_issue",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:wrong_source",
+      "command": "verify-review",
+      "mode": "wrong_source",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:wrong_kind",
+      "command": "verify-review",
+      "mode": "wrong_kind",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:opaque_unbound",
+      "command": "verify-review",
+      "mode": "opaque_unbound",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:opaque_matching",
+      "command": "verify-review",
+      "mode": "opaque_matching",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:opaque_wrong_work",
+      "command": "verify-review",
+      "mode": "opaque_wrong_work",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:opaque_stale",
+      "command": "verify-review",
+      "mode": "opaque_stale",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:opaque_partial",
+      "command": "verify-review",
+      "mode": "opaque_partial",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:opaque_unselected",
+      "command": "verify-review",
+      "mode": "opaque_unselected",
+      "accepted": false
+    },
+    {
+      "name": "publication:canonical",
+      "command": "publication",
+      "mode": "canonical",
+      "accepted": false
+    },
+    {
+      "name": "publication:foreign_repository",
+      "command": "publication",
+      "mode": "foreign_repository",
+      "accepted": false
+    },
+    {
+      "name": "publication:foreign_issue",
+      "command": "publication",
+      "mode": "foreign_issue",
+      "accepted": false
+    },
+    {
+      "name": "publication:wrong_source",
+      "command": "publication",
+      "mode": "wrong_source",
+      "accepted": false
+    },
+    {
+      "name": "publication:wrong_kind",
+      "command": "publication",
+      "mode": "wrong_kind",
+      "accepted": false
+    },
+    {
+      "name": "publication:opaque_unbound",
+      "command": "publication",
+      "mode": "opaque_unbound",
+      "accepted": false
+    },
+    {
+      "name": "publication:opaque_matching",
+      "command": "publication",
+      "mode": "opaque_matching",
+      "accepted": false
+    },
+    {
+      "name": "publication:opaque_wrong_work",
+      "command": "publication",
+      "mode": "opaque_wrong_work",
+      "accepted": false
+    },
+    {
+      "name": "publication:opaque_stale",
+      "command": "publication",
+      "mode": "opaque_stale",
+      "accepted": false
+    },
+    {
+      "name": "publication:opaque_partial",
+      "command": "publication",
+      "mode": "opaque_partial",
+      "accepted": false
+    },
+    {
+      "name": "publication:opaque_unselected",
+      "command": "publication",
+      "mode": "opaque_unselected",
+      "accepted": false
+    },
+    {
+      "name": "delivery:canonical",
+      "command": "delivery",
+      "mode": "canonical",
+      "accepted": false
+    },
+    {
+      "name": "delivery:foreign_repository",
+      "command": "delivery",
+      "mode": "foreign_repository",
+      "accepted": false
+    },
+    {
+      "name": "delivery:foreign_issue",
+      "command": "delivery",
+      "mode": "foreign_issue",
+      "accepted": false
+    },
+    {
+      "name": "delivery:wrong_source",
+      "command": "delivery",
+      "mode": "wrong_source",
+      "accepted": false
+    },
+    {
+      "name": "delivery:wrong_kind",
+      "command": "delivery",
+      "mode": "wrong_kind",
+      "accepted": false
+    },
+    {
+      "name": "delivery:opaque_unbound",
+      "command": "delivery",
+      "mode": "opaque_unbound",
+      "accepted": false
+    },
+    {
+      "name": "delivery:opaque_matching",
+      "command": "delivery",
+      "mode": "opaque_matching",
+      "accepted": false
+    },
+    {
+      "name": "delivery:opaque_wrong_work",
+      "command": "delivery",
+      "mode": "opaque_wrong_work",
+      "accepted": false
+    },
+    {
+      "name": "delivery:opaque_stale",
+      "command": "delivery",
+      "mode": "opaque_stale",
+      "accepted": false
+    },
+    {
+      "name": "delivery:opaque_partial",
+      "command": "delivery",
+      "mode": "opaque_partial",
+      "accepted": false
+    },
+    {
+      "name": "delivery:opaque_unselected",
+      "command": "delivery",
+      "mode": "opaque_unselected",
+      "accepted": false
+    }
+  ]
+}

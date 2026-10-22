@@ -1,0 +1,237 @@
+{
+  "contract": {
+    "path": "docs/engineering/mvp/contracts/control-plane.md",
+    "revision": 8,
+    "sha256": "d64b7a80ac07b496b4c4e1641bab671bdbf03adb113923af6f80a023c19239a9"
+  },
+  "cases": [
+    {
+      "name": "supported-admission",
+      "command": "admission",
+      "mode": "unchanged",
+      "accepted": true
+    },
+    {
+      "name": "actual-checkpoint",
+      "command": "actual-checkpoint",
+      "mode": "unchanged",
+      "accepted": true
+    },
+    {
+      "name": "checkpoint:canonical",
+      "command": "actual-checkpoint",
+      "mode": "canonical",
+      "accepted": true
+    },
+    {
+      "name": "checkpoint:missing_proof",
+      "command": "actual-checkpoint",
+      "mode": "missing_proof",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:unselected",
+      "command": "actual-checkpoint",
+      "mode": "unselected",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:stale",
+      "command": "actual-checkpoint",
+      "mode": "stale",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:partial",
+      "command": "actual-checkpoint",
+      "mode": "partial",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:wrong_head",
+      "command": "actual-checkpoint",
+      "mode": "wrong_head",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:null_head",
+      "command": "actual-checkpoint",
+      "mode": "null_head",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:wrong_attempt",
+      "command": "actual-checkpoint",
+      "mode": "wrong_attempt",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:null_attempt",
+      "command": "actual-checkpoint",
+      "mode": "null_attempt",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:wrong_contract",
+      "command": "actual-checkpoint",
+      "mode": "wrong_contract",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:null_contract",
+      "command": "actual-checkpoint",
+      "mode": "null_contract",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:active_step",
+      "command": "actual-checkpoint",
+      "mode": "active_step",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:wrong_issue",
+      "command": "actual-checkpoint",
+      "mode": "wrong_issue",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:duplicate_selection",
+      "command": "actual-checkpoint",
+      "mode": "duplicate_selection",
+      "accepted": false
+    },
+    {
+      "name": "checkpoint:canonical_wrong_head",
+      "command": "actual-checkpoint",
+      "mode": "canonical_wrong_head",
+      "accepted": false
+    },
+    {
+      "name": "decision:no_proof",
+      "command": "decision",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "decision:unrelated_progress",
+      "command": "decision",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "decision:unknown_without_receipt",
+      "command": "decision",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    },
+    {
+      "name": "continue:no_proof",
+      "command": "continue",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "continue:unrelated_progress",
+      "command": "continue",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "continue:unknown_without_receipt",
+      "command": "continue",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    },
+    {
+      "name": "verify-run:no_proof",
+      "command": "verify-run",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:unrelated_progress",
+      "command": "verify-run",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "verify-run:unknown_without_receipt",
+      "command": "verify-run",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    },
+    {
+      "name": "verify-review:no_proof",
+      "command": "verify-review",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:unrelated_progress",
+      "command": "verify-review",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "verify-review:unknown_without_receipt",
+      "command": "verify-review",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    },
+    {
+      "name": "publication:no_proof",
+      "command": "publication",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "publication:unrelated_progress",
+      "command": "publication",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "publication:unknown_without_receipt",
+      "command": "publication",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    },
+    {
+      "name": "delivery:no_proof",
+      "command": "delivery",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "delivery:unrelated_progress",
+      "command": "delivery",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "delivery:unknown_without_receipt",
+      "command": "delivery",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    },
+    {
+      "name": "cleanup:no_proof",
+      "command": "cleanup",
+      "mode": "no_proof",
+      "accepted": false
+    },
+    {
+      "name": "cleanup:unrelated_progress",
+      "command": "cleanup",
+      "mode": "unrelated_progress",
+      "accepted": false
+    },
+    {
+      "name": "cleanup:unknown_without_receipt",
+      "command": "cleanup",
+      "mode": "unknown_without_receipt",
+      "accepted": true
+    }
+  ]
+}
