@@ -19,7 +19,7 @@ from .operations import OperationDenied
 from .progress import with_progress_hint
 
 NATIVE_FIELDS = {"native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest",
-                 "native_origin_phase", "native_resume_phase", "native_correction"}
+                 "native_origin_phase", "native_resume_phase", "native_correction", "native_completion"}
 _FINISHED_CHECKPOINT = 'native_complete_'
 
 
@@ -183,6 +183,10 @@ class NativeRunner(Runner):
 
     async def step(self, repo, number):
         record = self.github.progress(repo, number)
+        if (record and record.get('execution_mode') == 'native' and record.get('host_alias') == self.host
+                and record.get('native_step') and record.get('native_completion') is not None):
+            return with_progress_hint({'repository': repo, 'issue': number, 'action': 'waiting',
+                'reason': 'verify_only_completion_required'})
         if (record and record.get('host_alias') == self.host and record.get('phase') == 'executing'
                 and record.get('pending_action') == 'verification'
                 and not any(key[:2] == (repo.casefold(), number) for key in self._pending_ended)):
@@ -255,6 +259,9 @@ class NativeRunner(Runner):
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
         scope = assignment_scope(repo, number, record["attempt_id"], state["head"], record["contract_revision"])
         boundary = self._verification_scope.get()
+        if boundary is not None:
+            task += ('\nComplete through hydra_command_v1 workflow_step.verify_only review_checkpoint. '
+                     'The legacy hydra_checkpoint path accepts only explicit stopped cleanup for this review.')
         draft = {**recovery, 'action': 'native_task', 'phase': phase,
             'spec_revision': record.get('spec_revision'), 'cwd': str(path),
             'mode': 'read_only' if 'review' in phase else 'workspace_write', 'prompt': task}
@@ -289,6 +296,7 @@ class NativeRunner(Runner):
                 wait_reason="native_assignment_pending", next_action=phase, expected_head=remote,
                 **({"resume_phase": record.get("resume_phase") or phase}
                    if phase in {"implementation", "correction"} else {}),
+                **({'native_completion': 'verify_only'} if boundary is not None else {}),
                 **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
         except (RuntimeError, ValueError, OSError):
             return None, {**recovery, "action": "waiting", "reason": "assignment_record_unknown"}
@@ -586,6 +594,9 @@ class NativeController:
                     confirm_native_assignment(step_id)
                 return {"action": "waiting", "reason": "stop_requested"}
             repo = config["repository"]
+            if (outcome != 'stopped' and (record.get('native_completion') is not None
+                    or step_id in self.runner.review_runs)):
+                return {'action': 'waiting', 'reason': 'verify_only_completion_required'}
             if outcome != "stopped" and record.get("native_outcome") not in {None, outcome}:
                 return {"action": "waiting", "reason": "native_result_already_recorded"}
             # A stopped checkpoint is explicit operator reconciliation, never inferred

@@ -89,7 +89,8 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
             or config.get('_completion_only') or record.get('head') != candidate['head']):
         raise OperationDenied('stale_candidate')
     if assignment is not None:
-        if record.get('native_phase') != 'change_review':
+        if (record.get('native_phase') != 'change_review'
+                or record.get('native_completion') != 'verify_only'):
             raise OperationDenied('unsupported_phase')
         if record.get('spec_revision') != assignment['spec_revision']:
             raise OperationDenied('stale_candidate')
@@ -165,7 +166,8 @@ def _correction_debt(runner, repo, number, record, reason, *, recorded=False):
     if not recorded:
         attempts = max(attempts + (record.get('correction_reason') == reason),
             runner.failures.get((repo, number, reason), 0) + 1)
-    return dict(resume_phase='correction', correction_reason=reason, correction_attempt=attempts or 1)
+    return dict(resume_phase='correction', correction_reason=reason,
+                correction_attempt=min(3, max(1, attempts)))
 
 
 def _private_output(runner, results):
@@ -313,6 +315,8 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
                                   'published', 'review_wait'}
             or record.get('resume_phase') is not None and not diagnostic_retry):
         raise OperationDenied('unsupported_phase')
+    if diagnostic_retry and (record.get('correction_attempt') or 0) >= 3:
+        raise OperationDenied('replan_required')
     previous = runner.verification_runs.get(key)
     if (previous is not None and previous.error_reason is not None
             and previous.expected_record['attempt_id'] == record['attempt_id']):
@@ -467,16 +471,19 @@ def _restore_undispatched(controller, repo, number, pin, proof, repository_id, p
 
 @contextmanager
 def _preservation_scope(runner, repo, number, record, proof, preservation_lease, *,
-                        expected_source=None, source_observer=None):
+                        expected_source, source_observer):
     revision, guard = preservation_lease()
+    _source(runner, repo, number, expected_source, source_observer)
+    if runner._record_values(record) != runner._record_values(expected_source):
+        raise RuntimeError('Verification preservation source changed')
+    guard()
     state = runner._checkpoint_ceiling.get()[3]
     previous_observer = state.get('before_progress')
     def deny_dispatch():
         raise OperationDenied('checkpoint_effect_unsupported')
     def attempted():
-        if expected_source is not None:
-            _source(runner, repo, number, expected_source, source_observer)
-            guard()
+        _source(runner, repo, number, expected_source, source_observer)
+        guard()
         proof.record_attempted = True
     boundary = runner._verification_scope.get()
     verification = runner._verification_scope.set(VerificationBoundary(deny_dispatch, deny_dispatch,
@@ -512,7 +519,8 @@ def _preserve_owned(controller, repo, number, pin, proof, repository_id, preserv
     if (key[3] != config['blob_sha'] or spec_digest is not None and proof.spec_digest != spec_digest
             or proof.digest != _digest(proof.results)):
         raise OperationDenied('verification_evidence_unknown')
-    with _preservation_scope(runner, repo, number, record, proof, preservation_lease):
+    with _preservation_scope(runner, repo, number, record, proof, preservation_lease,
+            expected_source=proof.dispatch_record, source_observer=observer):
         _finalize_owned(runner, repo, number, pin, proof, record, config, path, key, spec_digest, observer)
 
 

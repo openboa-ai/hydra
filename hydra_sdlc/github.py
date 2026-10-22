@@ -549,7 +549,7 @@ class GitHub:
         allowed = {"attempt_id", "host_alias", "contract_revision", "spec_revision", "phase", "branch", "head", "published_head", "pr_number", "pending_action", "pending_thread", "checkpoint", "wait_reason", "next_action", "expected_head", "expected_base", "action_attempt", "review_requested_head", "delivery_action", "delivery_attempt", "delivery_head", "review_requested_security_head", "pending_review_kind", "intake_digest", "correction_reason", "correction_attempt", "resume_phase"}
         if metadata:
             allowed |= {"repository_id", "issue_number", "version"}
-        allowed |= {"execution_mode", "native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest", "native_origin_phase", "native_resume_phase", "native_correction"}
+        allowed |= {"execution_mode", "native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest", "native_origin_phase", "native_resume_phase", "native_correction", "native_completion"}
         if not isinstance(record, dict) or set(record) - allowed:
             raise GitHubError("Unknown progress fields")
         for key, value in record.items():
@@ -575,6 +575,10 @@ class GitHub:
             elif key == "execution_mode":
                 if value != "native":
                     raise GitHubError("Invalid execution mode")
+            elif key == 'native_completion':
+                if (value != 'verify_only' or record.get('execution_mode') != 'native'
+                        or record.get('native_phase') != 'change_review' or not record.get('native_step')):
+                    raise GitHubError('Invalid native completion origin')
             elif key == "native_phase":
                 if value not in {"design", "spec_review", "implementation", "correction", "change_review"}:
                     raise GitHubError("Invalid native phase")

@@ -24,7 +24,10 @@ a passing verifier. The existing explicit diagnostic retry of a full failed
 verification remains available from `implementation_done` only when its resume,
 correction reason, failure wait and diagnosis action agree. Same-request replay
 does not repeat D; a fresh request actually runs and retains failure-attempt
-accounting. This does not admit review findings, verifier mutation or uncertain
+accounting. The existing three-attempt bound holds before another diagnostic
+retry starts. Verification after the final completed correction still records its
+actual result; exhausted debt stays at three instead of creating invalid progress.
+This does not admit review findings, verifier mutation or uncertain
 execution through a generic correction exception.
 Existing owned-execution recovery and exact review completion keep
 their separate paths. Already published delivery candidates retain bounded
@@ -45,6 +48,14 @@ workspace, and the actual invocation examined by that review. Matching candidate
 keys or identical copied result JSON do not prove invocation identity. It records
 and reads back the bounded final result before retiring the exact review step and
 releasing its ticket. It does not invoke legacy checkpoint or continuation.
+
+The active GitHub assignment carries server-written `native_completion=verify_only`.
+This source attribution survives lost private caches, provisional outcomes and
+controller restart until native-field retirement. The legacy checkpoint rejects
+all non-stopped outcomes for that assignment before mutation; ordinary continuation
+also holds it. Typed completion cannot consume an unrelated unmarked legacy
+review. Explicit original-ticket stopped cleanup and ordinary legacy reviews keep
+their existing paths. Attribution is not invocation proof or additional authority.
 
 | Review outcome and proof | Bounded result |
 | --- | --- |
@@ -80,6 +91,9 @@ The live worker retains that intent only until it drains; each registered comman
 rechecks it at the supervised dispatch boundary. Restoration also fences the
 exact original source at its actual writer, and refreshes current authority after
 the source read. A worker or an earlier source observation grants no exception.
+Every preservation scope requires its expected source, checks it at scope entry
+and the actual writer, and refreshes authority after the read. Completed results
+cannot adopt a newer correction/decision state as their own recording source.
 
 The storage provider's pure command-construction boundary normalizes its
 ValueError/RuntimeError into the existing bounded verification diagnosis. Earlier
@@ -251,6 +265,12 @@ independent effect spies and the pinned MCP SDK:
   restoration, lifecycle drift at actual worker entry, and grant revocation
   during the pre-intent source read; actual commands and unauthorized writes
   remain absent.
+- `test_native_verify_only_completion_boundary.py`: completed-result source races,
+  legacy/typed route isolation, weak-cache and restart recovery, provisional
+  completion, closed source attribution and the ordinary legacy control.
+- `test_native_verify_only_retry_budget.py`: actual failed-run accounting and
+  replay, no fourth diagnostic launch, and valid failure preservation after the
+  final completed correction.
 
 The first source CI ran all 1,637 methods successfully in 583.313 seconds with
 eight explicit skips, but exhausted the ten-minute job budget before evidence

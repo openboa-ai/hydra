@@ -73,6 +73,15 @@ own comments are a conflict. Never include local paths, SDK identities, raw prov
 transcripts, private knowledge, credentials or exploit details. Do not post raw model
 output. Update only on meaningful change. Issue/label/comment claims are not evidence.
 
+Active bounded native reviews add optional `native_completion = "verify_only"`
+to that same version-1 record. The server sets this source attribution; it grants
+no authority or verification acceptance. It remains through provisional outcomes
+and controller restart until exact native-field retirement. Only typed bounded
+review completion or explicit original-ticket stopped cleanup may consume it.
+Absent/null retains the legacy profile; unknown values or non-review attribution
+are unavailable. Older readers that reject this optional field cannot operate the
+new profile; actual activation requires a matching qualified runtime.
+
 Internal interfaces are plain records and injectable in tests:
 - GitHub client: repository/file/issue/comments/branch/PR/check/review observations;
   progress publication, owned PR creation/update, review request, exact-head merge,
