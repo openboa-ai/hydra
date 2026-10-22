@@ -49,8 +49,8 @@ Final local impact checks use Python 3.14.2 and Node 24.5.0:
 
 | Scope | Result |
 | --- | --- |
-| Python control, operations, CLI, runtime, projection, MCP and connection impact | 320 methods pass; zero failures, errors or skips |
-| Complete frontend suite, including both shared connection matrices | 367 methods pass; zero failures, errors or skips |
+| Python control, operations, CLI, runtime, projection, MCP and connection impact | 324 methods pass; zero failures, errors or skips |
+| Complete frontend suite, including both shared connection matrices | 369 methods pass; zero failures, errors or skips |
 | TypeScript check and frontend production build | Pass |
 | Complete Rust suite, including both source matrices | 69 methods pass; zero failures or ignored methods; build succeeds |
 
@@ -88,6 +88,26 @@ the fixture revision and digest with the actual maintained document. An injected
 stale revision still reproduces one purpose failure; restoring the current bytes
 passes all three original wire checks. The final Python impact selection includes
 all control and MCP suites so this consumer is checked locally as well as in CI.
+
+## Admission receipts and defaults
+
+The next review identified a second consumer of the stopped default: receipt
+correlation. Two independent reducer cases reproduce a rejected valid Pause and
+an incorrectly accepted Resume proof before correction; both pass unchanged after
+the source parser and reducer share the public project-mode calculation.
+
+Four actual admission-command controls cover implicit stopped Pause, explicit
+stopped Pause, explicit Resume from the stopped default and legacy running Resume.
+They verify exact store read-back and whether a write actually occurred. The
+implicit-stop case also reproduces the wrong reply reason before Python's source
+and receipt paths share the same calculation. The unchanged four controls pass
+after correction. No stored override or revision is manufactured for retained Stop.
+
+The preceding source `ad7203c` passes [Repository CI](https://github.com/openboa-ai/hydra/actions/runs/39842908538):
+1,747 Python methods collected, 1,739 pass and eight explicit skips; 367 frontend
+and 69 Rust methods, builds and trusted hygiene pass. Its selected-D export passes
+within its declared scope. Final-source CI and independent review remain required
+for the receipt correction.
 
 ## Remaining responsibilities
 

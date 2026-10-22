@@ -40,6 +40,13 @@ for(const desired of modes)test("missing project override "+desired,()=>{
   c.reply.observations[0].value.global_mode="running";c.reply.observations[0].value.project_overrides={};
   assert.equal(applied(c)?.outcome,desired==="running"?"applied":"unknown");
 });
+for(const desired of ["running","paused"])test("version-2 stopped default receipt "+desired,()=>{
+  const c=sample("admission");c.event.parameters={mode:desired};
+  c.reply.observations[0].value.global_mode="running";
+  c.reply.observations[0].value.project_overrides={};
+  c.reply.observations[0].value.default_project_mode="stopped";
+  assert.equal(applied(c)?.outcome,desired==="paused"?"applied":"unknown");
+});
 test("admission retains only a bounded immutable requested mode",()=>{
   const c=sample("admission");c.event.target={kind:"host"};c.reply.request.target=c.event.target;
   c.event.parameters={mode:"paused",summary:"PRIVATE_MODE_TRACKING_CANARY"};

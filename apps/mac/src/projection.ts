@@ -366,6 +366,10 @@ function issueRepository(value: unknown): ResourceRef {
   const repository=locator[1]!,number=locator[2]!;integer(Number(repository),1);integer(Number(number),1);
   return {source:"github",kind:"repository",id:repository};
 }
+export function projectAdmissionMode(snapshot: Record<string,unknown>, name: string): unknown {
+  const overrides=plain(snapshot.project_overrides);
+  return Object.hasOwn(overrides,name)?overrides[name]:snapshot.default_project_mode??"running";
+}
 function admissionFact(value: unknown, index: Index, names:Set<string>, binding:unknown): void {
   fact(value, x => one(x, "allowed paused stopped"), index);
   const v = value as Fact<string>;
@@ -375,7 +379,7 @@ function admissionFact(value: unknown, index: Index, names:Set<string>, binding:
   for(const source of sources){
     requireValue(source.resource.id===binding);const snapshot=plain(source.value);let mode=snapshot.global_mode;
     if(mode==="running"){
-      requireValue(names.size>0);const overrides=plain(snapshot.project_overrides),modes=new Set([...names].map(name=>overrides[name]??snapshot.default_project_mode??"running"));
+      requireValue(names.size>0);const modes=new Set([...names].map(name=>projectAdmissionMode(snapshot,name)));
       requireValue(modes.size===1);mode=[...modes][0];
     }
     requireValue(v.value===(mode==="running"?"allowed":mode));

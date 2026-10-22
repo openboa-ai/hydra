@@ -30,6 +30,10 @@ def default_project_mode(snapshot):
     return 'stopped' if snapshot.get('version') == 2 else 'running'
 
 
+def project_mode(snapshot, repository):
+    return snapshot['projects'].get(repository, default_project_mode(snapshot))
+
+
 def connection_reason(configuration, repository):
     if repository is None or configuration.get('connection_schema') != 1:
         return None

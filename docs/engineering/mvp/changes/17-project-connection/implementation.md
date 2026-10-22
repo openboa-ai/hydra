@@ -51,6 +51,14 @@ using that unavailable source. This uses the current observation/fact protocol.
 Repository spelling remains case-insensitive when run/serve arguments are compared
 with the installed allowlist. Host, path and provider comparisons remain exact.
 
+Python's effect checks, source observations and receipt reasons share the project
+mode calculation. TypeScript's source causality checks and receipt correlation
+also share one calculation for their public source format. A missing version-2
+override remains stopped when Pause is requested, without creating an override or
+advancing the revision, and the reply reports the retained stronger mode. The
+consumer accepts that Pause receipt and rejects it as proof of Resume. Absence of
+the public default field retains legacy running behavior.
+
 Tests first pin independent normal, stale, source-loss, malformed, no-config and
 missing-override outcomes. They use actual temporary settings and configuration
 files and the actual command/CLI boundaries. Existing legacy checks and the real

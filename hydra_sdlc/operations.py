@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from .connection_profile import default_project_mode, connection_reason, restrictive_connection_change
+from .connection_profile import project_mode, connection_reason, restrictive_connection_change
 
 
 MAX_SETTINGS_BYTES = 65536
@@ -426,7 +426,7 @@ class OperatingControl:
         mode = snapshot["global_mode"]
         if mode != "running":
             return "host_" + mode
-        mode = snapshot["projects"].get(repository, default_project_mode(snapshot)) if repository is not None else "running"
+        mode = project_mode(snapshot, repository) if repository is not None else "running"
         return None if mode == "running" else "project_" + mode
 
     def reason(self, repo=None):
@@ -528,7 +528,7 @@ class OperatingControl:
                 if repository is not None and mode == "running" and snapshot["global_mode"] != "running":
                     raise OperationDenied("host_" + snapshot["global_mode"])
                 if expected_revision is not None:
-                    stored = snapshot["global_mode"] if repository is None else snapshot["projects"].get(repository, default_project_mode(snapshot))
+                    stored = snapshot["global_mode"] if repository is None else project_mode(snapshot, repository)
                     if stored == mode or (stored == "stopped" and mode == "paused"):
                         return self._readback(snapshot) if observed else snapshot
                 if snapshot["revision"] == MAX_REVISION:

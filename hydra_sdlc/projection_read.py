@@ -129,10 +129,10 @@ def _observation(key, resource, scope, value, at, *, reason=None, revision=None)
 
 
 def _effective(snapshot, repository):
-    from .connection_profile import default_project_mode
+    from .connection_profile import project_mode
     mode = snapshot['global_mode']
     if mode == 'running':
-        mode = snapshot['projects'].get(repository, default_project_mode(snapshot))
+        mode = project_mode(snapshot, repository)
     return {'running': 'allowed', 'paused': 'paused', 'stopped': 'stopped'}[mode]
 
 
