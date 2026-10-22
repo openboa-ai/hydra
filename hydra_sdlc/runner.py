@@ -137,6 +137,10 @@ class Runner:
             if ceiling[0] != repo or (_checkpoint_effect not in {"progress", "checkpoint"}
                                      and not review_registration):
                 raise OperationDenied("checkpoint_effect_unsupported")
+            scope = self._verification_scope.get()
+            if (scope is not None and getattr(scope.run, 'undispatched_record', None) is not None
+                    and _checkpoint_effect != 'progress'):
+                raise OperationDenied("checkpoint_effect_unsupported")
         if not cleanup:
             self._require_policy(repo)
         if ceiling is not None:
@@ -422,6 +426,12 @@ class Runner:
             if (values.get("phase") == "executing" and previous.get("phase") != "executing"
                     and previous.get("wait_reason") not in {
                         "execution_unknown", "execution_failed", "invalid_model_result"}):
+                verification = self._verification_scope.get()
+                if verification is not None:
+                    # This owner has not received a launch grant. Let its fixed
+                    # current-authority scope settle the acknowledged intent.
+                    verification.undispatched = (previous, record, reason)
+                    return None
                 if self._operation_reason(repo):
                     # This function has not returned an execution grant. The
                     # recorded intent is positively known to be undispatched.

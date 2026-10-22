@@ -44,6 +44,25 @@ releasing its ticket. It does not invoke legacy checkpoint or continuation.
 
 ## Execution and recovery
 
+A denial before the worker is created is positively undispatched. The owner
+retains the original progress and exact acknowledged intent, then restores only
+that intent under current authority, policy, intake and a fixed current control
+revision. This scope permits progress only: it owns no workspace edits and cannot
+checkpoint, create a review, publish or launch work. Pause/Stop remains in force.
+Lost grants prevent the write; a retained private witness can reconcile after
+regrant without launching verification in that recovery. A later eligible retry
+can run once. Lost private evidence leaves an unresolved intent unknown.
+An invoked uncertain restoration receives exact read-back without retransmission.
+The same boundary handles the intent's own post-write check and the final grant.
+
+The storage provider's pure command-construction boundary normalizes its
+ValueError/RuntimeError into the existing bounded verification diagnosis. Earlier
+commands have already drained and the next command has not launched. Explicit
+provider uncertainty and unrelated untyped worker exceptions stay unknown.
+A source-confirmed valid unchanged verification also projects the existing
+accepted-spec source into the ordinary specification cache, as native checkpoint
+does. Restart recovery accepts neither a new specification nor a code review.
+
 The final private assignment return rechecks current configuration, admission and
 handoff grants after the last source read. Revocation during that read leaves the
 review recoverable and returns no private assignment or verifier output.

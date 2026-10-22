@@ -1,6 +1,7 @@
 """Bounded use of the existing native runner and its private verification lifetime."""
 import asyncio
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -40,6 +41,7 @@ class VerificationRun:
     dispatch_record: dict | None = None
     record_attempted: bool = False
     settled: bool = False
+    undispatched_record: dict | None = None
 
 
 @dataclass
@@ -48,6 +50,7 @@ class VerificationBoundary:
     before_handoff: Callable[[], None]
     cancel: Event = field(default_factory=Event)
     run: VerificationRun | None = None
+    undispatched: tuple | None = None
 
 
 def validate_assignment(value, repo, number, candidate):
@@ -234,7 +237,13 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                     current = runner.github.progress(repo, number)
                     if not current or current.get('native_step') is None:
                         bound_assignment = None
-                if prior_run is not None and not prior_run.settled and prior_run.dispatch_record is not None:
+                undispatched = prior_run is not None and prior_run.undispatched_record is not None
+                if undispatched:
+                    _restore_undispatched(controller, repo, number, pin, prior_run,
+                        repository_id, preservation_lease, source_observer)
+                    result = {'outcome': 'waiting', 'reason': 'verification_not_dispatched',
+                              'required_next': 'open_source'}
+                elif prior_run is not None and not prior_run.settled and prior_run.dispatch_record is not None:
                     _preserve_owned(controller, repo, number, pin, prior_run,
                         repository_id, preservation_lease, source_observer)
                     if prior_run.request_id != request_id:
@@ -242,7 +251,9 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                         # request remains a known retired request, never new D.
                         runner._retire_verification_request(prior_run)
                         prior_run.request_id, prior_run.request_digest = request_id, request_digest
-                if prior_run is not None and prior_run.changed_head is not None:
+                if undispatched:
+                    pass  # This recovery only restores the known zero-launch intent.
+                elif prior_run is not None and prior_run.changed_head is not None:
                     result = _resume_changed(controller, repo, number, pin, prior_run,
                         repository_id, source_observer)
                 else:
@@ -298,13 +309,31 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     runner.pending_verifications.pop(key, None)
     runner.verified_heads.discard(key)
     runner._prune_diagnoses(repo, number, pin['head'], pin['contract_revision'])
+    previous = runner._record_values(record)
     record = runner._intent(repo, number, config, record, 'verification',
         phase='executing', wait_reason=None, next_action='verification',
         **({'checkpoint': None} if record.get('checkpoint') == 'locally_verified' else {}))
     if record is None:
+        undispatched = runner._verification_scope.get().undispatched
+        if undispatched is not None:
+            previous, record, reason = undispatched
+            proof = _remember_undispatched(runner, key, previous, record, spec_digest,
+                request_id, request_digest, reason)
+            _restore_undispatched(controller, repo, number, pin, proof,
+                repository_id, preservation_lease, observer)
+            raise OperationDenied(reason)
         raise OperationDenied('verification_not_dispatched')
-    before_effect()
-    _candidate(controller, repo, number, pin, repository_id)
+    try:
+        before_effect()
+        _candidate(controller, repo, number, pin, repository_id)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # No task or worker has been created in this synchronous grant window.
+        reason = exc.reason if isinstance(exc, (OperationDenied, WorkspaceWait)) else 'verification_unavailable'
+        proof = _remember_undispatched(runner, key, previous, record, spec_digest,
+            request_id, request_digest, reason)
+        _restore_undispatched(controller, repo, number, pin, proof,
+            repository_id, preservation_lease, observer)
+        raise OperationDenied(reason) from exc
     error, cancelled = None, False
     # Keep the MCP event loop available to admission changes. This is the same
     # supervised verifier, with copied operation/ownership context, not a second
@@ -357,6 +386,70 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         key, repository_id, before_effect, allow_handoff, observer)
 
 
+def _remember_undispatched(runner, key, previous, record, spec_digest, request_id, request_digest, reason):
+    restore = runner._record_values(previous,
+        **({'checkpoint': None} if previous.get('checkpoint') == 'locally_verified' else {}))
+    proof = VerificationRun([], _digest([]), spec_digest, request_id, request_digest,
+        dispatch_record=runner._record_values(record), undispatched_record=restore,
+        expected_record=restore, error_reason=reason)
+    runner.verification_runs[key] = proof
+    runner._verification_scope.get().run = proof
+    return proof
+
+
+def _restore_undispatched(controller, repo, number, pin, proof, repository_id, preservation_lease, observer):
+    runner = controller.runner
+    key = next((k for k, value in runner.verification_runs.items() if value is proof), None)
+    if key is None or key[:3] != (repo, number, pin['head']) or proof.undispatched_record is None:
+        raise OperationDenied('verification_invocation_unattributed')
+    try:
+        _source(runner, repo, number, proof.expected_record, observer)
+    except RuntimeError:
+        if proof.record_attempted:
+            raise  # The original restoration can still apply; never repost it.
+        _source(runner, repo, number, proof.dispatch_record, observer)
+        record, config = controller._bound(repo, number, pin['attempt_id'], pin['head'], pin['contract_revision'])
+        if (record.get('repository_id') != repository_id or config.get('repository_id') != repository_id
+                or config.get('_completion_only') or config['blob_sha'] != key[3]):
+            raise OperationDenied('stale_candidate')
+        with _preservation_scope(runner, repo, number, record, proof, preservation_lease):
+            try:
+                runner._record(repo, number, proof.expected_record)
+            except (OSError, RuntimeError):
+                pass
+            _source(runner, repo, number, proof.expected_record, observer)
+    # Zero commands ran. There is no completed invocation to retire, and a later
+    # eligible retry can obtain its actual grant. Foreign edits remain untouched.
+    runner.verification_runs.pop(key)
+    runner._verification_scope.get().run = None
+
+
+@contextmanager
+def _preservation_scope(runner, repo, number, record, proof, preservation_lease):
+    revision, guard = preservation_lease()
+    state = runner._checkpoint_ceiling.get()[3]
+    previous_observer = state.get('before_progress')
+    def deny_dispatch():
+        raise OperationDenied('checkpoint_effect_unsupported')
+    def attempted():
+        proof.record_attempted = True
+    boundary = runner._verification_scope.get()
+    verification = runner._verification_scope.set(VerificationBoundary(deny_dispatch, deny_dispatch,
+        cancel=boundary.cancel, run=proof))
+    ceiling = runner._checkpoint_ceiling.set((repo, revision, guard, state))
+    state['before_progress'] = attempted
+    try:
+        with runner._confirmed_cleanup(repo, number, record):
+            yield
+    finally:
+        if previous_observer is None:
+            state.pop('before_progress', None)
+        else:
+            state['before_progress'] = previous_observer
+        runner._checkpoint_ceiling.reset(ceiling)
+        runner._verification_scope.reset(verification)
+
+
 def _preserve_owned(controller, repo, number, pin, proof, repository_id, preservation_lease, observer):
     """Only the retained, positively ended invocation may enter this scope."""
     runner = controller.runner
@@ -374,24 +467,8 @@ def _preserve_owned(controller, repo, number, pin, proof, repository_id, preserv
     if (key[3] != config['blob_sha'] or spec_digest is not None and proof.spec_digest != spec_digest
             or proof.digest != _digest(proof.results)):
         raise OperationDenied('verification_evidence_unknown')
-    revision, guard = preservation_lease()
-    state = runner._checkpoint_ceiling.get()[3]
-    def deny_dispatch():
-        raise OperationDenied('checkpoint_effect_unsupported')
-    def attempted():
-        proof.record_attempted = True
-    boundary = runner._verification_scope.get()
-    verification = runner._verification_scope.set(VerificationBoundary(deny_dispatch, deny_dispatch,
-        cancel=boundary.cancel, run=proof))
-    ceiling = runner._checkpoint_ceiling.set((repo, revision, guard, state))
-    state['before_progress'] = attempted
-    try:
-        with runner._confirmed_cleanup(repo, number, record):
-            _finalize_owned(runner, repo, number, pin, proof, record, config, path, key, spec_digest, observer)
-    finally:
-        state.pop('before_progress', None)
-        runner._checkpoint_ceiling.reset(ceiling)
-        runner._verification_scope.reset(verification)
+    with _preservation_scope(runner, repo, number, record, proof, preservation_lease):
+        _finalize_owned(runner, repo, number, pin, proof, record, config, path, key, spec_digest, observer)
 
 
 def _finalize_owned(runner, repo, number, pin, proof, record, config, path, key, spec_digest, observer):
@@ -423,6 +500,10 @@ def _finalize_owned(runner, repo, number, pin, proof, record, config, path, key,
         pass  # Read-back confirms only the exact attempted final record.
     _source(runner, repo, number, proof.expected_record, observer)
     proof.settled = True
+    if proof.changed_head is None and proof.error_reason is None:
+        # Project the unchanged accepted-spec source into the ordinary cache,
+        # as native checkpoint does. This accepts no new spec or code review.
+        runner.accepted_specs[(repo, number, proof.spec_digest)] = True
     if proof.changed_head is None and proof.error_reason is None and not all(v['passed'] for v in proof.results):
         runner._remember_diagnosis(repo, number, pin['head'], pin['contract_revision'],
             'verification_failure', _private_output(runner, proof.results))
