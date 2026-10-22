@@ -86,8 +86,9 @@ An unapplied or changed source remains unknown without a second checkpoint.
 The completed invocation and its exact planned record are retained before the
 final mutable write. An uncertain write receives a bounded original-source
 read-back. A same-request retry reconciles that private invocation and cannot run
-D or allocate a second review. An explicit new request remains an actual new
-invocation. This memo is bounded and process-local, not a durable request ledger
+D or allocate a second review. After unresolved completed work is reconciled,
+an explicit new request can start an actual new invocation. This memo is bounded
+and process-local, not a durable request ledger
 or a way to reconstruct a verdict after restart.
 
 A wait before review registration retains its actual reason. A same-request
@@ -107,6 +108,34 @@ survives restart without reconstructing a missing private verdict.
 An incomplete or invalid result list enters the same hold. In particular, a
 signalled command cannot leave a replayable intent merely because it returned
 partial results instead of throwing an exception.
+
+Dispatch, preservation and later review have separate admission boundaries.
+After the supervisor positively drains the owned invocation, its actual result
+and local edits are retained before any final write. Preservation revalidates
+current workflow authority, runtime, loaded providers, project policy and the
+exact original source, then pins a fresh control revision. The existing confirmed
+cleanup scope permits only that result record and an owned local checkpoint;
+it never changes Pause/Stop or permits a new command, review assignment,
+publication, delivery or resource retirement. Unknown supervisor cleanup grants
+no preservation exception.
+An owned edit to the specification is preserved as a changed candidate too;
+preserving those bytes does not accept the edited specification or certify the
+old pin. Full clean-candidate and accepted-spec checks remain necessary for any
+verification verdict.
+
+A Pause racing with a completed valid run preserves its actual receipt while
+withholding review. After explicit Resume, the ordinary lifecycle can consume
+that same invocation. Grant revocation prevents preservation writes; a later
+authorized request first reconciles the retained positive completion before
+considering new verification. Successful recovery binds that same private
+invocation to the recovery request and remembers the original request in the
+existing bounded retired-request cache. Replaying either request cannot turn
+that completed recovery into another invocation. Only a writer actually invoked
+inside the guarded effect counts as an attempted write. An uncertain attempted write is read back,
+without retransmission. After private evidence loss, an unresolved executing
+verification intent remains unknown through both entry points instead of
+automatically repeating potentially stateful commands. The runner's positively
+ended cleanup queue retains its existing recovery path.
 
 Final read-back compares the exact attempted record, including phase, waits and
 next action. Same candidate pins cannot certify unrelated progress. An unrecorded

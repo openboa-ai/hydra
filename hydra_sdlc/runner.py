@@ -146,6 +146,10 @@ class Runner:
             if review_registration:
                 self._verification_scope.get().before_handoff()
         with self._guard(repo, cleanup=cleanup):
+            if ceiling is not None and _checkpoint_effect == "progress":
+                observer = ceiling[3].get('before_progress')
+                if observer is not None:
+                    observer()
             return callback(*args, **kwargs)
 
     def _policy_reason(self, repo, config):
@@ -255,8 +259,9 @@ class Runner:
             raise error
         return config
 
-    def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True):
-        reason = self._operation_reason(repo)
+    def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True,
+                include_admission=True):
+        reason = self._operation_reason(repo) if include_admission else None
         if reason:
             return reason
         if include_stop and self.stop_requested():

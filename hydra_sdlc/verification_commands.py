@@ -154,6 +154,19 @@ async def execute_verification_command(config_path, command, *, context_provider
         with current_control.guard(repository, expected_revision=expected['admission_revision']):
             pass
 
+    def preservation_lease():
+        # This lease is available only to the owned supervisor's positive end
+        # path. Cleanup changes the mode gate, never the current caller's grants.
+        _, current_control, _ = validate()
+        revision = current_control.snapshot()['revision']
+        def guard():
+            _, current_control, _ = validate()
+            controller.runner._require_policy(repository)
+            with current_control.guard(repository, cleanup=True, expected_revision=revision):
+                pass
+        guard()
+        return revision, guard
+
     def allow_handoff():
         _, _, current = validate()
         return (native_profile and current.surface == 'native'
@@ -169,6 +182,7 @@ async def execute_verification_command(config_path, command, *, context_provider
         return await execute(controller, repository, target['issue_number'], params,
             expected['assignment'], repository_id=target['repository_id'],
             admission_revision=expected['admission_revision'], before_effect=before_effect,
+            preservation_lease=preservation_lease,
             allow_handoff=allow_handoff, source_observer=observe, request_id=command['request_id'],
             request_digest=hashlib.sha256(json.dumps(command, sort_keys=True,
                 separators=(',', ':'), ensure_ascii=False).encode()).hexdigest(), finalize_reply=reply)

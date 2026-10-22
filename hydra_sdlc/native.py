@@ -81,7 +81,11 @@ class NativeRunner(Runner):
 
     def _forget_verification_run(self, key):
         proof = self.verification_runs.pop(key, None)
-        if proof is not None and proof.request_id is not None:
+        if proof is not None:
+            self._retire_verification_request(proof)
+
+    def _retire_verification_request(self, proof):
+        if proof.request_id is not None:
             self.retired_verification_requests[proof.request_id] = proof.request_digest
             while len(self.retired_verification_requests) > 1024:
                 self.retired_verification_requests.pop(next(iter(self.retired_verification_requests)))
@@ -181,11 +185,10 @@ class NativeRunner(Runner):
         record = self.github.progress(repo, number)
         if (record and record.get('host_alias') == self.host and record.get('phase') == 'executing'
                 and record.get('pending_action') == 'verification'
-                and any(getattr(proof, 'error_reason', None) is not None
-                    and key[:3] == (repo, number, record.get('head'))
-                    and proof.expected_record['attempt_id'] == record.get('attempt_id')
-                    and proof.expected_record['contract_revision'] == record.get('contract_revision')
-                    for key, proof in self.verification_runs.items())):
+                and not any(key[:2] == (repo.casefold(), number) for key in self._pending_ended)):
+            # A source intent without its owned end witness cannot authorize a
+            # second invocation after restart. Real pending-ended cleanup is
+            # still handled by Runner.step before ordinary continuation.
             return with_progress_hint({'repository': repo, 'issue': number, 'action': 'waiting',
                 'reason': 'verification_unconfirmed'})
         if (record and record.get("execution_mode") == "native" and record.get("host_alias") == self.host

@@ -37,6 +37,9 @@ class VerificationRun:
     ticket: tuple[str, str] | None = None
     changed_head: str | None = None
     error_reason: str | None = None
+    dispatch_record: dict | None = None
+    record_attempted: bool = False
+    settled: bool = False
 
 
 @dataclass
@@ -69,7 +72,7 @@ def validate_assignment(value, repo, number, candidate):
         raise OperationDenied('native_assignment_too_large')
 
 
-def _candidate(controller, repo, number, candidate, repository_id, assignment=None):
+def _candidate(controller, repo, number, candidate, repository_id, assignment=None, *, preserving=False):
     runner = controller.runner
     if runner.host_hold_reason:
         raise OperationDenied(runner.host_hold_reason)
@@ -93,7 +96,8 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
     if record.get('pending_action') not in {None, 'verification'}:
         raise OperationDenied('effect_not_allowed')
     config = {**config, 'intake_digest': record['intake_digest']}
-    reason = runner._latest(repo, number, config)
+    reason = (runner._latest(repo, number, config, include_stop=False, include_admission=False)
+              if preserving else runner._latest(repo, number, config))
     if reason:
         raise OperationDenied(reason)
     boundary, remote, _ = runner._branch_boundary(repo, number, record)
@@ -102,6 +106,10 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
     path = runner.workspace.existing(repo, number, record['branch'])
     state = runner.workspace.inspect(path)
     if state['head'] != candidate['head'] or state['dirty']:
+        if preserving:
+            # Owned edits need preservation, including an edited specification.
+            # No digest here can certify that changed candidate's acceptance.
+            return record, config, path, None
         raise OperationDenied('stale_candidate')
     if not runner.workspace.contains_base(path, config['revision']):
         raise OperationDenied('base_changed')
@@ -165,27 +173,8 @@ def _private_output(runner, results):
     return ''.join(outputs)
 
 
-def _remember_error(runner, repo, number, record, spec_digest, key, request_id, request_digest, reason):
-    planned = runner._record_values(record, phase='implementation_done', pending_action=None,
-        wait_reason='replan_required', next_action='diagnose_verification')
-    proof = VerificationRun([], _digest([]), spec_digest, request_id, request_digest,
-        verification_record=runner._record_values(record), expected_record=planned, error_reason=reason)
-    runner.verification_runs[key] = proof
-    runner._verification_scope.get().run = proof
-    return proof
-
-
-def _settle_error(runner, repo, number, proof, observer):
-    try:
-        runner._record(repo, number, proof.expected_record)
-    except (OSError, RuntimeError):
-        pass  # Only exact read-back can confirm the attempted settlement.
-    _source(runner, repo, number, proof.expected_record, observer)
-    return {'outcome': 'waiting', 'reason': proof.error_reason, 'required_next': 'open_source'}
-
-
 async def execute(controller, repo, number, params, assignment, *, repository_id,
-                  admission_revision, before_effect, allow_handoff, source_observer,
+                  admission_revision, before_effect, preservation_lease, allow_handoff, source_observer,
                   request_id, request_digest, finalize_reply):
     runner, pin = controller.runner, params['candidate']
     policy = runner._policy_scope.set(None)
@@ -212,6 +201,16 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                         raise OperationDenied('request_conflict')
                     prior_run = proof
                     break
+            if prior_run is None:
+                # A fresh, admitted request first reconciles a positively ended
+                # invocation whose original finalization never completed.
+                for key, proof in runner.verification_runs.items():
+                    origin = proof.dispatch_record
+                    if (not proof.settled and origin is not None
+                            and key[:3] == (repo, number, pin['head'])
+                            and all(origin.get(k) == pin[k] for k in pin)):
+                        prior_run = proof
+                        break
         # A retired source cannot establish which old result is being replayed.
         if assignment is not None:
             prior = runner.github.progress(repo, number)
@@ -235,6 +234,14 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                     current = runner.github.progress(repo, number)
                     if not current or current.get('native_step') is None:
                         bound_assignment = None
+                if prior_run is not None and not prior_run.settled and prior_run.dispatch_record is not None:
+                    _preserve_owned(controller, repo, number, pin, prior_run,
+                        repository_id, preservation_lease, source_observer)
+                    if prior_run.request_id != request_id:
+                        # Keep the admitted recovery replay-safe too. The old
+                        # request remains a known retired request, never new D.
+                        runner._retire_verification_request(prior_run)
+                        prior_run.request_id, prior_run.request_digest = request_id, request_digest
                 if prior_run is not None and prior_run.changed_head is not None:
                     result = _resume_changed(controller, repo, number, pin, prior_run,
                         repository_id, source_observer)
@@ -251,7 +258,7 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                     else:
                         result = await _run(controller, repo, number, params, record, config, path,
                             spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
-                            request_id, request_digest)
+                            request_id, request_digest, preservation_lease)
                 if result.get('assignment') is None:
                     cleanup_attempted = True
                     _release_unhanded_ticket(runner, repo, number, boundary.run, source_observer)
@@ -271,10 +278,13 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
 
 
 async def _run(controller, repo, number, params, record, config, path, spec_digest, key,
-               repository_id, before_effect, allow_handoff, observer, request_id, request_digest):
+               repository_id, before_effect, allow_handoff, observer, request_id, request_digest,
+               preservation_lease):
     runner, pin = controller.runner, params['candidate']
     if record.get('wait_reason') == 'replan_required' and record.get('next_action') == 'diagnose_verification':
         raise OperationDenied('replan_required')
+    if record.get('phase') == 'executing' and record.get('pending_action') == 'verification':
+        raise OperationDenied('verification_unconfirmed')
     previous = runner.verification_runs.get(key)
     if (previous is not None and previous.error_reason is not None
             and previous.expected_record['attempt_id'] == record['attempt_id']):
@@ -314,19 +324,77 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         results, error = [], exc
     if error is not None and error.uncertain:
         runner.host_hold_reason = 'host_verification_unconfirmed'
-    if error is not None and not error.uncertain:
-        # The supervisor has finished, but a later command may be unavailable
-        # after an earlier stateful command completed. Preserve that fact even
-        # if admission changes before the fixed diagnosis record can be written.
-        proof = _remember_error(runner, repo, number, record, spec_digest, key,
-            request_id, request_digest, error.reason)
-    if cancelled:
-        raise asyncio.CancelledError()
-    if error is not None:
-        if error.uncertain:
-            runner.host_hold_reason = 'host_verification_unconfirmed'
-            raise OperationDenied('host_verification_unconfirmed') from error
-    before_effect()
+        if cancelled:
+            raise asyncio.CancelledError()
+        raise OperationDenied('host_verification_unconfirmed') from error
+    reason = error.reason if error else None
+    if not reason and not _valid_results(runner.workspace, path, config, results):
+        reason = 'verification_evidence_unknown'
+    if reason:
+        results = []  # Partial output is not a complete verification verdict.
+    proof = VerificationRun(results, _digest(results), spec_digest, request_id, request_digest,
+        error_reason=reason, dispatch_record=runner._record_values(record))
+    runner.verification_runs[key] = proof
+    runner._verification_scope.get().run = proof
+    try:
+        _preserve_owned(controller, repo, number, pin, proof, repository_id, preservation_lease, observer)
+    finally:
+        if cancelled:
+            raise asyncio.CancelledError()
+    if proof.changed_head is not None:
+        return {'outcome': 'waiting', 'reason': 'candidate_changed'}
+    if proof.error_reason is not None:
+        return {'outcome': 'waiting', 'reason': proof.error_reason, 'required_next': 'open_source'}
+    # New review work retains the caller's original dispatch admission. A mode
+    # change can withhold that work without discarding an actual safe receipt.
+    try:
+        before_effect()
+    except OperationDenied as exc:
+        result = _run_reply(pin, proof, _source(runner, repo, number, proof.expected_record, observer), None)
+        result['reason'] = exc.reason
+        return result
+    return await _resume_run(controller, repo, number, params, proof, config, path, spec_digest,
+        key, repository_id, before_effect, allow_handoff, observer)
+
+
+def _preserve_owned(controller, repo, number, pin, proof, repository_id, preservation_lease, observer):
+    """Only the retained, positively ended invocation may enter this scope."""
+    runner = controller.runner
+    key = next((key for key, value in runner.verification_runs.items() if value is proof), None)
+    if key is None or key[:3] != (repo, number, pin['head']) or proof.dispatch_record is None:
+        raise OperationDenied('verification_invocation_unattributed')
+    if proof.record_attempted:
+        # An invoked writer may still apply. Never blindly retransmit it.
+        _source(runner, repo, number, proof.expected_record, observer)
+        proof.settled = True
+        return
+    _source(runner, repo, number, proof.dispatch_record, observer)
+    record, config, path, spec_digest = _candidate(controller, repo, number, pin,
+        repository_id, preserving=True)
+    if (key[3] != config['blob_sha'] or spec_digest is not None and proof.spec_digest != spec_digest
+            or proof.digest != _digest(proof.results)):
+        raise OperationDenied('verification_evidence_unknown')
+    revision, guard = preservation_lease()
+    state = runner._checkpoint_ceiling.get()[3]
+    def deny_dispatch():
+        raise OperationDenied('checkpoint_effect_unsupported')
+    def attempted():
+        proof.record_attempted = True
+    boundary = runner._verification_scope.get()
+    verification = runner._verification_scope.set(VerificationBoundary(deny_dispatch, deny_dispatch,
+        cancel=boundary.cancel, run=proof))
+    ceiling = runner._checkpoint_ceiling.set((repo, revision, guard, state))
+    state['before_progress'] = attempted
+    try:
+        with runner._confirmed_cleanup(repo, number, record):
+            _finalize_owned(runner, repo, number, pin, proof, record, config, path, key, spec_digest, observer)
+    finally:
+        state.pop('before_progress', None)
+        runner._checkpoint_ceiling.reset(ceiling)
+        runner._verification_scope.reset(verification)
+
+
+def _finalize_owned(runner, repo, number, pin, proof, record, config, path, key, spec_digest, observer):
     state = runner.workspace.inspect(path)
     if state['dirty'] or state['head'] != pin['head']:
         head = runner._workspace_effect(repo, 'checkpoint', path,
@@ -334,58 +402,30 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         values = dict(head=head, pending_action=None, phase='implementation_done',
             wait_reason='candidate_changed', next_action='verification',
             **_correction_debt(runner, repo, number, record, 'verification_mutation'))
-        planned = runner._record_values(record, **values)
-        proof = VerificationRun(results, _digest(results), spec_digest, request_id, request_digest,
-            verification_record=planned, expected_record=planned, changed_head=head)
-        runner.verification_runs[key] = proof
-        runner._verification_scope.get().run = proof
-        try:
-            runner._record(repo, number, record, **values)
-        except (OSError, RuntimeError):
-            pass  # The exact attempted record is the only recovery target.
-        _source(runner, repo, number, planned, observer)
-        return {'outcome': 'waiting', 'reason': 'candidate_changed'}
-    _candidate(controller, repo, number, pin, repository_id)
-    if error:
-        return _settle_error(runner, repo, number, proof, observer)
-    if not _valid_results(runner.workspace, path, config, results):
-        proof = _remember_error(runner, repo, number, record, spec_digest, key,
-            request_id, request_digest, 'verification_evidence_unknown')
-        return _settle_error(runner, repo, number, proof, observer)
-    passed = all(value['passed'] for value in results)
-    final_values = dict(phase='implementation_done', pending_action=None,
-        wait_reason='native_assignment_pending' if passed else 'verification_failure',
-        next_action='change_review' if passed else 'diagnose_verification')
-    if not passed:
-        final_values.update(_correction_debt(runner, repo, number, record, 'verification_failure'))
-    planned = runner._record_values(record, **final_values)
-    proof = VerificationRun(results, _digest(results), spec_digest, request_id, request_digest,
-        verification_record=planned, expected_record=planned)
-    # Preserve the completed invocation before attempting its mutable record.
-    # A lost ACK can now be reconciled without performing D again.
-    runner.pending_verifications[key] = results
-    runner.verification_runs[key] = proof
-    runner._verification_scope.get().run = proof
+        proof.changed_head = head
+    elif proof.error_reason is not None:
+        values = dict(phase='implementation_done', pending_action=None,
+            wait_reason='replan_required', next_action='diagnose_verification')
+    else:
+        if spec_digest is None or not _valid_results(runner.workspace, path, config, proof.results):
+            raise OperationDenied('verification_evidence_unknown')
+        passed = all(value['passed'] for value in proof.results)
+        values = dict(phase='implementation_done', pending_action=None,
+            wait_reason='native_assignment_pending' if passed else 'verification_failure',
+            next_action='change_review' if passed else 'diagnose_verification')
+        if not passed:
+            values.update(_correction_debt(runner, repo, number, record, 'verification_failure'))
+        runner.pending_verifications[key] = proof.results
+    proof.verification_record = proof.expected_record = runner._record_values(record, **values)
     try:
-        record = runner._record(repo, number, record, **final_values)
+        runner._record(repo, number, record, **values)
     except (OSError, RuntimeError):
-        _source(runner, repo, number, planned, observer)
-        record = planned
-    _source(runner, repo, number, record, observer)
-    if not passed:
+        pass  # Read-back confirms only the exact attempted final record.
+    _source(runner, repo, number, proof.expected_record, observer)
+    proof.settled = True
+    if proof.changed_head is None and proof.error_reason is None and not all(v['passed'] for v in proof.results):
         runner._remember_diagnosis(repo, number, pin['head'], pin['contract_revision'],
-            'verification_failure', _private_output(runner, results))
-    assignment = None
-    if passed and allow_handoff():
-        assignment = await _dispatch_review(controller, repo, number, pin, proof, config,
-            path, key, repository_id, before_effect, allow_handoff, observer)
-    before_effect()
-    if assignment and not allow_handoff():
-        assignment = None
-    if assignment:
-        _candidate(controller, repo, number, pin, repository_id, assignment)
-    source = _source(runner, repo, number, proof.expected_record, observer)
-    return _run_reply(pin, proof, source, assignment)
+            'verification_failure', _private_output(runner, proof.results))
 
 
 def _run_reply(pin, proof, source, assignment):
