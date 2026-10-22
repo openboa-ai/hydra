@@ -276,6 +276,17 @@ class ControlResultTests(unittest.TestCase):
         self.addCleanup(owner.stop)
         self.addCleanup(workers.stop)
 
+    def public_without_runtime_digests(self, result):
+        public = copy.deepcopy(result)
+        # Opaque SHA-256 values may coincidentally contain PID digits.
+        # All remaining public output still participates in the no-PID check.
+        for field in ('code_digest', 'config_digest', 'control_binding_digest'):
+            digest = public['runtime'][field]
+            if digest is not None:
+                self.assertRegex(digest, r'^[0-9a-f]{64}$')
+                public['runtime'][field] = 'qualified_sha256'
+        return json.dumps(public)
+
     def test_local_status_does_not_load_providers_or_call_github(self):
         with patch("hydra_sdlc.github.GitHub", side_effect=AssertionError("GitHub used")), \
                 patch("importlib.import_module", side_effect=AssertionError("provider loaded")):
@@ -370,6 +381,12 @@ class ControlResultTests(unittest.TestCase):
         self.assertEqual(result["revision"], 1)
 
     def test_worker_observation_failure_and_residuals_do_not_become_zero(self):
+        from hydra_sdlc.runtime_identity import capture_runtime_identity
+        def identity(*args):
+            return {**capture_runtime_identity(*args), 'config_digest': '12345678' + 'a' * 56}
+        self.identity_collision = patch('hydra_sdlc.control.capture_runtime_identity', side_effect=identity)
+        self.identity_collision.start()
+        self.addCleanup(self.identity_collision.stop)
         for workers in (subprocess.TimeoutExpired("ps", 5), ["1234", "5678"]):
             with self.subTest(workers=workers):
                 self.workers.side_effect = workers if isinstance(workers, Exception) else None
@@ -377,8 +394,9 @@ class ControlResultTests(unittest.TestCase):
                 result = control_result(self.cfg, "stop")
                 self.assertFalse(result["can_quit"])
                 self.assertIsNone(result["execution"]["active_count"])
-                self.assertNotIn("1234", json.dumps(result))
-                self.assertNotIn("5678", json.dumps(result))
+                public = self.public_without_runtime_digests(result)
+                self.assertNotIn("1234", public)
+                self.assertNotIn("5678", public)
                 self.assertTrue(all(project["execution"]["state"] == "unknown" for project in result["projects"]))
 
     def test_unmapped_owned_admission_is_never_attributed_to_every_project(self):
@@ -679,6 +697,9 @@ class ControlResultTests(unittest.TestCase):
         self.assertFalse(result["can_quit"])
 
     def test_local_probes_follow_remote_reads_and_admission_is_read_last(self):
+        from hydra_sdlc.runtime_identity import capture_runtime_identity
+        def identity(*args):
+            return {**capture_runtime_identity(*args), 'config_digest': '12345678' + 'a' * 56}
         control = control_from_config(self.cfg)
         control.set_mode("start")
         github = FakeGitHub()
@@ -697,6 +718,7 @@ class ControlResultTests(unittest.TestCase):
         self.workers.side_effect = workers
         with patch.object(github, "issues", side_effect=issues), \
                 patch("hydra_sdlc.github.GitHub", return_value=github), \
+                patch("hydra_sdlc.control.capture_runtime_identity", side_effect=identity), \
                 patch("hydra_sdlc.control._now", side_effect=lambda: clock["now"]):
             result = control_result(self.cfg, refresh=True)
         self.assertEqual(result["observed_at"], observed)
@@ -707,7 +729,7 @@ class ControlResultTests(unittest.TestCase):
         self.assertEqual(result["execution"]["reason"], "residual_workers_unresolved")
         self.assertIsNone(result["execution"]["active_count"])
         self.assertFalse(result["can_quit"])
-        self.assertNotIn("1234", json.dumps(result))
+        self.assertNotIn("1234", self.public_without_runtime_digests(result))
 
     def test_remote_refresh_cannot_reuse_an_earlier_successful_worker_observation(self):
         github = FakeGitHub()

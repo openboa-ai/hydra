@@ -77,6 +77,11 @@ Verifier edits may be safely checkpointed once. If this changes the candidate,
 the command returns `candidate_changed` with no receipt for the old pin. It never
 refreshes the pin or verifies the new head automatically. Completion ACK loss is
 reconciled from the original progress source; it does not repeat verification.
+That includes the changed-candidate record: its actual checkpoint head and exact
+planned record survive an uncertain write in the existing private invocation
+lifetime. A matching request replay can return only the confirmed
+`candidate_changed` observation, without certifying or verifying the new head.
+An unapplied or changed source remains unknown without a second checkpoint.
 
 The completed invocation and its exact planned record are retained before the
 final mutable write. An uncertain write receives a bounded original-source
@@ -84,6 +89,11 @@ read-back. A same-request retry reconciles that private invocation and cannot ru
 D or allocate a second review. An explicit new request remains an actual new
 invocation. This memo is bounded and process-local, not a durable request ledger
 or a way to reconstruct a verdict after restart.
+
+A wait before review registration retains its actual reason. A same-request
+retry may recheck the resolved condition and dispatch that review with the same
+validated invocation, current scope and handoff grants. It does not rerun D or
+allocate a second existing assignment.
 
 Final read-back compares the exact attempted record, including phase, waits and
 next action. Same candidate pins cannot certify unrelated progress. An unrecorded
@@ -98,6 +108,12 @@ delivery without rerunning D or requesting the same review. A failed judgment
 records correction debt and the existing retry budget for that later invocation;
 the bounded command itself does not start correction. An ACK-loss retry does not
 charge another correction attempt. Missing invocation proof grants no marker.
+Failed verification records the same bounded diagnosis debt. The existing private
+summary cache carries actual verifier output or review findings to the matching
+candidate's later correction assignment as untrusted data. It is never progress
+text or a public receipt. Successful correction/acceptance clears that candidate's
+diagnosis; different candidate pins prune obsolete context. Restart does not
+reconstruct a lost private summary from a reason code.
 
 The fixed scope permits registered verification, its local checkpoint, progress
 recording and the qualified independent review assignment. Publication intents,
@@ -128,6 +144,9 @@ independent effect spies and the pinned MCP SDK:
 - `test_native_verify_only_lifecycle.py`: accepted-review continuation, failed-review
   correction debt and cap, missing proof, never-returned assignment cleanup and
   preservation of previously returned or foreign-source assignments.
+- `test_native_verify_only_deferred.py`: changed-candidate ACK loss/read-back,
+  unapplied records, actual private correction prompts, failed-verifier debt and
+  pre-registration wait recovery under current grants.
 
 The first source CI ran all 1,637 methods successfully in 583.313 seconds with
 eight explicit skips, but exhausted the ten-minute job budget before evidence
@@ -139,6 +158,13 @@ The next 1,645-method run took 590.679 seconds and exposed the stale ten-minute
 capacity assertion. The bounded capacity test now uses that measured baseline,
 two minutes of setup/export reserve and the fifteen-minute outer limit. Individual
 test deadlines and product acceptance assertions retain their existing meaning.
+The subsequent 1,655-method run completed in 675.675 seconds but failed two
+subcases of a worker privacy assertion: an opaque SHA-256 value happened to
+contain the synthetic PID digits. A fixed valid collision digest now reproduces
+that case deterministically. The assertion qualifies only the defined opaque
+runtime digests before checking all remaining public output for PID disclosure;
+unknown execution/count and held-Quit assertions remain intact. This failed run
+is not reported as green CI.
 
 Run these with the repository's supported Python 3.14+ interpreter and pinned MCP
 dependency; then run the affected legacy command, native, ownership and admission

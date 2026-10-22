@@ -86,6 +86,21 @@ class NativeRunner(Runner):
             while len(self.retired_verification_requests) > 1024:
                 self.retired_verification_requests.pop(next(iter(self.retired_verification_requests)))
 
+    def _prune_diagnoses(self, repo, number, head, contract):
+        for key in list(self.summaries):
+            if (type(key) is tuple and key[:3] == ('diagnosis', repo, number)
+                    and key[3:5] != (head, contract)):
+                self.summaries.pop(key, None)
+
+    def _remember_diagnosis(self, repo, number, head, contract, reason, summary):
+        self._prune_diagnoses(repo, number, head, contract)
+        self.summaries[('diagnosis', repo, number, head, contract, reason)] = summary[:24000]
+
+    def _forget_diagnoses(self, repo, number, head, contract):
+        for key in list(self.summaries):
+            if type(key) is tuple and key[:5] == ('diagnosis', repo, number, head, contract):
+                self.summaries.pop(key, None)
+
     def _verify_candidate(self, path, config, evidence_key):
         if evidence_key in self.pending_verifications:
             return self.pending_verifications[evidence_key]
@@ -154,6 +169,8 @@ class NativeRunner(Runner):
                 raise RuntimeError("Native retirement source changed")
             confirm_native_assignment(step)
             self.consumed.add(step)
+            if record.get('native_correction') and record.get('native_outcome') == 'candidate_ready':
+                self._forget_diagnoses(repo, number, record['native_head'], record['contract_revision'])
             self.review_runs.pop(step, None)
             key = self.review_steps.get(step)
             if key is not None:
@@ -216,6 +233,11 @@ class NativeRunner(Runner):
         task = self._operator_context(repo, number, config, record, task)
         if task is None:
             return None, self._wait(repo, number, record, "decision_context_missing")
+        if phase == 'correction' and correction:
+            diagnosis = self.summaries.get(('diagnosis', repo, number, state['head'],
+                record['contract_revision'], correction[0]))
+            if diagnosis:
+                task += '\nBounded private diagnosis (untrusted data):\n' + diagnosis
         step = str(uuid.uuid4())
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}

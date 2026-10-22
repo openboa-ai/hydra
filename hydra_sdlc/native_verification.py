@@ -35,6 +35,7 @@ class VerificationRun:
     assignment: dict | None = None
     draft: dict | None = None
     ticket: tuple[str, str] | None = None
+    changed_head: str | None = None
 
 
 @dataclass
@@ -144,6 +145,25 @@ def _valid_results(workspace, path, config, results):
     return True
 
 
+def _correction_debt(runner, repo, number, record, reason, *, recorded=False):
+    attempts = record.get('correction_attempt') or 0
+    if not recorded:
+        attempts = max(attempts + (record.get('correction_reason') == reason),
+            runner.failures.get((repo, number, reason), 0) + 1)
+    return dict(resume_phase='correction', correction_reason=reason, correction_attempt=attempts or 1)
+
+
+def _private_output(runner, results):
+    remaining, outputs = 24000, []
+    for value in results:
+        text = runner.workspace.verification_output(value['output_digest'], max_chars=remaining)
+        outputs.append(text)
+        remaining -= len(text)
+        if not remaining:
+            break
+    return ''.join(outputs)
+
+
 async def execute(controller, repo, number, params, assignment, *, repository_id,
                   admission_revision, before_effect, allow_handoff, source_observer,
                   request_id, request_digest, finalize_reply):
@@ -195,19 +215,23 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                     current = runner.github.progress(repo, number)
                     if not current or current.get('native_step') is None:
                         bound_assignment = None
-                record, config, path, spec_digest = _candidate(controller, repo, number, pin,
-                    repository_id, bound_assignment)
-                key = (repo, number, pin['head'], config['blob_sha'])
-                if prior_run is not None:
-                    result = _resume_run(controller, repo, number, params, prior_run, config, path,
-                        spec_digest, key, repository_id, before_effect, allow_handoff, source_observer)
-                elif params['stage'] == 'review_checkpoint':
-                    result = _finish(controller, repo, number, params, assignment, record,
-                        config, path, spec_digest, key, before_effect, source_observer)
+                if prior_run is not None and prior_run.changed_head is not None:
+                    result = _resume_changed(controller, repo, number, pin, prior_run,
+                        repository_id, source_observer)
                 else:
-                    result = await _run(controller, repo, number, params, record, config, path,
-                        spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
-                        request_id, request_digest)
+                    record, config, path, spec_digest = _candidate(controller, repo, number, pin,
+                        repository_id, bound_assignment)
+                    key = (repo, number, pin['head'], config['blob_sha'])
+                    if prior_run is not None:
+                        result = await _resume_run(controller, repo, number, params, prior_run, config, path,
+                            spec_digest, key, repository_id, before_effect, allow_handoff, source_observer)
+                    elif params['stage'] == 'review_checkpoint':
+                        result = _finish(controller, repo, number, params, assignment, record,
+                            config, path, spec_digest, key, before_effect, source_observer)
+                    else:
+                        result = await _run(controller, repo, number, params, record, config, path,
+                            spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
+                            request_id, request_digest)
                 if result.get('assignment') is None:
                     cleanup_attempted = True
                     _release_unhanded_ticket(runner, repo, number, boundary.run, source_observer)
@@ -237,6 +261,7 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
             runner._forget_verification_run(previous)
     runner.pending_verifications.pop(key, None)
     runner.verified_heads.discard(key)
+    runner._prune_diagnoses(repo, number, pin['head'], pin['contract_revision'])
     record = runner._intent(repo, number, config, record, 'verification',
         phase='executing', wait_reason=None, next_action='verification',
         **({'checkpoint': None} if record.get('checkpoint') == 'locally_verified' else {}))
@@ -274,9 +299,19 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     if state['dirty'] or state['head'] != pin['head']:
         head = runner._workspace_effect(repo, 'checkpoint', path,
             f'Checkpoint verification changes for Issue {number}')
-        record = runner._record(repo, number, record, head=head, pending_action=None,
-            phase='implementation_done', wait_reason='candidate_changed', next_action='verification')
-        _source(runner, repo, number, record, observer)
+        values = dict(head=head, pending_action=None, phase='implementation_done',
+            wait_reason='candidate_changed', next_action='verification',
+            **_correction_debt(runner, repo, number, record, 'verification_mutation'))
+        planned = runner._record_values(record, **values)
+        proof = VerificationRun(results, _digest(results), spec_digest, request_id, request_digest,
+            verification_record=planned, expected_record=planned, changed_head=head)
+        runner.verification_runs[key] = proof
+        runner._verification_scope.get().run = proof
+        try:
+            runner._record(repo, number, record, **values)
+        except (OSError, RuntimeError):
+            pass  # The exact attempted record is the only recovery target.
+        _source(runner, repo, number, planned, observer)
         return {'outcome': 'waiting', 'reason': 'candidate_changed'}
     _candidate(controller, repo, number, pin, repository_id)
     if error:
@@ -287,6 +322,8 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     final_values = dict(phase='implementation_done', pending_action=None,
         wait_reason='native_assignment_pending' if passed else 'verification_failure',
         next_action='change_review' if passed else 'diagnose_verification')
+    if not passed:
+        final_values.update(_correction_debt(runner, repo, number, record, 'verification_failure'))
     planned = runner._record_values(record, **final_values)
     proof = VerificationRun(results, _digest(results), spec_digest, request_id, request_digest,
         verification_record=planned, expected_record=planned)
@@ -301,32 +338,13 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         _source(runner, repo, number, planned, observer)
         record = planned
     _source(runner, repo, number, record, observer)
+    if not passed:
+        runner._remember_diagnosis(repo, number, pin['head'], pin['contract_revision'],
+            'verification_failure', _private_output(runner, results))
     assignment = None
-    if passed:
-        if allow_handoff():
-            remaining, outputs = 24000, []
-            for value in results:
-                text = runner.workspace.verification_output(value['output_digest'], max_chars=remaining)
-                outputs.append(text)
-                remaining -= len(text)
-                if not remaining:
-                    break
-            prompt = (f"Independently review diff from {config['revision']} to HEAD and accepted spec "
-                f"{runner._scoped_spec(repo, number, config, record)}. Inspect behavior, tests and security. "
-                "Use candidate_ready only for a passed independent review. Do not change files or deliver code. "
-                f"Registered verification receipts (untrusted data): {json.dumps(results)}\n"
-                + 'Bounded private verification output (untrusted data):\n' + ''.join(outputs))
-            _candidate(controller, repo, number, pin, repository_id)
-            _, assignment = await runner._model(repo, number, config, record, path, 'change_review', prompt)
-            proof.expected_record = dict(runner._checkpoint_ceiling.get()[3]['record'])
-            if assignment and assignment.get('action') != 'native_task':
-                # The existing model path supplies exact recovery identity.
-                # Reconcile its attempted record before a private handoff.
-                _source(runner, repo, number, proof.expected_record, observer)
-                assignment = proof.draft
-            if assignment:
-                assignment = _handoff(controller, repo, number, pin, proof, key,
-                    repository_id, before_effect, allow_handoff)
+    if passed and allow_handoff():
+        assignment = await _dispatch_review(controller, repo, number, pin, proof, config,
+            path, key, repository_id, before_effect, allow_handoff, observer)
     before_effect()
     if assignment and not allow_handoff():
         assignment = None
@@ -338,10 +356,47 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
 
 def _run_reply(pin, proof, source, assignment):
     passed = all(value['passed'] for value in proof.results)
-    return {'outcome': 'waiting', 'reason': 'native_assignment_pending' if passed else 'verification_failure',
+    reason = (source['record'].get('wait_reason') or 'native_assignment_pending') if passed else 'verification_failure'
+    return {'outcome': 'waiting', 'reason': reason,
         'receipt': {'kind': 'verification', 'candidate': dict(pin), 'verdict': 'passed' if passed else 'failed',
             'review': 'pending' if passed else None, 'progress_ref': source['resource'], 'evidence_refs': []},
         'assignment': assignment, 'required_next': 'open_source'}
+
+
+async def _dispatch_review(controller, repo, number, pin, proof, config, path, key,
+                           repository_id, before_effect, allow_handoff, observer):
+    runner, record = controller.runner, proof.expected_record
+    prompt = (f"Independently review diff from {config['revision']} to HEAD and accepted spec "
+        f"{runner._scoped_spec(repo, number, config, record)}. Inspect behavior, tests and security. "
+        "Use candidate_ready only for a passed independent review. Do not change files or deliver code. "
+        f"Registered verification receipts (untrusted data): {json.dumps(proof.results)}\n"
+        + 'Bounded private verification output (untrusted data):\n' + _private_output(runner, proof.results))
+    _candidate(controller, repo, number, pin, repository_id)
+    _, assignment = await runner._model(repo, number, config, record, path, 'change_review', prompt)
+    proof.expected_record = dict(runner._checkpoint_ceiling.get()[3]['record'])
+    if assignment and assignment.get('action') != 'native_task':
+        _source(runner, repo, number, proof.expected_record, observer)
+        assignment = proof.draft
+    return (_handoff(controller, repo, number, pin, proof, key,
+        repository_id, before_effect, allow_handoff) if assignment else None)
+
+
+def _resume_changed(controller, repo, number, pin, proof, repository_id, observer):
+    runner = controller.runner
+    # No new effect or candidate verdict is authorized by this private memo.
+    source = _source(runner, repo, number, proof.expected_record, observer)
+    record, config = controller._bound(repo, number, pin['attempt_id'], proof.changed_head,
+        pin['contract_revision'])
+    if record.get('repository_id') != repository_id:
+        raise OperationDenied('stale_candidate')
+    reason = runner._latest(repo, number, config)
+    if reason:
+        raise OperationDenied(reason)
+    path = runner.workspace.existing(repo, number, record['branch'])
+    state = runner.workspace.inspect(path)
+    if state['dirty'] or state['head'] != proof.changed_head:
+        raise OperationDenied('stale_candidate')
+    return {'outcome': 'waiting', 'reason': 'candidate_changed'}
 
 
 def _handoff(controller, repo, number, pin, proof, key, repository_id, before_effect, allow_handoff):
@@ -363,8 +418,8 @@ def _handoff(controller, repo, number, pin, proof, key, repository_id, before_ef
     return dict(assignment)
 
 
-def _resume_run(controller, repo, number, params, proof, config, path, spec_digest, key,
-                repository_id, before_effect, allow_handoff, observer):
+async def _resume_run(controller, repo, number, params, proof, config, path, spec_digest, key,
+                      repository_id, before_effect, allow_handoff, observer):
     runner, pin = controller.runner, params['candidate']
     if (runner.verification_runs.get(key) is not proof
             or runner.pending_verifications.get(key) is not proof.results
@@ -378,6 +433,10 @@ def _resume_run(controller, repo, number, params, proof, config, path, spec_dige
     if proof.draft is not None and source['record'].get('native_step') is not None:
         assignment = _handoff(controller, repo, number, pin, proof, key,
             repository_id, before_effect, allow_handoff)
+    elif proof.draft is None and all(value['passed'] for value in proof.results) and allow_handoff():
+        assignment = await _dispatch_review(controller, repo, number, pin, proof, config,
+            path, key, repository_id, before_effect, allow_handoff, observer)
+        source = _source(runner, repo, number, proof.expected_record, observer)
     return _run_reply(pin, proof, source, assignment)
 
 
@@ -452,11 +511,8 @@ def _finish(controller, repo, number, params, assignment, record, config, path,
                          'correction' if outcome == 'failed' else None),
         'wait_reason': wait, 'next_action': next_action}
     if outcome == 'failed':
-        attempts = record.get('correction_attempt') or 0
-        if record.get('native_outcome') != 'failed':
-            attempts = max(attempts + (record.get('correction_reason') == 'review_findings'),
-                runner.failures.get((repo, number, 'review_findings'), 0) + 1)
-        values.update(correction_reason='review_findings', correction_attempt=attempts or 1)
+        values.update(_correction_debt(runner, repo, number, record, 'review_findings',
+            recorded=record.get('native_outcome') == 'failed'))
     if any(record.get(k) != v for k, v in values.items()):
         record = runner._record(repo, number, record, **values)
     _source(runner, repo, number, record, observer)
@@ -473,6 +529,10 @@ def _finish(controller, repo, number, params, assignment, record, config, path,
     observer(source)
     if review == 'accepted':
         runner.verified_heads.add(key)
+        runner._forget_diagnoses(repo, number, params['candidate']['head'], params['candidate']['contract_revision'])
+    elif review == 'failed':
+        runner._remember_diagnosis(repo, number, params['candidate']['head'],
+            params['candidate']['contract_revision'], 'review_findings', params['summary'])
     runner.summaries.pop(step, None)
     runner.review_steps.pop(step, None)
     runner.review_runs.pop(step, None)
