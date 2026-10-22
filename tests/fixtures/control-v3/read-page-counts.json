@@ -95,6 +95,60 @@
       "count": 0,
       "total": null,
       "accepted": false
+    },
+    {
+      "name": "work-graph-complete_empty",
+      "target": "work_membership",
+      "mode": "complete_empty",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-partial_empty",
+      "target": "work_membership",
+      "mode": "partial_empty",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-no_projects",
+      "target": "work_membership",
+      "mode": "no_projects",
+      "state": "complete",
+      "count": 0,
+      "total": 0,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-wrong_project",
+      "target": "work_membership",
+      "mode": "wrong_project",
+      "state": "complete",
+      "count": 1,
+      "total": 1,
+      "accepted": false
+    },
+    {
+      "name": "work-graph-unexpanded",
+      "target": "work_membership",
+      "mode": "unexpanded",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": true
+    },
+    {
+      "name": "work-graph-empty_both",
+      "target": "work_membership",
+      "mode": "empty_both",
+      "state": "complete",
+      "count": 2,
+      "total": 2,
+      "accepted": true
     }
   ]
 }

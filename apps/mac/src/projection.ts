@@ -664,18 +664,19 @@ function projectionDocument(input: unknown, sourceFrame: boolean): ProjectionV3 
       (o.availability === "unavailable" || o.availability === "stale" ||
        o.coverage.state !== "complete" || ["rate_limited", "provider_wait"].includes(String(o.reason))));
   });
-  const projects = new Set<string>(), work = new Set<string>();
+  const projects = new Set<string>(), work = new Set<string>(), membership = new Set<string>();
   list(v.projects, item => {
     const p = object(item, "repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs");
     kindRef(p.repository_ref, "repository"); unique(projects, p.repository_ref);
     list(p.goal_refs, goalRef, 100); projectWorkRefs(p.work_refs,p.repository_ref);
+    for (const reference of p.work_refs as unknown[]) membership.add(canonical(reference));
     admissionFact(p.admission, index,repositoryNames(p.repository_ref,index),plain(v.runtime).control_binding_digest); unmappedFact(p.execution, execution, index);
     refs(p.attention_refs); coverage(p.coverage); refs(p.source_refs);
     if (sourceFrame) requireValue(plain(p.coverage).returned_count === (p.work_refs as unknown[]).length);
   }, 1024);
   list(v.work, item => {
     const w = object(item, "issue_ref goal_refs spec_refs requirement_refs readiness stage admission execution wait decision delivery result cleanup next_action task_refs resource_refs evidence_refs");
-    kindRef(w.issue_ref, "issue"); unique(work, w.issue_ref); list(w.goal_refs, goalRef, 100);
+    kindRef(w.issue_ref, "issue"); unique(work, w.issue_ref); requireValue(membership.has(canonical(w.issue_ref))); list(w.goal_refs, goalRef, 100);
     list(w.spec_refs, requirementRef, 100); list(w.requirement_refs, requirementRef, 100);
     readinessFact(w.readiness,index,w.issue_ref); unmappedFact(w.stage, x => one(x, "prepare design implement verify deliver observe complete"), index);
     admissionFact(w.admission, index,repositoryNames(issueRepository(w.issue_ref),index),plain(v.runtime).control_binding_digest); unmappedFact(w.execution, execution, index); unmappedFact(w.wait, wait, index);

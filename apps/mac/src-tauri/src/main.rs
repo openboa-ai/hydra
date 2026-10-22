@@ -588,6 +588,12 @@ mod tests {
             }
             value["page"]["next_cursor"]="continuation_page".into();
             let config=root.join("frame.json");fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();
+            let local_emitter=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_local_read.py");
+            let output=Command::new("python3").arg("-I").arg(local_emitter).arg(&epoch).output().unwrap();
+            assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+            let mut local:serde_json::Value=serde_json::from_slice(&output.stdout).unwrap();
+            local["page"]["next_cursor"]="continuation_page".into();
+            fs::write(root.join("frame.json.local"),serde_json::to_vec(&local).unwrap()).unwrap();
             let runtime=root.join("runtime");
             fs::write(&runtime,br#"#!/usr/bin/env python3
 import json,sys
@@ -596,7 +602,7 @@ if 'read-context' in a:
  print(json.dumps({'scope':'github:read:'+'a'*64}))
  sys.exit(0)
 p=a[a.index('--config')+1]
-v=json.load(open(p))
+v=json.load(open(p if '--refresh' in a else p+'.local'))
 v['request_id']=a[a.index('--request-id')+1]
 v['binding_epoch']=a[a.index('--binding-epoch')+1]
 if '--repository' in a:

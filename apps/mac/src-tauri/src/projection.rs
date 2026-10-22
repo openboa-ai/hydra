@@ -601,7 +601,7 @@ fn validate_frame(v:&Value)->R {
           o["coverage"]["state"]!="complete" || o["reason"]=="rate_limited" || o["reason"]=="provider_wait"))?;
     }
     need(v["retry_hints"].as_array().unwrap().len()<=4096)?;
-    let mut projects=HashSet::new();
+    let mut projects=HashSet::new();let mut membership=HashSet::new();
     let rows=v["projects"].as_array().ok_or(INVALID)?; need(rows.len()<=1024)?;
     for p in rows {
         object(p,"repository_ref goal_refs work_refs admission execution attention_refs coverage source_refs")?;
@@ -610,12 +610,14 @@ fn validate_frame(v:&Value)->R {
         admission_fact(&p["admission"],&index,&repository_names(&p["repository_ref"],&index)?,&v["runtime"]["control_binding_digest"])?; unmapped_fact(&p["execution"],execution,&index)?;
         refs(&p["attention_refs"])?; coverage(&p["coverage"])?; refs(&p["source_refs"])?;
         need(p["coverage"]["returned_count"].as_u64()==Some(p["work_refs"].as_array().unwrap().len() as u64))?;
+        for reference in p["work_refs"].as_array().unwrap() {membership.insert(serde_json::to_string(reference).map_err(|_|INVALID)?);}
     }
     let mut works=HashSet::new();
     let rows=v["work"].as_array().ok_or(INVALID)?; need(rows.len()<=512)?;
     for w in rows {
         object(w,"issue_ref goal_refs spec_refs requirement_refs readiness stage admission execution wait decision delivery result cleanup next_action task_refs resource_refs evidence_refs")?;
         kind_ref(&w["issue_ref"],"issue")?; unique(&mut works,&w["issue_ref"])?;
+        need(membership.contains(&serde_json::to_string(&w["issue_ref"]).map_err(|_|INVALID)?))?;
         list(&w["goal_refs"],goal_ref,100)?; list(&w["spec_refs"],requirement_ref,100)?; list(&w["requirement_refs"],requirement_ref,100)?;
         readiness_fact(&w["readiness"],&index,&w["issue_ref"])?; unmapped_fact(&w["stage"],|x| one(x,"prepare design implement verify deliver observe complete"),&index)?;
         admission_fact(&w["admission"],&index,&repository_names(&issue_repository(&w["issue_ref"])?,&index)?,&v["runtime"]["control_binding_digest"])?; unmapped_fact(&w["execution"],execution,&index)?;
@@ -955,7 +957,7 @@ mod read_page_count_regressions {
         let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
         assert!(output.status.success(),"Actual read producer failed: {}",String::from_utf8_lossy(&output.stderr));
         let cases:Value=serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(cases.as_array().unwrap().len(),12);
+        assert_eq!(cases.as_array().unwrap().len(),18);
         for case in cases.as_array().unwrap() {
             assert_eq!(ReadPayload::parse(case["wire"].as_str().unwrap().as_bytes()).is_ok(),case["accepted"].as_bool().unwrap(),"{}",case["name"]);
         }

@@ -857,9 +857,11 @@ def validate_frame(value):
         array(v['source_refs'], ref)
     array(value['projects'], project, 1024)
     require(len({canonical(v['repository_ref']) for v in value['projects']}) == len(value['projects']))
+    membership = {canonical(ref) for project in value['projects'] for ref in project['work_refs']}
     def work(v):
         obj(v, 'issue_ref goal_refs spec_refs requirement_refs readiness stage admission execution wait decision delivery result cleanup next_action task_refs resource_refs evidence_refs')
         kind_ref(v['issue_ref'], 'issue')
+        require(canonical(v['issue_ref']) in membership)
         array(v['goal_refs'], goal_ref, 100)
         array(v['spec_refs'], requirement_ref, 100)
         array(v['requirement_refs'], requirement_ref, 100)

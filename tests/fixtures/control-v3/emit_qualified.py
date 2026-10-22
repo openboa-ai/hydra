@@ -106,6 +106,7 @@ def cases():
                 if name=='unresolved_empty':
                     project=frame['projects'][0];project['work_refs']=[]
                     project['coverage'].update(returned_count=0,total_count=0 if project['coverage']['state']=='complete' else None)
+                    frame['work']=[work for work in frame['work'] if not work['issue_ref']['id'].startswith('101:')]
         if family=='receipt':
             reply=wire.standard(frame);name=row['name']
             if name=='foreign_store':reply['observations'][0]['resource']['id']='f'*64

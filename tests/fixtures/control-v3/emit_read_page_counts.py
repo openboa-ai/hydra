@@ -13,6 +13,16 @@ def vectors():
     for case in json.loads(Path(__file__).with_name('read-page-counts.json').read_text())['cases']:
         value=copy.deepcopy(frame)
         target=value['page']
+        if case.get('target')=='work_membership':
+            mode=case['mode']
+            if mode in {'complete_empty','partial_empty','empty_both'}:
+                project=value['projects'][0];project['work_refs']=[]
+                partial=mode=='partial_empty'
+                project['coverage'].update(state='partial' if partial else 'complete',returned_count=0,
+                    total_count=None if partial else 0,next_cursor=None,reason='source_coverage_incomplete' if partial else None)
+            if mode=='no_projects':value['projects']=[]
+            if mode=='wrong_project':value['projects']=value['projects'][1:]
+            if mode in {'unexpanded','empty_both'}:value['work']=[]
         if case.get('target')=='project':
             project=value['projects'][0]
             assert len(project['work_refs'])==1

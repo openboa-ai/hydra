@@ -1092,3 +1092,46 @@ Final-head CI, independent code/security reviews, protected merge and actual-mai
 checks remain required. Selected installation, authenticated native caller/Q&A,
 the actual remote Pause/Resume flow, two-project acceptance, resource closure and
 the full v1 D/L/O obligations remain unqualified by these source checks.
+
+
+## Closed work membership and local source lanes
+
+Parent `1363e35e3ad905952976fb681e00ce7710fd7fdd` passed all three CI jobs
+and exact-head security review. Its code review found two remaining read-model
+inconsistencies. This correction retains accepted P12 Rev4 / CP8 / NC8.
+
+Every expanded WorkView must be referenced by its corresponding returned project.
+The reverse is intentionally not required: a membership ref can be known without
+its expanded row. Source frames cannot declare an empty membership and merge an
+orphan row back into the display. The same membership closure applies to the
+accumulated display structure, with source coverage metadata retained separately.
+The shared actual-producer corpus now has eighteen cases: six legitimate pages
+and twelve contradictory project/work count or membership claims. It preserves
+unexpanded refs, empty legitimate membership, partial pages and normal records.
+
+Local read tickets accept only unavailable/not_requested GitHub placeholders and
+reject GitHub retry hints before cache, runtime, pins or provider-policy mutation.
+They cannot renew provider facts or poison the remote retry window. Normal local
+admission/ownership observations remain usable; credential-scoped remote reads
+retain current facts, source failures, late original quota and normal waits.
+
+Two new cache methods consume actual local producer bytes for overview/project
+queries. They prove no provider calls, retain current Hydra facts and reject
+remote facts, false access outcomes and provider hints on local tickets without
+changing remote policy. Generic source-cache fixtures use the appropriate lane;
+local dispatcher fixtures now use actual local bytes. Metadata tests select their
+source by identity rather than an assumed array position. Foreign orphan work is
+rejected at the source graph boundary, before query-scope validation.
+
+The frozen immutable-parent controls produce four Python assertion/subtest
+failures, one frontend failure and two Rust failures, without errors/skips. The
+independent actual-local positive passes on both revisions. The unchanged final
+oracles pass after correction. Final impact checks pass 379 Python, 352 frontend
+and 67 Rust methods, without failures/errors/skips, plus frontend/native builds.
+Existing sequence, runtime, quota, 66-cursor, bounded cache, qualified receipt and
+v2 regressions remain. Intermediate fixture failures are not final passing evidence.
+
+Final-head CI and independent reviews, protected merge and actual-main checks
+remain delivery gates. No wire, credential, selected installation or authority is
+changed. Actual native Q&A/control/recovery, two-project acceptance, full resource
+closure and all remaining v1 D/L/O obligations remain unqualified by these checks.

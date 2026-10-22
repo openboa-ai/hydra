@@ -47,6 +47,8 @@ test("newer capability snapshots survive older cross-scope cache responses in bo
 test("valid individual pages merge without rewriting their source page metadata",()=>{
   const f=stream(),first=structuredClone(f.frame),last=structuredClone(f.frame);
   first.projects=first.projects.slice(0,1);last.projects=last.projects.slice(1);
+  first.work=first.work.filter(w=>w.issue_ref.id.startsWith(first.projects[0]!.repository_ref.id+":"));
+  last.work=last.work.filter(w=>w.issue_ref.id.startsWith(last.projects[0]!.repository_ref.id+":"));
   first.page={state:"partial",scope:"registered-projects;overview",returned_count:1,total_count:null,next_cursor:"next-page",reason:"project_bound"};
   last.page={state:"complete",scope:"registered-projects;overview:from:1",returned_count:1,total_count:1,next_cursor:null,reason:null};
   f.read(first,10);f.read(last,20);
