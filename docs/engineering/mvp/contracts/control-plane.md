@@ -1,6 +1,6 @@
 # Control plane: projection과 안전한 명령
 
-상태: 설계 후보 · revision 8 · 2026-10-21 · 관련 작업: Issue #3
+Status: Design contract, revision 9, 2026-10-22. Installation authority increment.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 W3/W7의
 wire contract, 관측·화면·명령·호환·TC를 소유한다. native 연동 qualification 이전의
@@ -1322,3 +1322,18 @@ cargo test --locked --manifest-path apps/mac/src-tauri/Cargo.toml
 
 최종 후보는 기존 full Python suite와 필수 CI/review를 [구현 기준](../implementation-method.md)에
 따라 실행한다. O는 위임된 실제 환경에서만 수행하며 fixture/source test를 그 증거로 사용하지 않는다.
+
+## Explicit installation authority for STDIO project admission
+
+The P02 installation-profile increment adds one server-owned authority source:
+the optional protected `native_admission_control` host table. Its shared principal is
+all agents/launchers able to use that installation, not an authenticated human/task.
+Only configured numeric repository scopes may request admission_set(paused/running).
+Arrival, client metadata, repository registration and caller-supplied context are not
+grants. The adapter binds the same absolute config locator as the command core and
+re-reads the profile before and after source lookup. Semantic config changes invalidate
+old runtime expectations; expiry/revocation removes grants without automatically
+changing admission. Existing parent-admission, CAS, uncertainty and receipt semantics
+remain unchanged. No other operation gains authority. Full schema, failure cases,
+expiry lifetime, non-atomic revocation limit and acceptance are owned by
+[P02](../changes/02-project-admission/spec.md#installation-scoped-stdio-admission-profile).

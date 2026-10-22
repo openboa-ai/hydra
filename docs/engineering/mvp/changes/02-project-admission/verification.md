@@ -227,3 +227,36 @@ focused/full 이후 source/test 변경은 없다. 이 문단은 관측 결과만
 
 새 head의 hosted CI·코드/보안 리뷰, 보호 병합 및 실제 main 검증은 별도로 확인한다.
 이 결과는 설치된 transport의 권한 활성화·실제 원격 Codex 조작·운영 수용의 증거가 아니다.
+
+## Installation-scoped STDIO admission increment
+
+P02 revision 5 implements the explicit shared-installation project-admission
+policy through the protected host loader, semantic identity, a native-only internal
+provider and standalone STDIO main. Configuration is absent/default-deny; enabled
+numeric scopes permit only project Pause and a separate explicit Resume. No native
+human/task identity or additional workflow/termination authority is claimed.
+
+The frozen `test_native_admission_profile.py` contains twelve methods. Actual base
+`1aedced3120f3673ff74b1500d9092cc00ed2549` rejects their valid profile inputs,
+producing twelve purpose assertions without errors/skips. The unchanged oracles
+pass after implementation. Coverage includes schema/type/count/expiry validation,
+semantic identity and stale expectations, actual temporary-store Pause/read-back/
+Resume, unchanged host/other-project state, absent/disabled/empty/expired/foreign
+scope, source-time revocation and expiry, unsafe config replacement, fixed config
+locator, actual SDK context routing and real STDIO-main consumption with all six
+tools. No installed settings, selected client, native task or production gate is
+changed by these fixtures.
+
+Relevant CLI/control/runtime/MCP/STDIO/checkpoint/operations/resource regressions
+collect and pass 300 methods without failures, errors or skips. Subprocesses use
+the actual candidate source. Six corpus headers are rebound to CP revision 9;
+all non-contract case data and behavioral oracles match immutable base data.
+CP9 adds the authority-source contract without changing the wire or admitting
+future unqualified command sources. Earlier incomplete test observations remain
+diagnostics, not final passing evidence.
+
+Exact final-head CI and independent code/security reviews, protected merge and
+actual-main checks remain delivery gates. Actual selected-installation operation,
+authenticated native Q&A/control/recovery, two-project acceptance and full v1 D/L/O
+remain unqualified. Deployment targets and actual activation are separate from
+policy adoption and local SDK success.

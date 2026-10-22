@@ -23,7 +23,7 @@ class ControlWireContractTests(unittest.TestCase):
 
     def test_shared_vectors_pin_contract_and_include_actual_source_cli_and_legacy(self):
         inputs = json.loads((FIXTURE / 'inputs.json').read_bytes())
-        self.assertEqual(inputs['contract']['revision'], 8)
+        self.assertEqual(inputs['contract']['revision'], 9)
         self.assertEqual(hashlib.sha256((ROOT / inputs['contract']['path']).read_bytes()).hexdigest(),
                          inputs['contract']['sha256'])
         self.assertEqual(len({v['name'] for v in self.vectors}), len(inputs['cases']))

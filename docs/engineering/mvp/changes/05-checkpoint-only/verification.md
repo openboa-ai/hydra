@@ -271,3 +271,12 @@ existing checkout were preserved during testing; this record was appended later.
 Full candidate CI, final-head independent code/security review, normal protected
 merge and exact-main checks remain required. No installed native authority or
 full remote-operation qualification is claimed.
+
+## Optional installation admission consumer
+
+P05 revision 3 connects standalone STDIO main to P02's optional protected profile.
+The [P02 verification record](../02-project-admission/verification.md#installation-scoped-stdio-admission-increment)
+owns the frozen twelve-method adapter/SDK/main cases and 300-method related impact.
+Embedded create_server still defaults to no grant. The profile supplies neither
+checkpoint authority nor ended-task proof; existing checkpoint/legacy regression
+coverage remains. This source increment does not qualify installed/native operation.

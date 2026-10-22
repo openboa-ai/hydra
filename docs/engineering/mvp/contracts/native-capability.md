@@ -1,6 +1,6 @@
 # Native 연결: 실행 가능한 경계와 qualification
 
-Revision: 8 · 상태: 설계 후보 · 2026-10-19
+Revision: 9; design contract, 2026-10-22. Native operating qualification remains separate.
 상위: [v1.0.0 spec](../spec.md), [실행 계약](execution.md), [통합 설계](../../../architecture/sdlc.md)
 
 ## 목적·책임·범위
@@ -549,3 +549,19 @@ O에서는 검토한 설치 reader에 대한 한 번의 status로 실제 runtime
 
 O 검증은 위 runbook과 [검증 설계](../verification.md)의 실제 실행 사례로 수행한다.
 NC-D 통과는 native capability의 사용 가능성이나 설치 상태를 증명하지 않는다.
+
+## Installation-profile capability source
+
+Project admission may use the explicitly configured shared STDIO installation
+principal defined by [P02](../changes/02-project-admission/spec.md#installation-scoped-stdio-admission-profile).
+This source does not qualify caller_task_binding, human identity, an answer source,
+native task termination or continuation. The SDK Context verifies routing only.
+
+| Capability | Authority source and consumer | Evidence status |
+| --- | --- | --- |
+| Project Pause / explicit Resume | Protected host profile -> standalone STDIO provider -> existing CommandV1 core | Implementation increment; installed/native qualification NOT RUN |
+
+Qualification must identify the actual installation/config/control binding, selected
+numeric targets, expiry or until-revoked lifetime and revocation owner. Observe actual
+remote Pause/read-back and separate fresh-expectation Resume plus revoked/foreign
+scope refusal. A local SDK fixture cannot satisfy this row's native operating evidence.
