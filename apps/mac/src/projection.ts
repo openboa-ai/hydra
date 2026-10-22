@@ -649,7 +649,7 @@ function boundCommandResult(value:unknown,index:Index,binding:unknown):void {
   const source=evidenceIn(receipt.readback,index);
   requireValue(typeof binding==="string" && canonical(source.resource)===canonical({source:"hydra",kind:"admission",id:binding}));
 }
-export function parseProjection(input: unknown): ProjectionV3 {
+function projectionDocument(input: unknown, sourceFrame: boolean): ProjectionV3 {
   const v = inputValue(input);
   object(v, "schema_version runtime binding_epoch request_id assembled_at observations projects work relations page capabilities retry_hints request");
   requireValue(v.schema_version === 3); runtime(v.runtime); uuid(v.binding_epoch); uuid(v.request_id); timestamp(v.assembled_at);
@@ -671,6 +671,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
     list(p.goal_refs, goalRef, 100); projectWorkRefs(p.work_refs,p.repository_ref);
     admissionFact(p.admission, index,repositoryNames(p.repository_ref,index),plain(v.runtime).control_binding_digest); unmappedFact(p.execution, execution, index);
     refs(p.attention_refs); coverage(p.coverage); refs(p.source_refs);
+    if (sourceFrame) requireValue(plain(p.coverage).returned_count === (p.work_refs as unknown[]).length);
   }, 1024);
   list(v.work, item => {
     const w = object(item, "issue_ref goal_refs spec_refs requirement_refs readiness stage admission execution wait decision delivery result cleanup next_action task_refs resource_refs evidence_refs");
@@ -685,7 +686,7 @@ export function parseProjection(input: unknown): ProjectionV3 {
   }, 512);
   list(v.relations,item=>parentRelation(item,index));
   coverage(v.page);
-  requireValue(plain(v.page).returned_count === (v.projects as unknown[]).length);
+  if (sourceFrame) requireValue(plain(v.page).returned_count === (v.projects as unknown[]).length);
   list(v.capabilities, item => {
     const c = object(item, "source operation state actor qualification_ref reason");
     one(c.source, "github codex resource_provider hydra"); text(c.operation); one(c.state, "available unsupported unavailable");
@@ -694,6 +695,14 @@ export function parseProjection(input: unknown): ProjectionV3 {
   });
   nullable(v.request, r => boundCommandResult(r,index,plain(v.runtime).control_binding_digest));
   return v as unknown as ProjectionV3;
+}
+export function parseProjection(input: unknown): ProjectionV3 {
+  return projectionDocument(input,true);
+}
+// Accumulated display membership can span several validated source pages.
+// Use only for displays assembled from frames already checked by parseProjection.
+export function validateProjectionView(view: ProjectionV3): void {
+  projectionDocument(view,false);
 }
 export function parseStandardReply(input: unknown): ObjectValue {
   const v = inputValue(input); object(v, "command_schema runtime binding_epoch request observations");

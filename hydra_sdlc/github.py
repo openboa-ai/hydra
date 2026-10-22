@@ -191,6 +191,17 @@ class GitHub:
     def _credential_selected(self, fingerprint):
         pass
 
+    @staticmethod
+    def _read_result(result, *, default_status=None, uncertain=False):
+        from .github_read import parse_response
+        match = re.search(r"HTTP (\d{3})", result.stderr or "")
+        hint = int(match[1]) if match else default_status if not result.returncode else None
+        response = parse_response(result.stdout, status_hint=hint)
+        if result.returncode or response.status >= 400:
+            raise GitHubError("GitHub read failed", status=response.status,
+                              read_response=response.without_value(), uncertain=uncertain)
+        return response
+
     def _gh_request(self, method, path, payload, *, include_headers=False):
         try:
             token = self._credential()
@@ -201,14 +212,17 @@ class GitHub:
             # request with the same credential's immutable account identity.
             if self._authenticated_fingerprint != fingerprint:
                 self._reserve_request()
-                identity = subprocess.run(
-                    ["gh", "api", "--hostname", "github.com", "user"],
-                    env=env, capture_output=True, text=True, timeout=self._request_timeout(30), check=True,
-                )
+                identity = self._read_result(subprocess.run(
+                    ["gh", "api", "--hostname", "github.com", "--method", "GET", "--include", "user"],
+                    env=env, capture_output=True, text=True, timeout=self._request_timeout(30), check=False,
+                ), default_status=200, uncertain=method != "GET")
                 self._request_timeout(30)
-                if json.loads(identity.stdout).get("login") != self.user:
+                if type(identity.value) is not dict or identity.value.get("login") != self.user:
                     raise GitHubError("GitHub identity mismatch")
                 self._authenticated_fingerprint = fingerprint
+                if identity.limited and identity.remaining_wait() != 0:
+                    raise GitHubError("GitHub identity quota exhausted", status=identity.status,
+                                      read_response=identity.without_value(), uncertain=method != "GET")
             argv = ["gh", "api", "--hostname", "github.com", "--method", method,
                     "-H", "Accept: application/vnd.github+json", path.lstrip("/")]
             if include_headers:
@@ -220,13 +234,7 @@ class GitHub:
             result = subprocess.run(argv, input=json.dumps(payload) if payload is not None else None,
                                     env=env, capture_output=True, text=True, timeout=self._request_timeout(45))
             if include_headers:
-                from .github_read import parse_response
-                match = re.search(r"HTTP (\d{3})", result.stderr)
-                response = parse_response(result.stdout, status_hint=int(match[1]) if match else None)
-                if result.returncode or response.status >= 400:
-                    raise GitHubError("GitHub read failed", status=response.status,
-                                      read_response=response.without_value())
-                return response
+                return self._read_result(result)
             if result.returncode:
                 match = re.search(r"HTTP (\d{3})", result.stderr)
                 raise GitHubError("GitHub request failed", status=int(match[1]) if match else None,

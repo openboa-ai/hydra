@@ -853,6 +853,7 @@ def validate_frame(value):
         unmapped_fact(v['execution'], execution, observations)
         array(v['attention_refs'], ref)
         coverage(v['coverage'])
+        require(v['coverage']['returned_count'] == len(v['work_refs']))
         array(v['source_refs'], ref)
     array(value['projects'], project, 1024)
     require(len({canonical(v['repository_ref']) for v in value['projects']}) == len(value['projects']))

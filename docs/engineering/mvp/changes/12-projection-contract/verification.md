@@ -1034,3 +1034,61 @@ Prior intermediate fixture failures remain separate from final passing evidence.
 Final-head CI, independent reviews, protected merge and actual-main checks remain
 delivery gates. Installed operation, the real remote flow, two-project acceptance
 and full v1 D/L/O remain unqualified by these source checks.
+
+
+## Shared deadline, identity quota and work membership
+
+Parent `29c4a01cc8395297d38da85b1f094defcd2dd574` passed all three CI jobs
+and exact-head security review. Its completed code review found three additional
+source-boundary defects. The correction reuses accepted P12 Rev4 / CP8 / NC8.
+
+Repository reads now share the accepted 45-second aggregate deadline. Dividing
+that deadline across a large registry previously prevented even a healthy
+authentication/source request from completing. Fair request shares remain.
+When the aggregate budget ends, the overview cursor advances from the actually
+attempted prefix, preserving the first unattempted repository. A slow source is
+partial/unavailable and cannot manufacture attempts or skip untouched sources.
+The 4,096-request, response-size and inherited caller bounds remain unchanged.
+
+Identity and owned data GETs use the same header-aware response parser. Primary
+403 resets, secondary 403 Retry-After, 429 and explicit zero reach the existing
+sanitized read policy. Genuine access denial remains distinct. The authentication
+fingerprint is cached only after a successful expected-actor identity check.
+A successful identity response that exhausts the provider allowance also holds
+the following repository GET. Its valid identity proof is retained; the provider
+hold reaches the same policy, including its distinction between rate limiting
+and a subsequent held source. Explicit zero/expired waits remain immediate.
+No raw error body, response headers or credential material is exported.
+
+All three source consumers require project coverage counts to equal work_refs.
+The shared actual-producer corpus now has twelve cases: four legitimate pages
+and eight contradictory project/work membership claims. Raw source frames remain
+strict. The renderer separately validates its accumulated display structure,
+whose retained source coverage can describe one of several merged pages; it does
+not rewrite that source metadata or feed the display back into a source decoder.
+
+Frozen clock/transport regressions model credential lookup and HTTP latency for
+the supported 1,024-repository registry, verify usable current facts, retain the
+first unattempted cursor after one slow source, and enforce the shared time/request
+bounds. Authentication regressions cover primary/secondary limits, zero, real
+denial, held-probe suppression and private-body exclusion. On the immutable
+parent these final oracles produce ten Python assertion/subtest failures, one
+frontend method failure and one Rust method failure, without setup errors/skips.
+The same final oracles pass after correction. An additional frozen regression
+reproduces one assertion failure when a successful identity exhausts the final
+allowance; it now passes without an extra repository request. Existing legitimate empty/unavailable
+fixtures and expected identity-plus-data header call counts are updated.
+
+Final local impact checks pass 379 Python, 352 frontend and 65 Rust methods,
+without failures/errors/skips, plus both builds. Intermediate fixture failures
+remain separate from final passing evidence.
+
+A separate bounded read-only source check completed the authenticated identity
+and public repository GETs in two provider requests, returning HTTP 200. No
+effect, raw response body, new credential or selected installation was retained.
+This qualifies that normal source-read path only.
+
+Final-head CI, independent code/security reviews, protected merge and actual-main
+checks remain required. Selected installation, authenticated native caller/Q&A,
+the actual remote Pause/Resume flow, two-project acceptance, resource closure and
+the full v1 D/L/O obligations remain unqualified by these source checks.

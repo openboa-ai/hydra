@@ -609,6 +609,7 @@ fn validate_frame(v:&Value)->R {
         list(&p["goal_refs"],goal_ref,100)?; project_work_refs(&p["work_refs"],&p["repository_ref"])?;
         admission_fact(&p["admission"],&index,&repository_names(&p["repository_ref"],&index)?,&v["runtime"]["control_binding_digest"])?; unmapped_fact(&p["execution"],execution,&index)?;
         refs(&p["attention_refs"])?; coverage(&p["coverage"])?; refs(&p["source_refs"])?;
+        need(p["coverage"]["returned_count"].as_u64()==Some(p["work_refs"].as_array().unwrap().len() as u64))?;
     }
     let mut works=HashSet::new();
     let rows=v["work"].as_array().ok_or(INVALID)?; need(rows.len()<=512)?;
@@ -954,7 +955,7 @@ mod read_page_count_regressions {
         let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
         assert!(output.status.success(),"Actual read producer failed: {}",String::from_utf8_lossy(&output.stderr));
         let cases:Value=serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(cases.as_array().unwrap().len(),6);
+        assert_eq!(cases.as_array().unwrap().len(),12);
         for case in cases.as_array().unwrap() {
             assert_eq!(ReadPayload::parse(case["wire"].as_str().unwrap().as_bytes()).is_ok(),case["accepted"].as_bool().unwrap(),"{}",case["name"]);
         }

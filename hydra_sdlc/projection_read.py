@@ -422,8 +422,12 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     client.bind_context(binding_epoch, credential_scope)
     contexts, projects, work, locations, project_locations = {}, {}, {}, {}, {}
     # Transport authentication consumes this same aggregate provider budget.
+    visited = 0
     with client.read_budget(seconds=45, requests=request_limit) as total:
         for index, address in enumerate(repos):
+            if index and refresh and (total.remaining_seconds <= 0 or total.remaining_requests <= 0):
+                break
+            visited = index + 1
             requested_ref = _ref('github', 'repository', 'requested:' + address)
             context = {'requested': address, 'resource': requested_ref, 'value': None, 'observed_at': at}
             contexts[address] = context; client.context = address
@@ -439,7 +443,7 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             complete, reason, rows, next_cursor = False, 'not_requested', {}, None
             if refresh:
                 try:
-                    with client.read_budget(seconds=total.remaining_seconds / (len(repos) - index),
+                    with client.read_budget(seconds=total.remaining_seconds,
                                             requests=total.remaining_requests // (len(repos) - index)):
                         start = len(client.notes)
                         raw = client.api('GET', '/repos/' + address)
@@ -589,13 +593,13 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
             frame['retry_hints'].append(hint)
     frame['projects'] = list(projects.values()); frame['work'] = list(work.values())
     frame['observations'] = list(observations.values())
-    remaining_projects = repository is None and start_project + len(repos) < len(cfg['repos'])
+    remaining_projects = repository is None and start_project + visited < len(cfg['repos'])
     complete = not remaining_projects and all(row['coverage']['state'] == 'complete' for row in frame['projects'])
     page_scope = 'registered-projects;' + ('repository:' + repository if repository is not None else 'overview')
     frame['page'] = _coverage(page_scope + (':from:' + str(start_project) if start_project else ''), len(frame['projects']), complete,
                               None if complete else 'repository_page_limit' if remaining_projects else 'source_coverage_incomplete')
     if remaining_projects:
-        frame['page']['next_cursor'] = _cursor(cfg, binding_epoch, None, {'project_index': start_project + len(repos)})
+        frame['page']['next_cursor'] = _cursor(cfg, binding_epoch, None, {'project_index': start_project + visited})
     frame['assembled_at'] = _now()
     frame = _finish(frame, cfg, binding_epoch, locations, project_locations, repository=repository)
     p.encode(frame)

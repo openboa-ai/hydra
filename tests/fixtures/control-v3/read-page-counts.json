@@ -41,6 +41,60 @@
       "count": 0,
       "total": null,
       "accepted": false
+    },
+    {
+      "name": "complete-work-membership",
+      "target": "project",
+      "refs": 1,
+      "state": "complete",
+      "count": 1,
+      "total": 1,
+      "accepted": true
+    },
+    {
+      "name": "partial-work-membership",
+      "target": "project",
+      "refs": 1,
+      "state": "partial",
+      "count": 1,
+      "total": null,
+      "accepted": true
+    },
+    {
+      "name": "missing-returned-work",
+      "target": "project",
+      "refs": 0,
+      "state": "complete",
+      "count": 1,
+      "total": 1,
+      "accepted": false
+    },
+    {
+      "name": "unreported-returned-work",
+      "target": "project",
+      "refs": 1,
+      "state": "partial",
+      "count": 0,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "overstated-returned-work",
+      "target": "project",
+      "refs": 1,
+      "state": "partial",
+      "count": 2,
+      "total": null,
+      "accepted": false
+    },
+    {
+      "name": "unavailable-with-work-membership",
+      "target": "project",
+      "refs": 1,
+      "state": "unavailable",
+      "count": 0,
+      "total": null,
+      "accepted": false
     }
   ]
 }

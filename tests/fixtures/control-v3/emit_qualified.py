@@ -103,7 +103,9 @@ def cases():
             elif name=='duplicate':refs.append(copy.deepcopy(refs[0]))
             elif name.startswith('unresolved_'):
                 frame['projects'][0]['repository_ref']['id']='requested:example/alpha'
-                if name=='unresolved_empty':frame['projects'][0]['work_refs']=[]
+                if name=='unresolved_empty':
+                    project=frame['projects'][0];project['work_refs']=[]
+                    project['coverage'].update(returned_count=0,total_count=0 if project['coverage']['state']=='complete' else None)
         if family=='receipt':
             reply=wire.standard(frame);name=row['name']
             if name=='foreign_store':reply['observations'][0]['resource']['id']='f'*64

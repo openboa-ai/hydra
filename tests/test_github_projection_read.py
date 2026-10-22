@@ -149,7 +149,10 @@ class GitHubProjectionReadTests(unittest.TestCase):
         self.assertEqual(failure.read_response.retry_after, 37)
         self.assertIsNone(failure.read_response.value)
         self.assertNotIn(CANARY, str(failure))
-        self.assertEqual(len([c for c in calls if '--include' in c[0]]), 1)
+        included=[c for c in calls if '--include' in c[0]]
+        self.assertEqual(len(included),2)  # Identity and the failed data GET.
+        self.assertEqual(included[0][0][-1],'user')
+        self.assertNotEqual(included[1][0][-1],'user')
 
     def test_injected_json_reader_retains_unknown_headers_and_no_automatic_retry(self):
         calls = []

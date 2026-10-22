@@ -3,7 +3,7 @@ import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 import test from "node:test";
 import {readFileSync} from "node:fs";
-import {MAX_PROJECTION_BYTES,parseProjection,parseStandardReply,type ProjectionV3} from "../src/projection.ts";
+import {MAX_PROJECTION_BYTES,parseProjection,parseStandardReply,validateProjectionView,type ProjectionV3} from "../src/projection.ts";
 import {projectionState,reduceProjection,retryWait,type ProjectionState} from "../src/projection-state.ts";
 const emitter=fileURLToPath(new URL("../../../tests/fixtures/control-v3/emit_wire.py",import.meta.url));
 const result=spawnSync("python3",["-I",emitter],{encoding:"utf8",timeout:60000,maxBuffer:4194304});
@@ -107,11 +107,13 @@ test(`cached overview cannot erase newer detail or failed coverage (failed=${aft
     "Older cached coverage replaced the newer project observation");
   // Source frames were parsed above; the display accumulates multiple pages.
   assert.equal(s.view!.projects.length,2);
+  validateProjectionView(s.view!);
   s=apply(s,"overview",5,4,frames[3]!);
   assert.deepEqual(s.view!.work.map(w=>w.issue_ref.id).sort(),["101:7","102:4"]);
   assert.deepEqual(s.selected_ref,selected,"Source absence must not replace the user's independent selection");
   // Source frames were parsed above; the display accumulates multiple pages.
   assert.equal(s.view!.projects.length,2);
+  validateProjectionView(s.view!);
 });
 for (const empty of [false,true])
 test(`a late cached old runtime cannot roll back the accepted generation (empty=${empty})`,()=>{
@@ -135,7 +137,7 @@ test(`a late cached old runtime cannot roll back the accepted generation (empty=
   const fresh=structuredClone(base);fresh.runtime.code_digest="e".repeat(64);
   s=apply(s,4,3,fresh);
   assert.equal(s.view!.runtime.code_digest,fresh.runtime.code_digest,"A fresh runtime generation could not recover");
-  parseProjection(s.view);
+  validateProjectionView(s.view!);
 });
 test("failed identity refresh preserves partial coverage while local polling reuses the numeric repository",()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nfirst=ReadFixture({('example/alpha','open',False):[issue()]}).read(repository='example/alpha')\nfailed=ReadFixture(fail=lambda _: RuntimeError('fixture unavailable')).read(repository='example/alpha')\nlocal=ReadFixture().read(repository='example/alpha',refresh=False)\nprint(json.dumps([first,failed,local]))\n";
@@ -152,7 +154,7 @@ test("failed identity refresh preserves partial coverage while local polling reu
   assert.equal(failed.view!.projects[0]!.coverage.state,"partial","A failed refresh inherited old complete coverage");
   assert.equal(frames[1]!.projects[0]!.coverage.state,"partial");
   assert.equal(failed.view!.projects[0]!.coverage.reason,frames[1]!.projects[0]!.coverage.reason);
-  parseProjection(failed.view);
+  validateProjectionView(failed.view!);
 });
 for (const [action,target] of [
   ["workflow_step",{repository_id:101,issue_number:7}],
@@ -209,7 +211,7 @@ test(`a near-limit ${mode} partial read preserves known work and current local a
   assert.deepEqual(s.view.work.map(w=>w.issue_ref.id).sort(),ids,"A partial frame replaced known remote work");
   assert.ok(s.view.work.every(w=>w.admission.value==="stopped" && w.execution.value===null && w.cleanup.value===null));
   assert.ok(new TextEncoder().encode(JSON.stringify(s.view)).length<=MAX_PROJECTION_BYTES);
-  parseProjection(s.view);
+  validateProjectionView(s.view!);
 });
 test("local admission reads refresh retained work without refreshing independent GitHub or execution",()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nfirst=ReadFixture({('example/alpha','open',False):[issue()]}).read()\nframes=[first]\nfor revision,mode in [(8,'stopped'),(9,'running'),(6,'paused')]:\n fixture=ReadFixture()\n frame=fixture.read(refresh=False,admission_snapshot={'revision':revision,'global_mode':mode,'projects':{}})\n assert not fixture.calls\n frames.append(frame)\nprint(json.dumps(frames))\n";
@@ -226,7 +228,7 @@ test("local admission reads refresh retained work without refreshing independent
     assert.equal(work.admission.evidence[0]!.revision!.value,String(index+8));
     assert.deepEqual(work.readiness,initialReadiness);
     assert.equal(work.execution.value,null);assert.equal(work.cleanup.value,null);
-    parseProjection(s.view);
+    validateProjectionView(s.view!);
   }
   s=read(s,4,frames[3]!);
   assert.equal(s.view!.projects.find(p=>p.repository_ref.id==="101")!.admission.value,null);
@@ -248,7 +250,7 @@ for (const failedRefresh of [false,true]) test(`numeric repository resolution re
   assert.equal(s.selected_ref!.id,"101");
   assert.equal(s.view!.projects.find(p=>p.repository_ref.id==="101")!.admission.value,"paused");
   assert.equal(s.view!.projects.find(p=>p.repository_ref.id==="101")!.execution.value,null);
-  parseProjection(s.view);
+  validateProjectionView(s.view!);
 });
 test("actual continuation pages keep retained work reachable within the per-project bound",()=>{
   const code="from pathlib import Path\nimport sys,json\nroot=Path.cwd().parents[1]\nsys.path[:0]=[str(root),str(root/'tests')]\nfrom test_projection_read import ReadFixture,issue\nsets=[]\nfor total in (120,150):\n rows={('example/alpha','open',False):[issue(n) for n in range(1,total+1)]}\n fail=(lambda path: RuntimeError('fixture unavailable') if '/issues?' in path and 'page=2' in path else None) if total==120 else None\n first=ReadFixture(rows,fail=fail).read(repository='example/alpha')\n second=ReadFixture(rows).read(repository='example/alpha',cursor=first['projects'][0]['coverage']['next_cursor'])\n assert second['projects'][0]['coverage']['next_cursor'] is None\n sets.append([first,second])\nprint(json.dumps(sets))\n";
@@ -273,7 +275,7 @@ test("actual continuation pages keep retained work reachable within the per-proj
     assert.equal(project.coverage.next_cursor,frame.projects[0]!.coverage.next_cursor);
     assert.equal(project.coverage.state,"partial","A continuation slice cannot certify whole-source coverage");
     assert.ok(retained.every(w=>w.cleanup.value===null));
-    parseProjection(s.view);
+    validateProjectionView(s.view!);
   }
   assert.equal(seen.size,index===0 ? 120 : 150);
   assert.equal(s.view!.work.filter(w=>w.issue_ref.id.startsWith("101:")).length,index===0 ? 120 : 22);
@@ -297,7 +299,7 @@ test("actual producer continuation remains traversable when merged pages exceed 
       assert.ok(s.view.work.some(current=>current.issue_ref.id===w.issue_ref.id),"A newly read whole record was omitted");
       seen.add(w.issue_ref.id);
     }
-    parseProjection(s.view);
+    validateProjectionView(s.view!);
   }
   assert.equal(seen.size,150);
 });
@@ -412,7 +414,7 @@ test("capacity pressure from a failed read retains known work and independent so
   assert.deepEqual(s.view.work.map(w=>w.issue_ref.id),ids);
   assert.equal(s.view.page.next_cursor,cursor);
   assert.ok(new TextEncoder().encode(JSON.stringify(s.view)).length<=MAX_PROJECTION_BYTES);
-  parseProjection(s.view);
+  validateProjectionView(s.view!);
 });
 
 function workflowReply(operation:string) {

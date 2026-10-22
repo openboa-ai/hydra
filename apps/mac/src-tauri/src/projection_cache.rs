@@ -1012,6 +1012,8 @@ mod tests {
             if variant=="unavailable" {
                 frame["projects"][0]["repository_ref"]["id"]="requested:example/alpha".into();
                 frame["projects"][0]["work_refs"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);
+                frame["projects"][0]["coverage"]["returned_count"]=0.into();
+                frame["projects"][0]["coverage"]["total_count"]=if frame["projects"][0]["coverage"]["state"]=="complete" {0.into()}else{Value::Null};
                 frame["projects"][0]["admission"]=serde_json::json!({"value":null,"reason":"source_unavailable","evidence":[]});
             }
             if variant=="empty" {frame["projects"]=serde_json::json!([]);frame["work"]=serde_json::json!([]);frame["page"]["returned_count"]=0.into();}

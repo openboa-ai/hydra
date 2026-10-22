@@ -59,6 +59,7 @@ test("whole-page memory rotation preserves newer capability and continuation sna
   function bulk(start:number){
     const frame=structuredClone(f.frame),seed=structuredClone(frame.projects[0]!);
     seed.goal_refs=[];seed.work_refs=[];seed.attention_refs=[];seed.source_refs=[];
+    seed.coverage={...seed.coverage,returned_count:0,total_count:seed.coverage.state==="complete"?0:null};
     seed.admission={value:null,reason:"source_unavailable",evidence:[]};
     seed.execution={value:null,reason:"source_unavailable",evidence:[]};
     frame.projects=Array.from({length:600},(_,index)=>({...structuredClone(seed),

@@ -1,6 +1,6 @@
 /** Source ordering and display state. No event in this reducer sends an effect. */
 import {
-  MAX_PROJECTION_BYTES, ProjectionError, parseProjection, parseStandardReply,
+  MAX_PROJECTION_BYTES, ProjectionError, parseProjection, parseStandardReply, validateProjectionView,
   type CommandResult, type Fact, type Observation, type ProjectionV3, type ResourceRef, type Revision,
 } from "./projection.ts";
 
@@ -256,10 +256,7 @@ function bound(state: ProjectionState, window?: ReadWindow) {
     const incoming = new Set<object>([...state.view.projects, ...state.view.work, ...state.view.relations]);
     refreshFacts(state, new Set(), incoming, window.sequence, window.received_sequence);
     try {
-      // The display can retain a newer source page while rotating membership.
-      // Validate the rotated records against their already validated wire page;
-      // never rewrite the page metadata displayed as a source observation.
-      if (fits(state.view)) { parseProjection({...state.view,page:window.frame.page}); return; }
+      if (fits(state.view)) { validateProjectionView(state.view); return; }
     } catch { /* A retained source fence cannot create a malformed display. */ }
   }
   // Memory pressure is an explicit read-model failure, never task completion,
