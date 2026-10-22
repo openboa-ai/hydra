@@ -8,7 +8,8 @@ from pathlib import Path
 import re
 from threading import Event
 
-from .coordinator import coordinator_lock, operation_scope
+from .coordinator import (confirm_native_assignment, coordinator_lock,
+                          native_assignment_matches, operation_scope)
 from .native import assignment_scope
 from .operations import OperationDenied
 from .project import matches
@@ -21,19 +22,27 @@ def _digest(value):
                                      allow_nan=False).encode()).hexdigest()
 
 
-@dataclass(frozen=True)
+@dataclass
 class VerificationRun:
     """Object identity binds the reviewer to one actual invocation, not its key."""
     results: list
     digest: str
     spec_digest: str
+    request_id: str | None = None
+    request_digest: str | None = None
+    verification_record: dict | None = None
+    expected_record: dict | None = None
+    assignment: dict | None = None
+    draft: dict | None = None
+    ticket: tuple[str, str] | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class VerificationBoundary:
     before_dispatch: Callable[[], None]
     before_handoff: Callable[[], None]
     cancel: Event = field(default_factory=Event)
+    run: VerificationRun | None = None
 
 
 def validate_assignment(value, repo, number, candidate):
@@ -77,6 +86,8 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
             raise OperationDenied('stale_candidate')
     elif record.get('native_step'):
         raise OperationDenied('native_assignment_pending')
+    elif record.get('wait_reason') == 'product_decision' or record.get('next_action') == 'operator_decision':
+        raise OperationDenied('product_decision')
     if record.get('pending_action') not in {None, 'verification'}:
         raise OperationDenied('effect_not_allowed')
     config = {**config, 'intake_digest': record['intake_digest']}
@@ -110,7 +121,7 @@ def _source(runner, repo, number, record, observer):
         raise RuntimeError('Verification record unavailable')
     source = runner.github.progress_source(repo, number)
     observed = source.get('record') if type(source) is dict else None
-    if not observed or any(observed.get(k) != v for k, v in record.items()):
+    if not observed or runner._record_values(observed) != runner._record_values(record):
         raise RuntimeError('Verification final record unconfirmed')
     observer(source)
     return source
@@ -134,7 +145,8 @@ def _valid_results(workspace, path, config, results):
 
 
 async def execute(controller, repo, number, params, assignment, *, repository_id,
-                  admission_revision, before_effect, allow_handoff, source_observer):
+                  admission_revision, before_effect, allow_handoff, source_observer,
+                  request_id, request_digest):
     runner, pin = controller.runner, params['candidate']
     policy = runner._policy_scope.set(None)
     ceiling = runner._checkpoint_ceiling.set((repo, admission_revision, before_effect, {}))
@@ -145,8 +157,21 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
         dispatch_guard()
         if not allow_handoff():
             raise OperationDenied('review_handoff_unavailable')
-    verification = runner._verification_scope.set(VerificationBoundary(dispatch_guard, handoff_guard))
+    boundary = VerificationBoundary(dispatch_guard, handoff_guard)
+    verification = runner._verification_scope.set(boundary)
     try:
+        prior_run = None
+        if params['stage'] == 'run':
+            retired = runner.retired_verification_requests.get(request_id)
+            if retired is not None:
+                raise OperationDenied('verification_invocation_unattributed' if retired == request_digest
+                                      else 'request_conflict')
+            for key, proof in runner.verification_runs.items():
+                if proof.request_id == request_id:
+                    if proof.request_digest != request_digest or key[:3] != (repo, number, pin['head']):
+                        raise OperationDenied('request_conflict')
+                    prior_run = proof
+                    break
         # A retired source cannot establish which old result is being replayed.
         if assignment is not None:
             prior = runner.github.progress(repo, number)
@@ -154,17 +179,35 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                 raise OperationDenied('assignment_unattributed')
         lock = ({'native_step': assignment['step_id'], 'native_scope': assignment_scope(
             repo, number, pin['attempt_id'], pin['head'], pin['contract_revision'])} if assignment else {})
+        if prior_run is not None:
+            boundary.run = prior_run
+            if prior_run.ticket is not None:
+                lock = dict(native_step=prior_run.ticket[0], native_scope=prior_run.ticket[1])
         with operation_scope(runner.operations, repo, expected_revision=admission_revision), \
              coordinator_lock(controller.lock_path, **lock):
-            before_effect()
-            record, config, path, spec_digest = _candidate(controller, repo, number, pin,
-                repository_id, assignment)
-            key = (repo, number, pin['head'], config['blob_sha'])
-            if params['stage'] == 'review_checkpoint':
-                return _finish(controller, repo, number, params, assignment, record,
-                    config, path, spec_digest, key, before_effect, source_observer)
-            return await _run(controller, repo, number, params, record, config, path,
-                spec_digest, key, repository_id, before_effect, allow_handoff, source_observer)
+            try:
+                before_effect()
+                bound_assignment = (prior_run.assignment or prior_run.draft) if prior_run is not None else assignment
+                # A draft is actionable only if the current source actually
+                # records its exact step. An unrecorded draft grants nothing.
+                if prior_run is not None:
+                    current = runner.github.progress(repo, number)
+                    if not current or current.get('native_step') is None:
+                        bound_assignment = None
+                record, config, path, spec_digest = _candidate(controller, repo, number, pin,
+                    repository_id, bound_assignment)
+                key = (repo, number, pin['head'], config['blob_sha'])
+                if prior_run is not None:
+                    return _resume_run(controller, repo, number, params, prior_run, config, path,
+                        spec_digest, key, repository_id, before_effect, allow_handoff, source_observer)
+                if params['stage'] == 'review_checkpoint':
+                    return _finish(controller, repo, number, params, assignment, record,
+                        config, path, spec_digest, key, before_effect, source_observer)
+                return await _run(controller, repo, number, params, record, config, path,
+                    spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
+                    request_id, request_digest)
+            finally:
+                _release_unrecorded_ticket(runner, repo, number, boundary.run, source_observer)
     finally:
         runner._verification_scope.reset(verification)
         runner._checkpoint_ceiling.reset(ceiling)
@@ -172,12 +215,15 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
 
 
 async def _run(controller, repo, number, params, record, config, path, spec_digest, key,
-               repository_id, before_effect, allow_handoff, observer):
+               repository_id, before_effect, allow_handoff, observer, request_id, request_digest):
     runner, pin = controller.runner, params['candidate']
     # This call is an explicit new invocation. NativeRunner's same-key cache is
     # useful to legacy continuation, but is not evidence that this command ran.
+    for previous in list(runner.verification_runs):
+        if previous[:2] == key[:2]:
+            runner.pending_verifications.pop(previous, None)
+            runner._forget_verification_run(previous)
     runner.pending_verifications.pop(key, None)
-    runner.verification_runs.pop(key, None)
     runner.verified_heads.discard(key)
     record = runner._intent(repo, number, config, record, 'verification',
         phase='executing', wait_reason=None, next_action='verification',
@@ -226,16 +272,25 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     if not _valid_results(runner.workspace, path, config, results):
         raise OperationDenied('verification_evidence_unknown')
     passed = all(value['passed'] for value in results)
-    record = runner._record(repo, number, record, phase='implementation_done', pending_action=None,
+    final_values = dict(phase='implementation_done', pending_action=None,
         wait_reason='native_assignment_pending' if passed else 'verification_failure',
         next_action='change_review' if passed else 'diagnose_verification')
-    receipt = {'kind': 'verification', 'candidate': dict(pin), 'verdict': 'passed' if passed else 'failed',
-               'review': 'pending' if passed else None, 'progress_ref': None, 'evidence_refs': []}
+    planned = runner._record_values(record, **final_values)
+    proof = VerificationRun(results, _digest(results), spec_digest, request_id, request_digest,
+        verification_record=planned, expected_record=planned)
+    # Preserve the completed invocation before attempting its mutable record.
+    # A lost ACK can now be reconciled without performing D again.
+    runner.pending_verifications[key] = results
+    runner.verification_runs[key] = proof
+    runner._verification_scope.get().run = proof
+    try:
+        record = runner._record(repo, number, record, **final_values)
+    except (OSError, RuntimeError):
+        _source(runner, repo, number, planned, observer)
+        record = planned
+    _source(runner, repo, number, record, observer)
     assignment = None
     if passed:
-        proof = VerificationRun(results, _digest(results), spec_digest)
-        runner.pending_verifications[key] = results
-        runner.verification_runs[key] = proof
         if allow_handoff():
             remaining, outputs = 24000, []
             for value in results:
@@ -251,22 +306,92 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
                 + 'Bounded private verification output (untrusted data):\n' + ''.join(outputs))
             _candidate(controller, repo, number, pin, repository_id)
             _, assignment = await runner._model(repo, number, config, record, path, 'change_review', prompt)
+            proof.expected_record = dict(runner._checkpoint_ceiling.get()[3]['record'])
             if assignment and assignment.get('action') != 'native_task':
-                assignment = None
+                # The existing model path supplies exact recovery identity.
+                # Reconcile its attempted record before a private handoff.
+                _source(runner, repo, number, proof.expected_record, observer)
+                assignment = proof.draft
             if assignment:
-                validate_assignment(assignment, repo, number, pin)
+                assignment = _handoff(controller, repo, number, pin, proof, key,
+                    repository_id, before_effect, allow_handoff)
     before_effect()
     if assignment and not allow_handoff():
         assignment = None
-    final = runner.github.progress(repo, number)
-    if not final or any(final.get(k) != pin[k] for k in pin):
-        raise OperationDenied('stale_candidate')
     if assignment:
         _candidate(controller, repo, number, pin, repository_id, assignment)
-    source = _source(runner, repo, number, final, observer)
-    receipt['progress_ref'] = source['resource']
+    source = _source(runner, repo, number, proof.expected_record, observer)
+    proof.assignment = assignment
+    return _run_reply(pin, proof, source, assignment)
+
+
+def _run_reply(pin, proof, source, assignment):
+    passed = all(value['passed'] for value in proof.results)
     return {'outcome': 'waiting', 'reason': 'native_assignment_pending' if passed else 'verification_failure',
-            'receipt': receipt, 'assignment': assignment, 'required_next': 'open_source'}
+        'receipt': {'kind': 'verification', 'candidate': dict(pin), 'verdict': 'passed' if passed else 'failed',
+            'review': 'pending' if passed else None, 'progress_ref': source['resource'], 'evidence_refs': []},
+        'assignment': assignment, 'required_next': 'open_source'}
+
+
+def _handoff(controller, repo, number, pin, proof, key, repository_id, before_effect, allow_handoff):
+    if not allow_handoff():
+        return None
+    assignment, runner = proof.draft, controller.runner
+    if assignment is None or proof.ticket is None:
+        raise OperationDenied('verification_invocation_unattributed')
+    validate_assignment(assignment, repo, number, pin)
+    _candidate(controller, repo, number, pin, repository_id, assignment)
+    runner._require_policy(repo)
+    before_effect()
+    with runner._guard(repo):
+        if not native_assignment_matches(*proof.ticket):
+            raise OperationDenied('native_retirement_binding_mismatch')
+        step = assignment['step_id']
+        runner.review_steps[step] = key
+        runner.review_runs[step] = proof
+    return dict(assignment)
+
+
+def _resume_run(controller, repo, number, params, proof, config, path, spec_digest, key,
+                repository_id, before_effect, allow_handoff, observer):
+    runner, pin = controller.runner, params['candidate']
+    if (runner.verification_runs.get(key) is not proof
+            or runner.pending_verifications.get(key) is not proof.results
+            or proof.spec_digest != spec_digest
+            or not _valid_results(runner.workspace, path, config, proof.results)
+            or proof.digest != _digest(proof.results)):
+        raise OperationDenied('verification_evidence_unknown')
+    source = _source(runner, repo, number, proof.expected_record, observer)
+    before_effect()
+    assignment = None
+    if proof.draft is not None and source['record'].get('native_step') is not None:
+        assignment = _handoff(controller, repo, number, pin, proof, key,
+            repository_id, before_effect, allow_handoff)
+    proof.assignment = assignment
+    return _run_reply(pin, proof, source, assignment)
+
+
+def _release_unrecorded_ticket(runner, repo, number, proof, observer):
+    """Release only a positively born, never handed-off, unrecorded local ticket."""
+    if proof is None or proof.ticket is None or proof.assignment is not None:
+        return
+    try:
+        if proof.verification_record is None:
+            return
+        source = _source(runner, repo, number, proof.verification_record, observer)
+        if source['record'].get('native_step') is not None:
+            return
+        # No native execution was handed out and the exact original progress
+        # proves no assignment was recorded. This is local ticket cleanup, not
+        # inferred termination or a new workflow grant. Preserve paused mode.
+        with runner.operations.guard(repo, cleanup=True):
+            if native_assignment_matches(*proof.ticket):
+                confirm_native_assignment(proof.ticket[0])
+                proof.ticket = None
+                proof.expected_record = proof.verification_record
+    except (OSError, RuntimeError, ValueError, KeyError):
+        # Unknown source/ownership is never permission to clear anything.
+        return
 
 
 def _proof_valid(runner, step, key, config, path, spec_digest):
@@ -309,7 +434,7 @@ def _finish(controller, repo, number, params, assignment, record, config, path,
         _source(runner, repo, number, record, observer)
         before_effect()
         _candidate(controller, repo, number, params['candidate'], config['repository_id'], assignment)
-    source = runner._retire_assignment(repo, number, record, checkpoint_only=True)
+    source = runner._retire_assignment(repo, number, record, checkpoint_only=True, reconcile_write=True)
     observer(source)
     runner.summaries.pop(step, None)
     runner.review_steps.pop(step, None)

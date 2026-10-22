@@ -44,6 +44,11 @@ releasing its ticket. It does not invoke legacy checkpoint or continuation.
 
 ## Execution and recovery
 
+Workflow dispatch compares the controller's loaded configuration identity with
+the current host configuration. A new digest cannot relabel already-loaded
+storage or lifecycle providers; changed bindings require controller restart.
+Embedded controllers without a startup identity cannot use configured providers.
+
 Registered verification uses the existing supervised `Workspace.verify` in an
 awaited worker with the original ownership and admission context. The MCP event
 loop stays available for Pause. Exact admission revisions guard each launch and
@@ -59,6 +64,20 @@ Verifier edits may be safely checkpointed once. If this changes the candidate,
 the command returns `candidate_changed` with no receipt for the old pin. It never
 refreshes the pin or verifies the new head automatically. Completion ACK loss is
 reconciled from the original progress source; it does not repeat verification.
+
+The completed invocation and its exact planned record are retained before the
+final mutable write. An uncertain write receives a bounded original-source
+read-back. A same-request retry reconciles that private invocation and cannot run
+D or allocate a second review. An explicit new request remains an actual new
+invocation. This memo is bounded and process-local, not a durable request ledger
+or a way to reconstruct a verdict after restart.
+
+Final read-back compares the exact attempted record, including phase, waits and
+next action. Same candidate pins cannot certify unrelated progress. An unrecorded
+review ticket may be released only with positive local birth/ownership, no
+handoff and the exact original progress observation; cleanup preserves Pause.
+An uncertain retirement write is read back once before confirming its matching
+ticket. Missing, changed or incomplete source remains unknown without reposting.
 
 The fixed scope permits registered verification, its local checkpoint, progress
 recording and the qualified independent review assignment. Publication intents,
@@ -81,6 +100,16 @@ independent effect spies and the pinned MCP SDK:
   with observed owned-child cleanup while actual verification is running.
 - `test_native_verify_only_recovery.py`: existing host holds, earlier local
   acceptance invalidation and cleanup through the explicit legacy stop path.
+- `test_native_verify_only_review.py`: loaded providers, unhanded ticket recovery,
+  final-record ACK loss/retry, foreign same-pin progress and retirement ACK loss,
+  with unchanged-provider and pre-write-failure controls.
+
+The first source CI ran all 1,637 methods successfully in 583.313 seconds with
+eight explicit skips, but exhausted the ten-minute job budget before evidence
+export. The kernel job now has a fifteen-minute execution budget, including
+setup and export. Required checks, test cases, their own deadlines, permissions
+and pinned trusted tooling are unchanged. The cancelled run is not a green CI
+result; final-source CI and its evidence export must complete independently.
 
 Run these with the repository's supported Python 3.14+ interpreter and pinned MCP
 dependency; then run the affected legacy command, native, ownership and admission

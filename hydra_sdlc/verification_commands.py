@@ -1,5 +1,7 @@
 """Closed verify-only command boundary. No installation grants are supplied here."""
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -114,6 +116,13 @@ async def execute_verification_command(config_path, command, *, context_provider
                 and current.config_digest != runtime['config_digest']):
             raise OperationDenied('runtime_unavailable' if key is None else 'stale_runtime')
         runner = controller.runner
+        loaded = getattr(controller, 'runtime_identity', None)
+        providers = ('storage_provider', 'lifecycle_provider')
+        if (loaded is not None and (type(loaded) is not dict
+                or loaded.get('config_digest') != runtime['config_digest'])
+                or loaded is None and any(cfg.get(name) is not None
+                    or getattr(runner.workspace, name, None) is not None for name in providers)):
+            raise OperationDenied('verification_binding_mismatch')
         if (runner.github is not github or runner.host != cfg['host_alias']
                 or tuple(controller.repos) != tuple(cfg['repos'])
                 or Path(controller.lock_path).absolute() != Path(cfg['lock_path'])
@@ -155,11 +164,13 @@ async def execute_verification_command(config_path, command, *, context_provider
         result = await execute(controller, repository, target['issue_number'], params,
             expected['assignment'], repository_id=target['repository_id'],
             admission_revision=expected['admission_revision'], before_effect=before_effect,
-            allow_handoff=allow_handoff, source_observer=observe)
+            allow_handoff=allow_handoff, source_observer=observe, request_id=command['request_id'],
+            request_digest=hashlib.sha256(json.dumps(command, sort_keys=True,
+                separators=(',', ':'), ensure_ascii=False).encode()).hexdigest())
         return reply(**result)
     except OperationDenied as exc:
-        outcome = ('unknown' if exc.reason == 'assignment_unattributed' else
-                   'rejected' if exc.reason in {'stale_candidate', 'unsupported_phase'} else 'waiting')
+        outcome = ('unknown' if exc.reason in {'assignment_unattributed', 'verification_invocation_unattributed'} else
+                   'rejected' if exc.reason in {'stale_candidate', 'unsupported_phase', 'request_conflict'} else 'waiting')
         return reply(outcome, exc.reason)
     except (OSError, RuntimeError, ValueError, HostBusy):
         return reply('unknown', 'verification_unconfirmed')

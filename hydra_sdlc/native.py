@@ -75,6 +75,16 @@ class NativeRunner(Runner):
         # caches. A matching candidate key does not identify an invocation.
         self.verification_runs = {}
         self.review_runs = {}
+        # Bounded, process-local request tombstones contain no result/transcript.
+        # They prevent a known completed UI request from becoming a fresh run.
+        self.retired_verification_requests = {}
+
+    def _forget_verification_run(self, key):
+        proof = self.verification_runs.pop(key, None)
+        if proof is not None and proof.request_id is not None:
+            self.retired_verification_requests[proof.request_id] = proof.request_digest
+            while len(self.retired_verification_requests) > 1024:
+                self.retired_verification_requests.pop(next(iter(self.retired_verification_requests)))
 
     def _verify_candidate(self, path, config, evidence_key):
         if evidence_key in self.pending_verifications:
@@ -90,7 +100,7 @@ class NativeRunner(Runner):
             record = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
         return super()._record(repo, number, record, **values)
 
-    def _retire_assignment(self, repo, number, record, *, checkpoint_only=False, **values):
+    def _retire_assignment(self, repo, number, record, *, checkpoint_only=False, reconcile_write=False, **values):
         """One fixed retirement, with remote policy observed before admission.
 
         This synchronous operation never grants a policy bypass to a callback
@@ -99,6 +109,9 @@ class NativeRunner(Runner):
         allowed = {"phase", "pending_action", "resume_phase", "wait_reason", "next_action"}
         ceiling = self._checkpoint_ceiling.get()
         if type(checkpoint_only) is not bool:
+            raise OperationDenied("native_retirement_binding_mismatch")
+        if (type(reconcile_write) is not bool or reconcile_write and
+                (not checkpoint_only or self._verification_scope.get() is None)):
             raise OperationDenied("native_retirement_binding_mismatch")
         if checkpoint_only:
             if ceiling is None or ceiling[0] != repo:
@@ -125,18 +138,26 @@ class NativeRunner(Runner):
         with self._guard(repo, cleanup=cleanup) if checkpoint_only else self._guard(repo):
             if not native_assignment_matches(step, scope):
                 raise OperationDenied("native_retirement_binding_mismatch")
-            writer(repo, number, clean)
+            try:
+                writer(repo, number, clean)
+            except (OSError, RuntimeError):
+                if not reconcile_write:
+                    raise
+                # The original write was attempted under this exact ticket.
+                # Read back once; never retransmit or infer from partial state.
             source = self.github.progress_source(repo, number) if checkpoint_only else None
             observed = (source["record"] if source else None) if checkpoint_only else self.github.progress(repo, number)
             if (not observed or observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items())
                     or checkpoint_only and any(k in observed for k in NATIVE_FIELDS)):
                 raise RuntimeError("Native retirement is unconfirmed")
+            if reconcile_write and self._record_values(observed) != clean:
+                raise RuntimeError("Native retirement source changed")
             confirm_native_assignment(step)
             self.consumed.add(step)
             self.review_runs.pop(step, None)
             key = self.review_steps.get(step)
             if key is not None:
-                self.verification_runs.pop(key, None)
+                self._forget_verification_run(key)
         return source if checkpoint_only else clean
 
     async def step(self, repo, number):
@@ -199,15 +220,21 @@ class NativeRunner(Runner):
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
         scope = assignment_scope(repo, number, record["attempt_id"], state["head"], record["contract_revision"])
-        if self._verification_scope.get() is not None:
+        boundary = self._verification_scope.get()
+        draft = {**recovery, 'action': 'native_task', 'phase': phase,
+            'spec_revision': record.get('spec_revision'), 'cwd': str(path),
+            'mode': 'read_only' if 'review' in phase else 'workspace_write', 'prompt': task}
+        if boundary is not None:
             from .native_verification import validate_assignment
-            validate_assignment({**recovery, 'action': 'native_task', 'phase': phase,
-                'spec_revision': record.get('spec_revision'), 'cwd': str(path),
-                'mode': 'read_only' if 'review' in phase else 'workspace_write', 'prompt': task},
-                repo, number, {k: record[k] for k in ('attempt_id', 'head', 'contract_revision')})
+            validate_assignment(draft, repo, number,
+                {k: record[k] for k in ('attempt_id', 'head', 'contract_revision')})
+            if boundary.run is None:
+                raise OperationDenied('verification_evidence_unknown')
         try:
             self._effect(repo, register_native_assignment, step, scope,
                 _checkpoint_effect='review_assignment' if self._verification_scope.get() is not None else None)
+            if boundary is not None:
+                boundary.run.ticket, boundary.run.draft = (step, scope), draft
         except OperationDenied:
             raise
         except (RuntimeError, ValueError, OSError):
@@ -215,6 +242,8 @@ class NativeRunner(Runner):
                 held = native_assignment_matches(step, scope)
             except (RuntimeError, ValueError, OSError):
                 held = False
+            if boundary is not None and held:
+                boundary.run.ticket, boundary.run.draft = (step, scope), draft
             return None, {**recovery, "action": "waiting",
                           "reason": "assignment_ticket_unconfirmed" if held else "assignment_ticket_unknown"}
         try:
@@ -584,7 +613,7 @@ class NativeController:
                     key = self.runner.review_steps.pop(step_id, None)
                     if key is not None:
                         self.runner.pending_verifications.pop(key, None)
-                        self.runner.verification_runs.pop(key, None)
+                        self.runner._forget_verification_run(key)
                     return self._continuation(repo, n, record, {"action": "waiting", "reason": fresh["wait_reason"]})
             # Persist only the bounded outcome; raw summaries remain private and
             # cannot authorize delivery. Interrupted read-back keeps ownership.
