@@ -16,6 +16,19 @@ No installed verification authority or native-client capability is enabled here.
 `run` checks the exact attempt, head, contract, repository, owner, accepted spec,
 intake, base, clean workspace and current admission. It invokes the protected
 project's registered verifier rather than reusing an earlier invocation's cache.
+New runs require an implementation-complete source: `implementation_done`,
+`correction_done`, `change_review_done`, `published` or `review_wait`, with no
+unresolved pending effect. Earlier specification/implementation stages and
+outstanding implementation or review correction cannot become complete through
+a passing verifier. The existing explicit diagnostic retry of a full failed
+verification remains available from `implementation_done` only when its resume,
+correction reason, failure wait and diagnosis action agree. Same-request replay
+does not repeat D; a fresh request actually runs and retains failure-attempt
+accounting. This does not admit review findings, verifier mutation or uncertain
+execution through a generic correction exception.
+Existing owned-execution recovery and exact review completion keep
+their separate paths. Already published delivery candidates retain bounded
+verification; this command still cannot perform delivery.
 Actual results, argv and output digests remain in the existing private memory
 lifetime. Public receipts contain the verdict, candidate, pending review and actual
 GitHub progress reference. Private output has no fabricated public evidence URL.
@@ -45,7 +58,7 @@ releasing its ticket. It does not invoke legacy checkpoint or continuation.
 ## Execution and recovery
 
 A denial before the worker is created is positively undispatched. The owner
-retains the original progress and exact acknowledged intent, then restores only
+retains the original progress and exact attempted intent, then restores only
 that intent under current authority, policy, intake and a fixed current control
 revision. This scope permits progress only: it owns no workspace edits and cannot
 checkpoint, create a review, publish or launch work. Pause/Stop remains in force.
@@ -53,7 +66,20 @@ Lost grants prevent the write; a retained private witness can reconcile after
 regrant without launching verification in that recovery. A later eligible retry
 can run once. Lost private evidence leaves an unresolved intent unknown.
 An invoked uncertain restoration receives exact read-back without retransmission.
-The same boundary handles the intent's own post-write check and the final grant.
+The same boundary handles the intent's own post-write check, an uncertain intent
+write and the final grant. Immediately before invoking the intent writer, the
+owner checks the exact original source and captures the actual planned record.
+Lost acknowledgements distinguish that applied intent from the unchanged original
+source. Foreign/unavailable state grants no restoration. A fresh request clears
+previous local acceptance only through an exact source-confirmed progress change;
+an unapplied intent does not invent a completed verification or a process end.
+Before worker creation, the exact acknowledged intent is read back and current
+authority is checked again. A changed lifecycle stage cannot authorize dispatch
+or be overwritten by restoration.
+The live worker retains that intent only until it drains; each registered command
+rechecks it at the supervised dispatch boundary. Restoration also fences the
+exact original source at its actual writer, and refreshes current authority after
+the source read. A worker or an earlier source observation grants no exception.
 
 The storage provider's pure command-construction boundary normalizes its
 ValueError/RuntimeError into the existing bounded verification diagnosis. Earlier
@@ -213,6 +239,18 @@ independent effect spies and the pinned MCP SDK:
   with an actual stateful first command and unavailable second executable.
 - `test_native_verify_only_incomplete.py`: an actual signalled first command,
   incomplete results, untouched later command and a held ordinary continuation.
+- `test_native_verify_only_preservation*.py`: current-authority preservation,
+  Pause/restart, replay and owned specification edits without new acceptance.
+- `test_native_verify_only_launch.py`: final launch denial, progress-only
+  restoration, source/grant uncertainty and pure provider construction failures.
+- `test_native_verify_only_intent.py`: applied/unapplied intent ACK loss,
+  Pause/restart and grant recovery, unavailable read-back, unfinished lifecycle
+  stages and resume debt, exact source changes at both launch boundaries, and
+  normal post-review/post-publication verification.
+- `test_native_verify_only_intent_fences.py`: foreign progress immediately before
+  restoration, lifecycle drift at actual worker entry, and grant revocation
+  during the pre-intent source read; actual commands and unauthorized writes
+  remain absent.
 
 The first source CI ran all 1,637 methods successfully in 583.313 seconds with
 eight explicit skips, but exhausted the ten-minute job budget before evidence

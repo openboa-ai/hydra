@@ -51,6 +51,7 @@ class VerificationBoundary:
     cancel: Event = field(default_factory=Event)
     run: VerificationRun | None = None
     undispatched: tuple | None = None
+    dispatch_record: dict | None = None
 
 
 def validate_assignment(value, repo, number, candidate):
@@ -129,12 +130,14 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
     return record, config, path, digest
 
 
-def _source(runner, repo, number, record, observer):
-    if type(record) is not dict:
+def _source(runner, repo, number, record, observer, *, alternatives=()):
+    expected = (record, *alternatives)
+    if any(type(value) is not dict for value in expected):
         raise RuntimeError('Verification record unavailable')
     source = runner.github.progress_source(repo, number)
     observed = source.get('record') if type(source) is dict else None
-    if not observed or runner._record_values(observed) != runner._record_values(record):
+    if not observed or not any(runner._record_values(observed) == runner._record_values(value)
+                               for value in expected):
         raise RuntimeError('Verification final record unconfirmed')
     observer(source)
     return source
@@ -185,6 +188,12 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
     def dispatch_guard():
         before_effect()
         _candidate(controller, repo, number, pin, repository_id)
+        if boundary.dispatch_record is not None:
+            try:
+                _source(runner, repo, number, boundary.dispatch_record, source_observer)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise OperationDenied('stale_candidate') from exc
+            before_effect()
     def handoff_guard():
         dispatch_guard()
         if not allow_handoff():
@@ -294,8 +303,16 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     runner, pin = controller.runner, params['candidate']
     if record.get('wait_reason') == 'replan_required' and record.get('next_action') == 'diagnose_verification':
         raise OperationDenied('replan_required')
-    if record.get('phase') == 'executing' and record.get('pending_action') == 'verification':
+    if record.get('pending_action') == 'verification':
         raise OperationDenied('verification_unconfirmed')
+    diagnostic_retry = (record.get('phase') == 'implementation_done'
+        and record.get('resume_phase') == 'correction'
+        and record.get('correction_reason') == record.get('wait_reason') == 'verification_failure'
+        and record.get('next_action') == 'diagnose_verification')
+    if (record.get('phase') not in {'implementation_done', 'correction_done', 'change_review_done',
+                                  'published', 'review_wait'}
+            or record.get('resume_phase') is not None and not diagnostic_retry):
+        raise OperationDenied('unsupported_phase')
     previous = runner.verification_runs.get(key)
     if (previous is not None and previous.error_reason is not None
             and previous.expected_record['attempt_id'] == record['attempt_id']):
@@ -310,34 +327,53 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     runner.verified_heads.discard(key)
     runner._prune_diagnoses(repo, number, pin['head'], pin['contract_revision'])
     previous = runner._record_values(record)
-    record = runner._intent(repo, number, config, record, 'verification',
-        phase='executing', wait_reason=None, next_action='verification',
-        **({'checkpoint': None} if record.get('checkpoint') == 'locally_verified' else {}))
-    if record is None:
-        undispatched = runner._verification_scope.get().undispatched
-        if undispatched is not None:
-            previous, record, reason = undispatched
-            proof = _remember_undispatched(runner, key, previous, record, spec_digest,
+    state = runner._checkpoint_ceiling.get()[3]
+    previous_observer, attempted_record = state.get('before_progress'), None
+    def intent_attempted():
+        nonlocal attempted_record
+        # The writer must still own the exact implementation-complete source.
+        # Capture its actual planned record at the invocation boundary, before
+        # an applied write can lose its acknowledgement.
+        _source(runner, repo, number, previous, observer)
+        runner._checkpoint_ceiling.get()[2]()
+        if previous_observer is not None:
+            previous_observer()
+        attempted_record = dict(state['record'])
+    try:
+        state['before_progress'] = intent_attempted
+        try:
+            record = runner._intent(repo, number, config, record, 'verification',
+                phase='executing', wait_reason=None, next_action='verification',
+                **({'checkpoint': None} if record.get('checkpoint') == 'locally_verified' else {}))
+        finally:
+            if previous_observer is None:
+                state.pop('before_progress', None)
+            else:
+                state['before_progress'] = previous_observer
+        if record is None:
+            undispatched = runner._verification_scope.get().undispatched
+            raise OperationDenied(undispatched[2] if undispatched else 'verification_not_dispatched')
+        if attempted_record is None:
+            raise OperationDenied('verification_not_dispatched')
+        before_effect()
+        _candidate(controller, repo, number, pin, repository_id)
+        _source(runner, repo, number, attempted_record, observer)
+        before_effect()
+    except (OSError, RuntimeError, ValueError) as exc:
+        # No task or worker exists in this entire intent/dispatch window.
+        # An unattempted writer grants no source-restoration authority.
+        reason = exc.reason if isinstance(exc, (OperationDenied, WorkspaceWait)) else 'verification_unavailable'
+        if attempted_record is not None:
+            proof = _remember_undispatched(runner, key, previous, attempted_record, spec_digest,
                 request_id, request_digest, reason)
             _restore_undispatched(controller, repo, number, pin, proof,
                 repository_id, preservation_lease, observer)
-            raise OperationDenied(reason)
-        raise OperationDenied('verification_not_dispatched')
-    try:
-        before_effect()
-        _candidate(controller, repo, number, pin, repository_id)
-    except (OSError, RuntimeError, ValueError) as exc:
-        # No task or worker has been created in this synchronous grant window.
-        reason = exc.reason if isinstance(exc, (OperationDenied, WorkspaceWait)) else 'verification_unavailable'
-        proof = _remember_undispatched(runner, key, previous, record, spec_digest,
-            request_id, request_digest, reason)
-        _restore_undispatched(controller, repo, number, pin, proof,
-            repository_id, preservation_lease, observer)
         raise OperationDenied(reason) from exc
     error, cancelled = None, False
     # Keep the MCP event loop available to admission changes. This is the same
     # supervised verifier, with copied operation/ownership context, not a second
     # execution service. Await its cleanup before releasing the coordinator.
+    runner._verification_scope.get().dispatch_record = dict(attempted_record)
     job = asyncio.create_task(asyncio.to_thread(Runner._verify_candidate, runner, path, config, key))
     while not job.done():
         try:
@@ -347,6 +383,7 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         except asyncio.CancelledError:
             runner._verification_scope.get().cancel.set()
             cancelled = True
+    runner._verification_scope.get().dispatch_record = None
     try:
         results = job.result()
     except WorkspaceWait as exc:
@@ -390,7 +427,7 @@ def _remember_undispatched(runner, key, previous, record, spec_digest, request_i
     restore = runner._record_values(previous,
         **({'checkpoint': None} if previous.get('checkpoint') == 'locally_verified' else {}))
     proof = VerificationRun([], _digest([]), spec_digest, request_id, request_digest,
-        dispatch_record=runner._record_values(record), undispatched_record=restore,
+        dispatch_record=runner._record_values(record), undispatched_record=runner._record_values(previous),
         expected_record=restore, error_reason=reason)
     runner.verification_runs[key] = proof
     runner._verification_scope.get().run = proof
@@ -402,17 +439,21 @@ def _restore_undispatched(controller, repo, number, pin, proof, repository_id, p
     key = next((k for k, value in runner.verification_runs.items() if value is proof), None)
     if key is None or key[:3] != (repo, number, pin['head']) or proof.undispatched_record is None:
         raise OperationDenied('verification_invocation_unattributed')
-    try:
-        _source(runner, repo, number, proof.expected_record, observer)
-    except RuntimeError:
-        if proof.record_attempted:
-            raise  # The original restoration can still apply; never repost it.
-        _source(runner, repo, number, proof.dispatch_record, observer)
+    # The intent can be applied or unapplied when its response is lost. Both
+    # exact sources belong to this positively undispatched request; a foreign
+    # source does not. An invoked restoration permits its target read-back only.
+    alternatives = () if proof.record_attempted else (proof.dispatch_record, proof.undispatched_record)
+    source = _source(runner, repo, number, proof.expected_record, observer, alternatives=alternatives)
+    if runner._record_values(source['record']) != runner._record_values(proof.expected_record):
         record, config = controller._bound(repo, number, pin['attempt_id'], pin['head'], pin['contract_revision'])
         if (record.get('repository_id') != repository_id or config.get('repository_id') != repository_id
                 or config.get('_completion_only') or config['blob_sha'] != key[3]):
             raise OperationDenied('stale_candidate')
-        with _preservation_scope(runner, repo, number, record, proof, preservation_lease):
+        expected_source = runner._record_values(source['record'])
+        if runner._record_values(record) != expected_source:
+            raise RuntimeError('Verification original record changed')
+        with _preservation_scope(runner, repo, number, record, proof, preservation_lease,
+                expected_source=expected_source, source_observer=observer):
             try:
                 runner._record(repo, number, proof.expected_record)
             except (OSError, RuntimeError):
@@ -425,13 +466,17 @@ def _restore_undispatched(controller, repo, number, pin, proof, repository_id, p
 
 
 @contextmanager
-def _preservation_scope(runner, repo, number, record, proof, preservation_lease):
+def _preservation_scope(runner, repo, number, record, proof, preservation_lease, *,
+                        expected_source=None, source_observer=None):
     revision, guard = preservation_lease()
     state = runner._checkpoint_ceiling.get()[3]
     previous_observer = state.get('before_progress')
     def deny_dispatch():
         raise OperationDenied('checkpoint_effect_unsupported')
     def attempted():
+        if expected_source is not None:
+            _source(runner, repo, number, expected_source, source_observer)
+            guard()
         proof.record_attempted = True
     boundary = runner._verification_scope.get()
     verification = runner._verification_scope.set(VerificationBoundary(deny_dispatch, deny_dispatch,
