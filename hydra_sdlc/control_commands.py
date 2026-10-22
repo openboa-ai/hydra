@@ -128,6 +128,11 @@ async def execute_command_v1(config_path, command, *, context_provider, github, 
                              ended_provider=None, unavailable_runtime=None):
     """Thin transport-independent dispatch to existing guarded command cores."""
     parsed = parse_command_v1(command)
+    if (parsed['action'] == 'workflow_step' and parsed['parameters']
+            and parsed['parameters'].get('operation') == 'verify_only'):
+        from .verification_commands import execute_verification_command
+        return await execute_verification_command(config_path, parsed,
+            context_provider=context_provider, github=github, controller=controller)
     if config_path is None:
         context, reason = _context(context_provider, parsed)
         return _reply(parsed, unavailable_runtime or capture_runtime_identity(),
@@ -139,7 +144,7 @@ async def execute_command_v1(config_path, command, *, context_provider, github, 
 
 
 def command_input_schema():
-    """Closed schemas for the two implemented profiles; not capability grants."""
+    """Closed supported command variants; schemas never confer capability grants."""
     def obj(properties):
         return {'type': 'object', 'properties': properties, 'required': list(properties),
                 'additionalProperties': False}
@@ -164,7 +169,20 @@ def command_input_schema():
         'parameters': obj({'operation': {'const': 'checkpoint_only'},
             'outcome': {'enum': ['candidate_ready', 'needs_decision', 'stopped']},
             'summary': {'type': 'string', 'maxLength': 24000}})})
-    return {'oneOf': [admission, checkpoint]}
+    candidate = obj({'attempt_id': uid, 'head': sha, 'contract_revision': sha})
+    verify = {'operation': {'const': 'verify_only'}, 'candidate': candidate,
+              'reply_profile': {'enum': ['standard_v1', 'native_handoff_v1']}}
+    run = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': checkpoint['properties']['target'],
+        'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
+        'parameters': obj({**verify, 'stage': {'const': 'run'}})})
+    review = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': checkpoint['properties']['target'], 'expected': checkpoint['properties']['expected'],
+        'effect_key': checkpoint['properties']['effect_key'],
+        'parameters': obj({**verify, 'stage': {'const': 'review_checkpoint'},
+            'outcome': {'enum': ['candidate_ready', 'failed', 'needs_decision']},
+            'summary': {'type': 'string', 'maxLength': 24000}})})
+    return {'oneOf': [admission, checkpoint, run, review]}
 
 
 def _uuid(value):
@@ -210,7 +228,7 @@ def _parse(command, *, checkpoint=False):
         if (type(parameters) is not dict or type(parameters.get('operation')) is not str
                 or not parameters['operation']):
             raise InvalidAdmissionCommand()
-        if parameters['operation'] != 'checkpoint_only':
+        if parameters['operation'] not in {'checkpoint_only', 'verify_only'}:
             # An unknown operation's expected/effect/body are also opaque.
             return {key: (dict(target) if key == 'target' else None if key in
                           {'expected', 'parameters', 'effect_key'} else value)
@@ -229,6 +247,10 @@ def _parse(command, *, checkpoint=False):
             or type(expected['source_checks']) is not list or expected['source_checks'] != []):
         raise InvalidAdmissionCommand()
     if checkpoint:
+        if parameters['operation'] == 'verify_only':
+            from .verification_commands import validate_parameters
+            validate_parameters(command)
+            return copy.deepcopy(command)
         assignment = expected['assignment']
         if (type(assignment) is not dict or set(assignment) !=
                 {'attempt_id', 'step_id', 'head', 'contract_revision', 'spec_revision'}
@@ -278,7 +300,8 @@ def _context(provider, command):
             or any(not _integer(value, 1) for value in context.repository_ids)):
         return None, 'authority_unavailable'
     if (type(context.operations) is not frozenset or not context.operations <=
-            {'admission_set', 'workflow_step.checkpoint_only'}):
+            {'admission_set', 'workflow_step.checkpoint_only', 'workflow_step.verify_only.run',
+             'workflow_step.verify_only.review_checkpoint', 'command_reply.native_handoff_v1'}):
         return None, 'authority_unavailable'
     if context.config_digest is not None and (type(context.config_digest) is not str
                                               or not _DIGEST.fullmatch(context.config_digest)):

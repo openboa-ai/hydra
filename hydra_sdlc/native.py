@@ -19,7 +19,7 @@ from .operations import OperationDenied
 from .progress import with_progress_hint
 
 NATIVE_FIELDS = {"native_step", "native_phase", "native_head", "native_outcome", "native_spec_digest",
-                 "native_origin_phase", "native_resume_phase", "native_correction"}
+                 "native_origin_phase", "native_resume_phase", "native_correction", "native_completion"}
 _FINISHED_CHECKPOINT = 'native_complete_'
 
 
@@ -71,6 +71,39 @@ class NativeRunner(Runner):
         self.summaries = {}
         self.pending_verifications = {}
         self.review_steps = {}
+        # These links live exactly as long as the private verification/review
+        # caches. A matching candidate key does not identify an invocation.
+        self.verification_runs = {}
+        self.review_runs = {}
+        # Bounded, process-local request tombstones contain no result/transcript.
+        # They prevent a known completed UI request from becoming a fresh run.
+        self.retired_verification_requests = {}
+
+    def _forget_verification_run(self, key):
+        proof = self.verification_runs.pop(key, None)
+        if proof is not None:
+            self._retire_verification_request(proof)
+
+    def _retire_verification_request(self, proof):
+        if proof.request_id is not None:
+            self.retired_verification_requests[proof.request_id] = proof.request_digest
+            while len(self.retired_verification_requests) > 1024:
+                self.retired_verification_requests.pop(next(iter(self.retired_verification_requests)))
+
+    def _prune_diagnoses(self, repo, number, head, contract):
+        for key in list(self.summaries):
+            if (type(key) is tuple and key[:3] == ('diagnosis', repo, number)
+                    and key[3:5] != (head, contract)):
+                self.summaries.pop(key, None)
+
+    def _remember_diagnosis(self, repo, number, head, contract, reason, summary):
+        self._prune_diagnoses(repo, number, head, contract)
+        self.summaries[('diagnosis', repo, number, head, contract, reason)] = summary[:24000]
+
+    def _forget_diagnoses(self, repo, number, head, contract):
+        for key in list(self.summaries):
+            if type(key) is tuple and key[:5] == ('diagnosis', repo, number, head, contract):
+                self.summaries.pop(key, None)
 
     def _verify_candidate(self, path, config, evidence_key):
         if evidence_key in self.pending_verifications:
@@ -86,7 +119,7 @@ class NativeRunner(Runner):
             record = {k: v for k, v in record.items() if k not in NATIVE_FIELDS}
         return super()._record(repo, number, record, **values)
 
-    def _retire_assignment(self, repo, number, record, *, checkpoint_only=False, **values):
+    def _retire_assignment(self, repo, number, record, *, checkpoint_only=False, reconcile_write=False, **values):
         """One fixed retirement, with remote policy observed before admission.
 
         This synchronous operation never grants a policy bypass to a callback
@@ -95,6 +128,9 @@ class NativeRunner(Runner):
         allowed = {"phase", "pending_action", "resume_phase", "wait_reason", "next_action"}
         ceiling = self._checkpoint_ceiling.get()
         if type(checkpoint_only) is not bool:
+            raise OperationDenied("native_retirement_binding_mismatch")
+        if (type(reconcile_write) is not bool or reconcile_write and
+                (not checkpoint_only or self._verification_scope.get() is None)):
             raise OperationDenied("native_retirement_binding_mismatch")
         if checkpoint_only:
             if ceiling is None or ceiling[0] != repo:
@@ -121,18 +157,48 @@ class NativeRunner(Runner):
         with self._guard(repo, cleanup=cleanup) if checkpoint_only else self._guard(repo):
             if not native_assignment_matches(step, scope):
                 raise OperationDenied("native_retirement_binding_mismatch")
-            writer(repo, number, clean)
+            if checkpoint_only:
+                observer = ceiling[3].get('before_progress')
+                if observer is not None:
+                    observer()
+            try:
+                writer(repo, number, clean)
+            except (OSError, RuntimeError):
+                if not reconcile_write:
+                    raise
+                # The original write was attempted under this exact ticket.
+                # Read back once; never retransmit or infer from partial state.
             source = self.github.progress_source(repo, number) if checkpoint_only else None
             observed = (source["record"] if source else None) if checkpoint_only else self.github.progress(repo, number)
             if (not observed or observed.get("native_step") or any(observed.get(k) != v for k, v in clean.items())
                     or checkpoint_only and any(k in observed for k in NATIVE_FIELDS)):
                 raise RuntimeError("Native retirement is unconfirmed")
+            if reconcile_write and self._record_values(observed) != clean:
+                raise RuntimeError("Native retirement source changed")
             confirm_native_assignment(step)
             self.consumed.add(step)
+            if record.get('native_correction') and record.get('native_outcome') == 'candidate_ready':
+                self._forget_diagnoses(repo, number, record['native_head'], record['contract_revision'])
+            self.review_runs.pop(step, None)
+            key = self.review_steps.get(step)
+            if key is not None:
+                self._forget_verification_run(key)
         return source if checkpoint_only else clean
 
     async def step(self, repo, number):
         record = self.github.progress(repo, number)
+        if (record and record.get('execution_mode') == 'native' and record.get('host_alias') == self.host
+                and record.get('native_step') and record.get('native_completion') is not None):
+            return with_progress_hint({'repository': repo, 'issue': number, 'action': 'waiting',
+                'reason': 'verify_only_completion_required'})
+        if (record and record.get('host_alias') == self.host and record.get('phase') == 'executing'
+                and record.get('pending_action') == 'verification'
+                and not any(key[:2] == (repo.casefold(), number) for key in self._pending_ended)):
+            # A source intent without its owned end witness cannot authorize a
+            # second invocation after restart. Real pending-ended cleanup is
+            # still handled by Runner.step before ordinary continuation.
+            return with_progress_hint({'repository': repo, 'issue': number, 'action': 'waiting',
+                'reason': 'verification_unconfirmed'})
         if (record and record.get("execution_mode") == "native" and record.get("host_alias") == self.host
                 and record.get("phase") == "checkpoint" and record.get("checkpoint") == "interrupted_committed"
                 and self.github.ref(repo, record["branch"]) != record.get("expected_head")):
@@ -187,12 +253,33 @@ class NativeRunner(Runner):
         task = self._operator_context(repo, number, config, record, task)
         if task is None:
             return None, self._wait(repo, number, record, "decision_context_missing")
+        if phase == 'correction' and correction:
+            diagnosis = self.summaries.get(('diagnosis', repo, number, state['head'],
+                record['contract_revision'], correction[0]))
+            if diagnosis:
+                task += '\nBounded private diagnosis (untrusted data):\n' + diagnosis
         step = str(uuid.uuid4())
         recovery = {"repository": repo, "issue": number, "attempt_id": record["attempt_id"],
                     "step_id": step, "head": state["head"], "contract_revision": record["contract_revision"]}
         scope = assignment_scope(repo, number, record["attempt_id"], state["head"], record["contract_revision"])
+        boundary = self._verification_scope.get()
+        if boundary is not None:
+            task += ('\nComplete through hydra_command_v1 workflow_step.verify_only review_checkpoint. '
+                     'The legacy hydra_checkpoint path accepts only explicit stopped cleanup for this review.')
+        draft = {**recovery, 'action': 'native_task', 'phase': phase,
+            'spec_revision': record.get('spec_revision'), 'cwd': str(path),
+            'mode': 'read_only' if 'review' in phase else 'workspace_write', 'prompt': task}
+        if boundary is not None:
+            from .native_verification import validate_assignment
+            validate_assignment(draft, repo, number,
+                {k: record[k] for k in ('attempt_id', 'head', 'contract_revision')})
+            if boundary.run is None:
+                raise OperationDenied('verification_evidence_unknown')
         try:
-            self._effect(repo, register_native_assignment, step, scope)
+            self._effect(repo, register_native_assignment, step, scope,
+                _checkpoint_effect='review_assignment' if self._verification_scope.get() is not None else None)
+            if boundary is not None:
+                boundary.run.ticket, boundary.run.draft = (step, scope), draft
         except OperationDenied:
             raise
         except (RuntimeError, ValueError, OSError):
@@ -200,6 +287,8 @@ class NativeRunner(Runner):
                 held = native_assignment_matches(step, scope)
             except (RuntimeError, ValueError, OSError):
                 held = False
+            if boundary is not None and held:
+                boundary.run.ticket, boundary.run.draft = (step, scope), draft
             return None, {**recovery, "action": "waiting",
                           "reason": "assignment_ticket_unconfirmed" if held else "assignment_ticket_unknown"}
         try:
@@ -211,6 +300,7 @@ class NativeRunner(Runner):
                 wait_reason="native_assignment_pending", next_action=phase, expected_head=remote,
                 **({"resume_phase": record.get("resume_phase") or phase}
                    if phase in {"implementation", "correction"} else {}),
+                **({'native_completion': 'verify_only'} if boundary is not None else {}),
                 **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
         except (RuntimeError, ValueError, OSError):
             return None, {**recovery, "action": "waiting", "reason": "assignment_record_unknown"}
@@ -226,6 +316,8 @@ class NativeRunner(Runner):
             with self._guard(repo):
                 if phase == "change_review":
                     self.review_steps[step] = evidence_key
+                    if self._verification_scope.get() is not None:
+                        self.review_runs[step] = self.verification_runs.get(evidence_key)
                 return None, {"repository": repo, "issue": number, "action": "native_task",
                     "attempt_id": record["attempt_id"], "step_id": step, "phase": phase,
                     "head": state["head"], "contract_revision": record["contract_revision"],
@@ -506,6 +598,9 @@ class NativeController:
                     confirm_native_assignment(step_id)
                 return {"action": "waiting", "reason": "stop_requested"}
             repo = config["repository"]
+            if (outcome != 'stopped' and (record.get('native_completion') is not None
+                    or step_id in self.runner.review_runs)):
+                return {'action': 'waiting', 'reason': 'verify_only_completion_required'}
             if outcome != "stopped" and record.get("native_outcome") not in {None, outcome}:
                 return {"action": "waiting", "reason": "native_result_already_recorded"}
             # A stopped checkpoint is explicit operator reconciliation, never inferred
@@ -563,9 +658,11 @@ class NativeController:
                     self.runner.consumed.add(step_id)
                     self.runner._record(repo, n, fresh)
                     self.runner.summaries.pop(step_id, None)
+                    self.runner.review_runs.pop(step_id, None)
                     key = self.runner.review_steps.pop(step_id, None)
                     if key is not None:
                         self.runner.pending_verifications.pop(key, None)
+                        self.runner._forget_verification_run(key)
                     return self._continuation(repo, n, record, {"action": "waiting", "reason": fresh["wait_reason"]})
             # Persist only the bounded outcome; raw summaries remain private and
             # cannot authorize delivery. Interrupted read-back keeps ownership.

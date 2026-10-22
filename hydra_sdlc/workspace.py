@@ -766,6 +766,12 @@ class Workspace:
                             execution_argv = wrap(path, list(argv), cwd)
                     except OperationDenied as exc:
                         raise WorkspaceWait("verification_stopped") from exc
+                    except WorkspaceWait:
+                        raise  # Preserve an explicit provider cleanup uncertainty.
+                    except (ValueError, RuntimeError) as exc:
+                        # wrap_command purely constructs argv; this command has
+                        # not launched and earlier commands were already drained.
+                        raise WorkspaceWait("verification_unavailable") from exc
                     if (not isinstance(execution_argv, list) or not execution_argv
                             or not all(isinstance(arg, str) and arg and "\0" not in arg for arg in execution_argv)):
                         raise WorkspaceWait("invalid_storage_provider_contract")

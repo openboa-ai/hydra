@@ -1831,8 +1831,8 @@ class VerificationRuntimeBoundaryTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         kernel = workflow.split('  kernel:\n', 1)[1].split('  mac-app:\n', 1)[0]
         minutes = int(re.search(r'^    timeout-minutes: (\d+)$', kernel, re.MULTILINE)[1])
-        self.assertGreater(minutes * 60, 284.417 + 60)
-        self.assertLessEqual(minutes, 10)
+        self.assertGreater(minutes * 60, 880.435 + 176.723 + 120)
+        self.assertLessEqual(minutes, 20)
 
 
 if __name__ == "__main__":

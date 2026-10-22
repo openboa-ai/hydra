@@ -43,17 +43,32 @@ only within the owned worktree and accepted scope. Let Hydra checkpoint commits;
 do not commit, push, create a PR or merge through a competing path. Review phases
 inspect actual spec/diff and verification output without changing the checkout.
 
-Submit hydra_checkpoint with candidate_ready, failed or needs_decision. Candidate
-readiness is a model judgment. Hydra and current GitHub facts decide delivery.
-The response may contain the next assignment. Do not replay a consumed step.
-Continue with hydra_verify/hydra_deliver against the current recorded head and
-policy. Wait for actual code/security review and CI; fix coherent findings as a
+For an ordinary assignment, submit hydra_checkpoint with candidate_ready, failed
+or needs_decision. The response may contain the next assignment. Do not replay a
+consumed step. Continue with hydra_verify/hydra_deliver against the current recorded
+head and policy.
+
+A read_only change_review returned by workflow_step.verify_only with the private
+native_handoff_v1 profile has a different bounded completion route. Retain the
+original command target and candidate plus the full returned assignment. Complete
+through hydra_command_v1: action=workflow_step, operation=verify_only,
+stage=review_checkpoint, the exact expected assignment, and
+effect_key=checkpoint:<attempt_id>:<step_id>, with the review outcome and private
+summary. Use the current qualified runtime and admission expectations. Do not
+substitute hydra_checkpoint or broad continuation. Missing capability, invocation
+proof or authority means preserve the assignment and wait; do not invent a grant.
+Explicit stopped cleanup still uses the original ticket identity after confirming
+the owned work has stopped. It is not review acceptance or permission to deliver.
+
+Candidate readiness is a model judgment. Hydra and current GitHub facts decide
+delivery. Wait for actual code/security review and CI; fix coherent findings as a
 meaningful PR update. UI changes require a real screen shared before final PR.
 Keep private research, paths, prompts, app IDs and transcripts out of public records.
 
 ## Ask, stop and resume
 
-Before a user question, submit needs_decision and retain the returned checkpoint.
+Before a user question, submit needs_decision through the assignment's completion
+route above and retain the returned checkpoint.
 Use the native question tool in the outcome task. State decision, why it matters,
 options and recommendation. Record only a publishable actual user decision in
 the Issue, including the exact-attempt resolution marker expected by Hydra.

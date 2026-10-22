@@ -103,6 +103,7 @@ class Runner:
         self.operations = operations
         self._policy_scope = ContextVar("hydra_project_policy_scope", default=None)
         self._checkpoint_ceiling = ContextVar("hydra_checkpoint_ceiling", default=None)
+        self._verification_scope = ContextVar("hydra_verification_scope", default=None)
         self._cleanup_scope = ContextVar("hydra_cleanup_scope", default=None)
         self._ended_execution = ContextVar("hydra_ended_execution", default=None)
         # Exact completion evidence is process-local. Keep an unsettled proof
@@ -131,7 +132,14 @@ class Runner:
     def _effect(self, repo, callback, *args, cleanup=False, _checkpoint_effect=None, **kwargs):
         ceiling = self._checkpoint_ceiling.get()
         if ceiling is not None:
-            if ceiling[0] != repo or _checkpoint_effect not in {"progress", "checkpoint"}:
+            review_registration = (self._verification_scope.get() is not None
+                and _checkpoint_effect == "review_assignment")
+            if ceiling[0] != repo or (_checkpoint_effect not in {"progress", "checkpoint"}
+                                     and not review_registration):
+                raise OperationDenied("checkpoint_effect_unsupported")
+            scope = self._verification_scope.get()
+            if (scope is not None and getattr(scope.run, 'undispatched_record', None) is not None
+                    and _checkpoint_effect != 'progress'):
                 raise OperationDenied("checkpoint_effect_unsupported")
         if not cleanup:
             self._require_policy(repo)
@@ -139,7 +147,13 @@ class Runner:
             # Policy observation can be remote. Refresh authority after it,
             # immediately before acquiring the bounded admission guard.
             ceiling[2]()
+            if review_registration:
+                self._verification_scope.get().before_handoff()
         with self._guard(repo, cleanup=cleanup):
+            if ceiling is not None and _checkpoint_effect == "progress":
+                observer = ceiling[3].get('before_progress')
+                if observer is not None:
+                    observer()
             return callback(*args, **kwargs)
 
     def _policy_reason(self, repo, config):
@@ -184,6 +198,7 @@ class Runner:
         if not callable(factory):
             raise OperationDenied("project_contract_unavailable")
         compare = Runner._observed_policy_reason
+        verification_guard = self._verification_scope.get()
 
         def read(deadline):
             try:
@@ -197,6 +212,8 @@ class Runner:
                 raise OperationDenied("project_contract_unavailable") from None
             if reason:
                 raise OperationDenied(reason)
+            if verification_guard is not None:
+                verification_guard.before_dispatch()
 
         return DispatchPreflight(read, owner=self)
 
@@ -246,8 +263,9 @@ class Runner:
             raise error
         return config
 
-    def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True):
-        reason = self._operation_reason(repo)
+    def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True,
+                include_admission=True):
+        reason = self._operation_reason(repo) if include_admission else None
         if reason:
             return reason
         if include_stop and self.stop_requested():
@@ -331,8 +349,10 @@ class Runner:
             self._require_policy(evidence_key[0])
         except OperationDenied as exc:
             raise WorkspaceWait(exc.reason) from exc
+        scope = self._verification_scope.get()
         return self.workspace.verify(path, config["verification"],
-                                     stop_requested=lambda: self._stopping(evidence_key[0]),
+                                     stop_requested=lambda: self._stopping(evidence_key[0])
+                                         or scope is not None and scope.cancel.is_set(),
                                      before_command=self._dispatch_preflight(evidence_key[0]))
 
     def _resource_completion(self, repo, number, config, record, pr_number, merge_sha):
@@ -381,6 +401,8 @@ class Runner:
         return issues, None
 
     def _intent(self, repo, number, config, record, action, *, stopped_checkpoint=False, **values):
+        if self._verification_scope.get() is not None and action not in {None, "verification"}:
+            raise OperationDenied("effect_not_allowed")
         if self._policy_scope.get() is None:
             self._bind_policy(repo, config)
         service_action = action in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}
@@ -404,6 +426,12 @@ class Runner:
             if (values.get("phase") == "executing" and previous.get("phase") != "executing"
                     and previous.get("wait_reason") not in {
                         "execution_unknown", "execution_failed", "invalid_model_result"}):
+                verification = self._verification_scope.get()
+                if verification is not None:
+                    # This owner has not received a launch grant. Let its fixed
+                    # current-authority scope settle the acknowledged intent.
+                    verification.undispatched = (previous, record, reason)
+                    return None
                 if self._operation_reason(repo):
                     # This function has not returned an execution grant. The
                     # recorded intent is positively known to be undispatched.
