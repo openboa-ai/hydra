@@ -27,6 +27,8 @@ does not repeat D; a fresh request actually runs and retains failure-attempt
 accounting. The existing three-attempt bound holds before another diagnostic
 retry starts. Verification after the final completed correction still records its
 actual result; exhausted debt stays at three instead of creating invalid progress.
+An actual passing diagnostic retry clears its resolved verification-failure
+resume debt, so a standard reply continues to independent review.
 This does not admit review findings, verifier mutation or uncertain
 execution through a generic correction exception.
 Existing owned-execution recovery and exact review completion keep
@@ -94,6 +96,12 @@ the source read. A worker or an earlier source observation grants no exception.
 Every preservation scope requires its expected source, checks it at scope entry
 and the actual writer, and refreshes authority after the read. Completed results
 cannot adopt a newer correction/decision state as their own recording source.
+The same source-writer context covers intent, preservation, review registration,
+result recording, proof-loss downgrade and both normal and unhanded retirement.
+It freezes the expected record and rechecks current authority after the source
+read at the actual writer. Checkpoint-only retirement invokes this same observer
+inside its existing ticket guard. Review writes gain no Pause or preservation
+exception from using the common fence.
 
 The storage provider's pure command-construction boundary normalizes its
 ValueError/RuntimeError into the existing bounded verification diagnosis. Earlier
@@ -128,7 +136,9 @@ bounded effect. Cancellation requests the existing supervisor's stop path and
 waits for its result before releasing coordinator ownership. Unconfirmed cleanup
 retains the host hold; cancellation is not termination evidence.
 Existing host cleanup holds also block this route. An explicit new verification
-invalidates earlier local acceptance for the candidate before dispatch. The new
+invalidates earlier local acceptance only when its exact, currently authorized
+intent writer is owned. A zero-effect source or authority denial preserves that
+acceptance for ordinary continuation. The new
 private invocation links are cleared with the original review lifetime, including
 an explicit legacy stop; they cannot outlive that step as accepted evidence.
 
@@ -156,6 +166,12 @@ validated invocation, current scope and handoff grants. It does not rerun D or
 allocate a second existing assignment.
 Confirmed release of a never-recorded ticket also clears its retired private
 draft. Recovery can then create the actual review from that original invocation.
+A settled invocation can still own a ticket whose review was never returned.
+After explicit Resume, a fresh admitted request may reconcile that exact proof
+and return its original assignment under current source/candidate/admission
+guards. The existing bounded request tombstones retain the original request's
+attribution, and recovery replay does not execute D again. A previously returned
+assignment retains its original owner and cleanup rules.
 
 A deterministic verifier exception after an earlier command completed is not a
 full verification verdict. Its original private request memo is retained before
@@ -271,24 +287,26 @@ independent effect spies and the pinned MCP SDK:
 - `test_native_verify_only_retry_budget.py`: actual failed-run accounting and
   replay, no fourth diagnostic launch, and valid failure preservation after the
   final completed correction.
+- `test_native_verify_only_completion_recovery.py`: actual source races at review
+  registration, result/downgrade and both retirement writers; preserved accepted
+  D after a zero-effect intent denial; Pause/Resume recovery and replay of the
+  same unhanded review; and a passing standard retry reaching independent review.
 
-The first source CI ran all 1,637 methods successfully in 583.313 seconds with
-eight explicit skips, but exhausted the ten-minute job budget before evidence
-export. The kernel job now has a fifteen-minute execution budget, including
-setup and export. Required checks, test cases, their own deadlines, permissions
-and pinned trusted tooling are unchanged. The cancelled run is not a green CI
-result; final-source CI and its evidence export must complete independently.
-The next 1,645-method run took 590.679 seconds and exposed the stale ten-minute
-capacity assertion. The bounded capacity test now uses that measured baseline,
-two minutes of setup/export reserve and the fifteen-minute outer limit. Individual
-test deadlines and product acceptance assertions retain their existing meaning.
-The subsequent 1,655-method run completed in 675.675 seconds but failed two
-subcases of a worker privacy assertion: an opaque SHA-256 value happened to
-contain the synthetic PID digits. A fixed valid collision digest now reproduces
-that case deterministically. The assertion qualifies only the defined opaque
-runtime digests before checking all remaining public output for PID disclosure;
-unknown execution/count and held-Quit assertions remain intact. This failed run
-is not reported as green CI.
+The kernel job has a twenty-minute outer execution budget. An actual CI run
+completed 1,712 methods in 880.435 seconds with eight explicit skips and one stale
+requirement-reference failure, then exhausted the fifteen-minute job before
+evidence export. The capacity estimate adds 176.723 seconds from the nine new
+regression cases' local worker durations and the existing 120-second setup/export
+reserve to that observed CI duration. This estimates capacity across environments;
+it does not combine their results into passing evidence. Required checks, test cases, their own
+deadlines, permissions and pinned trusted tooling remain unchanged. The failed,
+cancelled run is not green CI; final-source CI and export must complete independently.
+
+The versioned manifest binds the current complete workflow specification digest.
+After an accepted specification edit, update that exact reference while retaining
+the case IDs, requirement sections, fixtures and selected methods. Stale references
+remain invalid; neither the validator nor the acceptance oracle substitutes an
+old revision or silently updates a mismatched input.
 
 Run these with the repository's supported Python 3.14+ interpreter and pinned MCP
 dependency; then run the affected legacy command, native, ownership and admission

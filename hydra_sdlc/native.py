@@ -157,6 +157,10 @@ class NativeRunner(Runner):
         with self._guard(repo, cleanup=cleanup) if checkpoint_only else self._guard(repo):
             if not native_assignment_matches(step, scope):
                 raise OperationDenied("native_retirement_binding_mismatch")
+            if checkpoint_only:
+                observer = ceiling[3].get('before_progress')
+                if observer is not None:
+                    observer()
             try:
                 writer(repo, number, clean)
             except (OSError, RuntimeError):

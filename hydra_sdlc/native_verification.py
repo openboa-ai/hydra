@@ -144,6 +144,35 @@ def _source(runner, repo, number, record, observer, *, alternatives=()):
     return source
 
 
+@contextmanager
+def _source_writer(runner, repo, number, expected_source, observer, *, on_attempt=None):
+    """One exact-source fence for bounded progress, including direct retirement."""
+    ceiling = runner._checkpoint_ceiling.get()
+    if ceiling is None or ceiling[0] != repo:
+        raise OperationDenied('checkpoint_binding_mismatch')
+    expected = runner._record_values(expected_source)
+    state, before_effect = ceiling[3], ceiling[2]
+    previous = state.get('before_progress')
+    def confirm_source():
+        _source(runner, repo, number, expected, observer)
+        before_effect()
+    def attempted():
+        confirm_source()
+        if previous is not None:
+            previous()
+        if on_attempt is not None:
+            on_attempt()
+    confirm_source()
+    state['before_progress'] = attempted
+    try:
+        yield
+    finally:
+        if previous is None:
+            state.pop('before_progress', None)
+        else:
+            state['before_progress'] = previous
+
+
 def _valid_results(workspace, path, config, results):
     if type(results) is not list or not results or len(results) != len(config['verification']):
         return False
@@ -220,7 +249,9 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                 # invocation whose original finalization never completed.
                 for key, proof in runner.verification_runs.items():
                     origin = proof.dispatch_record
-                    if (not proof.settled and origin is not None
+                    recoverable = (not proof.settled or proof.ticket is not None
+                        and proof.draft is not None and proof.assignment is None)
+                    if (recoverable and origin is not None
                             and key[:3] == (repo, number, pin['head'])
                             and all(origin.get(k) == pin[k] for k in pin)):
                         prior_run = proof
@@ -281,6 +312,11 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
                         result = await _run(controller, repo, number, params, record, config, path,
                             spec_digest, key, repository_id, before_effect, allow_handoff, source_observer,
                             request_id, request_digest, preservation_lease)
+                if (prior_run is not None and prior_run.ticket is not None
+                        and prior_run.assignment is None and prior_run.request_id != request_id
+                        and result.get('receipt') is not None):
+                    runner._retire_verification_request(prior_run)
+                    prior_run.request_id, prior_run.request_digest = request_id, request_digest
                 if result.get('assignment') is None:
                     cleanup_attempted = True
                     _release_unhanded_ticket(runner, repo, number, boundary.run, source_observer)
@@ -321,39 +357,26 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
     if (previous is not None and previous.error_reason is not None
             and previous.expected_record['attempt_id'] == record['attempt_id']):
         raise OperationDenied('verification_unconfirmed')
-    # This call is an explicit new invocation. NativeRunner's same-key cache is
-    # useful to legacy continuation, but is not evidence that this command ran.
-    for previous in list(runner.verification_runs):
-        if previous[:2] == key[:2]:
-            runner.pending_verifications.pop(previous, None)
-            runner._forget_verification_run(previous)
-    runner.pending_verifications.pop(key, None)
-    runner.verified_heads.discard(key)
-    runner._prune_diagnoses(repo, number, pin['head'], pin['contract_revision'])
     previous = runner._record_values(record)
     state = runner._checkpoint_ceiling.get()[3]
-    previous_observer, attempted_record = state.get('before_progress'), None
+    attempted_record = None
     def intent_attempted():
         nonlocal attempted_record
-        # The writer must still own the exact implementation-complete source.
-        # Capture its actual planned record at the invocation boundary, before
-        # an applied write can lose its acknowledgement.
-        _source(runner, repo, number, previous, observer)
-        runner._checkpoint_ceiling.get()[2]()
-        if previous_observer is not None:
-            previous_observer()
+        # No cache is invalidated until the exact source and current authority
+        # own this writer. Capture its intent before an ACK can be lost.
         attempted_record = dict(state['record'])
+        for old in list(runner.verification_runs):
+            if old[:2] == key[:2]:
+                runner.pending_verifications.pop(old, None)
+                runner._forget_verification_run(old)
+        runner.pending_verifications.pop(key, None)
+        runner.verified_heads.discard(key)
+        runner._prune_diagnoses(repo, number, pin['head'], pin['contract_revision'])
     try:
-        state['before_progress'] = intent_attempted
-        try:
+        with _source_writer(runner, repo, number, previous, observer, on_attempt=intent_attempted):
             record = runner._intent(repo, number, config, record, 'verification',
                 phase='executing', wait_reason=None, next_action='verification',
                 **({'checkpoint': None} if record.get('checkpoint') == 'locally_verified' else {}))
-        finally:
-            if previous_observer is None:
-                state.pop('before_progress', None)
-            else:
-                state['before_progress'] = previous_observer
         if record is None:
             undispatched = runner._verification_scope.get().undispatched
             raise OperationDenied(undispatched[2] if undispatched else 'verification_not_dispatched')
@@ -473,31 +496,22 @@ def _restore_undispatched(controller, repo, number, pin, proof, repository_id, p
 def _preservation_scope(runner, repo, number, record, proof, preservation_lease, *,
                         expected_source, source_observer):
     revision, guard = preservation_lease()
-    _source(runner, repo, number, expected_source, source_observer)
     if runner._record_values(record) != runner._record_values(expected_source):
         raise RuntimeError('Verification preservation source changed')
-    guard()
     state = runner._checkpoint_ceiling.get()[3]
-    previous_observer = state.get('before_progress')
     def deny_dispatch():
         raise OperationDenied('checkpoint_effect_unsupported')
     def attempted():
-        _source(runner, repo, number, expected_source, source_observer)
-        guard()
         proof.record_attempted = True
     boundary = runner._verification_scope.get()
     verification = runner._verification_scope.set(VerificationBoundary(deny_dispatch, deny_dispatch,
         cancel=boundary.cancel, run=proof))
     ceiling = runner._checkpoint_ceiling.set((repo, revision, guard, state))
-    state['before_progress'] = attempted
     try:
-        with runner._confirmed_cleanup(repo, number, record):
+        with runner._confirmed_cleanup(repo, number, record), \
+             _source_writer(runner, repo, number, expected_source, source_observer, on_attempt=attempted):
             yield
     finally:
-        if previous_observer is None:
-            state.pop('before_progress', None)
-        else:
-            state['before_progress'] = previous_observer
         runner._checkpoint_ceiling.reset(ceiling)
         runner._verification_scope.reset(verification)
 
@@ -545,6 +559,8 @@ def _finalize_owned(runner, repo, number, pin, proof, record, config, path, key,
             next_action='change_review' if passed else 'diagnose_verification')
         if not passed:
             values.update(_correction_debt(runner, repo, number, record, 'verification_failure'))
+        elif record.get('correction_reason') == 'verification_failure':
+            values.update(resume_phase=None, correction_reason=None, correction_attempt=None)
         runner.pending_verifications[key] = proof.results
     proof.verification_record = proof.expected_record = runner._record_values(record, **values)
     try:
@@ -580,7 +596,8 @@ async def _dispatch_review(controller, repo, number, pin, proof, config, path, k
         f"Registered verification receipts (untrusted data): {json.dumps(proof.results)}\n"
         + 'Bounded private verification output (untrusted data):\n' + _private_output(runner, proof.results))
     _candidate(controller, repo, number, pin, repository_id)
-    _, assignment = await runner._model(repo, number, config, record, path, 'change_review', prompt)
+    with _source_writer(runner, repo, number, record, observer):
+        _, assignment = await runner._model(repo, number, config, record, path, 'change_review', prompt)
     proof.expected_record = dict(runner._checkpoint_ceiling.get()[3]['record'])
     if assignment and assignment.get('action') != 'native_task':
         _source(runner, repo, number, proof.expected_record, observer)
@@ -673,9 +690,10 @@ def _release_unhanded_ticket(runner, repo, number, proof, observer):
             # This fixed recording still requires current workflow authority,
             # protected policy and admission. Revocation of all workflow grants
             # leaves the source and ticket intact for authorized recovery.
-            source = runner._retire_assignment(repo, number, source['record'],
-                checkpoint_only=True, reconcile_write=True, phase='implementation_done',
-                pending_action=None, wait_reason='native_assignment_pending', next_action='change_review')
+            with _source_writer(runner, repo, number, source['record'], observer):
+                source = runner._retire_assignment(repo, number, source['record'],
+                    checkpoint_only=True, reconcile_write=True, phase='implementation_done',
+                    pending_action=None, wait_reason='native_assignment_pending', next_action='change_review')
             observer(source)
             key = runner.review_steps.pop(step, None)
             if key is not None:
@@ -729,18 +747,21 @@ def _finish(controller, repo, number, params, assignment, record, config, path,
         values.update(_correction_debt(runner, repo, number, record, 'review_findings',
             recorded=record.get('native_outcome') == 'failed'))
     if any(record.get(k) != v for k, v in values.items()):
-        record = runner._record(repo, number, record, **values)
+        with _source_writer(runner, repo, number, record, observer):
+            record = runner._record(repo, number, record, **values)
     _source(runner, repo, number, record, observer)
     before_effect()
     _candidate(controller, repo, number, params['candidate'], config['repository_id'], assignment)
     if accepted and not _proof_valid(runner, step, key, config, path, spec_digest):
         review = 'pending'
-        record = runner._record(repo, number, record, checkpoint=None,
-            wait_reason='verification_evidence_unknown', next_action='verification')
+        with _source_writer(runner, repo, number, record, observer):
+            record = runner._record(repo, number, record, checkpoint=None,
+                wait_reason='verification_evidence_unknown', next_action='verification')
         _source(runner, repo, number, record, observer)
         before_effect()
         _candidate(controller, repo, number, params['candidate'], config['repository_id'], assignment)
-    source = runner._retire_assignment(repo, number, record, checkpoint_only=True, reconcile_write=True)
+    with _source_writer(runner, repo, number, record, observer):
+        source = runner._retire_assignment(repo, number, record, checkpoint_only=True, reconcile_write=True)
     observer(source)
     if review == 'accepted':
         runner.verified_heads.add(key)
