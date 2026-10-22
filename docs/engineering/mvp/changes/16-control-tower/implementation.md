@@ -45,7 +45,11 @@ prompts, paths and native transcripts are not added to the screen or a cache.
 
 A failed refresh retains the prior display with stale/unknown evidence and its
 source reason. It does not erase a separate project's valid observations or
-manufacture empty success. Late responses cannot change the selected target.
+manufacture empty success. Read failure feedback belongs to the source and query
+that failed; local polling, another project or another query cannot acknowledge
+it. Matching recovery clears its own feedback. This bounded transient feedback
+contains no provider error text and is invalidated with its connection/runtime.
+Late responses cannot change the selected target.
 A binding replacement clears the old read context, selection and cached view
 before fresh data can be accepted. Read retries use the existing source policy;
 no mutation is retried by this read-side component.

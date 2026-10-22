@@ -29,7 +29,10 @@ unchanged case passes after correction. All original eleven methods are preserve
 Independent review then identified local-scope, address-normalization and failed
 continuation defects. Five assertions reproduced those defects on the published
 parent, using actual Python local producer bytes for the polling cases. The same
-five pass after correction, with the original twelve lifecycle methods unchanged.
+five pass after correction, with the original twelve lifecycle methods unchanged. A later
+feedback-ownership review reproduced three assertions alongside one valid matching
+recovery control. The same four cases pass after correction; the preceding
+seventeen lifecycle methods remain byte-for-byte unchanged.
 
 | Case | Required outcome | Local result |
 | --- | --- | --- |
@@ -50,17 +53,21 @@ five pass after correction, with the original twelve lifecycle methods unchanged
 | Case-preserving refresh | Keep display casing; pass the lowercase repository address to the bridge | PASS |
 | Case-preserving original navigation | Original-Issue opening uses the same normalized repository address | PASS |
 | Continuation failure | A failed new slice keeps earlier page evidence current and inspectable | PASS |
+| Error / local recovery | A successful actual local producer poll cannot acknowledge a failed remote continuation | PASS |
+| Error / another project | Another project source success cannot acknowledge the failed project query | PASS |
+| Error / another query | First-page success cannot acknowledge a failed continuation query | PASS |
+| Error / matching recovery | A matching remote query success clears its own feedback | PASS |
 
 Commands from `apps/mac`:
 
 ```sh
-node --experimental-strip-types --test tests/tower.test.ts tests/tower-events.test.ts tests/tower-pagination.test.ts tests/tower-review.test.ts
+node --experimental-strip-types --test tests/tower.test.ts tests/tower-events.test.ts tests/tower-pagination.test.ts tests/tower-review.test.ts tests/tower-feedback.test.ts
 npm test
 npm run build
 npm run verify:theme
 ```
 
-Local results: 17 lifecycle methods, 369 complete frontend methods, TypeScript/Vite
+Local results: 21 lifecycle methods, 373 complete frontend methods, TypeScript/Vite
 build and theme verification pass. The existing suite includes actual Python
 producer/TypeScript consumer fixtures, using Python 3.14.2 in this verification.
 No Rust source changed. Required remote/native build checks remain part of CI;
@@ -77,11 +84,16 @@ The browser reported no page errors or external page requests. No native Hydra o
 Codex operation was dispatched, and the one-shot browser was closed afterward.
 
 Built JavaScript SHA-256:
-`2217eedd1200d91033343544032f4eb1b9f5d85c2fc14d17df0d62c42904dec4`.
+`861ea14f8b9334cfe234b9ffbd6035d75a2f13596f2b3b62d2c28fc94da36163`.
 Built CSS SHA-256:
 `962520c3b8fd8dee16ea02c69d3cd1b02eb85d7cabaa3d1f738b19233f1b0da9`.
 Overview screenshot SHA-256:
 `4a271b8686033f95dc8f7f8595d6ac349c980076a2574cfb509333c5a9621367`.
+
+A further built-source screen follows a failed GitHub continuation with an
+actual Python local-producer reply. The continuation failure remains visible,
+with the retained project observations and next-page navigation. Its screenshot
+SHA-256 is `dd60b4b5b0b418743ce02419b080c28a000f773bab57615331d09a2c96ca794c`.
 
 This is source-fixture screen evidence. It does not establish the installed
 runtime, authenticated remote answers, a real scoped command/read-back, actual

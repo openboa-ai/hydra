@@ -39,6 +39,15 @@ export function mountControlTower(root: HTMLElement): void {
   let lastLocal = 0, lastRemote = 0, previousTick = Date.now();
   let notice = '', focusVersion = 0, restoringFocus = false;
   let clockVersion = 0, clockBusy = false, clockBlocked = false;
+  const readFailures = new Map<string, string>();
+  let omittedReadFailures = false;
+  function clearReadFailures() { readFailures.clear(); omittedReadFailures = false; }
+  function failRead(scope: string, message: string) {
+    if (!readFailures.has(scope) && readFailures.size >= 16) {
+      readFailures.delete(readFailures.keys().next().value!); omittedReadFailures = true;
+    }
+    readFailures.set(scope, message);
+  }
   const supersedeFocus = () => { if (!restoringFocus) focusVersion += 1; };
   document.addEventListener('pointerdown', supersedeFocus, true);
   document.addEventListener('keydown', supersedeFocus, true);
@@ -93,7 +102,10 @@ export function mountControlTower(root: HTMLElement): void {
     const selected = state?.selected_ref ?? null;
     const id = remote ? repository(selected) : null;
     const oldEpoch = state?.binding_epoch;
-    let epoch: string | undefined, requestSequence = 0, scope = '';
+    const scope = `${remote ? 'github' : 'local'}:${id ?? 'overview'}:${cursor ? 'page' : 'first'}`;
+    const readTarget = id && state?.view ? repositoryName(state.view, id) ?? 'selected project' : 'overview';
+    const unavailable = `${remote ? 'GitHub' : 'Local'} ${readTarget}${cursor ? ' continuation' : ''} refresh unavailable. Prior observations are retained with uncertainty.`;
+    let epoch: string | undefined, requestSequence = 0;
     render();
     try {
       epoch = await invoke<string>('projection_binding');
@@ -102,13 +114,13 @@ export function mountControlTower(root: HTMLElement): void {
       else if (state.binding_epoch !== epoch) {
         state = reduceProjection(state, {type: 'binding_changed', binding_epoch: epoch});
         state = reduceProjection(state, {type: 'selection_changed', selected_ref: null});
+        clearReadFailures();
         notice = 'Connection changed. Previous source data and selection were cleared. Refresh to inspect the current connection.';
         return;
       }
       const view = projectedView(state, Date.now());
       const name = id && view ? repositoryName(view, id)?.toLowerCase() ?? null : null;
-      if (id && !name) { notice = 'Source refresh unavailable: the current repository identity is unconfirmed.'; return; }
-      scope = `${remote ? 'github' : 'local'}:${id ?? 'overview'}:${cursor ? 'page' : 'first'}`;
+      if (id && !name) { failRead(scope, unavailable + ' Repository identity is unconfirmed.'); return; }
       requestSequence = ++sequence;
       const requestId = crypto.randomUUID();
       const keys = cursor ? [] : [...state.source_slots].filter(([,slot]) =>
@@ -120,16 +132,18 @@ export function mountControlTower(root: HTMLElement): void {
       const response = await invoke<ReadResponse>('projection_status', {epoch, requestId, refresh: remote,
         repository: name, cursor, explicitRecovery: manual});
       if (generation !== clockVersion || state.binding_epoch !== epoch) return;
+      const previousRuntime = state.runtime_key;
       state = reduceProjection(state, {type: 'read_succeeded', scope, sequence: requestSequence,
         now: Date.now(), response});
-      notice = state.error ? 'Source refresh unavailable. Prior observations are retained with uncertainty.' : '';
+      if (previousRuntime !== null && state.runtime_key !== previousRuntime) clearReadFailures();
+      if (state.error) failRead(scope, unavailable);
+      else { readFailures.delete(scope); if (manual) notice = ''; }
     } catch {
       // Bridge error text may contain private paths or provider output.
       if (generation !== clockVersion) return;
       if (state && epoch === state.binding_epoch && requestSequence > 0)
         state = reduceProjection(state, {type: 'read_failed', scope, sequence: requestSequence, reason: 'read_unavailable'});
-      if (!epoch || state?.binding_epoch === epoch)
-        notice = 'Source refresh unavailable. Prior observations are retained with uncertainty.';
+      if (!epoch || state?.binding_epoch === epoch) failRead(scope, unavailable);
     } finally {
       if (remote) remoteBusy = false; else localBusy = false;
       render(); restoreFocus(focused, focusIntent);
@@ -238,7 +252,9 @@ export function mountControlTower(root: HTMLElement): void {
     const identity = node('div'); identity.append(node('p', 'HYDRA', 'eyebrow'), node('h1', 'Work lifecycle'));
     const refresh = button(remoteBusy ? 'Refreshing…' : 'Refresh sources', 'Refresh workflow sources', () => { void read(true, true); });
     refresh.disabled = remoteBusy || clockBusy; header.append(identity, refresh); fragment.append(header);
-    const status = node('p', notice, 'tower-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    const messages = [notice, ...readFailures.values(), omittedReadFailures ?
+      'Earlier read failures remain unconfirmed outside this bounded view. Inspect their sources to reconcile them.' : ''];
+    const status = node('p', messages.filter(Boolean).join(' '), 'tower-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
     fragment.append(status);
     const view = state ? projectedView(state, Date.now()) : null;
     if (!view) fragment.append(node('p', state ? 'Workflow sources are unconfirmed. Refresh to inspect them.' : 'Reading workflow sources…', 'empty'));
