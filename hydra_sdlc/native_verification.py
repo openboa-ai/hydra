@@ -36,6 +36,7 @@ class VerificationRun:
     draft: dict | None = None
     ticket: tuple[str, str] | None = None
     changed_head: str | None = None
+    error_reason: str | None = None
 
 
 @dataclass
@@ -164,6 +165,25 @@ def _private_output(runner, results):
     return ''.join(outputs)
 
 
+def _remember_error(runner, repo, number, record, spec_digest, key, request_id, request_digest, reason):
+    planned = runner._record_values(record, phase='implementation_done', pending_action=None,
+        wait_reason='replan_required', next_action='diagnose_verification')
+    proof = VerificationRun([], _digest([]), spec_digest, request_id, request_digest,
+        verification_record=runner._record_values(record), expected_record=planned, error_reason=reason)
+    runner.verification_runs[key] = proof
+    runner._verification_scope.get().run = proof
+    return proof
+
+
+def _settle_error(runner, repo, number, proof, observer):
+    try:
+        runner._record(repo, number, proof.expected_record)
+    except (OSError, RuntimeError):
+        pass  # Only exact read-back can confirm the attempted settlement.
+    _source(runner, repo, number, proof.expected_record, observer)
+    return {'outcome': 'waiting', 'reason': proof.error_reason, 'required_next': 'open_source'}
+
+
 async def execute(controller, repo, number, params, assignment, *, repository_id,
                   admission_revision, before_effect, allow_handoff, source_observer,
                   request_id, request_digest, finalize_reply):
@@ -253,6 +273,12 @@ async def execute(controller, repo, number, params, assignment, *, repository_id
 async def _run(controller, repo, number, params, record, config, path, spec_digest, key,
                repository_id, before_effect, allow_handoff, observer, request_id, request_digest):
     runner, pin = controller.runner, params['candidate']
+    if record.get('wait_reason') == 'replan_required' and record.get('next_action') == 'diagnose_verification':
+        raise OperationDenied('replan_required')
+    previous = runner.verification_runs.get(key)
+    if (previous is not None and previous.error_reason is not None
+            and previous.expected_record['attempt_id'] == record['attempt_id']):
+        raise OperationDenied('verification_unconfirmed')
     # This call is an explicit new invocation. NativeRunner's same-key cache is
     # useful to legacy continuation, but is not evidence that this command ran.
     for previous in list(runner.verification_runs):
@@ -288,6 +314,12 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         results, error = [], exc
     if error is not None and error.uncertain:
         runner.host_hold_reason = 'host_verification_unconfirmed'
+    if error is not None and not error.uncertain:
+        # The supervisor has finished, but a later command may be unavailable
+        # after an earlier stateful command completed. Preserve that fact even
+        # if admission changes before the fixed diagnosis record can be written.
+        proof = _remember_error(runner, repo, number, record, spec_digest, key,
+            request_id, request_digest, error.reason)
     if cancelled:
         raise asyncio.CancelledError()
     if error is not None:
@@ -315,9 +347,11 @@ async def _run(controller, repo, number, params, record, config, path, spec_dige
         return {'outcome': 'waiting', 'reason': 'candidate_changed'}
     _candidate(controller, repo, number, pin, repository_id)
     if error:
-        raise OperationDenied(error.reason)
+        return _settle_error(runner, repo, number, proof, observer)
     if not _valid_results(runner.workspace, path, config, results):
-        raise OperationDenied('verification_evidence_unknown')
+        proof = _remember_error(runner, repo, number, record, spec_digest, key,
+            request_id, request_digest, 'verification_evidence_unknown')
+        return _settle_error(runner, repo, number, proof, observer)
     passed = all(value['passed'] for value in results)
     final_values = dict(phase='implementation_done', pending_action=None,
         wait_reason='native_assignment_pending' if passed else 'verification_failure',
@@ -421,6 +455,13 @@ def _handoff(controller, repo, number, pin, proof, key, repository_id, before_ef
 async def _resume_run(controller, repo, number, params, proof, config, path, spec_digest, key,
                       repository_id, before_effect, allow_handoff, observer):
     runner, pin = controller.runner, params['candidate']
+    if proof.error_reason is not None:
+        if (runner.verification_runs.get(key) is not proof or proof.spec_digest != spec_digest
+                or proof.results != [] or proof.digest != _digest([])):
+            raise OperationDenied('verification_evidence_unknown')
+        _source(runner, repo, number, proof.expected_record, observer)
+        before_effect()
+        return {'outcome': 'waiting', 'reason': proof.error_reason, 'required_next': 'open_source'}
     if (runner.verification_runs.get(key) is not proof
             or runner.pending_verifications.get(key) is not proof.results
             or proof.spec_digest != spec_digest
@@ -474,7 +515,7 @@ def _release_unhanded_ticket(runner, repo, number, proof, observer):
         with runner.operations.guard(repo, cleanup=True):
             if native_assignment_matches(*proof.ticket):
                 confirm_native_assignment(proof.ticket[0])
-                proof.ticket = None
+                proof.ticket, proof.draft = None, None
                 proof.expected_record = proof.verification_record
     except (OSError, RuntimeError, ValueError, KeyError):
         # Unknown source/ownership is never permission to clear anything.

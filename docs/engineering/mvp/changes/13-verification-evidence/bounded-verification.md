@@ -94,6 +94,19 @@ A wait before review registration retains its actual reason. A same-request
 retry may recheck the resolved condition and dispatch that review with the same
 validated invocation, current scope and handoff grants. It does not rerun D or
 allocate a second existing assignment.
+Confirmed release of a never-recorded ticket also clears its retired private
+draft. Recovery can then create the actual review from that original invocation.
+
+A deterministic verifier exception after an earlier command completed is not a
+full verification verdict. Its original private request memo is retained before
+settlement, and a guarded, exact source read-back clears the running intent into
+the existing replan/diagnose-verification hold. Same-request replay returns that
+wait without D; a new request cannot bypass unresolved diagnosis. An uncertain
+settlement remains unknown and blocks ordinary reentry. A confirmed source hold
+survives restart without reconstructing a missing private verdict.
+An incomplete or invalid result list enters the same hold. In particular, a
+signalled command cannot leave a replayable intent merely because it returned
+partial results instead of throwing an exception.
 
 Final read-back compares the exact attempted record, including phase, waits and
 next action. Same candidate pins cannot certify unrelated progress. An unrecorded
@@ -147,6 +160,11 @@ independent effect spies and the pinned MCP SDK:
 - `test_native_verify_only_deferred.py`: changed-candidate ACK loss/read-back,
   unapplied records, actual private correction prompts, failed-verifier debt and
   pre-registration wait recovery under current grants.
+- `test_native_verify_only_errors.py`: released draft recovery, partial invocation
+  exceptions, diagnosis-record ACK loss, unknown settlement and restart holds,
+  with an actual stateful first command and unavailable second executable.
+- `test_native_verify_only_incomplete.py`: an actual signalled first command,
+  incomplete results, untouched later command and a held ordinary continuation.
 
 The first source CI ran all 1,637 methods successfully in 583.313 seconds with
 eight explicit skips, but exhausted the ten-minute job budget before evidence

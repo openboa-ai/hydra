@@ -179,6 +179,15 @@ class NativeRunner(Runner):
 
     async def step(self, repo, number):
         record = self.github.progress(repo, number)
+        if (record and record.get('host_alias') == self.host and record.get('phase') == 'executing'
+                and record.get('pending_action') == 'verification'
+                and any(getattr(proof, 'error_reason', None) is not None
+                    and key[:3] == (repo, number, record.get('head'))
+                    and proof.expected_record['attempt_id'] == record.get('attempt_id')
+                    and proof.expected_record['contract_revision'] == record.get('contract_revision')
+                    for key, proof in self.verification_runs.items())):
+            return with_progress_hint({'repository': repo, 'issue': number, 'action': 'waiting',
+                'reason': 'verification_unconfirmed'})
         if (record and record.get("execution_mode") == "native" and record.get("host_alias") == self.host
                 and record.get("phase") == "checkpoint" and record.get("checkpoint") == "interrupted_committed"
                 and self.github.ref(repo, record["branch"]) != record.get("expected_head")):
