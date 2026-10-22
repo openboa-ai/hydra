@@ -1,3 +1,4 @@
+import { mountControlTower } from './tower.ts';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ObservationFeedback, Observations, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, pendingLabel, title, waitReasonLabel, workRecord } from './model.ts';
@@ -306,4 +307,7 @@ void listen<{ state: 'stopping' | 'blocked'; code?: string; status?: unknown }>(
   render();
 }).catch(() => { feedback.show('The desktop connection is unavailable. Open the installed Hydra application.'); render(); });
 void refresh();
-setInterval(() => { if (!pending && !quitting) void refresh(); }, 5_000);
+const hostControls = document.querySelector<HTMLDetailsElement>('#host-controls');
+hostControls?.addEventListener('toggle', () => { if (hostControls.open) void refresh(); });
+setInterval(() => { if (hostControls?.open && !pending && !quitting) void refresh(); }, 5_000);
+mountControlTower(document.querySelector<HTMLElement>('#workflow')!);

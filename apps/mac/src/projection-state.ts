@@ -30,6 +30,7 @@ export type ProjectionEvent =
   | { type: "command_result"; request_id: string; reply: unknown }
   | { type: "binding_changed"; binding_epoch: string }
   | { type: "clock_resumed"; now: number }
+  | { type: "binding_unavailable"; now: number }
   | { type: "selection_changed"; selected_ref: ResourceRef | null };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const json = (value: unknown): string => {
@@ -521,6 +522,13 @@ export function reduceProjection(previous: ProjectionState, event: ProjectionEve
       window = {frame:windowFrame,sequence:event.sequence,received_sequence:event.response.sequence};
       if (state.error !== "read_policy_capacity_held") state.error = null; break;
     }
+    case "binding_unavailable": {
+      uint(event.now); state.last_now = Math.max(state.last_now,event.now);
+      state.queries.clear();
+      stale(state,state.source_slots.keys(),"binding_unavailable");
+      refreshFacts(state,new Set(state.source_slots.keys()),new Set(),Number.MAX_SAFE_INTEGER);
+      state.error = "binding_unavailable"; break;
+    }
     case "clock_resumed": {
       uint(event.now); state.last_now = Math.max(state.last_now,event.now);
       stale(state,state.source_slots.keys(),"clock_resumed");
@@ -608,7 +616,11 @@ export function projectedView(state:ProjectionState,now:number):ProjectionV3|nul
   uint(now);if (!state.view) return null;
   const display={...state,source_slots:new Map(state.source_slots),view:structuredClone(state.view)};
   const expired=[...state.source_slots.keys()].filter(k=>!sourceFresh(state,k,now));
-  stale(display,expired,"ttl_expired");
+  const timedOut = expired.filter(k => {
+    const slot = state.source_slots.get(k)!;
+    return !slot.stale && slot.observation.availability === "current";
+  });
+  stale(display,timedOut,"ttl_expired");
   refreshFacts(display,new Set(expired),new Set(),Number.MAX_SAFE_INTEGER);
   return display.view;
 }

@@ -75,3 +75,38 @@ footer { display: flex; align-items: flex-start; justify-content: space-between;
 .coverage-reason { max-width: 320px; }
 @media (max-width: 560px) { .app-header, main { padding: var(--space-16); } .host, .project { padding: var(--space-16); } .host-top, .project-heading { align-items: flex-start; } .host-top { flex-wrap: wrap; } .utilities button { font-size: var(--caption-size); padding-right: var(--space-0); } footer { padding: var(--space-16); flex-direction: column; } .project-bottom { align-items: flex-start; flex-direction: column; } .controls { gap: var(--space-4); } .controls button { padding: var(--space-8); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+
+/* Lifecycle projections reuse the current theme and remain separate from host controls. */
+#workflow { padding: var(--space-24); }
+.tower-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-20); }
+.tower-status:empty { display: none; }
+.tower-status:not(:empty) { margin-bottom: var(--space-16); padding: var(--space-12); border: var(--border-thin) solid var(--border); border-radius: var(--radius-sm); color: var(--warning); }
+.tower-layout { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 3fr); gap: var(--space-24); }
+.tower-navigation { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-8); }
+.tower-navigation button { justify-content: flex-start; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.tower-navigation [aria-current='page'] { border-color: var(--accent); color: var(--accent); background: var(--surface); }
+.tower-detail { min-width: 0; }
+.tower-detail > h2 { margin-bottom: var(--space-12); overflow-wrap: anywhere; }
+.tower-detail > h3 { margin-top: var(--space-20); }
+.tower-project { background: var(--surface); border: var(--border-thin) solid var(--border); border-radius: var(--radius-xl); padding: var(--space-20); margin-top: var(--space-16); }
+.tower-project > h3 { margin-bottom: var(--space-8); }
+.tower-project > button { margin-top: var(--space-16); }
+.tower-project .tower-facts { margin-bottom: var(--space-16); }
+.tower-coverage, .tower-goal, .tower-boundary { color: var(--secondary); font-size: var(--small-size); }
+.tower-goal { margin-top: var(--space-8); }
+.tower-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-16); margin-top: var(--space-20); }
+.tower-fact { padding: var(--space-12); border: var(--border-thin) solid var(--border); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.tower-fact .reason { margin-top: var(--space-4); }
+.tower-original, .tower-references { margin-top: var(--space-20); padding: var(--space-16); background: var(--surface); border: var(--border-thin) solid var(--border); border-radius: var(--radius-md); }
+.tower-original p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--space-12); }
+.tower-original button { margin-top: var(--space-12); }
+.tower-references p { overflow-wrap: anywhere; }
+.tower-work { margin-top: var(--space-8); }
+.tower-work button { text-align: left; white-space: normal; justify-content: flex-start; overflow-wrap: anywhere; }
+.tower-sources { margin-top: var(--space-20); }
+.tower-sources summary, .host-compatibility > summary { cursor: pointer; color: var(--secondary); }
+.tower-boundary { margin-top: var(--space-24); padding-top: var(--space-16); border-top: var(--border-thin) solid var(--border); }
+.host-compatibility { margin: var(--space-0) var(--space-24) var(--space-24); border: var(--border-thin) solid var(--border); border-radius: var(--radius-md); }
+.host-compatibility > summary { padding: var(--space-16); }
+.host-compatibility > summary:focus-visible, .tower-sources summary:focus-visible { outline: var(--border-focusRing) solid var(--focus); outline-offset: var(--border-focusOffset); }
+@media (max-width: 700px) { #workflow { padding: var(--space-16); } .tower-layout { grid-template-columns: minmax(0, 1fr); } .tower-navigation { flex-direction: row; flex-wrap: wrap; } .tower-facts { grid-template-columns: minmax(0, 1fr); } .tower-header { align-items: flex-start; flex-wrap: wrap; } .host-compatibility { margin: var(--space-0) var(--space-16) var(--space-16); } }
