@@ -132,10 +132,12 @@ class Runner:
     def _effect(self, repo, callback, *args, cleanup=False, _checkpoint_effect=None, **kwargs):
         ceiling = self._checkpoint_ceiling.get()
         if ceiling is not None:
+            publishing = ceiling[3].get('profile') == 'publish_candidate'
             review_registration = (self._verification_scope.get() is not None
                 and _checkpoint_effect == "review_assignment")
-            if ceiling[0] != repo or (_checkpoint_effect not in {"progress", "checkpoint"}
-                                     and not review_registration):
+            allowed = ({'progress', 'publish', 'pr', 'review_request'} if publishing
+                       else {'progress', 'checkpoint'})
+            if ceiling[0] != repo or (_checkpoint_effect not in allowed and not review_registration):
                 raise OperationDenied("checkpoint_effect_unsupported")
             scope = self._verification_scope.get()
             if (scope is not None and getattr(scope.run, 'undispatched_record', None) is not None
@@ -154,7 +156,16 @@ class Runner:
                 observer = ceiling[3].get('before_progress')
                 if observer is not None:
                     observer()
-            return callback(*args, **kwargs)
+            if ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
+                if _checkpoint_effect != 'progress':
+                    ceiling[3]['before_publication'](_checkpoint_effect, args, kwargs)
+                ceiling[3]['before_callback'](_checkpoint_effect)
+            result = callback(*args, **kwargs)
+            if ceiling is not None and _checkpoint_effect == 'progress':
+                observer = ceiling[3].get('after_progress')
+                if observer is not None:
+                    observer()
+            return result
 
     def _policy_reason(self, repo, config):
         return self._observed_policy_reason(self.github, repo, config)
@@ -221,7 +232,7 @@ class Runner:
         current = self._cleanup_scope.get()
         cleanup = method == "checkpoint" and current is not None and current[0] == repo
         return self._effect(repo, getattr(self.workspace, method), *args, cleanup=cleanup,
-                            _checkpoint_effect=method if method == "checkpoint" else None, **kwargs)
+                            _checkpoint_effect=method if method in {"checkpoint", "publish"} else None, **kwargs)
 
     @contextmanager
     def _confirmed_cleanup(self, repo, number, record):
@@ -403,6 +414,19 @@ class Runner:
     def _intent(self, repo, number, config, record, action, *, stopped_checkpoint=False, **values):
         if self._verification_scope.get() is not None and action not in {None, "verification"}:
             raise OperationDenied("effect_not_allowed")
+        ceiling = self._checkpoint_ceiling.get()
+        if ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
+            if action not in {'publish', 'upsert_pr', 'request_review'}:
+                raise OperationDenied('effect_not_allowed')
+            original = ceiling[3].pop('reuse_intent', None)
+            if original is not None:
+                if (self._record_values(record) != original or record.get('pending_action') != action
+                        or any(record.get(key) != value for key, value in values.items())):
+                    raise OperationDenied('publication_unconfirmed')
+                reason = self._latest(repo, number, config)
+                if reason:
+                    raise OperationDenied(reason)
+                return record
         if self._policy_scope.get() is None:
             self._bind_policy(repo, config)
         service_action = action in {"publish", "upsert_pr", "merge", "close_issue", "request_review", "resolve_threads"}
@@ -868,7 +892,10 @@ class Runner:
             return self._intent_wait(repo, number)
         try:
             self._workspace_effect(repo, "publish", path, branch, remote)
-        except Exception:
+        except Exception as error:
+            ceiling = self._checkpoint_ceiling.get()
+            if isinstance(error, OperationDenied) and ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
+                raise
             if self.github.ref(repo, branch) != head:
                 return self._wait(repo, number, record, "publish_unknown", phase="uncertain")
         if self.github.ref(repo, branch) != head:
@@ -886,8 +913,12 @@ class Runner:
         try:
             pr = self._effect(repo, self.github.ensure_pr, repo, number, branch, head, f"Implement Issue {number}",
                 f"Refs https://github.com/{repo}/issues/{number}\n\nImplements the scoped specification {spec}. "
-                "Registered local verification and independent candidate review completed. Remote checks and reviews remain delivery gates.")
-        except Exception:
+                "Registered local verification and independent candidate review completed. Remote checks and reviews remain delivery gates.",
+                _checkpoint_effect='pr')
+        except Exception as error:
+            ceiling = self._checkpoint_ceiling.get()
+            if isinstance(error, OperationDenied) and ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
+                raise
             recovered = self.github.pulls(repo, branch)
             if len(recovered) != 1 or recovered[0].get("head", {}).get("sha") != head:
                 return intent, None, self._wait(repo, number, intent, "pr_unknown", phase="uncertain")
@@ -1770,8 +1801,12 @@ class Runner:
             if intent is None:
                 return record
             try:
-                self._effect(repo, self.github.request_review, repo, observation["pr"]["number"], kind=kind, head=head, issue_number=number)
-            except RuntimeError:
+                self._effect(repo, self.github.request_review, repo, observation["pr"]["number"], kind=kind, head=head,
+                             issue_number=number, _checkpoint_effect='review_request')
+            except RuntimeError as error:
+                ceiling = self._checkpoint_ceiling.get()
+                if isinstance(error, OperationDenied) and ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
+                    raise
                 return self._record(repo, number, intent, phase="uncertain", wait_reason="review_request_unknown")
             record = self._record(repo, number, intent, pending_action=None, **{field: head},
                                   delivery_action=None, delivery_attempt=None, delivery_head=None, pending_review_kind=None)

@@ -77,7 +77,7 @@ def create_server(controller, *, command_config_path=None, command_context_provi
 
     if profile.supported:
         async def hydra_command_v1(command, ctx=None) -> dict:
-            """Apply a guarded project admission or checkpoint-only command. No default write grant."""
+            """Apply one explicitly granted admission or bounded workflow command."""
             return await command_result(command, ctx)
         hydra_command_v1.__annotations__['ctx'] = profile.context_type
     else:

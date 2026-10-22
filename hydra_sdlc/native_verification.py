@@ -76,7 +76,8 @@ def validate_assignment(value, repo, number, candidate):
         raise OperationDenied('native_assignment_too_large')
 
 
-def _candidate(controller, repo, number, candidate, repository_id, assignment=None, *, preserving=False):
+def _candidate(controller, repo, number, candidate, repository_id, assignment=None, *, preserving=False,
+               pending_actions=frozenset({None, 'verification'}), workspace_change_reason='stale_candidate'):
     runner = controller.runner
     if runner.host_hold_reason:
         raise OperationDenied(runner.host_hold_reason)
@@ -98,7 +99,7 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
         raise OperationDenied('native_assignment_pending')
     elif record.get('wait_reason') == 'product_decision' or record.get('next_action') == 'operator_decision':
         raise OperationDenied('product_decision')
-    if record.get('pending_action') not in {None, 'verification'}:
+    if record.get('pending_action') not in pending_actions:
         raise OperationDenied('effect_not_allowed')
     config = {**config, 'intake_digest': record['intake_digest']}
     reason = (runner._latest(repo, number, config, include_stop=False, include_admission=False)
@@ -115,7 +116,7 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
             # Owned edits need preservation, including an edited specification.
             # No digest here can certify that changed candidate's acceptance.
             return record, config, path, None
-        raise OperationDenied('stale_candidate')
+        raise OperationDenied(workspace_change_reason)
     if not runner.workspace.contains_base(path, config['revision']):
         raise OperationDenied('base_changed')
     if any(not matches(name, config['allowed_paths'])
