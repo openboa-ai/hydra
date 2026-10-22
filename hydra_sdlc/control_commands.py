@@ -328,10 +328,11 @@ def _repository(github, names, identifier):
 
 
 def _observation(command, runtime, snapshot, repository, suffix, observed_at):
+    from .connection_profile import default_project_mode, admission_value
     key = f"command:{command['request_id']}:admission-{suffix}"
     revision = {'kind': 'monotonic', 'value': str(snapshot['revision'])}
     mode = snapshot['global_mode']
-    project_mode = snapshot['projects'].get(repository, 'running')
+    project_mode = snapshot['projects'].get(repository, default_project_mode(snapshot))
     reason = ('host_' + mode if mode != 'running' else
               'project_' + project_mode if project_mode != 'running' else None)
     return {
@@ -342,8 +343,7 @@ def _observation(command, runtime, snapshot, repository, suffix, observed_at):
         'coverage': {'state': 'complete', 'scope': key, 'returned_count': 1,
                      'total_count': 1, 'next_cursor': None, 'reason': None},
         'reason': None,
-        'value': {'revision': snapshot['revision'], 'global_mode': mode,
-                  'project_overrides': dict(snapshot['projects']), 'gate_reason': reason},
+        'value': admission_value(snapshot, reason),
     }
 
 

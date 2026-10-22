@@ -28,6 +28,7 @@ def parser():
         else:
             command.add_argument("--repos", nargs="+", required=True)
         if name != "status":
+            command.add_argument('--config', type=Path, help='Trusted installed config; required by connection-aware admission')
             command.add_argument("--workspace-root", type=Path, required=True)
             command.add_argument("--host-alias", required=True)
             command.add_argument("--lock-path", type=Path, default=Path.home() / ".local/share/hydra/host.lock")
@@ -155,7 +156,20 @@ async def operate(args, *, github=None, workspace=None, execute=None, capabiliti
     run_target = issue_url(args.issue) if args.command == "run" else None
     admission_repo = run_target[0] if run_target else None
     targets = [admission_repo] if run_target else args.repos
-    operations = operations if operations is not None else OperatingControl(args.lock_path, targets)
+    installed = None
+    if getattr(args, 'config', None) is not None:
+        from .control import load_host_config, control_from_config
+        installed = load_host_config(args.config)
+        if (args.host_alias != installed['host_alias']
+                or str(args.workspace_root.expanduser().absolute()) != installed['workspace_root']
+                or str(args.lock_path.expanduser().absolute()) != installed['lock_path']
+                or any(getattr(args, key, None) != installed.get(key) for key in
+                       ('lifecycle_provider', 'storage_provider', 'knowledge_repo'))
+                or not set(targets).issubset(installed['repos'])
+                or args.command == 'serve' and tuple(args.repos) != tuple(installed['repos'])):
+            raise ValueError('Execution arguments differ from installed configuration')
+    operations = operations if operations is not None else (
+        control_from_config(installed) if installed is not None else OperatingControl(args.lock_path, targets))
     reason = operations.reason(admission_repo)
     if reason:
         result = with_progress_hint({"action": "waiting", "reason": reason})

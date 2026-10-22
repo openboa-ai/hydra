@@ -187,7 +187,9 @@ function refs(value: unknown): void { list(value, ref); }
 function bool(value: unknown): void { requireValue(typeof value === "boolean"); }
 function sourceValue(kind: string, value: unknown): void {
   requireValue(Object.hasOwn(sourceFields, kind));
-  const v = object(value, sourceFields[kind]!);
+  const keys = kind === "admission" && Object.hasOwn(plain(value), "default_project_mode") ?
+    sourceFields[kind]! + " default_project_mode" : sourceFields[kind]!;
+  const v = object(value, keys);
   switch (kind) {
     case "repository": {
       integer(v.numeric_id, 1); text(v.full_name);
@@ -252,6 +254,7 @@ function sourceValue(kind: string, value: unknown): void {
       for (const k of ["activity", "preservation", "retirement"]) nullable(v[k], code);
       nullable(v.open_ref, x => text(x, 2048)); break;
     case "admission": {
+      if (Object.hasOwn(v, "default_project_mode")) one(v.default_project_mode, "running stopped");
       integer(v.revision); one(v.global_mode, "running paused stopped");
       const overrides = plain(v.project_overrides); requireValue(Object.keys(overrides).length <= 1024);
       for (const [repository, mode] of Object.entries(overrides)) {
@@ -372,7 +375,7 @@ function admissionFact(value: unknown, index: Index, names:Set<string>, binding:
   for(const source of sources){
     requireValue(source.resource.id===binding);const snapshot=plain(source.value);let mode=snapshot.global_mode;
     if(mode==="running"){
-      requireValue(names.size>0);const overrides=plain(snapshot.project_overrides),modes=new Set([...names].map(name=>overrides[name]??"running"));
+      requireValue(names.size>0);const overrides=plain(snapshot.project_overrides),modes=new Set([...names].map(name=>overrides[name]??snapshot.default_project_mode??"running"));
       requireValue(modes.size===1);mode=[...modes][0];
     }
     requireValue(v.value===(mode==="running"?"allowed":mode));

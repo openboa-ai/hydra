@@ -129,9 +129,10 @@ def _observation(key, resource, scope, value, at, *, reason=None, revision=None)
 
 
 def _effective(snapshot, repository):
+    from .connection_profile import default_project_mode
     mode = snapshot['global_mode']
     if mode == 'running':
-        mode = snapshot['projects'].get(repository, 'running')
+        mode = snapshot['projects'].get(repository, default_project_mode(snapshot))
     return {'running': 'allowed', 'paused': 'paused', 'stopped': 'stopped'}[mode]
 
 
@@ -540,9 +541,12 @@ def read_projection(cfg, *, binding_epoch, request_id, refresh=False, repository
     try:
         p.require(runtime['control_binding_digest'] is not None)
         snapshot = control.snapshot()
-        admission_value = {'revision': snapshot['revision'], 'global_mode': snapshot['global_mode'],
-            'project_overrides': snapshot['projects'],
-            'gate_reason': None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode']}
+        check_connection = getattr(control, '_connection_guard', None)
+        if check_connection is not None:
+            check_connection(snapshot, None)
+        from .connection_profile import admission_value as public_admission
+        admission_value = public_admission(snapshot,
+            None if snapshot['global_mode'] == 'running' else 'host_' + snapshot['global_mode'])
         p.source_value('admission', admission_value)
         admission = _observation('hydra:host:admission', admission_ref,
             'resource:host:admission', admission_value, at,

@@ -1,10 +1,26 @@
 # Control plane: projection과 안전한 명령
 
-Status: Design contract, revision 9, 2026-10-22. Installation authority increment.
+Status: Design contract, revision 10, 2026-10-23. P17 admission-default source increment.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 W3/W7의
 wire contract, 관측·화면·명령·호환·TC를 소유한다. native 연동 qualification 이전의
 설계이며 API의 존재, 구현 수용, 테스트 실행 또는 설치 환경에서의 성공을 선언하지 않는다.
+
+### P17 admission source compatibility
+
+The admission `SourceValue` retains `revision`, `global_mode`,
+`project_overrides` and `gate_reason`. It adds optional `default_project_mode`,
+whose only accepted values are `running` and `stopped`. Absence means the existing
+version-1 running default. A version-2 admission source declares `stopped` and
+does not fabricate missing stored overrides. Producers and strict Python, Rust
+and TypeScript consumers use that default when validating effective admission.
+The trusted connection-config path remains private and is absent from this value.
+
+This closes the source representation needed by PC's existing explicit-stopped
+rule; it does not change operating authority. Legacy source bytes remain valid.
+An older strict consumer rejects the new source field rather than interpreting
+it with an unsafe running default. Profile activation requires the matching
+consumer; legacy schema-2 control rejects the connection profile before mutation.
 
 ## 1. 목적·책임·범위
 

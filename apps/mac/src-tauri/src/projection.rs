@@ -157,7 +157,10 @@ fn repository_name(value: &str, lower: bool) -> R {
       name.bytes().all(|c| (c.is_ascii_alphanumeric() || b"_.-".contains(&c)) && (!lower || !c.is_ascii_uppercase())))
 }
 fn source_value(kind: &str, v: &Value) -> R {
-    object(v, source_fields(kind)?)?;
+    let fields=if kind=="admission" && v.get("default_project_mode").is_some() {
+        "revision global_mode project_overrides gate_reason default_project_mode"
+    } else {source_fields(kind)?};
+    object(v, fields)?;
     match kind {
         "repository" => {
             positive(&v["numeric_id"])?; repository_name(string(&v["full_name"])?, false)?;
@@ -226,6 +229,7 @@ fn source_value(kind: &str, v: &Value) -> R {
             optional(&v["open_ref"],|x| text(x,2048,false,false))?;
         },
         "admission" => {
+            if let Some(default)=v.get("default_project_mode") {one(default,"running stopped")?;}
             number(&v["revision"])?; one(&v["global_mode"],"running paused stopped")?;
             let overrides=v["project_overrides"].as_object().ok_or(INVALID)?; need(overrides.len()<=1024)?;
             for (repository,mode) in overrides { repository_name(repository,true)?; one(mode,"running paused stopped")?; }
@@ -364,7 +368,8 @@ fn admission_fact(v: &Value, index: &Index<'_>, names:&HashSet<String>, binding:
                 if mode=="running" {
                     need(!names.is_empty())?;
                     for name in names {
-                        let mode=match snapshot["project_overrides"].get(name){Some(mode)=>string(mode)?,None=>"running"};
+                        let default=match snapshot.get("default_project_mode"){Some(mode)=>string(mode)?,None=>"running"};
+                        let mode=match snapshot["project_overrides"].get(name){Some(mode)=>string(mode)?,None=>default};
                         need(v["value"]==if mode=="running"{"allowed"}else{mode})?;
                     }
                 } else {need(v["value"]==mode)?;}
@@ -961,5 +966,25 @@ mod read_page_count_regressions {
         for case in cases.as_array().unwrap() {
             assert_eq!(ReadPayload::parse(case["wire"].as_str().unwrap().as_bytes()).is_ok(),case["accepted"].as_bool().unwrap(),"{}",case["name"]);
         }
+    }
+}
+
+#[cfg(test)]
+mod connection_default_regressions {
+    use super::*;
+    #[test]
+    fn actual_python_source_defaults_match_across_admission_versions() {
+        let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/control-v3/emit_connection_defaults.py");
+        let output=std::process::Command::new("python3").arg("-I").arg(script).output().unwrap();
+        assert!(output.status.success(),"Actual connection producer failed: {}",String::from_utf8_lossy(&output.stderr));
+        let cases:Value=serde_json::from_slice(&output.stdout).unwrap();
+        let rows=cases.as_array().unwrap();assert_eq!(rows.len(),9);
+        let mut mismatches=Vec::new();
+        for row in rows {
+            if Projection::parse(row["wire"].as_str().unwrap().as_bytes()).is_ok()!=row["accepted"].as_bool().unwrap(){
+                mismatches.push(row["name"].as_str().unwrap().to_owned());
+            }
+        }
+        assert!(mismatches.is_empty(),"Connection-default contract mismatches: {:?}",mismatches);
     }
 }
