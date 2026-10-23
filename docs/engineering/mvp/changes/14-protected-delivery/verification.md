@@ -164,6 +164,18 @@ final pre-change definitions. Source tests do not establish installed operation.
 New exact-head CI and independent reviews are required after this correction;
 earlier CI/review observations do not qualify the corrected revision.
 
+## Integration with optional Project priority reads
+
+The publication candidate incorporates verified main `399cd7a9e86ac92981c87bed39d36628475e5159`.
+All original publication assertions and GitHub adapter methods are preserved.
+The integration includes the optional Project reader without changing
+publication authority or activating any installed operation.
+
+All 111 selected Python 3.14.2 publication, GitHub and Project-planning
+methods pass with zero failures, errors or skips. This is integration
+regression evidence; it does not replace final-head CI, independent
+code/security reviews, protected delivery or actual operational acceptance.
+
 ## Remaining qualification
 
 The earlier main-CI preservation increment was delivered separately in
