@@ -132,6 +132,38 @@ New exact-head CI and independent code/security reviews are required after
 integration. The earlier source CI and review history are retained as
 historical evidence. No source test qualifies installed or remote operation.
 
+## Independent review corrections
+
+Review of `b173961` identified three publication-boundary defects. This source
+correction reuses P14 revision 4 and the existing effect/authority contract.
+The original reviewed source and all earlier test assertions remain preserved.
+
+The final pre-change matrix adds ten independent methods and reuses the original
+exact-null-expectation restart control. Three normal controls pass; the remaining
+cases produce twelve purpose assertion failures, without errors or skips.
+The same eleven methods pass after correction. The initial nine-method probe is
+retained separately from the refined, ownership-validated external-PR case and
+the additional receipt-source budget case.
+
+- A command's remote expectation must equal authenticated progress. A matching
+  current remote ref cannot substitute for that source. Existing known-intent
+  recovery still accepts the original null expectation after an observed push.
+- Incomplete unrelated comments cannot erase valid owned review-request evidence.
+  Comments claiming review evidence and configured producer comments retain
+  strict identity/format checks. Request readiness remains distinct from approval.
+- A complete publication observation uses one fresh 15-second/32-request client
+  for branch, PR list, ownership, receipt source, commits, comments and identity.
+  Payload preflight owns the same bounded read profile. Neither scope consumes
+  another caller's budget, resets the deadline midway or replaces runner.github.
+  Separate effect writes and workflow guards retain their existing contracts.
+
+All 80 publication/GitHub impact methods pass without failures, errors or skips,
+including all 42 publication methods and the original actual-Git/SDK recovery
+paths. The ten new methods and the prior assertions are unchanged from their
+final pre-change definitions. Source tests do not establish installed operation.
+New exact-head CI and independent reviews are required after this correction;
+earlier CI/review observations do not qualify the corrected revision.
+
 ## Remaining qualification
 
 The earlier main-CI preservation increment was delivered separately in

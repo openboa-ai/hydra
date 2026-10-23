@@ -132,11 +132,12 @@ def _candidate(controller, repo, number, candidate, repository_id, assignment=No
     return record, config, path, digest
 
 
-def _source(runner, repo, number, record, observer, *, alternatives=()):
+def _source(runner, repo, number, record, observer, *, alternatives=(), github=None):
     expected = (record, *alternatives)
     if any(type(value) is not dict for value in expected):
         raise RuntimeError('Verification record unavailable')
-    source = runner.github.progress_source(repo, number)
+    reader = runner.github if github is None else github
+    source = reader.progress_source(repo, number)
     observed = source.get('record') if type(source) is dict else None
     if not observed or not any(runner._record_values(observed) == runner._record_values(value)
                                for value in expected):

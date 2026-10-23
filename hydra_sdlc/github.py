@@ -738,8 +738,15 @@ class GitHub:
 
     def observe_publication(self, repo, pr):
         """Read request readiness without acquiring unrelated delivery evidence."""
-        repo, pr = _repo(repo), _number(pr)
         reader = self.read_client()
+        with reader.read_budget(seconds=15, requests=32):
+            return reader._publication_observation(repo, pr)
+
+    def _publication_observation(self, repo, pr):
+        """Use the caller's already-owned complete observation budget."""
+        if not self._read_budgets:
+            raise GitHubError('Publication reader scope unavailable')
+        repo, pr = _repo(repo), _number(pr)
         def anchor(row):
             if type(row) is not dict or type(row.get('number')) is not int or row['number'] != pr:
                 raise GitHubError('Publication PR identity unavailable')
@@ -751,18 +758,17 @@ class GitHub:
                     _sha(head.get('sha')), head.get('ref'), head['repo'].get('id'),
                     _sha(base.get('sha')), base.get('ref'), base['repo'].get('id'),
                     user.get('id'), user.get('login'), row.get('commits'), row.get('comments'))
-        with reader.read_budget(seconds=15, requests=32):
-            raw = reader.api('GET', f'/repos/{repo}/pulls/{pr}')
-            original = anchor(raw)
-            commits = reader._pages(f'/repos/{repo}/pulls/{pr}/commits')
-            comments = reader.comments(repo, pr)
-            latest = reader.api('GET', f'/repos/{repo}/pulls/{pr}')
-            if (anchor(latest) != original
-                    or type(latest.get('commits')) is not int or latest['commits'] != len(commits)
-                    or type(latest.get('comments')) is not int or latest['comments'] != len(comments)):
-                raise GitHubError('Publication observation incomplete or changed')
-            return {'pr': latest, 'head_sha': latest['head']['sha'],
-                    'commits': commits, 'provider_comments': comments}
+        raw = self.api('GET', f'/repos/{repo}/pulls/{pr}')
+        original = anchor(raw)
+        commits = self._pages(f'/repos/{repo}/pulls/{pr}/commits')
+        comments = self.comments(repo, pr)
+        latest = self.api('GET', f'/repos/{repo}/pulls/{pr}')
+        if (anchor(latest) != original
+                or type(latest.get('commits')) is not int or latest['commits'] != len(commits)
+                or type(latest.get('comments')) is not int or latest['comments'] != len(comments)):
+            raise GitHubError('Publication observation incomplete or changed')
+        return {'pr': latest, 'head_sha': latest['head']['sha'],
+                'commits': commits, 'provider_comments': comments}
 
     def observe(self, repo, pr):
         info = self.repository(repo)

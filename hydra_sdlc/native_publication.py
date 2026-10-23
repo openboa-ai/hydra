@@ -1,11 +1,13 @@
 """Publish an accepted candidate through the existing owned effect engine."""
 import asyncio
 import copy
+from contextlib import contextmanager
 import json
 import re
 from threading import Event
 
 from .coordinator import coordinator_lock, operation_scope
+from .github import GitHub
 from .native_verification import _candidate, _source
 from .operations import OperationDenied
 from .project import _provider
@@ -37,6 +39,13 @@ def _review_requests(github, repo, config, observation, head):
         raise RuntimeError('Review observation incomplete')
     if len({row['sha'] for row in commits}) != len(commits):
         raise RuntimeError('Duplicate commit observation')
+    provider = config['review_provider']
+    markers = ('<!-- hydra-review-request:', '<!-- codex-pull-request-review-summary -->',
+               '<!-- codex-review-state:', '<!-- codex-security-review:')
+    comments = [row for row in comments if type(row) is dict and (
+        type(row.get('user')) is dict and row['user'].get('id') == provider['user_id']
+        and row['user'].get('login') == provider['login']
+        or type(row.get('body')) is str and any(marker in row['body'] for marker in markers))]
     for row in comments:
         if (type(row) is not dict or type(row.get('body')) is not str
                 or type(row.get('user')) is not dict
@@ -66,7 +75,7 @@ def _review_requests(github, repo, config, observation, head):
             observed.add(kind)
             refs.append({'source': 'github', 'kind': 'issue_comment',
                          'id': f'{repo}/comments/{identifier}'})
-    if not _provider(config, observation, head):
+    if not _provider(config, {**observation, 'provider_comments': comments}, head):
         return {'code', 'security'}, refs
     provider = config['review_provider']
     summaries = [row for row in comments if type(row) is dict
@@ -150,7 +159,8 @@ class Publication:
         self.key = (repo, number, *(self.pin[name] for name in ('attempt_id', 'head', 'contract_revision')))
 
     def source(self, expected):
-        return _source(self.runner, self.repo, self.number, expected, self.observer)
+        return _source(self.runner, self.repo, self.number, expected, self.observer,
+            github=getattr(self, '_publication_reader', None))
 
     def guard(self):
         if self.cancel.is_set():
@@ -185,21 +195,38 @@ class Publication:
         return _candidate(self.controller, self.repo, self.number, self.pin, self.repository_id,
             pending_actions=_PENDING, workspace_change_reason='candidate_changed')
 
+    @contextmanager
+    def _read_scope(self):
+        source = self.runner.github
+        if not isinstance(source, GitHub):
+            # Trusted injected dependencies retain their own existing contract.
+            yield source
+            return
+        reader = source.read_client()
+        previous = getattr(self, '_publication_reader', None)
+        self._publication_reader = reader
+        try:
+            with reader.read_budget(seconds=15, requests=32):
+                yield reader
+        finally:
+            self._publication_reader = previous
+
     def public_payloads(self):
         messages = self.runner.workspace.commit_messages(self.path, self.config['revision'])
         if type(messages) is not list or any(type(message) is not str for message in messages):
             raise RuntimeError('Candidate messages unavailable')
         if any(_CLOSING.search(message) for message in messages):
             raise OperationDenied('premature_issue_closure')
-        pulls = self.runner.github.pulls(self.repo, self.params['branch'])
-        if len(pulls) > 1:
-            raise OperationDenied('multiple_prs')
-        for pr in pulls:
-            if not self.runner.github.owns_pr(self.repo, self.number, pr):
-                raise OperationDenied('foreign_pr')
-            if (type(pr.get('title')) is not str or type(pr.get('body')) is not str
-                    or _CLOSING.search(pr['title']) or _CLOSING.search(pr['body'])):
-                raise OperationDenied('premature_issue_closure')
+        with self._read_scope() as reader:
+            pulls = reader.pulls(self.repo, self.params['branch'])
+            if len(pulls) > 1:
+                raise OperationDenied('multiple_prs')
+            for pr in pulls:
+                if not reader.owns_pr(self.repo, self.number, pr):
+                    raise OperationDenied('foreign_pr')
+                if (type(pr.get('title')) is not str or type(pr.get('body')) is not str
+                        or _CLOSING.search(pr['title']) or _CLOSING.search(pr['body'])):
+                    raise OperationDenied('premature_issue_closure')
 
     def reviewed_phase(self, record):
         if (record.get('resume_phase') is not None or record.get('phase') not in
@@ -227,9 +254,10 @@ class Publication:
         self.runner._record(self.repo, self.number, self.expected, **values)
         return self.expected
 
-    def check_pr(self, pr):
+    def check_pr(self, pr, *, github=None):
+        reader = self.runner.github if github is None else github
         if (type(pr) is not dict or type(pr.get('number')) is not int or pr['number'] < 1
-                or not self.runner.github.owns_pr(self.repo, self.number, pr)):
+                or not reader.owns_pr(self.repo, self.number, pr)):
             raise OperationDenied('foreign_pr')
         if pr.get('head', {}).get('sha') != self.pin['head']:
             raise OperationDenied('stale_publication')
@@ -252,26 +280,30 @@ class Publication:
                           else 'pr_ready' if pr else 'branch_published')}
 
     def read_publication(self):
-        remote = self.runner.github.ref(self.repo, self.params['branch'])
-        pulls = self.runner.github.pulls(self.repo, self.params['branch'])
-        if len(pulls) > 1:
-            raise OperationDenied('multiple_prs')
-        pr, observation, observed = None, None, set()
-        refs = []
-        if pulls:
-            pr = pulls[0]
-            self.check_pr(pr)
-            self.remember_receipt(remote, pr)
-            reader = getattr(self.runner.github, 'observe_publication', None)
-            observation = (reader if callable(reader) else self.runner.github.observe)(self.repo, pr['number'])
-            if (observation.get('head_sha') != self.pin['head']
-                    or observation.get('pr', {}).get('number') != pr['number']
-                    or not self.runner.github.owns_pr(self.repo, self.number, observation['pr'])):
-                raise RuntimeError('Publication source changed')
-            self.check_pr(observation['pr'])
-            observed, refs = _review_requests(self.runner.github, self.repo, self.config, observation, self.pin['head'])
-        self.remember_receipt(remote, pr, observed, refs)
-        return remote, pr, observation, observed
+        with self._read_scope() as reader:
+            remote = reader.ref(self.repo, self.params['branch'])
+            pulls = reader.pulls(self.repo, self.params['branch'])
+            if len(pulls) > 1:
+                raise OperationDenied('multiple_prs')
+            pr, observation, observed = None, None, set()
+            refs = []
+            if pulls:
+                pr = pulls[0]
+                self.check_pr(pr, github=reader)
+                self.remember_receipt(remote, pr)
+                if isinstance(reader, GitHub):
+                    observation = reader._publication_observation(self.repo, pr['number'])
+                else:
+                    method = getattr(reader, 'observe_publication', None)
+                    observation = (method if callable(method) else reader.observe)(self.repo, pr['number'])
+                if (observation.get('head_sha') != self.pin['head']
+                        or observation.get('pr', {}).get('number') != pr['number']
+                        or not reader.owns_pr(self.repo, self.number, observation['pr'])):
+                    raise RuntimeError('Publication source changed')
+                self.check_pr(observation['pr'], github=reader)
+                observed, refs = _review_requests(reader, self.repo, self.config, observation, self.pin['head'])
+            self.remember_receipt(remote, pr, observed, refs)
+            return remote, pr, observation, observed
 
     def reuse_intent(self):
         if self.cache.get(self.key) != self.runner._record_values(self.expected):
@@ -362,6 +394,8 @@ class Publication:
             raise OperationDenied('product_decision')
         self.source(self.expected)
         if self.params['branch'] != self.expected.get('branch'):
+            raise OperationDenied('stale_publication')
+        if self.params['expected_remote_head'] != self.expected.get('expected_head'):
             raise OperationDenied('stale_publication')
         self.config = {**self.config, 'intake_digest': self.expected['intake_digest']}
         remote, pr, observation, observed = self.read_publication()
