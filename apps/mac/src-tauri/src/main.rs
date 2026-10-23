@@ -202,37 +202,12 @@ impl Bridge {
 
     async fn mutate_locked(
         &self,
-        action: Action,
-        target: &Target,
+        _action: Action,
+        _target: &Target,
     ) -> Result<Snapshot, BridgeError> {
-        self.launch
-            .as_ref()
-            .map_err(|code| BridgeError::new(*code))?;
-        if let Target::Project { repository } = target {
-            if !protocol::repository_valid(repository) {
-                return Err(BridgeError::new("project_unregistered"));
-            }
-            let snapshot = self.call(None, None, false).await?;
-            if snapshot.project(repository).is_none() {
-                return Err(BridgeError::new("project_unregistered"));
-            }
-        }
-        match self.call(Some(action), Some(target), false).await {
-            Ok(snapshot) if snapshot.acknowledges(action, target) => Ok(snapshot),
-            Err(error) if error.code == "backend_unavailable" => Err(error),
-            Err(error) if error.code == "unsupported_runtime" => {
-                // An incompatible response cannot confirm whether the effect
-                // happened. Preserve its cause and reconcile without retrying.
-                let status = self.call(None, None, false).await.ok();
-                Err(BridgeError::with_status("unsupported_runtime", status))
-            }
-            _ => {
-                // The effect may have happened before the response was lost.
-                // Reconcile once; never resend the mutation automatically.
-                let status = self.call(None, None, false).await.ok();
-                Err(BridgeError::with_status("mutation_response_lost", status))
-            }
-        }
+        // V2 compatibility is read-only. Typed commands need their own exact
+        // expected values and qualified authority; never fall back to this path.
+        Err(BridgeError::new("legacy_control_read_only"))
     }
 
     async fn mutate(&self, action: Action, target: Target) -> Result<Snapshot, BridgeError> {
@@ -486,7 +461,7 @@ fn main() {
             let quit = tauri::menu::MenuItem::with_id(
                 app,
                 "app-quit",
-                "Stop All and Quit Hydra",
+                "Quit Hydra",
                 true,
                 Some("CmdOrCtrl+Q"),
             )?;
@@ -498,7 +473,7 @@ fn main() {
             let tray_quit = tauri::menu::MenuItem::with_id(
                 app,
                 "tray-quit",
-                "Stop All and Quit Hydra",
+                "Quit Hydra",
                 true,
                 None::<&str>,
             )?;
@@ -665,6 +640,61 @@ print(json.dumps(v))
         }
         assert_eq!(f.count(),1);
     }
+    #[cfg(unix)]
+    struct CompatibilityFixture {root:std::path::PathBuf,bridge:Bridge}
+    #[cfg(unix)]
+    impl CompatibilityFixture {
+        fn new()->Self {
+            use std::{fs,os::unix::fs::PermissionsExt};
+            let root=std::env::temp_dir().join(format!("hydra-compatibility-{}",read_epoch().unwrap()));
+            fs::create_dir(&root).unwrap();
+            let execution=serde_json::json!({"state":"unknown","active_count":null,"reason":"native_ownership_unconfirmed"});
+            let value=serde_json::json!({"schema_version":2,"observed_at":"2026-10-19T12:00:00Z","host_alias":"fixture","revision":4,
+                "runtime":{"identity_schema":1,"package":"openboa-hydra-sdlc","version":"0.2.1","code_digest":"a".repeat(64),
+                "code_digest_scope":"package_sources_at_startup","config_digest":"b".repeat(64),"control_binding_digest":"c".repeat(64),"identity_reason":null},
+                "global_mode":"paused","gate_status":"blocked","gate_reason":"host_paused","native_turn_control":"unsupported",
+                "execution":execution,"coverage":{"state":"unverified","reason":"schedule_coverage_unverified"},
+                "can_quit":false,"quit_reason":"schedule_coverage_unverified","remote":{"state":"not_requested","observed_at":null},
+                "projects":[{"repository":"example/alpha","override_mode":"paused","effective_mode":"paused","gate_status":"blocked",
+                "gate_reason":"host_paused","execution":execution,"work":[],"links":{"chat":null}}],"request":null});
+            let config=root.join("snapshot.json");fs::write(&config,serde_json::to_vec(&value).unwrap()).unwrap();
+            let runtime=root.join("runtime");
+            fs::write(&runtime,br#"#!/usr/bin/env python3
+import pathlib,sys
+a=sys.argv
+p=pathlib.Path(a[a.index('--config')+1])
+action=a[a.index('control')+1]
+if action!='status':
+ with open(str(p)+'.effects','a') as stream: stream.write(action+'\n')
+print(p.read_text())
+"#).unwrap();
+            fs::set_permissions(&runtime,fs::Permissions::from_mode(0o700)).unwrap();
+            let mut bridge=Bridge::new();bridge.launch=Ok(LaunchConfig{runtime,config,home:root.as_os_str().into()});
+            Self{root,bridge}
+        }
+        fn effects(&self)->String {std::fs::read_to_string(self.root.join("snapshot.json.effects")).unwrap_or_default()}
+    }
+    #[cfg(unix)]
+    impl Drop for CompatibilityFixture {fn drop(&mut self){let _=std::fs::remove_dir_all(&self.root);}}
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn compatibility_keeps_valid_legacy_status_readable() {
+        let f=CompatibilityFixture::new();let value=f.bridge.snapshot(false).await.unwrap();
+        assert!(value.project("example/alpha").is_some());assert!(!value.permits_quit());assert!(f.effects().is_empty());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn compatibility_rejects_all_legacy_mutations_before_runtime_dispatch() {
+        let f=CompatibilityFixture::new();let mut reasons=Vec::new();
+        for target in [Target::All,Target::Project{repository:"example/alpha".into()}] {
+            for action in [Action::Start,Action::Pause,Action::Resume,Action::Stop] {
+                reasons.push(f.bridge.mutate(action,target.clone()).await.unwrap_err().code);
+            }
+        }
+        assert!(f.effects().is_empty(),"A compatibility command reached the runtime: {}",f.effects());
+        assert!(reasons.iter().all(|reason|reason=="legacy_control_read_only"));
+    }
+
     #[tokio::test]
     async fn queued_refresh_cannot_spawn_after_quit_fence() {
         let bridge = Arc::new(Bridge::new());

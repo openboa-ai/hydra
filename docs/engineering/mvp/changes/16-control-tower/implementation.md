@@ -1,4 +1,4 @@
-# P16 implementation: the v3 read-side foundation
+# P16 implementation: lifecycle reads and compatibility
 
 Reuse P16 revision 4 and the maintained control-plane contract. The first
 increment connects the delivered P12 read bridge and reducer to an actual
@@ -12,11 +12,11 @@ actions. GitHub, Codex and resource providers retain their original records.
 The view owns only transient selection and the existing projection reducer's
 display cache. It creates no tracker, question store or persistent data copy.
 
-The existing local host controls retain their original implementation and
-authority boundary. They are visually separated from this read-side workflow
-view. V3 facts do not authorize those controls. New workflow, native, connection,
-delegation and cleanup actions remain disabled until their exact producer and
-typed consumer are qualified; no legacy operation substitutes for them.
+The visually separated V2 surface is a read-only compatibility view. Its status
+and guarded original navigation remain available, while observations do not
+authorize an operation. New workflow, native, connection, delegation and cleanup
+actions remain disabled until their exact producer and typed consumer are
+qualified; no legacy operation substitutes for them.
 
 ## Read and display behavior
 
@@ -67,10 +67,30 @@ A binding replacement clears the old read context, selection and cached view
 before fresh data can be accepted. Read retries use the existing source policy;
 no mutation is retried by this read-side component.
 
-The existing host surface is a compatibility boundary, not a new V3 command
-consumer. Complete V2 read-only migration and typed app command consumers remain
-follow-up P16 work. Unsupported V3 reads must show an explicit unavailable view;
-they do not synthesize V3 evidence from a V2 snapshot.
+The compatibility view is not a V3 command consumer. Unsupported V3 reads show
+an explicit unavailable view; they do not synthesize V3 evidence from a V2
+snapshot. Qualified typed app commands remain a separate P16 responsibility.
+
+## Read-only V2 compatibility
+
+CP section 9 and P16 section 6 require V2 observations to remain read-only in
+the new client. The compatibility renderer disables every legacy host/project
+action and Quit, explains that boundary and removes its write/shutdown dispatch
+code and command-pending state. Manually forcing a disabled handler still sends
+no operation. Status refresh, source navigation and appearance controls remain
+available through their existing guarded paths.
+
+The Rust legacy mutation entry rejects with `legacy_control_read_only` before
+runtime or provider dispatch. The same boundary also stops the native Quit
+flow from turning a shutdown attempt into an implicit global Stop. Unsupported
+shutdown remains held; a V2 observation cannot qualify execution termination.
+Renderer permissions for the retired control and shutdown commands are removed.
+Native menu wording and attempt feedback do not claim that work is stopping.
+
+The installed CLI and native MCP retain their existing meanings. This source
+change does not modify an installed runtime, operating setting or authority
+profile. Typed V3 commands and installed/remote operating acceptance are still
+required for the complete P16 outcome.
 
 ## Independent verification and completion
 

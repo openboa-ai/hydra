@@ -125,6 +125,45 @@ This is source-fixture screen evidence. It does not establish the installed
 runtime, authenticated remote answers, a real scoped command/read-back, actual
 native execution, two-project operation or resource retirement.
 
+## Read-only compatibility source verification
+
+This increment reuses P16 revision 4 and CP section 9. The qualified initial
+read-side main is `7cf2b89`. Existing CLI/MCP semantics and the V3 reader are
+preserved; the change closes the client compatibility boundary.
+
+Six frozen DOM cases execute the actual entry with a valid V2 host/project
+observation. Normal local refresh and guarded original navigation pass on the
+parent. Four purpose assertions reproduce enabled controls and legacy write or
+shutdown dispatch. Two Rust cases use a real bounded temporary runtime: normal
+status reads pass, while the parent dispatches all eight host/project actions.
+There are no harness errors or skipped cases in this baseline.
+
+The same eight cases pass after correction, with their assertions unchanged.
+The initial correction on `7cf2b89` passes all 389 frontend methods and 69 Rust
+methods. Integration with the qualified connection-guard main `925d87c` then
+passes all 412 frontend and 71 Rust methods, theme verification and
+frontend/native builds. Existing lifecycle, connection, wire, read-ordering and
+bridge assertions are retained. Final interface wording identifies runtime
+status and read-only inspection, without suggesting that its disabled controls
+can start or stop work. Source tests do not qualify native menus, installed
+shutdown, actual execution termination or remote operation.
+
+### Final compatibility screen observation
+
+The final built source on `925d87c` was rendered with the public V3 frame
+and a valid synthetic V2 host/project observation. Desktop light/dark and
+390px mobile views retain status refresh and guarded original navigation.
+All eight legacy host/project controls and Quit remain disabled. The browser
+reported no page errors, external page requests or horizontal overflow, and
+the owned one-shot browser closed normally. The current screen was shared
+before publication; no native or installed operation was performed.
+
+Built JavaScript SHA-256: `3c33a3213e3f18e1ec0aefffcd39e91b18ff026af2fc10176abbfa23de4f2f42`.
+
+Desktop light screenshot SHA-256: `50f797970ca0707067a0e43d0b662074b284a134fecd0d1516e041b628028a82`.
+
+Mobile screenshot SHA-256: `aaf067b6b630b783c7148d4a5fae2961983637f7326177d37a214950b46b4b7a`.
+
 ## Delivery and remaining responsibility
 
 Exact-head CI and independent code/security reviews are pending at preparation.
@@ -132,8 +171,9 @@ Merge and actual-main CI must be verified on their original provider records.
 The PR links those changing delivery results instead of rewriting this fixed
 source observation as an operating acceptance.
 
-P16 still owns qualified typed command consumers, complete V2 read-only migration,
-installed read/scoped-command observations and final operating-screen acceptance.
+P16 still owns qualified typed command consumers, installed read/scoped-command
+observations and final operating-screen acceptance. V2 read-only behavior is
+source-verified; its delivery and installed qualification are separate gates.
 The full v1 goal also retains remote Q&A/Pause/restart/explicit Resume, two real
 independent projects and complete owned-resource closure. Unsupported source
 mappings remain visibly unconfirmed and cannot authorize these operations.
