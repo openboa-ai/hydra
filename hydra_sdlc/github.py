@@ -314,6 +314,11 @@ class GitHub:
             raise GitHubError("Incomplete repository identity")
         return data
 
+    def native_planning_read(self, repo, source, planning):
+        """Observe selected Project priority without granting dispatch authority."""
+        from .github_planning import read_priority
+        return read_priority(self, repo, source, planning)
+
     def native_issue_planning_read(self, repo, source, planning, expected_source_digest):
         """Observe exact Issue-source priority without adoption or dispatch."""
         from .github_issue_planning import read_issue_priority
