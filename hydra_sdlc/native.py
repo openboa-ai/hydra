@@ -331,7 +331,13 @@ class NativeRunner(Runner):
 
 class NativeController:
     def __init__(self, github, workspace, *, repos, host_alias, lock_path, knowledge_revision=lambda: None, operations=None):
-        if not repos or any(not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r) for r in repos):
+        if isinstance(repos, (str, bytes)):
+            raise ValueError("A host repository allowlist is required")
+        try:
+            repos = tuple(repos)
+        except TypeError:
+            raise ValueError("A host repository allowlist is required") from None
+        if any(not isinstance(r, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r) for r in repos):
             raise ValueError("A host repository allowlist is required")
         self.repos = tuple({r.casefold(): r for r in repos}.values())
         self.lock_path = Path(lock_path)

@@ -201,7 +201,10 @@ def reported_status(value):
 
 def source_value(kind, value):
     require(kind in SOURCE_FIELDS)
-    obj(value, SOURCE_FIELDS[kind])
+    keys = SOURCE_FIELDS[kind]
+    if kind == 'admission' and type(value) is dict and 'default_project_mode' in value:
+        keys += ' default_project_mode'
+    obj(value, keys)
     nref = lambda v: nullable(v, ref)
     refs = lambda v: array(v, ref)
     nrefs = lambda v: nullable(v, refs)
@@ -305,6 +308,8 @@ def source_value(kind, value):
             nullable(value[key], code)
         nullable(value['open_ref'], url)
     elif kind == 'admission':
+        if 'default_project_mode' in value:
+            one(value['default_project_mode'], {'running', 'stopped'})
         integer(value['revision'])
         one(value['global_mode'], MODES)
         require(type(value['project_overrides']) is dict and len(value['project_overrides']) <= 1024)
@@ -465,7 +470,7 @@ def admission_fact(value, observations, names, binding):
             mode = snapshot['global_mode']
             if mode == 'running':
                 require(bool(names))
-                modes = {snapshot['project_overrides'].get(name, 'running') for name in names}
+                modes = {snapshot['project_overrides'].get(name, snapshot.get('default_project_mode', 'running')) for name in names}
                 require(len(modes) == 1)
                 mode = next(iter(modes))
             require(value['value'] == {'running': 'allowed', 'paused': 'paused', 'stopped': 'stopped'}[mode])

@@ -118,8 +118,9 @@ def create_server(controller, *, command_config_path=None, command_context_provi
         operations = getattr(getattr(controller, "runner", None), "operations", None)
         if operations is not None:
             from .operations import OperationDenied
+            from .connection_profile import public_snapshot
             try:
-                result["controls"] = operations.snapshot()
+                result["controls"] = public_snapshot(operations.snapshot())
             except OperationDenied as exc:
                 result["controls"] = {"reason": exc.reason, "gate_status": "unknown"}
         result["native_context"] = probe_context(ctx, profile)

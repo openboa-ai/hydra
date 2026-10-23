@@ -21,6 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from .connection_profile import project_mode, connection_reason, restrictive_connection_change
 
 
 MAX_SETTINGS_BYTES = 65536
@@ -88,10 +89,22 @@ def _invalid_constant(value):
 
 
 def _validate(value):
-    if not isinstance(value, dict) or set(value) != _KEYS:
+    if not isinstance(value, dict):
         raise ValueError("Invalid keys")
-    if type(value["version"]) is not int or value["version"] != 1:
+    version = value.get('version')
+    if type(version) is not int or version not in {1, 2}:
         raise ValueError("Invalid version")
+    if set(value) != (_KEYS if version == 1 else _KEYS | {'connection_config'}):
+        raise ValueError('Invalid keys')
+    if version == 2:
+        binding = value['connection_config']
+        if (type(binding) is not dict or set(binding) != {'profile', 'path'}
+                or type(binding['profile']) is not int or binding['profile'] != 1
+                or type(binding['path']) is not str or not 1 <= len(binding['path']) <= 4096
+                or not Path(binding['path']).is_absolute() or '..' in Path(binding['path']).parts
+                or str(Path(binding['path'])) != binding['path']
+                or any(ord(char) < 32 or ord(char) == 127 for char in binding['path'])):
+            raise ValueError('Invalid connection binding')
     revision = value["revision"]
     if type(revision) is not int or not 0 <= revision <= MAX_REVISION:
         raise ValueError("Invalid revision")
@@ -156,7 +169,7 @@ class OperatingControl:
     ``snapshot`` and ``reason`` never create directories, files, or repair data.
     """
 
-    def __init__(self, lock_path, repos=()):
+    def __init__(self, lock_path, repos=(), *, configuration=None, config_path=None):
         try:
             path = Path(lock_path).expanduser().absolute()
         except (TypeError, ValueError, RuntimeError) as exc:
@@ -174,6 +187,14 @@ class OperatingControl:
         self.settings_path = path.with_name(path.name + ".operations.json")
         self.control_lock_path = path.with_name(path.name + ".operations.lock")
         self._key = str(self.control_lock_path)
+        self._configuration_path = config_path
+        self._loaded_configuration = None
+        if configuration is not None and (config_path is not None or configuration.get('connection_schema') == 1):
+            from .runtime_identity import _configuration
+            try:
+                self._loaded_configuration = _configuration(configuration)
+            except (ValueError, TypeError, OSError):
+                raise OperationDenied('connection_binding_invalid') from None
 
     def _target(self, repository):
         if repository is None:
@@ -372,17 +393,47 @@ class OperatingControl:
         with self._locked(exclusive=False, create=False, blocking=blocking) as held:
             return self._readback(self._read(held)[0])
 
+    def _connection_guard(self, snapshot, repository, *, cleanup=False, limiting=False):
+        if snapshot['version'] == 1:
+            if self._loaded_configuration is not None and self._loaded_configuration.get('connection_schema') == 1:
+                raise OperationDenied('connection_binding_required')
+            return
+        binding = snapshot['connection_config']
+        if self._configuration_path is None or binding['path'] != self._configuration_path:
+            raise OperationDenied('connection_binding_required')
+        try:
+            from .control import load_host_config
+            from .runtime_identity import _configuration
+            cfg = load_host_config(binding['path'])
+            current = _configuration(cfg)
+            valid_lock = Path(cfg['lock_path']).with_name(Path(cfg['lock_path']).name + '.operations.lock')
+            compatible_cleanup = ((cleanup or limiting)
+                and restrictive_connection_change(self._loaded_configuration, current))
+            if ((current != self._loaded_configuration and not compatible_cleanup)
+                    or current.get('connection_schema') != 1
+                    or valid_lock != self.control_lock_path or not self.repos.issubset(cfg['repos'])):
+                raise OperationDenied('connection_config_changed')
+            if repository is not None and repository not in cfg['repos']:
+                raise OperationDenied('operation_state_repository_unregistered')
+            reason = connection_reason(cfg, repository)
+            if reason and not cleanup and not limiting:
+                raise OperationDenied(reason)
+        except (ValueError, TypeError, OSError):
+            raise OperationDenied('connection_config_unavailable') from None
+
     @staticmethod
     def _reason(snapshot, repository):
         mode = snapshot["global_mode"]
         if mode != "running":
             return "host_" + mode
-        mode = snapshot["projects"].get(repository, "running") if repository is not None else "running"
+        mode = project_mode(snapshot, repository) if repository is not None else "running"
         return None if mode == "running" else "project_" + mode
 
     def reason(self, repo=None):
         try:
-            return self._reason(self.snapshot(), self._target(repo))
+            snapshot, repository = self.snapshot(), self._target(repo)
+            self._connection_guard(snapshot, repository)
+            return self._reason(snapshot, repository)
         except OperationDenied as exc:
             return exc.reason
 
@@ -415,6 +466,7 @@ class OperatingControl:
             snapshot = self._read(held)[0]
             if expected_revision is not None and snapshot["revision"] != expected_revision:
                 raise OperationDenied("stale_revision")
+            self._connection_guard(snapshot, repository, cleanup=cleanup)
             reason = self._reason(snapshot, repository)
             if reason is not None and not cleanup:
                 raise OperationDenied(reason)
@@ -472,10 +524,11 @@ class OperatingControl:
                 mode = _ACTIONS[action]
                 if expected_revision is not None and snapshot["revision"] != expected_revision:
                     raise OperationDenied("stale_revision")
+                self._connection_guard(snapshot, repository, limiting=mode != 'running')
                 if repository is not None and mode == "running" and snapshot["global_mode"] != "running":
                     raise OperationDenied("host_" + snapshot["global_mode"])
                 if expected_revision is not None:
-                    stored = snapshot["global_mode"] if repository is None else snapshot["projects"].get(repository, "running")
+                    stored = snapshot["global_mode"] if repository is None else project_mode(snapshot, repository)
                     if stored == mode or (stored == "stopped" and mode == "paused"):
                         return self._readback(snapshot) if observed else snapshot
                 if snapshot["revision"] == MAX_REVISION:

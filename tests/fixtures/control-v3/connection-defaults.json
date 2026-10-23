@@ -1,0 +1,14 @@
+{
+  "fixture_version": 1,
+  "cases": [
+    {"name":"v2-missing-override-is-stopped","mode":"v2","accepted":true,"alpha":"allowed","beta":"stopped"},
+    {"name":"v2-explicit-override-runs","mode":"explicit","accepted":true,"alpha":"allowed","beta":"allowed"},
+    {"name":"host-pause-precedes-default","mode":"paused","accepted":true,"alpha":"paused","beta":"paused"},
+    {"name":"legacy-default-stays-running","mode":"legacy","accepted":true,"alpha":"allowed","beta":"allowed"},
+    {"name":"missing-override-cannot-claim-allowed","mode":"wrong_fact","accepted":false},
+    {"name":"default-cannot-be-a-boolean","mode":"boolean","accepted":false},
+    {"name":"paused-is-not-a-default-format","mode":"bad_default","accepted":false},
+    {"name":"private-binding-is-not-a-public-field","mode":"private_field","accepted":false},
+    {"name":"absent-legacy-default-cannot-prove-stopped","mode":"missing_default","accepted":false}
+  ]
+}

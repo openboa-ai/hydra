@@ -27,7 +27,7 @@ _REPOSITORY = re.compile(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9_.-]{1,100}\Z")
 _PROVIDER = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z", re.ASCII)
 _CONFIG_FIELDS = frozenset({"repos", "host_alias", "workspace_root", "lock_path",
     "lifecycle_provider", "storage_provider", "knowledge_repo", "runtime_python", "project_threads",
-    "native_admission_control"})
+    "native_admission_control", "connection_schema", "project_connections"})
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
@@ -180,7 +180,7 @@ def _configuration(cfg):
     if not isinstance(cfg, dict) or set(cfg) - _CONFIG_FIELDS:
         raise ValueError("invalid configuration")
     repos = cfg.get("repos")
-    if not isinstance(repos, list) or not 1 <= len(repos) <= 1024:
+    if not isinstance(repos, list) or not (0 if 'connection_schema' in cfg else 1) <= len(repos) <= 1024:
         raise ValueError("invalid configuration")
     repos = sorted(_repository(repo) for repo in repos)
     if len(set(repos)) != len(repos):
@@ -207,6 +207,10 @@ def _configuration(cfg):
         if repo not in repos or not isinstance(thread, str) or str(uuid.UUID(thread)) != thread:
             raise ValueError("invalid thread")
     value["project_threads"] = dict(threads)
+    from .connection_profile import declarations
+    connections = declarations(cfg, repos)
+    if connections is not None:
+        value.update(connection_schema=1, project_connections=connections)
     if "native_admission_control" in cfg:
         value["native_admission_control"] = parse_admission_profile(cfg["native_admission_control"])
     return value

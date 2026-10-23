@@ -1,13 +1,11 @@
 {
   "identifier": "main",
-  "description": "Bundled Hydra window operating controls only.",
+  "description": "Bundled Hydra lifecycle and read-only compatibility views.",
   "windows": ["main"],
   "platforms": ["macOS"],
   "permissions": [
     "allow-status",
-    "allow-control",
     "allow-open-record",
-    "allow-request-quit",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

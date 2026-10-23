@@ -95,6 +95,43 @@ publication command or qualify an installed/native control connection.
 Final-source CI, independent code/security reviews, protected delivery and actual
 main checks remain pending for this candidate.
 
+## Integration with current connection guards
+
+The existing publication branch incorporates verified main `7a9db88fa66f5a16f1e3129b65bf2d2a0ef87dc0`
+through a normal feature-branch integration. P14 revision 4 remains unchanged.
+The current project-connection guard, public MCP controls and bounded
+publication route are preserved together. No installation grant is activated.
+
+All original publication, guard, reconciliation and bounded-read assertions
+are byte-identical. Three additional integration cases use actual temporary
+configuration, admission stores, registered verification and Git remotes.
+Missing explicit running admission rejects publication; a connected/running
+scope publishes its exact candidate and one owned PR; changing the fixed
+configuration to disconnect immediately before the real push prevents that
+writer from dispatching, even with the original cached controller.
+
+The three cases pass with no failures, errors or skips. The initial
+251-method impact run passes 249 methods, including all original 29
+publication methods and the three integration cases. Two admission cases
+fail because the custom local runner launches their children outside the
+candidate checkout and loads a preserved older checkout. Bounded import
+probes independently confirm the different source locations and digests.
+After selecting the candidate working directory, all 45 unchanged admission
+cases pass with no failures, errors or skips. The original failures remain
+recorded; the 251 unique methods are covered across those runs, without
+claiming a single 251-method passing execution. No product source or test
+assertion changes for this runner correction. The three new cases are
+integration controls, not a new-feature RED claim. The prior behavioral RED
+evidence remains in the original publication record. Python source and root
+test bytes match that impact run; the additional upstream app changes retain
+their own exact-main CI. Only the two maintained-contract manifest digests
+change; selected cases, five selectors, sections, exclusions and fixtures
+retain their original meaning.
+
+New exact-head CI and independent code/security reviews are required after
+integration. The earlier source CI and review history are retained as
+historical evidence. No source test qualifies installed or remote operation.
+
 ## Remaining qualification
 
 The earlier main-CI preservation increment was delivered separately in
