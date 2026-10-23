@@ -1,8 +1,8 @@
 import { mountControlTower } from './tower.ts';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ObservationFeedback, Observations, actionDisabled, admissionSummary, appliedNotice, count, isStale, nextActionLabel, parseSnapshot, pendingLabel, title, waitReasonLabel, workRecord } from './model.ts';
-import type { Action, FeedbackSource, ObservationTicket, Project, RecordRequest, Snapshot, Target } from './model.ts';
+import { ObservationFeedback, Observations, admissionSummary, count, isStale, nextActionLabel, parseSnapshot, title, waitReasonLabel, workRecord } from './model.ts';
+import type { FeedbackSource, ObservationTicket, Project, RecordRequest, Snapshot, Target } from './model.ts';
 import './tokens.css';
 import './style.css';
 
@@ -11,7 +11,6 @@ let snapshot: Snapshot | null = null;
 let remoteSnapshot: Snapshot | null = null;
 const observations = new Observations();
 const feedback = new ObservationFeedback(observations);
-let pending: { action: Action; target: Target } | null = null;
 let localBusy = false;
 let remoteBusy = false;
 let quitting = false;
@@ -41,7 +40,6 @@ function description(label: string, value: string): HTMLElement {
   const node = element('div', undefined, 'fact'); node.append(element('dt', label), element('dd', value)); return node;
 }
 function targetName(target: Target): string { return target.scope === 'all' ? 'all projects' : target.repository; }
-function equalTarget(a: Target, b: Target): boolean { return a.scope === b.scope && (a.scope === 'all' || (b.scope === 'project' && a.repository === b.repository)); }
 function restoreFocus(label: string | null): void {
   if (!label) return;
   Array.from(app.querySelectorAll<HTMLElement>('button[aria-label], summary[aria-label]')).find(node => node.getAttribute('aria-label') === label && !(node instanceof HTMLButtonElement && node.disabled))?.focus({ preventScroll: true });
@@ -55,6 +53,7 @@ document.addEventListener('focusin', () => { if (!renderingFocus) supersedePendi
 window.addEventListener('blur', supersedePendingFocus);
 
 const messages: Record<string, string> = {
+  legacy_control_read_only: 'This read-only compatibility view can inspect status and originals. Controls and shutdown require a supported command connection.',
   launch_configuration_invalid: 'Launch Hydra with an installed runtime and host configuration. No operation has been enabled.',
   unsupported_runtime: 'This runtime uses an unsupported control protocol. Connect a compatible Hydra runtime; no current control state is confirmed.',
   invalid_response: 'The runtime returned an invalid response. Execution state remains unconfirmed.',
@@ -111,7 +110,7 @@ async function refresh(remote = false, manual = false): Promise<void> {
   render();
   try {
     const accepted = receive(await invoke('status', { refresh: remote }), ticket);
-    feedback.reconcileRefresh(accepted !== null, { manual, pending: !!pending, quitting });
+    feedback.reconcileRefresh(accepted !== null, { manual, pending: false, quitting });
   }
   catch (value) { receiveFailure(value, ticket, 'observation'); }
   finally {
@@ -121,18 +120,8 @@ async function refresh(remote = false, manual = false): Promise<void> {
   }
 }
 
-async function control(action: Action, target: Target): Promise<void> {
-  if (actionDisabled(action, target, snapshot, !!pending || quitting)) return;
-  const ticket = observations.begin();
-  pending = { action, target }; feedback.clear(); notice = ''; render();
-  try {
-    const result = receive(await invoke('control', { action, target }), ticket);
-    if (!result) { feedback.show('A newer runtime observation replaced this request. Refresh to reconcile its result.'); return; }
-    if (result.request?.status === 'applied') {
-      notice = appliedNotice(action, target, result);
-    } else feedback.show(result.request?.reason ? title(result.request.reason) : 'This request is held. No enabling change was confirmed.');
-  } catch (value) { receiveFailure(value, ticket); }
-  finally { pending = null; render(); restorePendingFocus(`${title(action)} ${targetName(target)}`); }
+function compatibilityReadOnly(): void {
+  feedback.show(messages.legacy_control_read_only!); notice = ''; render();
 }
 
 async function openRecord(request: RecordRequest): Promise<void> {
@@ -141,21 +130,13 @@ async function openRecord(request: RecordRequest): Promise<void> {
   catch (value) { receiveFailure(value, ticket); render(); }
 }
 
-async function requestQuit(): Promise<void> {
-  if (quitting || pending) return;
-  quitTicket = observations.begin();
-  quitting = true; feedback.clear(); notice = 'Stopping new work and checking owned executions before quitting…'; render();
-  try { await invoke('request_quit'); }
-  catch (value) { receiveFailure(value, quitTicket ?? undefined); quitting = false; quitTicket = null; notice = ''; render(); restorePendingFocus('Stop and quit Hydra'); }
-}
-
 function controls(target: Target): HTMLElement {
   const group = element('div', undefined, 'controls'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', `Controls for ${targetName(target)}`);
   for (const [action, symbol] of [['start', '▷'], ['pause', 'Ⅱ'], ['resume', '↻'], ['stop', '□']] as const) {
-    const node = button(title(action), () => { void control(action, target); }, action === 'resume' ? 'primary' : '', symbol);
-    node.disabled = actionDisabled(action, target, snapshot, !!pending || quitting);
+    const node = button(title(action), compatibilityReadOnly, action === 'resume' ? 'primary' : '', symbol);
+    node.disabled = true;
     node.setAttribute('aria-label', `${title(action)} ${targetName(target)}`);
-    node.title = action === 'start' || action === 'resume' ? 'Allow new eligible work; does not resume external schedules or native turns.' : 'Block new work; actual execution termination must be confirmed separately.';
+    node.title = messages.legacy_control_read_only!;
     group.append(node);
   }
   return group;
@@ -166,14 +147,14 @@ function projectCard(project: Project): HTMLElement {
   const card = element('article', undefined, 'project');
   const header = element('div', undefined, 'project-heading');
   const identity = element('div'); identity.append(element('p', project.repository.split('/')[0], 'owner'), element('h3', project.repository.split('/')[1]));
-  const state = pending && equalTarget(pending.target, target) ? pendingLabel(pending.action) : `New work ${project.gate_status === 'unknown' ? 'unconfirmed' : project.gate_status}`;
+  const state = `New work ${project.gate_status === 'unknown' ? 'unconfirmed' : project.gate_status}`;
   header.append(identity, badge(state, project.effective_mode === 'unknown' ? 'warning' : 'neutral', project.effective_mode === 'running' ? '▷' : project.effective_mode === 'paused' ? 'Ⅱ' : project.effective_mode === 'unknown' ? '?' : '□'));
   card.append(header);
   const facts = element('dl', undefined, 'facts');
   facts.append(description('Admission', project.gate_status === 'allowed' ? 'New work allowed' : project.gate_status === 'blocked' ? 'New work blocked' : 'Unconfirmed'), description('Execution', title(project.execution.state)), description('Active', count(project.execution.active_count)));
   card.append(facts);
   card.append(element('p', `Individual setting · ${project.override_mode === null ? 'Inherit global' : title(project.override_mode)} · Effective setting · ${title(project.effective_mode)}`, 'helper'));
-  if (project.override_mode && project.override_mode !== 'running') card.append(element('p', `Individual ${project.override_mode === 'paused' ? 'Pause' : 'Stop'} is preserved when all projects resume.`, 'preserved'));
+  if (project.override_mode && project.override_mode !== 'running') card.append(element('p', 'The individual setting is preserved independently of the global setting.', 'preserved'));
   if (project.execution.reason || project.gate_reason) card.append(element('p', title(project.execution.reason ?? project.gate_reason!), 'reason'));
   const remoteProject = remoteSnapshot?.projects.find(row => row.repository === project.repository);
   const workSource = project.work.length ? project : remoteProject ?? project;
@@ -227,7 +208,7 @@ function render(): void {
   const focused = document.activeElement?.getAttribute('aria-label');
   const fragment = document.createDocumentFragment();
   const header = element('header', undefined, 'app-header');
-  const identity = element('div'); identity.append(element('p', 'PROJECT OPERATIONS', 'eyebrow'), element('h1', 'Hydra'));
+  const identity = element('div'); identity.append(element('p', 'RUNTIME STATUS', 'eyebrow'), element('h1', 'Hydra'));
   const utilities = element('div', undefined, 'utilities');
   const themeButton = button(theme === 'system' ? 'System theme' : `${title(theme)} theme`, () => {
     theme = theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system';
@@ -240,11 +221,11 @@ function render(): void {
   const host = element('section', undefined, 'host'); host.setAttribute('aria-label', 'Host controls');
   const top = element('div', undefined, 'host-top');
   const hostTitle = element('div'); hostTitle.append(element('h2', 'All projects'), element('p', snapshot?.host_alias ?? 'Connecting to installed runtime', 'host-name'));
-  const label = quitting ? 'Stopping…' : pending?.target.scope === 'all' ? pendingLabel(pending.action) : snapshot ? `New work ${snapshot.gate_status === 'unknown' ? 'unconfirmed' : snapshot.gate_status}` : 'Unconfirmed';
+  const label = quitting ? 'Checking shutdown…' : snapshot ? `New work ${snapshot.gate_status === 'unknown' ? 'unconfirmed' : snapshot.gate_status}` : 'Unconfirmed';
   const hostSymbol = snapshot?.global_mode === 'running' ? '▷' : snapshot?.global_mode === 'paused' ? 'Ⅱ' : snapshot?.global_mode === 'stopped' ? '□' : '?';
   top.append(hostTitle, badge(label, !snapshot || snapshot.global_mode === 'unknown' ? 'warning' : 'neutral', hostSymbol));
-  host.append(top, controls({ scope: 'all' }));
-  host.append(element('p', 'Start / Resume allow new work. Pause / Stop block new work. Global Resume preserves individual settings.', 'helper'));
+  host.append(top, element('p', messages.legacy_control_read_only!, 'helper'), controls({ scope: 'all' }));
+  host.append(element('p', 'Observed settings describe admission only. They do not establish native execution or permission to quit.', 'helper'));
   if (snapshot) host.append(element('p', `Global setting · ${title(snapshot.global_mode)} · ${admissionSummary(snapshot)}`, 'helper'));
   const hostFacts = element('dl', undefined, 'facts host-facts');
   hostFacts.append(description('Gate', snapshot ? title(snapshot.gate_status) : 'Unconfirmed'), description('Execution', snapshot ? title(snapshot.execution.state) : 'Unknown'), description('Active', snapshot ? count(snapshot.execution.active_count) : 'Unknown'));
@@ -253,7 +234,7 @@ function render(): void {
   main.append(host);
 
   const limits = element('section', undefined, 'capability-note');
-  limits.append(icon('ⓘ'), element('p', 'Native continuation is unavailable. Start and Resume allow eligible Hydra work; they do not start Codex turns or change external schedules.'));
+  limits.append(icon('ⓘ'), element('p', 'Native execution is unconfirmed. Admission settings do not prove an active turn or safe shutdown.'));
   main.append(limits);
   const live = element('div', undefined, 'feedback'); live.setAttribute('aria-live', 'polite'); live.setAttribute('role', 'status');
   if (feedback.error) { const p = element('p', undefined, 'error'); p.append(icon('!'), element('span', feedback.error)); live.append(p); }
@@ -289,7 +270,7 @@ function render(): void {
   }
   const footerActions = element('div', undefined, 'footer-actions');
   const localRefresh = button(localBusy ? 'Reading…' : 'Refresh', () => { void refresh(false, true); }, 'quiet'); localRefresh.disabled = localBusy || quitting; localRefresh.setAttribute('aria-label', 'Refresh local status');
-  const quit = button(quitting ? 'Stopping…' : 'Stop & Quit', () => { void requestQuit(); }, 'quiet'); quit.disabled = quitting || !!pending; quit.setAttribute('aria-label', 'Stop and quit Hydra'); quit.title = snapshot?.quit_reason ? title(snapshot.quit_reason) : 'Request global Stop and quit only after owned execution termination is confirmed.';
+  const quit = button('Quit Hydra', compatibilityReadOnly, 'quiet'); quit.disabled = true; quit.setAttribute('aria-label', 'Quit Hydra'); quit.title = messages.legacy_control_read_only!;
   footerActions.append(localRefresh, quit); footer.append(health, footerActions); fragment.append(footer);
   renderingFocus = true;
   try { app.replaceChildren(fragment); restoreFocus(focused ?? null); }
@@ -302,12 +283,12 @@ void listen<{ state: 'stopping' | 'blocked'; code?: string; status?: unknown }>(
   quitting = payload.state === 'stopping';
   if (payload.status) { try { receive(payload.status, quitTicket ?? observations.begin()); } catch { receiveFailure(new Error('invalid_response')); } }
   if (payload.state === 'blocked') { feedback.show(messages[payload.code ?? 'quit_blocked'] ?? messages.quit_blocked!); notice = ''; }
-  else notice = 'Stopping new work and checking owned executions before quitting…';
+  else notice = 'Checking shutdown support. No execution termination is confirmed.';
   if (payload.state === 'blocked') quitTicket = null;
   render();
 }).catch(() => { feedback.show('The desktop connection is unavailable. Open the installed Hydra application.'); render(); });
 void refresh();
 const hostControls = document.querySelector<HTMLDetailsElement>('#host-controls');
 hostControls?.addEventListener('toggle', () => { if (hostControls.open) void refresh(); });
-setInterval(() => { if (hostControls?.open && !pending && !quitting) void refresh(); }, 5_000);
+setInterval(() => { if (hostControls?.open && !quitting) void refresh(); }, 5_000);
 mountControlTower(document.querySelector<HTMLElement>('#workflow')!);
