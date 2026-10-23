@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from hydra_sdlc import github_planning
-from test_github_planning import Fixture, values
+from test_github_planning import Fixture, membership, value, values
 
 
 class PlanningBoundaryTests(unittest.TestCase):
@@ -45,6 +45,32 @@ class PlanningBoundaryTests(unittest.TestCase):
         result = Fixture().read()
         self.assertEqual((result['coverage'], result['priority'], result['reason']),
                          ('complete', 42, None))
+
+    def test_deleted_unused_mapping_option_invalidates_existing_selected_value(self):
+        members, fields = membership(), values()
+        for raw in (members, fields):
+            raw['data']['priorityField']['options'] = [{'id': 'option-critical'}]
+        result = Fixture(members=[members], fields=[fields]).read()
+        self.assertNotEqual(result['coverage'], 'complete')
+        self.assertIsNone(result['priority'])
+        self.assertEqual(result['reason'], 'planning_unavailable')
+
+    def test_deleted_configured_option_cannot_make_explicit_null_known_zero(self):
+        members, fields = membership(), values([value(None)])
+        for raw in (members, fields):
+            raw['data']['priorityField']['options'] = [{'id': 'option-critical'}]
+        result = Fixture(members=[members], fields=[fields]).read()
+        self.assertNotEqual(result['coverage'], 'complete')
+        self.assertIsNone(result['priority'])
+
+    def test_replaced_unused_option_cannot_make_unset_field_known_zero(self):
+        members, fields = membership(), values([])
+        for raw in (members, fields):
+            raw['data']['priorityField']['options'] = [
+                {'id': 'option-critical'}, {'id': 'replacement-low'}]
+        result = Fixture(members=[members], fields=[fields]).read()
+        self.assertNotEqual(result['coverage'], 'complete')
+        self.assertIsNone(result['priority'])
 
 
 if __name__ == '__main__':

@@ -77,6 +77,7 @@ def read_priority(client,repository,source,planning):
         for option in options:
             _require(type(option) is dict);option_ids.append(_text(option.get('id'),200))
         _require(len(set(option_ids))==len(option_ids))
+        _require(set(policy['option_priorities']) <= set(option_ids))
         context=current,tuple(sorted(option_ids))
         current_credential=client._authenticated_fingerprint
         if identity is not None:

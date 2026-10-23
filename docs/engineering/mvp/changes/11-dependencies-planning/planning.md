@@ -23,6 +23,10 @@ unset field yields policy default zero. Missing/duplicate/redacted items, partia
 coverage, field/type drift, unmapped options and access failures remain unavailable;
 the reader does not fall back to Issue priority.
 
+Every configured option ID must still exist in the observed field, even when this
+Issue does not currently use it. A deleted or replaced unused option invalidates
+the protected mapping for selected, explicit-null and unset values alike.
+
 One read is bounded by 15 seconds and eight HTTP reservations including transport
 authentication, three pages and 255 entries per collection, and 128 KiB of canonical
 JSON per decoded response. Nested caller bounds remain effective. Source/field/
@@ -46,6 +50,14 @@ could outlive the read deadline. Three new methods retain a valid positive contr
 and reproduce three assertion failures across those negative cases, without errors
 or skips. The same methods pass after validating the type before set membership
 and checking the remaining deadline after constructing the complete result.
+
+Independent review of `ceb0be2` found that stable observations of a field could
+still omit an unused configured option. Three additional regression methods
+reproduced that stale-mapping acceptance for selected, explicit-null and unset
+values. They pass after checking all configured option IDs on every source read.
+All 358 selected impact methods pass with zero failures, errors or skips. Original
+test assertions are preserved. Earlier reviews and CI do not qualify the correction;
+the final head requires fresh remote evidence.
 
 Cases cover ID mapping and display-name changes, negative/null/unset priorities,
 missing/duplicate/redacted/foreign items, field/type/option drift, pagination and
