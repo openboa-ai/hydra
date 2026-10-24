@@ -54,6 +54,9 @@ def parser():
     control.add_argument("--repository-bindings", help="Internal retained numeric read hints; never a source grant")
     control.add_argument("--repository", help="Registered read scope; never a mutation target")
     control.add_argument("--cursor", help="Opaque continuation for this exact registered read scope")
+    connection = sub.add_parser('connection', help='Inspect and change one trusted host connection configuration')
+    connection.add_argument('action', choices=('preview', 'apply', 'status'))
+    connection.add_argument('--config', type=Path, required=True)
     return p
 
 
@@ -111,6 +114,13 @@ def operate_control(args):
                           repository=args.project, refresh=args.refresh)
 
 
+def operate_connection(args, *, github=None, stdin=None):
+    from .connections import execute_connection
+    source = sys.stdin if stdin is None else stdin
+    raw = None if args.action == 'status' else source.read(65537)
+    return execute_connection(args.config, args.action, raw, github=github)
+
+
 def _control_json(args, result):
     if getattr(args, "projection_schema", 2) == 3:
         from .projection import encode
@@ -120,6 +130,10 @@ def _control_json(args, result):
 
 async def operate(args, *, github=None, workspace=None, execute=None, capabilities=None,
                   operations=None, emit=print):
+    if args.command == 'connection':
+        result = operate_connection(args, github=github)
+        emit(json.dumps(result, ensure_ascii=False))
+        return result
     if args.command == "read-context":
         result = read_connection_context(args.binding_epoch)
         emit(json.dumps(result, ensure_ascii=False))
