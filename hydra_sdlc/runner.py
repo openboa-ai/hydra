@@ -436,7 +436,8 @@ class Runner:
             original = ceiling[3].pop('reuse_intent', None)
             if original is not None:
                 if (self._record_values(record) != original or record.get('pending_action') != action
-                        or any(record.get(key) != value for key, value in values.items())):
+                        or any(record.get(key) != value for key, value in values.items()
+                               if publishing or key != 'phase')):
                     raise OperationDenied('publication_unconfirmed' if publishing else 'delivery_unconfirmed')
                 reason = self._latest(repo, number, config)
                 if reason:
@@ -506,9 +507,9 @@ class Runner:
             "pending": ("post_merge_checks", "observe_post_merge_checks"),
             "failed": ("post_merge_failed", "diagnose_post_merge"),
         }.get(check_state, ("post_merge_evidence_unknown", "reconcile_post_merge_evidence"))
-        if check_state is None:
-            # A failed read can coincide with a complete provider outage. Report
-            # the unknown observation without attempting another provider call.
+        if check_state is None or (record.get("phase") == "completed" and record.get("pending_action") is None):
+            # Current check evidence cannot erase confirmed delivery history.
+            # An unavailable read also avoids another provider write.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
         try:
             return self._wait(repo, number, record, reason, phase="observing", next_action=action)
@@ -1174,10 +1175,6 @@ class Runner:
         reason = self._latest(repo, number, config, include_dependencies=False)
         closing_recovery = reason == "issue_closed" and (record.get("pending_action") == "close_issue"
                                                        or record.get("phase") == "completed")
-        if closing_recovery and record.get("phase") == "completed":
-            # Keep failed completion-label cleanup discoverable while current
-            # delivery evidence is rechecked; never dispatch another close.
-            record = {**record, "phase": "closing", "pending_action": "close_issue"}
         if reason and not closing_recovery:
             if reason == "intake_changed":
                 return self._wait(repo, number, record, reason, phase="uncertain")
@@ -1644,11 +1641,31 @@ class Runner:
         check_state = self._observe_post_merge(repo, config, merge_sha)
         if check_state != "success":
             return self._post_merge_wait(repo, number, record, check_state)
-        if not retire and record.get("phase") == "completed" and record.get("pending_action") is None:
+        if record.get("phase") == "completed" and record.get("pending_action") is None:
             reason = self._latest(repo, number, config)
-            return {"repository": repo, "issue": number,
-                    "action": "completed" if reason == "issue_closed" else "waiting",
-                    **({"pr": pr["number"]} if reason == "issue_closed" else {"reason": reason or "completion_reopened"})}
+            if reason != "issue_closed":
+                return {"repository": repo, "issue": number, "action": "waiting",
+                        "reason": reason or "completion_reopened"}
+            if retire:
+                # Preserve the broad path's final current-check observation
+                # before it considers its separate resource responsibility.
+                check_state = self._observe_post_merge(repo, config, merge_sha)
+                if check_state != "success":
+                    return self._post_merge_wait(repo, number, record, check_state)
+                issue = self.github.issue(repo, number)
+                active = any((item.get("name") if isinstance(item, dict) else item) == "hydra:active"
+                             for item in issue.get("labels", []))
+                if record.get("wait_reason") is not None:
+                    cleanup = (record.get("next_action") == "resource_cleanup"
+                               or self._completion_callback() is not None)
+                    record = self._record(repo, number, record, wait_reason=None,
+                                          next_action="resource_cleanup" if cleanup else "completed")
+                elif active and record.get("next_action") != "resource_cleanup":
+                    # An equal completed record retries only its owned active-label
+                    # cleanup; it does not invent another close intent or comment.
+                    record = self._record(repo, number, record)
+                return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
+            return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
         boundary = self._latest(repo, number, config)
         if boundary and not (closing_recovery and boundary == "issue_closed"):
             return self._wait(repo, number, record, "delivery_boundary_changed")

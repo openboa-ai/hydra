@@ -111,7 +111,13 @@ class Delivery:
     def after_progress(self):
         previous = self.expected
         self.expected = copy.deepcopy(self.source(self.state['record'])['record'])
-        if (previous.get('pending_action') is None
+        prior = self.runner._record_values(previous)
+        current = self.runner._record_values(self.expected)
+        wait_fields = {'phase', 'wait_reason', 'next_action'}
+        same_unsent_intent = (self.cache.get(self.key) == prior
+            and all(prior.get(name) == current.get(name)
+                    for name in prior.keys() | current.keys() if name not in wait_fields))
+        if ((previous.get('pending_action') is None or same_unsent_intent)
                 and self.expected.get('pending_action') in _PENDING - {None}
                 and self.action_key(self.expected) not in self.attempted):
             if len(self.cache) >= 128 and self.key not in self.cache:

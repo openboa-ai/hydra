@@ -256,6 +256,36 @@ methods without claiming one 504-method passing execution. Exact-head CI,
 independent reviews, protected delivery and actual main checks remain required. Source fixtures do not qualify
 an installed authority grant or native remote operation.
 
+## Review correction: delivery waits and completed replay
+
+The exact published candidate's independent code review identifies two recovery
+defects under P14-R3/R4/R7. Main checks can change after a close intent is saved;
+this owner's wait-only updates must preserve an already-known undispatched
+intent. They must never create that proof for an unknown request. Replaying
+completed work must report current check evidence without rewriting confirmed
+completion or silently closing a human-reopened Issue.
+
+Six new methods reproduce six assertion failures before correction, with zero
+errors or skips. The final seven-method set passes, including a positive
+control for retrying owned active-label cleanup without another close or
+progress comment. All 37 selected squash/active-label/legacy methods pass.
+The final 288-method impact run has 287 passes, zero failures or errors and one
+unchanged Linux-only ownership case skipped on macOS. It includes delivery,
+post-merge, native ownership, completion and recovery. The skipped Linux case
+must run successfully in the final-head Linux CI before delivery; its test
+source and original skipped local result are preserved.
+
+The shared broad path now preserves terminal progress instead of fabricating a
+new closing intent during label-cleanup recovery. Two existing active-label
+expectations require completed history and no pending close; their ownership,
+discovery, no-model, no-close and cleanup assertions remain. The cleanup
+positive control passes before this shared-path refinement. The original
+fourteen delivery contract methods remain unchanged.
+
+These source checks require fresh exact-head CI and independent reviews before
+protected delivery, followed by the actual merge revision's checks. They do not
+qualify installed commands, remote native operation or full P14/v1 acceptance.
+
 ## Remaining qualification
 
 The earlier main-CI preservation increment was delivered separately in
