@@ -163,7 +163,19 @@ def _public(value):
         _require(value.context_id is None and value.receipt_id is None)
 
 
-def decision_plan(selection, calls, record, public, *, resume=False, linked_source_attempt=None,
+def decision_root(context):
+    basis = context_basis(context)
+    return {'decision': {'key': basis['key'], 'context_sha256': context.sha256},
+            'resume_attempt': basis['resume_attempt']}
+
+
+def consumed_decision(record, context, linked_source_attempt, root):
+    basis = context_basis(context)
+    return (linked_source_attempt == context.key[2] and
+            (root == decision_root(context) or root is None and record.get('attempt_id') == basis['resume_attempt']))
+
+
+def decision_plan(selection, calls, record, public, *, resume=False, linked_source_attempt=None, native_root=None,
                   predecessor_public=None, predecessor_calls=None):
     """Choose one bounded next operation; never perform it or confer authority."""
     hold = lambda reason: DecisionPlan('hold', reason)
@@ -181,8 +193,7 @@ def decision_plan(selection, calls, record, public, *, resume=False, linked_sour
         return hold('decision_evidence_conflict' if public.status == 'conflict' else 'decision_evidence_unknown')
     # An exact authenticated resumed record is stronger than an uncertain PATCH
     # response. Current policy/head/spec/ownership guards still belong to Runner.
-    if (record.get('attempt_id') == basis['resume_attempt']
-            and linked_source_attempt == context.key[2]
+    if (consumed_decision(record, context, linked_source_attempt, native_root)
             and record.get('contract_revision') == basis['contract_revision']
             and record.get('intake_digest') == basis['intake_digest']):
         return (DecisionPlan('reuse_resume' if resume else 'publish_complete', 'decision_reconciled')
@@ -202,14 +213,13 @@ def decision_plan(selection, calls, record, public, *, resume=False, linked_sour
                 predecessor_calls.resume_writes))
                 or predecessor_public.status not in {'context', 'pair'}):
             return hold('decision_predecessor_unknown')
-        consumed = (record.get('attempt_id') == previous_basis['resume_attempt']
-                    and linked_source_attempt == context.key[2])
+        consumed = consumed_decision(record, selection.predecessor, linked_source_attempt, native_root)
         if predecessor_calls.resume_writes and not consumed and predecessor_calls.resume_state != 'not_applied':
             return hold('decision_resume_unknown')
         if (predecessor_public.status == 'pair' or consumed) and selection.replan is None:
             return hold('decision_amendment_required')
         if consumed:
-            source_attempt = previous_basis['resume_attempt']
+            source_attempt = record['attempt_id']
     if (record.get('attempt_id') != source_attempt or record.get('wait_reason') != 'product_decision'
             or record.get('next_action') != 'operator_decision'
             or record.get('phase') in {'executing', 'completed', 'merging'}

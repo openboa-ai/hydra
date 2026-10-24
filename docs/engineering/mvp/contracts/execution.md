@@ -1,6 +1,6 @@
 # 실행·검증·전달·복구 계약
 
-Revision: 8; design contract, 2026-10-22. Installation authority increment.
+Revision: 10; design contract, 2026-10-25. Original technical-effect coverage across restart.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 구현할 동작과
 검증 기준을 정의한다. 현재 코드가 모두 충족한다는 선언이 아니며 코드·설치·예약 실행을 재개하지 않는다.
@@ -729,3 +729,128 @@ answer reception, wake, retry and ordinary continuation cannot issue an implicit
 Resume. Host Pause/Stop remains dominant. Revoking the profile does not clear a
 project's Pause or terminate native work. Preserve exact expectations and original
 effect read-back; the profile adds no command journal or lifecycle mirror.
+
+## Native decision continuity across technical replans
+
+A technical replan continues an already consumed decision; an answer amendment
+selects a different DecisionPin. Never infer the consumed round from source attempt
+alone. Preserve the existing two-field `hydra-decision-context:v1` marker and its
+legacy getter semantics. Native writes additionally retain one public root marker
+in the same authenticated progress comment:
+
+```text
+<!-- hydra-native-decision-root:v1 {"decision":DecisionPin,"resume_attempt":UUID} -->
+```
+
+The root is immutable across technical successors of one consumed decision. Its
+UUID is the original IntentBasis.resume_attempt, not the current technical successor. Its DecisionPin is the exact consumed public context. These
+are public decision identities only; no native task ID, private answer, transcript
+or private-source hash is persisted. Initial native resume records the root with
+the progress transition. A previously resumed record without this marker is
+recognized only at the exact original resume UUID with its exact authenticated
+source/resume relation; descendant consumption is never inferred from that
+legacy relation. An authorized native successor may establish its root from this
+positively recognized original consumption.
+
+Read progress, source/resume relation and native root from one authenticated
+comment body. This is a consistent observation, not remote compare-and-swap.
+Current progress C plus its exact relation (source X,current C), matching root and
+unchanged selected public pair establish current service continuity after restart.
+Private selection, adoption, authority, work, policy, ownership and admission are
+still re-read. Missing, malformed or conflicting root information holds a native
+descendant. A round-2 answer must not reuse a round-1 successor merely because
+both rounds have source attempt X. Existing amendment/replan requirements remain.
+
+An accepted answer amendment retains the prior root while pending and recognizes
+it as consumed-predecessor evidence, including after a technical successor. Only
+consuming the amendment's pinned resume atomically replaces that root with the new
+DecisionPin and original resume UUID. Require positive round-2 consumption and
+checkpoint after a round-1 technical successor.
+
+Only the existing authorized exact `hydra: replan <current attempt> ready`
+transition may perform a technical rotation of the unchanged consumed decision. It requires a confirmed stopped
+or inactive assignment, unchanged exact old progress, matching consumed root,
+current authorized marker reference/body and all ordinary current guards. Reconcile
+an unrelated uncertain external effect through its original owner before issuing
+a conflicting replan write; a ready marker does not resolve that effect.
+
+The public effect identity is (numeric repository, Issue, old attempt). The
+successor UUID is deterministic from that identity and independent of repeated
+ready comments. Validate that it is fresh and distinct from both the old attempt
+and consumed root; collision, prior unrelated use or inconsistent derivation holds. The internal TechnicalReplanIntent binds that effect, exact old
+and proposed new records, consumed public root and exact current authorization
+reference/revision. Different authorization, selection, old state or intent digest
+cannot authorize replacement writes for a previous unresolved effect.
+
+TechnicalReplanCoverage is a separate normalized qualified-source capability,
+not DecisionCallCoverage and not a provider-field assumption. It binds the stable
+effect and exact intent digest to complete physical-write count and dispatch state.
+A first write requires confirmed no-dispatch. A retry requires definitive ended
+nonapplication, unchanged expected state and a known remaining bound (three total).
+Missing/incomplete/unknown coverage holds. Local attempted counts never decrease,
+and lagging original reads cannot erase a known attempt. A new ready comment,
+controller restart, command ID or transient-witness loss never resets that budget.
+
+A server-owned successor permit authorizes one exact old-to-new body dispatch,
+including exceptions. Check UUID rotation before generic decision-context marker
+creation, so `next_action=decision_context_*` cannot bypass the permit. Write the
+successor, source/resume relation and immutable root together; exact read-back is
+required before subsequent effects or assignment. A confirmed successor is reused.
+After a lost acknowledgment, old or partial progress permits read-back only unless
+the separate original coverage proves definitive nonapplication. Deterministic
+UUIDs aid rediscovery and do not themselves authorize another PATCH.
+
+Required deterministic cases include authorized technical replan and restart,
+repeated technical successors with one unchanged answer, round-2 amendment after a
+round-1 successor, missing/conflicting consumed-pin binding, generic writer UUID
+rotation/marker-branch bypass, mixed progress/marker reads, source loss, changed
+ready authorization, call-count regression, and lost ACK with old versus exact
+successor read-back. Unknown initial decision-resume writes and unrelated unknown
+effects retain their existing holds. A fixed normalized fixture provides deterministic implementation evidence; it does
+not qualify actual source capability or installed operation.
+
+### Original technical-effect coverage before conflicting work
+
+Before native continuation may write progress or return an assignment, obtain
+complete original technical-effect coverage for the numeric repository and Issue.
+Apply the same guard before publishing an accepted answer amendment. This is a
+separate qualified source capability, not absence of entries in a Hydra cache.
+An unavailable reader, incomplete history or unidentifiable pending effect holds
+the affected operation. Ordinary legacy work remains independent.
+
+The normalized work observation names the repository and Issue, complete coverage,
+and the relevant physical technical effects. Each effect binds its stable key to
+the consumed public root, original intent digest where available, physical count,
+coverage and dispatch state. The reader must cover all possibly unsettled effects
+and every locally known attempted effect requested by the controller. A complete
+empty observation is usable only when the qualified original source establishes
+absence; losing a process, map entry, response or source page never establishes it.
+No provider field, historical-call API or installed mapping is assumed to exist.
+
+An effect is settled by original evidence that its physical requests definitively
+ended without application, original evidence of completed application/read-back,
+or the current authenticated progress at its deterministically derived successor
+with its exact public root and source/current relation. A model's success text is
+insufficient. Unknown effects that do not match this original result block a
+conflicting progress write, answer-amendment consumption or assignment. Changing
+the current phase, selecting a new answer or restarting does not remove that hold.
+Already settled effects may be omitted only when complete original coverage and
+the explicitly requested known-effect checks still establish their settlement.
+A round-2 amendment after a genuinely settled technical replan must still consume
+its own pinned resume and reach a normal checkpoint.
+
+Retain the highest observed physical count and intent binding beginning with the
+first coverage read, including reads before a dispatch. Reject a smaller count
+within the invocation or a later call. Increment from the maximum of original
+observations and actual local attempts. A source read cannot erase that maximum;
+a different authorization/intent cannot replace a previously attempted effect.
+These bounded process-local fences are not a journal or source of restart facts.
+After restart, the qualified original reader remains mandatory.
+
+Deterministic coverage must include unknown successor PATCH followed by an
+accepted amendment both with a live cache and with an empty restarted cache;
+current-phase changes; exact successor read-back; settled positive amendments;
+known effects omitted from incomplete/lagging history; and a count sequence of
+2/not_applied then 0/not_dispatched that dispatches no additional write. Preserve
+original test assertions while extending source fixtures with the newly required
+independent history facts. Native qualification and actual operation remain open.

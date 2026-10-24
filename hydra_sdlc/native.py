@@ -81,6 +81,8 @@ class NativeRunner(Runner):
         self.retired_verification_requests = {}
         self.decision_source = None
         self._continuation_scope = ContextVar('hydra_native_continuation', default=None)
+        self.technical_replan_attempts = {}
+        self.technical_replan_observations = {}
 
     def _decision_frame(self):
         bound = self._policy_scope.get()
@@ -111,6 +113,15 @@ class NativeRunner(Runner):
             frame.check()
         return super()._guard(repo, cleanup=cleanup)
 
+    def _effect(self, repo, callback, *args, **kwargs):
+        continuation = self._continuation_scope.get()
+        if continuation is not None and kwargs.get('_checkpoint_effect') == 'progress':
+            writer = callback
+            def callback(*values, **options):
+                continuation.progress_dispatches += 1
+                return writer(*values, **options)
+        return super()._effect(repo, callback, *args, **kwargs)
+
     def _decision_preflight(self, repo):
         frame = self._decision_frame()
         continuation = self._continuation_scope.get()
@@ -132,6 +143,12 @@ class NativeRunner(Runner):
     def _record_options(self):
         frame = self._decision_frame()
         return {'preserve_decision_context': True} if frame is not None and frame.consumed else {}
+
+    def _replan_record(self, repo, number, record, **values):
+        frame = self._decision_frame()
+        if frame is not None and frame.consumed:
+            return frame.replan(record, values)
+        return super()._replan_record(repo, number, record, **values)
 
     def _operator_context(self, repo, number, config, record, task):
         frame = self._decision_frame()
@@ -365,6 +382,7 @@ class NativeRunner(Runner):
                 boundary.run.ticket, boundary.run.draft = (step, scope), draft
             return None, {**recovery, "action": "waiting",
                           "reason": "assignment_ticket_unconfirmed" if held else "assignment_ticket_unknown"}
+        before_intent = continuation.progress_dispatches if continuation is not None else None
         try:
             record = self._intent(repo, number, config, record, None,
                 head=state['head'], execution_mode="native", native_step=step, native_phase=phase,
@@ -377,8 +395,12 @@ class NativeRunner(Runner):
                 **({'native_completion': 'verify_only'} if boundary is not None else {}),
                 **({"correction_reason": correction[0], "correction_attempt": correction[1]} if correction else {}))
         except (RuntimeError, ValueError, OSError):
+            if continuation is not None:
+                continuation.release_undispatched_ticket(step, scope, before_intent)
             return None, {**recovery, "action": "waiting", "reason": "assignment_record_unknown"}
         if record is None:
+            if continuation is not None:
+                continuation.release_undispatched_ticket(step, scope, before_intent)
             return None, {**recovery, "action": "waiting", "reason": "assignment_record_unconfirmed"}
         # A ticket plus intent is not yet a grant. Recheck protected policy
         # outside the admission lock, then guard the final handoff itself.
@@ -632,19 +654,27 @@ class NativeController:
             if residual_workers():
                 return {"action": "waiting", "reason": "confirm_previous_stopped"}
             record = self.runner.github.progress(repo, n)
-            if record and record.get("native_step"):
-                if record.get("native_outcome") == "stopped":
-                    config = self.runner._work_config(repo, n, record)
-                    target = config["repository"]
-                    if self.runner._policy_changed(target, config, record):
-                        return {"repository": target, "issue": n, "action": "waiting",
-                                "reason": "policy_changed"}
-                    self.runner._bind_policy(target, config)
-                    self.runner.consumed.add(record["native_step"])
-                    self.runner._record(repo, n, record)
-                else:
-                    return {"action": "waiting", "reason": "confirm_previous_stopped"}
+            held = self._prepare_begin(repo, n, record)
+            if held is not None:
+                return held
             return await self.runner.step(repo, n)
+
+    def _prepare_begin(self, repo, number, record):
+        """Reconcile a confirmed stop inside the caller's existing host lock."""
+        if residual_workers():
+            return {"action": "waiting", "reason": "confirm_previous_stopped"}
+        if not record or not record.get("native_step"):
+            return None
+        if record.get("native_outcome") != "stopped":
+            return {"action": "waiting", "reason": "confirm_previous_stopped"}
+        config = self.runner._work_config(repo, number, record)
+        target = config["repository"]
+        if self.runner._policy_changed(target, config, record):
+            return {"repository": target, "issue": number, "action": "waiting", "reason": "policy_changed"}
+        self.runner._bind_policy(target, config)
+        self.runner.consumed.add(record["native_step"])
+        self.runner._record(repo, number, record)
+        return None
 
     def _bound(self, repo, n, attempt_id, head, contract_revision, step_id=None, *, stopping=False):
         record = self.runner.github.progress(repo, n)

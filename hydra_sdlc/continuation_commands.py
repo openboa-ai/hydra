@@ -12,8 +12,8 @@ from threading import Event
 
 from . import control_commands as c
 from . import projection as p
-from .coordinator import (HostBusy, coordinator_lock, operation_scope, residual_workers,
-                          native_assignment_matches)
+from .coordinator import (HostBusy, coordinator_lock, operation_scope,
+                          native_assignment_matches, confirm_native_assignment)
 from .operations import OperationDenied
 from .verification_commands import progress_observation
 from .workflow_binding import WorkflowBinding
@@ -27,6 +27,7 @@ class ContinuationScope:
         self.expected, self.source, self.frame = None, None, None
         self.observed, self.read_failed = None, False
         self.confirmed_refs, self.uncertain, self.cancel = [], False, Event()
+        self.progress_dispatches = 0
 
     def read(self):
         try:
@@ -81,6 +82,9 @@ class ContinuationScope:
         if decision_frame is not None and not cleanup:
             decision_frame.check()
             self.frame = decision_frame
+            # Source checks perform remote IO. Preserve the caller's full
+            # progress fence if another writer changed it during those reads.
+            self.prepare()
         _, control, caller = self.binding.validate()
         if handoff:
             self._require_handoff(caller)
@@ -88,6 +92,20 @@ class ContinuationScope:
                     self.command['expected']['admission_revision'])
         with control.guard(repository, cleanup=cleanup, expected_revision=revision):
             yield
+
+    def release_undispatched_ticket(self, step, assignment_scope, before):
+        """Release only this call's ticket when no intent writer was invoked."""
+        if self.progress_dispatches != before:
+            return
+        try:
+            # The assignment was never returned and its writer never started.
+            # This clears one local ticket, without restoring external progress
+            # or inferring that any previously dispatched execution has ended.
+            with self.runner.operations.guard(self.repository, cleanup=True):
+                if native_assignment_matches(step, assignment_scope):
+                    confirm_native_assignment(step)
+        except (OSError, RuntimeError, ValueError):
+            pass  # Unconfirmed ownership remains held.
 
     def before_handoff(self):
         _, _, caller = self.binding.validate()
@@ -178,8 +196,9 @@ async def execute_continue_command(config_path, command, *, context_provider, gi
             with operation_scope(runner.operations, repository,
                     expected_revision=command['expected']['admission_revision']), coordinator_lock(controller.lock_path):
                 scope.prepare()
-                if residual_workers() or scope.expected and scope.expected.get('native_step'):
-                    return reply('waiting', 'confirm_previous_stopped')
+                held = controller._prepare_begin(repository, scope.number, scope.expected)
+                if held is not None:
+                    return reply('waiting', held['reason'])
                 result = asyncio.run(runner.step(repository, scope.number))
                 scope.prepare()
                 assignment = ({key: value for key, value in result.items() if key != 'progress_hint'}

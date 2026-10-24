@@ -42,10 +42,18 @@ def apply_public_decision(controller, repository, number, params, *, repository_
             raise OperationDenied('effect_not_allowed')
         with coordinator_lock(controller.lock_path), operation_scope(runner.operations, repository):
             validate_apply_target(controller, repository, number, repository_id)
+            def prepare(kind):
+                if prepare_effect is not None:
+                    prepare_effect(kind)
+                if params['round'] > 1:
+                    from .native_replan import reconcile_work_effects
+                    source = validate_apply_target(controller, repository, number, repository_id, mutation=True)
+                    reconcile_work_effects(runner, runner.decision_source, repository, number,
+                        source['record'], timeout=15)
             coordinator = DecisionCoordinator(runner.github, repository, number,
                 read_source=read_source, effect_guard=effect_guard,
                 expected_key=(repository_id, number, params['source_attempt'], params['round']),
-                expected_proposal=source_check, cancel=cancel, prepare_effect=prepare_effect)
+                expected_proposal=source_check, cancel=cancel, prepare_effect=prepare)
             return coordinator.apply()
     except OperationDenied as exc:
         return DecisionEffectResult('waiting', exc.reason)

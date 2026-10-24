@@ -223,7 +223,7 @@ def command_input_schema():
         'effect_key': {'type': 'string', 'pattern': '^decision:[0-9a-f-]{36}:[1-9][0-9]*$'},
         'parameters': obj({'operation': {'const': 'decision_apply'}, 'proposal_ref': resource,
             'source_attempt': uid, 'round': positive})})
-    progress = obj({'attempt_id': uid, 'head': sha, 'contract_revision': sha,
+    progress = obj({'attempt_id': uid, 'head': nullable(sha), 'contract_revision': sha,
         'phase': {'type': 'string', 'pattern': '^[a-z0-9][a-z0-9_-]{0,119}$'}})
     continuation = obj({**common, 'action': {'const': 'workflow_step'},
         'target': checkpoint['properties']['target'],

@@ -37,7 +37,7 @@ def validate_parameters(command):
                 pin = params['progress']
                 p.obj(pin, 'attempt_id head contract_revision phase')
                 p.require(_uuid(pin['attempt_id']))
-                p.sha(pin['head'])
+                p.nullable(pin['head'], p.sha)
                 p.sha(pin['contract_revision'])
                 p.code(pin['phase'])
     except (ValueError, TypeError, KeyError):

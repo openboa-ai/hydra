@@ -87,9 +87,10 @@ function workflowReceipt(pending:Command,result:CommandResult) {
     const progress=p.progress;
     if (progress!==null) {
       valid(progress && typeof progress==="object" && !Array.isArray(progress));
-      const pin=progress as Record<string,unknown>;
-      valid(["attempt_id","head","contract_revision"].every(field=>r[field]===pin[field]));
     }
+    // The pin is the submitted precondition. The parser binds the receipt to
+    // actual post-state progress; successful continuation may change its head
+    // or attempt. Keep the captured input intact.
   }
   if (kind==="publication") valid(r.branch===p.branch);
   if (kind==="delivery") {

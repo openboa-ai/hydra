@@ -29,6 +29,7 @@ class WorkDecisionGuard:
         self.runner, self.repository, self.number = runner, repository, number
         self.provider = getattr(runner, 'decision_source', None)
         self.coordinator, self.mode, self.consumed = None, None, False
+        self.technical_guard = None
 
     def _current(self, *, timeout=15):
         reader = self.runner.github.read_client()
@@ -52,10 +53,14 @@ class WorkDecisionGuard:
                     or repository['id'] < 1 or type(repository.get('full_name')) is not str
                     or repository['full_name'].casefold() != self.repository.casefold()):
                 raise OperationDenied('decision_source_unavailable')
-            linked = (reader.decision_context_attempt(self.repository, self.number, record.get('attempt_id'))
-                      if record else None)
+            original = reader.decision_progress_source(self.repository, self.number) if record else None
+            if original is not None and original['record'] != record:
+                raise OperationDenied('decision_source_changed')
+            context = original['decision_context'] if original else None
+            linked = (context['source_attempt'] if context is not None
+                      and context['resume_attempt'] == record.get('attempt_id') else None)
             attempts = {value for value in (linked, record.get('attempt_id') if record else None) if value}
-            found = False
+            found = original is not None and original['native_root'] is not None
             for row in reader.comments(self.repository, self.number):
                 if type(row) is not dict:
                     raise OperationDenied('decision_source_unavailable')
@@ -135,6 +140,9 @@ class WorkDecisionGuard:
                     or record.get('execution_mode') != 'native'
                     or record.get('branch') != 'hydra/issue-' + str(self.number)):
                 raise OperationDenied('decision_binding_mismatch')
+            from .native_replan import reconcile_work_effects
+            reconcile_work_effects(self.runner, self.provider, self.repository, self.number, record,
+                timeout=remaining())
         remaining()
         return observed, record
 
@@ -203,7 +211,14 @@ class WorkDecisionGuard:
             raise OperationDenied('decision_source_unavailable') from None
 
     def check(self):
-        return self.reconcile()
+        record = self.reconcile()
+        if self.technical_guard is not None:
+            self.technical_guard()
+        return record
+
+    def replan(self, record, values):
+        from .native_replan import technical_replan
+        return technical_replan(self, record, values)
 
     def public_context(self):
         if not self.consumed or self.coordinator is None:

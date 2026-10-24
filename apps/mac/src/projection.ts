@@ -493,8 +493,9 @@ function receipt(value: unknown, index: Index): void {
     for (const key of ["intent_ref", "context_ref", "resolved_ref"]) ref(v[key]);
   }
   if (v.kind === "continuation") {
-    uuid(v.attempt_id); sha(v.head); sha(v.contract_revision);
+    uuid(v.attempt_id); nullable(v.head, sha); sha(v.contract_revision);
     one(v.boundary, "progress_recorded assignment_returned existing_result_reconciled");
+    requireValue(v.head !== null || v.boundary === "progress_recorded");
   }
   if (["verification", "verification_review", "publication", "delivery"].includes(v.kind)) candidate(v.candidate);
   if (v.kind === "verification") {
@@ -562,7 +563,7 @@ function commandResult(value: unknown, index: Index): void {
     else {
       requireValue(progress.kind === "issue_comment");
     }
-    if (progress.kind === "issue_comment" || kind === "checkpoint") {
+    if (progress.kind === "issue_comment" || kind === "checkpoint" || kind === "continuation") {
       const proofs = (v.observed_refs as unknown[]).map(e => index.get(String(plain(e).observation_key))!)
         .filter(o => { const resource=plain(o.resource); return resource.source === "github" &&
           resource.kind === "progress" && resource.id === progress.id; });
@@ -575,6 +576,10 @@ function commandResult(value: unknown, index: Index): void {
         const checkpoint=plain(v.receipt), assignment=plain(checkpoint.assignment), source=plain(proof.value);
         requireValue(source.head === checkpoint.checkpoint_head && source.attempt_id === assignment.attempt_id &&
           source.contract_revision === assignment.contract_revision && source.native_step === null);
+      }
+      if (kind === "continuation") {
+        const source=plain(proof.value), result=plain(v.receipt);
+        requireValue(["attempt_id", "head", "contract_revision"].every(k=>source[k]===result[k]));
       }
     }
   }

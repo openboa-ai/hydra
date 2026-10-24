@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 import time
 
 from .decision_protocol import (DecisionCallCoverage, DecisionSelection,
-    InvalidDecisionFacts, _calls, decision_plan, validate_selection)
+    InvalidDecisionFacts, _calls, decision_plan, decision_root, validate_selection)
 from .github import GitHubError, _number, _repo
 from .operations import OperationDenied
 from . import projection as p
@@ -117,7 +117,7 @@ class DecisionCoordinator:
 
     def _observe(self, *, resume=False):
         snapshot = self._snapshot()
-        source = self.client.progress_source(self.repository, self.issue_number)
+        source = self.client.decision_progress_source(self.repository, self.issue_number)
         if source is None:
             raise OperationDenied('decision_checkpoint_missing')
         public = self._public(snapshot)
@@ -126,11 +126,12 @@ class DecisionCoordinator:
             predecessor = read_public_decision(self.client, self.repository, self.issue_number,
                 snapshot.selection.predecessor, known_context_id=snapshot.predecessor_context_id,
                 known_receipt_id=snapshot.predecessor_receipt_id)
-        linked = self.client.decision_context_attempt(self.repository, self.issue_number,
-            source['record'].get('attempt_id'))
+        context = source['decision_context']
+        linked = (context['source_attempt'] if context is not None
+                  and context['resume_attempt'] == source['record'].get('attempt_id') else None)
         plan = decision_plan(snapshot.selection, snapshot.calls, source['record'], public,
             resume=resume, linked_source_attempt=linked, predecessor_public=predecessor,
-            predecessor_calls=snapshot.predecessor_calls)
+            predecessor_calls=snapshot.predecessor_calls, native_root=source['native_root'])
         self._remaining()
         return snapshot, source, public, plan
 
@@ -212,18 +213,20 @@ class DecisionCoordinator:
             self._remaining()
             self.local['resume_writes'] += 1
             try:
-                self.client.record_checkpoint(self.repository, self.issue_number, plan.resume_record)
+                self.client.record_checkpoint(self.repository, self.issue_number, plan.resume_record,
+                    native_decision_root=decision_root(snapshot.selection.context))
             except GitHubError:
                 pass
         # A mutable PATCH is attempted once. An old or partial read-back cannot
         # authorize another PATCH, a new UUID, or an assignment.
-        observed = self.client.progress_source(self.repository, self.issue_number)
+        observed = self.client.decision_progress_source(self.repository, self.issue_number)
         if observed is not None:
             values = {name: value for name, value in observed['record'].items()
                       if name not in {'repository_id', 'issue_number', 'version'}}
-            linked = self.client.decision_context_attempt(self.repository, self.issue_number,
-                                                        observed['record'].get('attempt_id'))
-            if values == plan.resume_record and linked == snapshot.selection.context.key[2]:
+            context = observed['decision_context']
+            linked = context['source_attempt'] if context is not None else None
+            if (values == plan.resume_record and linked == snapshot.selection.context.key[2]
+                    and observed['native_root'] == decision_root(snapshot.selection.context)):
                 return DecisionEffectResult('applied', 'decision_reconciled',
                     self._resume_receipt(observed), observed)
         return DecisionEffectResult('unknown', 'decision_resume_unknown', progress_source=observed)

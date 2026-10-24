@@ -9,7 +9,7 @@ from unittest.mock import patch
 from hydra_sdlc.decision_coordinator import DecisionCoordinator
 from hydra_sdlc.github import GitHubError
 from hydra_sdlc.work_decisions import WorkDecisionObservation
-from hydra_sdlc.public_decisions import receipt_body
+from hydra_sdlc.public_decisions import context_basis, receipt_body
 import test_decision_apply_command as command_fixture
 import test_decision_coordinator as effect_fixture
 import test_public_decisions as wire
@@ -42,6 +42,17 @@ class WorkflowTransport(effect_fixture.DecisionTransport):
 
 
 class WorkSource(command_fixture.ProposalSource):
+    def read_technical_replan_effects(self, repository_id, number, *, known_effects, timeout):
+        from hydra_sdlc.native_replan import TechnicalReplanEffects
+        allowed = {wire.ATTEMPT, context_basis(self.chosen.context)['resume_attempt']}
+        complete = not known_effects
+        for _, payload in self.transport.effects:
+            body = payload.get('body', '')
+            if '<!-- hydra-progress:v1 ' in body:
+                record = json.loads(body.split('<!-- hydra-progress:v1 ', 1)[1].split(' -->', 1)[0])
+                complete = complete and record['attempt_id'] in allowed
+        return TechnicalReplanEffects(repository_id, number, complete, ())
+
     def read_work(self, repository, number, record, *, timeout):
         if repository != wire.REPO or number != 4:
             raise RuntimeError('fixture work changed')

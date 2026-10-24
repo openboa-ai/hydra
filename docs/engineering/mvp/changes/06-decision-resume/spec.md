@@ -1,8 +1,8 @@
 # P06 — 같은 질문의 결정을 적용하고 원 단계 재개
 
-상태: 설계 후보 · revision 2 · 2026-10-19. P06은 계획 ID이며 실제 PR 번호가 아니다.
+Status: Design candidate, revision 5, 2026-10-25. P06 is a plan ID, not a pull-request number.
 수용 판본·구현 head·D/L/O 결과는 [공통 변경 절차](../README.md)에 연결한다. 현재 모든 실행은 NOT RUN이다.
-검토 기준은 CP revision 7·EX revision 7·NC revision 8다. 구현 시 수용한 immutable 판본을 고정한다.
+Review baseline: CP revision 11, EX revision 10, NC revision 9. Pin the accepted immutable revisions before dependent implementation.
 
 ## 1. 목적·요구·범위
 
@@ -119,3 +119,55 @@ D/L 결과와 필요한 O, 원본 safe refs, installed identity, 공통 CI/리�
 한 줄로 소비하지 않으며 P03 gate 없이 자동 적용을 켜지 않는다. private 선택·public pair·현재
 후속 책임을 원본에서 재발견하고 local journal을 만들지 않는다. 미확정 PATCH는 다음 write를 보류한다.
 P07/P08에는 qualified 재진입과 남은 책임, P12/P16에는 DecisionView의 원본 근거와 미지원 범위를 인계한다.
+
+## 7. Review corrections and pre-workspace continuation
+
+The current-progress fence is checked again after decision-source IO and before
+each effect. A newly observed decision wait must remain intact. A local ticket
+created in this same invocation may be released only with positive evidence that
+its intent writer was never invoked and its exact ownership still matches. An
+invoked writer or uncertain ownership retains its ticket for original recovery;
+absence of an acknowledgment is not proof of non-dispatch.
+
+Typed continuation shares the existing guarded begin preparation for a positively
+confirmed stopped record whose ticket was already released. It may finish the
+remaining native-field retirement and continue the same responsibility. Active,
+foreign or unknown ownership remains held; no stop result is inferred.
+
+The CP revision 11 pre-workspace amendment preserves existing progress with a null
+head. Nullable pins and result receipts follow CP's exact rules; no new progress
+store, synthetic SHA, workspace allocation or broader candidate schema is added.
+Tests must prove both the waiting and subsequent positive continuation paths.
+Original source read-back, admission, current policy, native provenance and
+independent final-head review/CI remain required. These source corrections do not
+establish installed or remote acceptance.
+
+## 8. Authorized technical successor continuity
+
+EX revision 9 owns the native-specific public root marker, consistent observation from one authenticated comment body and guarded technical successor contract. This change preserves a
+consumed DecisionPin across legitimate replans and restart while keeping answer
+amendment separate. A source-attempt-only descendant match is prohibited.
+
+The existing native controller/runner and GitHub record writer remain the owners;
+no parallel tracker, journal, scheduler or task executor is added. Technical
+successor coverage is a distinct optional qualified original-source capability.
+Its absence prevents that automatic write and never blocks unrelated supported
+operations. Ordinary legacy replan behavior and the existing two-field source
+getter remain compatible. Final acceptance requires the positive and uncertain
+recovery cases in EX, normal impact tests, exact-head independent review/CI and
+the separately qualified actual native flow.
+
+## 9. Original-effect coverage and monotonic retry observations
+
+EX revision 10 closes conflicting work after an unknown technical successor,
+including restart with no local witness. Native common-entry guards and accepted
+answer-amendment publication use qualified original work-effect coverage. Missing
+coverage holds only the affected native operation. The implementation adds no
+durable cache, reconstructed permission or caller-controlled bypass.
+
+Retain counts from the first source observation through the guarded dispatch and
+later calls. Extend the fixed source adapters to supply actual fixture history
+and retain all existing acceptance assertions. New regressions must demonstrate
+that cache loss cannot authorize amendment consumption and that a decreasing
+source count cannot reset the three-write bound. These requirements do not claim
+that an installed provider can already supply the original facts.

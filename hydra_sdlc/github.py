@@ -100,6 +100,33 @@ def _decision_context_marker(body):
     return value
 
 
+def _native_decision_root(value):
+    if (type(value) is not dict or set(value) != {'decision', 'resume_attempt'}
+            or type(value['decision']) is not dict
+            or set(value['decision']) != {'key', 'context_sha256'}):
+        raise GitHubError('Malformed native decision root')
+    key = value['decision']['key']
+    if type(key) is not dict or set(key) != {'repository_id', 'issue_number', 'source_attempt', 'round'}:
+        raise GitHubError('Malformed native decision root')
+    for name in ('repository_id', 'issue_number', 'round'):
+        _number(key[name])
+    for identifier in (key['source_attempt'], value['resume_attempt']):
+        try:
+            if str(uuid.UUID(identifier)) != identifier:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise GitHubError('Malformed native decision root') from None
+    digest = value['decision']['context_sha256']
+    if type(digest) is not str or re.fullmatch('[0-9a-f]{64}', digest) is None:
+        raise GitHubError('Malformed native decision root')
+    return value
+
+
+def _native_decision_root_marker(body):
+    value = _marker(body, 'hydra-native-decision-root')
+    return _native_decision_root(value) if value is not None else None
+
+
 class GitHub:
     """The injected transport has signature (method, path, payload) -> JSON value.
 
@@ -422,6 +449,24 @@ class GitHub:
         return {"record": value, "resource": {"source": "github", "kind": "issue_comment",
                 "id": f"{_repo(repo)}/comments/{identifier}"}}
 
+    def decision_progress_source(self, repo, n):
+        """Observe native progress and its public bindings from one authenticated body."""
+        comment = self._progress_comment(repo, n)
+        if comment is None:
+            return None
+        record = self._progress_value(repo, n, comment)
+        context = _decision_context_marker(comment.get('body'))
+        root = _native_decision_root_marker(comment.get('body'))
+        if root is not None:
+            key = root['decision']['key']
+            if (key['repository_id'] != record['repository_id'] or key['issue_number'] != n
+                    or context is None or context['source_attempt'] != key['source_attempt']
+                    or context['resume_attempt'] != record.get('attempt_id')):
+                raise GitHubError('Native decision root binding changed')
+        return {'record': record, 'resource': {'source': 'github', 'kind': 'issue_comment',
+                'id': f"{_repo(repo)}/comments/{_number(comment.get('id'))}"},
+                'decision_context': context, 'native_root': root}
+
     def work_binding_source(self, repo, n, *, spec_directory, selected_comment_id=None,
                             selected_digest=None, recover=False):
         """Bounded read-only v2 binding identity; never an execution grant.
@@ -601,7 +646,8 @@ class GitHub:
             elif not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,119}", value):
                 raise GitHubError("Progress requires public codes, not raw text")
 
-    def record(self, repo, n, record, *, cleanup=False, preserve_decision_context=False):
+    def record(self, repo, n, record, *, cleanup=False, preserve_decision_context=False,
+               native_decision_root=None, decision_successor=None):
         if type(preserve_decision_context) is not bool:
             raise GitHubError('Invalid decision context preservation')
         self._validate_record(record)
@@ -609,15 +655,36 @@ class GitHub:
         if metadata.get("branch") not in {None, f"hydra/issue-{n}"}:
             raise GitHubError("Progress branch mismatch")
         previous = self._progress_comment(repo, n)
-        context = None
+        context, root, old, old_context, old_root = None, None, None, None, None
         if previous:
             old = _marker(previous.get("body"), "hydra-progress")
             if old.get("repository_id") != metadata["repository_id"] or old.get("issue_number") != n or old.get("version") != 1:
                 raise GitHubError("Existing progress identity mismatch")
             self._validate_record(old, metadata=True)
             context = _decision_context_marker(previous.get("body"))
+            root = _native_decision_root_marker(previous.get('body'))
+            old_context, old_root = context, root
+        if native_decision_root is not None:
+            _native_decision_root(native_decision_root)
+        # Native rotation is checked before next_action can create a generic
+        # source marker. That branch is not a successor authorization path.
+        rotated = old is not None and old.get('attempt_id') != metadata.get('attempt_id')
+        if decision_successor is not None:
+            from .native_replan import TechnicalReplanPermit
+            if type(decision_successor) is not TechnicalReplanPermit or not rotated or native_decision_root is not None:
+                raise GitHubError('Invalid native successor permit')
+            root = decision_successor.authorize(metadata['repository_id'], n, old, metadata, context, root)
+            context = {'source_attempt': root['decision']['key']['source_attempt'],
+                       'resume_attempt': metadata['attempt_id']}
+        elif rotated and (root is not None or preserve_decision_context and context is not None):
+            if native_decision_root is None:
+                raise GitHubError('Decision context ownership changed')
+        if root is not None:
+            preserve_decision_context = True
         source = re.fullmatch(r"decision_context_([0-9a-f-]{36})", metadata.get("next_action") or "")
         if source and metadata.get("resume_phase"):
+            if root is not None and native_decision_root is None and source.group(1) != root['decision']['key']['source_attempt']:
+                raise GitHubError('Native decision source changed')
             context = {"source_attempt": source.group(1), "resume_attempt": metadata.get("attempt_id")}
             _decision_context_marker("<!-- hydra-decision-context:v1 "
                                      + json.dumps(context, separators=(",", ":")) + " -->")
@@ -631,11 +698,22 @@ class GitHub:
                            "resume_attempt": metadata.get("attempt_id")}
                 _decision_context_marker("<!-- hydra-decision-context:v1 "
                                          + json.dumps(context, separators=(",", ":")) + " -->")
+        if native_decision_root is not None:
+            root = native_decision_root
+            if (not source or root['resume_attempt'] != metadata.get('attempt_id')
+                    or source.group(1) != root['decision']['key']['source_attempt']):
+                raise GitHubError('Native resume root changed')
+        if root is not None:
+            key = root['decision']['key']
+            if (key['repository_id'] != metadata['repository_id'] or key['issue_number'] != n
+                    or context is None or context['source_attempt'] != key['source_attempt']
+                    or context['resume_attempt'] != metadata.get('attempt_id')):
+                raise GitHubError('Native decision root binding changed')
         completed = (metadata.get("phase") == "completed" and metadata.get("pending_action") is None
                      and metadata.get("wait_reason") is None and metadata.get("next_action") != "resource_cleanup")
         if not completed and not cleanup:
             self._active(repo, n, True)
-        if previous and old == metadata:
+        if previous and old == metadata and context == old_context and root == old_root:
             if completed and not cleanup:
                 self._active(repo, n, False)
             return previous
@@ -645,7 +723,12 @@ class GitHub:
         if context:
             body += "\n<!-- hydra-decision-context:v1 " + json.dumps(
                 context, sort_keys=True, separators=(",", ":")) + " -->"
+        if root is not None:
+            body += '\n<!-- hydra-native-decision-root:v1 ' + json.dumps(
+                root, sort_keys=True, separators=(',', ':')) + ' -->'
         if previous:
+            if decision_successor is not None:
+                decision_successor.consume()
             result = self.api("PATCH", f"/repos/{_repo(repo)}/issues/comments/{_number(previous['id'])}", {"body": body})
         else:
             result = self.api("POST", f"/repos/{_repo(repo)}/issues/{n}/comments", {"body": body})
@@ -653,13 +736,18 @@ class GitHub:
             self._active(repo, n, False)
         return result
 
-    def record_checkpoint(self, repo, n, record, *, preserve_decision_context=False):
+    def record_checkpoint(self, repo, n, record, *, preserve_decision_context=False,
+                          native_decision_root=None, decision_successor=None):
         """Record a confirmed finished/stopped checkpoint without discovery effects.
 
         Callers still enforce their own admission and exact assignment authority.
         """
-        return self.record(repo, n, record, cleanup=True,
-                           preserve_decision_context=preserve_decision_context)
+        options = {'preserve_decision_context': preserve_decision_context}
+        if native_decision_root is not None:
+            options['native_decision_root'] = native_decision_root
+        if decision_successor is not None:
+            options['decision_successor'] = decision_successor
+        return self.record(repo, n, record, cleanup=True, **options)
 
     def ref(self, repo, branch):
         try:

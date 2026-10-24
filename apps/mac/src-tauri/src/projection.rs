@@ -480,8 +480,9 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
         for k in ["intent_ref","context_ref","resolved_ref"] {reference(&v[k])?;}
     }
     if kind=="continuation" {
-        uuid(&v["attempt_id"])?; sha(&v["head"])?; sha(&v["contract_revision"])?;
+        uuid(&v["attempt_id"])?; optional(&v["head"],sha)?; sha(&v["contract_revision"])?;
         one(&v["boundary"],"progress_recorded assignment_returned existing_result_reconciled")?;
+        need(!v["head"].is_null() || v["boundary"]=="progress_recorded")?;
     }
     if ["verification","verification_review","publication","delivery"].contains(&kind) {candidate(&v["candidate"])?;}
     if kind=="verification" {
@@ -555,7 +556,7 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
         else {
             need(progress["kind"]=="issue_comment")?;
         }
-        if progress["kind"]=="issue_comment" || kind==Some("checkpoint") {
+        if progress["kind"]=="issue_comment" || kind==Some("checkpoint") || kind==Some("continuation") {
             let proofs:Vec<_>=v["observed_refs"].as_array().ok_or(INVALID)?.iter()
                 .filter_map(|e|index.get(e["observation_key"].as_str()?))
                 .filter(|o|o["resource"]["source"]=="github" && o["resource"]["kind"]=="progress" &&
@@ -570,6 +571,11 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
                     proof["value"]["contract_revision"]==checkpoint["assignment"]["contract_revision"] &&
                     proof["value"]["native_step"].is_null())?;
             }
+            if kind==Some("continuation") {
+                for key in ["attempt_id","head","contract_revision"] {
+                    need(proof["value"][key]==v["receipt"][key])?;
+                }
+            }
         }
     }
     Ok(())
@@ -577,6 +583,31 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
 fn observations(value:&Value)->Result<Index<'_>,&'static str> {
     let rows=value.as_array().ok_or(INVALID)?; need(rows.len()<=4096)?; let mut index=HashMap::new();
     for v in rows {observation(v)?; need(index.insert(string(&v["key"])?,v).is_none())?;} Ok(index)
+}
+
+#[cfg(test)]
+mod continuation_head_tests {
+    use super::*;
+
+    #[test]
+    fn pre_workspace_receipts_keep_strict_heads_and_unqualified_consumer_boundary() {
+        let path=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/control-v3/continuation-heads.json");
+        let rows:Value=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(),8);
+        for row in rows.as_array().unwrap() {
+            let reply=&row["reply"];
+            let index=observations(&reply["observations"]).unwrap();
+            assert_eq!(command_result(&reply["request"],&index).is_ok(),
+                row["schema_accepted"].as_bool().unwrap(),"{}",row["name"]);
+            let wire=serde_json::to_vec(reply).unwrap();
+            if row["schema_accepted"]==true {
+                assert_eq!(StandardReply::parse(&wire).unwrap_err(),"unsupported_receipt_source");
+            } else {
+                assert!(StandardReply::parse(&wire).is_err(),"{}",row["name"]);
+            }
+        }
+    }
 }
 fn bound_command_result(v:&Value,index:&Index<'_>,binding:&Value)->R {
     command_result(v,index)?;let receipt=&v["receipt"];

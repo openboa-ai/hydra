@@ -358,6 +358,9 @@ class Runner:
     def _record_options(self):
         return {}
 
+    def _replan_record(self, repo, number, record, **values):
+        return self._record(repo, number, record, attempt_id=str(uuid.uuid4()), **values)
+
     def _prepare_decision(self, repo, number, record):
         return record
 
@@ -1220,7 +1223,6 @@ class Runner:
         if record.get("wait_reason") == "replan_required":
             if self._resolution_marker(repo, number, config, record) != "replan_ready":
                 return {"repository": repo, "issue": number, "action": "waiting", "reason": "replan_required"}
-            self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
             # A prior replan resets the retry counter, never the uncertain effect.
             # Its pending action remains authoritative even before a fresh request.
             service_retry = record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
@@ -1233,7 +1235,7 @@ class Runner:
             review_reconcile = (record.get("next_action") in {"diagnose_review", "diagnose_review_request"}
                                 and record.get("phase") != "executing")
             receipt = record.get("checkpoint")
-            record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()),
+            record = self._replan_record(repo, number, record,
                                   host_alias=self.host if handover else record.get("host_alias"),
                                   checkpoint=receipt if re.fullmatch(r"squash_[0-9a-f]{40}", receipt or "") else None,
                                   pending_action=record.get("pending_action") if service_retry else None,
@@ -1243,6 +1245,7 @@ class Runner:
                                   correction_attempt=None, wait_reason=None,
                                   phase="uncertain" if service_retry else "review_wait" if review_reconcile else "ready",
                                   resume_phase=None if service_retry or review_reconcile else origin if origin in {"design", "correction"} else "implementation")
+            self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
         unresolved_model = record.get("phase") == "executing" or record.get("wait_reason") in {
             "execution_unknown", "execution_failed", "invalid_model_result"}
         if record.get("host_alias") != self.host or unresolved_model:
