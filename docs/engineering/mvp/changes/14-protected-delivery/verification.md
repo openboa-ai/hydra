@@ -325,3 +325,9 @@ reviews still apply before protected delivery. Actual merge verification,
 repair integration, installed operation and full P14/v1 acceptance remain
 separate obligations. The two refreshed requirement hashes preserve all
 existing selectors, cases and evaluation criteria.
+
+## Integration with input-evidence comparison
+
+The protected main from PR #41, `b2f27b9f361127c987f3e3e088cc79fc95805417`, passes its actual-merge CI. This delivery candidate preserves the P11 implementation and tests, all original delivery runtime files and all original delivery test oracles. The combined compatibility run passes 208 methods under Python 3.14.2 with zero failures, errors or skips.
+
+Fresh final-head CI and independent code/security reviews are required before protected delivery, followed by the actual merge revision checks. Repair integration, effective requirement fulfillment, installed operation and full P14/v1 acceptance remain open.
