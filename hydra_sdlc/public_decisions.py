@@ -183,6 +183,13 @@ def receipt_body(context):
             + " -->\n").encode("utf-8")
 
 
+def context_basis(context):
+    """Read validated intent data; it conveys no source or execution authority."""
+    checked = parse_context(context.body)
+    metadata = checked.body.decode('utf-8').split('\n')[-2][len(_INTENT):-4]
+    return _load(metadata)
+
+
 def parse_receipt(body):
     _, text = _wire(body)
     lines = text.split("\n")

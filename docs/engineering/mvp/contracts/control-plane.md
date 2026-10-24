@@ -1,6 +1,6 @@
 # Control plane: projection과 안전한 명령
 
-Status: Design contract, revision 10, 2026-10-23. P17 admission-default source increment.
+Status: Design contract, revision 11, 2026-10-25. P06 pre-workspace continuation compatibility.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 W3/W7의
 wire contract, 관측·화면·명령·호환·TC를 소유한다. native 연동 qualification 이전의
@@ -800,7 +800,7 @@ current progress와 전체 guard가 다음 단계를 허용하면 별도 명시 
 
 ```text
 CandidatePin = {attempt_id: UUID, head: git_sha, contract_revision: git_sha}
-ProgressPin = {attempt_id: UUID, head: git_sha, contract_revision: git_sha, phase: string}
+ProgressPin = {attempt_id: UUID, head: git_sha | null, contract_revision: git_sha, phase: string}
 Continue = {operation: continue, progress: ProgressPin | null,
             reply_profile: standard_v1 | native_handoff_v1}
 VerifyOnly =
@@ -811,7 +811,7 @@ VerifyOnly =
    reply_profile: standard_v1 | native_handoff_v1}
 ContinueReceipt = {
   kind: continuation, progress_ref: ResourceRef,
-  attempt_id: UUID, head: git_sha, contract_revision: git_sha,
+  attempt_id: UUID, head: git_sha | null, contract_revision: git_sha,
   boundary: progress_recorded | assignment_returned | existing_result_reconciled
 }
 VerificationReceipt = {
@@ -858,6 +858,33 @@ scope·철회된 권한·변경된 입력을 승인하지 않는다. consumer는
 pending assignment는 재사용/대기로 처리하고 새 owner를 만들지 않는다. 기존 위임 밖 새 scope는
 자동 채택하지 않는다. receipt는 실제 progress read-back 또는 현재 controller가 반환한 exact
 assignment와 연결한다. `assignment_returned`는 실제 Codex 실행 시작 증거가 아니다.
+
+#### Pre-workspace continuation compatibility
+
+A `null` ProgressPin expects a successfully observed absence of progress. An object
+whose required `head` is `null` instead pins an existing pre-workspace record.
+Attempt, phase, contract revision and nullable head must all match the current
+original. Unavailable or incomplete reads establish neither condition. Do not
+allocate a workspace or invent a commit merely to represent a dependency wait.
+
+A ContinueReceipt describes the confirmed result after the operation. Its head
+may be null only for `boundary=progress_recorded` backed by the actual pre-workspace
+progress read-back. `assignment_returned` and `existing_result_reconciled` require
+a Git SHA. CandidatePin, ExactAssignment, NativeAssignment, verification,
+publication and delivery retain their existing non-null SHA requirements.
+
+The submitted ProgressPin is a precondition, not an expected result. A valid
+continuation may produce a different head or attempt, including when a dependency
+closes or a selected decision is consumed. Consumers correlate the returned
+receipt with the actual progress observation and exact request/target/runtime;
+they do not compare post-state to the old input pin or silently rewrite that pin.
+Schema compatibility does not qualify a continuation route: consumers that do not
+yet support this capability keep their existing unsupported behavior.
+
+Required deterministic cases cover an open dependency without workspace creation,
+its repeated nullable pin, closure followed by a real SHA/assignment, stale
+null/SHA/phase/attempt pins, absent versus unavailable progress, strict candidate
+and assignment heads, and preservation of unsupported consumer gates.
 
 verify_only는 current progress의 attempt/head/contract를 **요청한 CandidatePin과 먼저 대조**한다.
 현재 accepted spec/intake/policy와 branch/base 경계도 기존 runner 검사로 확인한다. 다르면 `rejected/stale_candidate`이며
