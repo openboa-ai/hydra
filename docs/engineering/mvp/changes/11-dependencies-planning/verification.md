@@ -24,7 +24,14 @@ There is no default acceptance reader, public command, grant, cache or write.
 - The unchanged 23 methods pass after implementation.
 - Four additional controls cover reference conditions, every delivery-pin
   field, multiple producers, independent consumers and malformed observations.
-- All 135 related methods pass with zero failures, errors or skips under
+- A valid three-clause, 120-reference input reproduces one assertion failure
+  when an aggregate evidence set incorrectly inherits one clause's count limit.
+  The same regression passes after reusing the single-reference validator for
+  aggregate evidence. Per-clause limits and the evidence byte limit are unchanged.
+- Four further controls cover larger accepted/observed sets, missing observations
+  and invalid references. The 60-reference control already passed before this
+  correction and is not reported as a reproduced defect.
+- All 139 related methods, including 31 feature methods, pass with zero failures, errors or skips under
   Python 3.14.2. Existing binding, input, relation and producer-reader tests
   remain unchanged.
 

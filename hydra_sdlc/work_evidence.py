@@ -9,7 +9,7 @@ import json
 
 from .github_producer_delivery import ProducerDeliveryRead
 from .work_records import (_hex, _integer, _issue_ref, _json_object, _object,
-                           _require, _requirements, _uuid, validate_binding)
+                           _require, _requirement, _uuid, validate_binding)
 from .work_relations import _time, compare_bound_producers
 
 
@@ -128,6 +128,19 @@ def _reference(value):
     return tuple(value[key] for key in ('repository_id', 'path', 'revision', 'selector'))
 
 
+def _evidence_references(values):
+    # A producer can satisfy several independently bounded input clauses.
+    # The complete evidence document, not one clause's count, bounds this set.
+    _require(type(values) is list, 'invalid_evidence')
+    references = set()
+    for value in values:
+        _requirement(value)
+        reference = _reference(value)
+        _require(reference not in references, 'invalid_evidence')
+        references.add(reference)
+    return frozenset(references)
+
+
 def _document(value, expected_type):
     _require(type(value) is expected_type and type(value.document) is str, 'invalid_evidence')
     try:
@@ -172,9 +185,7 @@ def _producer(row, key):
     accepted_pin = _pin(accepted['delivery'])
     _require(type(accepted['coverage']) is str
              and accepted['coverage'] in {'complete', 'partial', 'unavailable'}, 'invalid_evidence')
-    _requirements(accepted['accepted'])
-    _requirements(accepted['observed'])
-    accepted_refs = frozenset(_reference(ref) for ref in accepted['accepted'])
-    observed_refs = frozenset(_reference(ref) for ref in accepted['observed'])
+    accepted_refs = _evidence_references(accepted['accepted'])
+    observed_refs = _evidence_references(accepted['observed'])
     _require(observed_refs <= accepted_refs, 'invalid_evidence')
     return delivered, (accepted_pin, accepted['coverage'], accepted_refs, observed_refs)
