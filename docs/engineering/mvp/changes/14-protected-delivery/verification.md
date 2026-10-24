@@ -331,3 +331,9 @@ existing selectors, cases and evaluation criteria.
 The protected main from PR #41, `b2f27b9f361127c987f3e3e088cc79fc95805417`, passes its actual-merge CI. This delivery candidate preserves the P11 implementation and tests, all original delivery runtime files and all original delivery test oracles. The combined compatibility run passes 208 methods under Python 3.14.2 with zero failures, errors or skips.
 
 Fresh final-head CI and independent code/security reviews are required before protected delivery, followed by the actual merge revision checks. Repair integration, effective requirement fulfillment, installed operation and full P14/v1 acceptance remain open.
+
+## Full observations and external-close recovery
+
+Two review regressions fail on the unchanged published candidate with two assertion failures and zero errors/skips. The same methods pass after correction. Full PR observations use a separate bounded allowance while progress reads retain their smaller budget; request/time exhaustion and foreign ownership remain holds. Verified external closure is reconciled without another close, preserving unknown-open requests and completed history.
+
+The related 183-method regression bundle and seven focused methods pass under Python 3.14.2 with zero failures, errors or skips. The final focused control also covers external closure during the close-intent recheck. Existing test bytes and accepted requirement/spec revisions are unchanged. Fresh final-head CI and independent reviews, protected delivery and actual-main qualification remain required. Full P14/v1 and installed native acceptance remain open.

@@ -65,7 +65,7 @@ class Delivery:
         return record
 
     @contextmanager
-    def read_scope(self):
+    def read_scope(self, *, full_observation=False):
         github = self.runner.github
         if not isinstance(github, GitHub):
             yield github
@@ -73,13 +73,16 @@ class Delivery:
         reader, previous = github.read_client(), self.reader
         self.reader = reader
         try:
-            with reader.read_budget(seconds=15, requests=32):
+            # Full observations expand workflow runs and protection sources;
+            # progress-only reads retain the smaller independent allowance.
+            with reader.read_budget(seconds=45 if full_observation else 15,
+                                    requests=128 if full_observation else 32):
                 yield reader
         finally:
             self.reader = previous
 
     def read_pr(self):
-        with self.read_scope() as reader:
+        with self.read_scope(full_observation=True) as reader:
             value = reader.observe(self.repo, self.params['pr_number'])
             pr = value.get('pr')
             if (type(pr) is not dict or pr.get('number') != self.params['pr_number']

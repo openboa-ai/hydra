@@ -1673,6 +1673,10 @@ class Runner:
                 return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
             return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
         boundary = self._latest(repo, number, config)
+        # Verified external closure needs reconciliation even when this owner
+        # knows its own close request was never sent. Keep unknown-open intents
+        # in recovery so an observation cannot authorize another close.
+        closing_recovery = closing_recovery or boundary == "issue_closed"
         if boundary and not (closing_recovery and boundary == "issue_closed"):
             return self._wait(repo, number, record, "delivery_boundary_changed")
         record = self._intent(repo, number, config, record, "close_issue", phase="closing") if not closing_recovery else record
@@ -1690,6 +1694,7 @@ class Runner:
         if check_state != "success":
             return self._post_merge_wait(repo, number, record, check_state)
         boundary = self._latest(repo, number, config)
+        closing_recovery = closing_recovery or boundary == "issue_closed"
         if boundary and not (closing_recovery and boundary == "issue_closed"):
             return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
         if not closing_recovery:
