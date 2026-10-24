@@ -167,12 +167,91 @@ Pending-disconnect screenshot SHA-256:
 Independent-project screenshot SHA-256:
 `e61f4d2b36ff2a2f123cf6ad74c0ef8f86ed5d656524e0a8283733ba44b777b2`.
 
-## Remaining responsibilities
+## Configuration writer and ordered recovery
 
-This increment does not create or migrate an installed configuration. The next
-P17 increment retains stopped-first connect, desired-first disconnect, atomic
-CAS/read-back, old-writer/pending-effect migration checks and qualified resource
-coverage before final disconnection. It reuses the same spec.
+The next source increment reuses P17 revision 2 and PC revision 1. It implements
+the closed connection request and reply, read-only status/preview, the foreground
+CLI, exact config/admission CAS and ordered connect, update, disconnect and
+finalize operations. It preserves unrelated configuration and stopped history;
+the final removal leaves a valid empty registry.
+
+The original 28-method oracle set reproduces 37 assertion failures on the
+interface-only implementation, with zero errors or skips and an independent
+legacy control. Its unchanged bytes pass after implementation. Before that
+qualified negative run, one concurrency fixture was corrected to make a valid
+semantic configuration change; no product failure is claimed for that fixture
+repair.
+
+Four additional recovery methods reproduce four assertion failures across
+three methods. They detect a preview incorrectly claiming an applied stop,
+physical parent replacement after the atomic write, and oversized proposals
+accepted by preview or partly written by apply. The fourth method is a passing
+control for an uncertain parent-fsync result. All four pass after the source
+correction. The final related impact run passes all 146 methods without
+failures, errors or skips on Python 3.14.2. Its original 28-method oracles and
+the four recovery oracles remain unchanged.
+
+Three additional controls execute the actual foreground CLI subprocess:
+read-only status, invalid UTF-8 and oversized stdin. All three pass without
+store changes, private-path output or diagnostic leakage. They are a separate
+run from the 146-method impact result; no new behavioral RED is claimed.
+
+Three reconnection methods then reproduce two failures and retain one duplicate
+connection control. An explicit reconnect can clear a pending disconnect only
+after stopped admission and fresh scoped closure. A removed scope with a retained
+override also requires closure before reuse. An already connected duplicate
+does not stop or rewrite running work. The final integrated local selection
+passes all 152 methods, including the three actual CLI controls, without
+failures, errors or skips. All earlier oracle bytes remain unchanged.
+
+The implementation-contract update makes the two selected-D specification
+digests stale. The original five-method collector test rejects that state;
+refreshing only those digests makes the same test pass. Case IDs, selectors,
+fixtures and acceptance criteria remain unchanged.
+
+Faults between the two store writes preserve unregistered-plus-stopped or
+disconnect-requested state. The real cached effect guard rejects new work
+after the desired-first crash. A version-2 binding written before the profile
+blocks legacy/arg-only dispatch. Failed post-replace fsync returns unknown
+with actual state observations and does not retry the write. No journal,
+provider factory, credential store, native task or Issue creation is added.
+
+Quiescence and native Project observations are trusted internal source inputs
+bound to the exact scope; public JSON cannot supply them. The current CLI has
+no qualified resource/native inventory integration, so migration, update,
+finalization and supplied native locators remain held without those sources.
+Fixture callbacks prove source behavior, not installed provider qualification.
+
+## Review correction: rename identity and retained destination
+
+Independent code review identifies two gaps under PC-R2/R6. An explicit rename
+now checks a retained destination's stopped admission and separate current
+closure before any store write, including migration. A proof for the old name
+cannot satisfy the destination. A clean stopped destination still progresses.
+
+The old-address witness uses a narrowly scoped authenticated GET only for the
+explicit rename. Its canonical name must be the old or selected replacement
+address, and its numeric ID must match the independently checked canonical
+replacement and protected policy. Ordinary GitHub repository lookups retain
+their strict canonical-name check.
+
+Nine methods reproduce six failures with zero errors/skips before correction.
+The positive redirect case uses the actual GitHub client with an injected
+transport, including ref, file and permission parsing. Negative controls retain
+ordinary redirect rejection and reject foreign IDs or canonical addresses.
+The same nine methods pass in the final 199-method related run, with zero
+failures, errors or skips on Python 3.14.2.
+
+All 38 preceding connection test method bodies are unchanged. The older fixture
+transport gains only the repository-GET response shape needed by the new exact
+endpoint; its no-write assertion and behavioral oracles remain. These source
+checks do not establish actual provider or installed native qualification.
+
+## Remaining operational responsibilities
+
+No installed configuration, admission state or service has been changed.
+Actual native caller authority, source-backed resource/native adapters,
+installed migration/disconnection and the P16 app consumer remain required.
 
 Final-source remote CI and independent code/security review, protected delivery
 and actual-main checks remain required. Actual remote Codex connection, native

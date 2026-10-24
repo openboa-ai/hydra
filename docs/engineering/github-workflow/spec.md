@@ -124,9 +124,22 @@ work facts cite a scoped unavailable admission observation. Independent projects
 retain their current facts; the original mode snapshot is not rewritten as stopped.
 MCP status also uses a closed public controls view without the trusted locator.
 
-This prerequisite does not expose the configuration writer, migrate an installed
-store, restart a controller or activate a native capability. Subsequent connection
-CAS, read-back, disconnection and actual remote qualification remain required.
+The configuration writer adds `hydra connection preview|apply|status --config`
+with bounded stdin JSON and the same trusted configuration and admission lock.
+Connect records an explicit stopped override before registration; disconnect
+persists its desired state before the stopped override. Read-back distinguishes
+actual configuration and admission effects from the replying process's startup
+identity. Preview never reports an applied effect. Unsafe or changed physical
+parents and partial writes cannot produce a successful receipt.
+
+Migration requires a stopped host and complete scoped old-writer/resource
+observations before version-2 binding is persisted. Update and final disconnection
+require an already stopped target and current scoped resource closure. These are
+trusted source inputs, never stdin proofs. The installed native/resource sources
+remain unqualified; unavailable closure keeps the dependent operations waiting.
+No configuration, installation, service, task or native capability is activated
+by delivering this source. Actual remote caller and app consumers remain separate
+qualification obligations under P17/P16.
 
 ## Execution, delivery and recovery
 

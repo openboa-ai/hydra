@@ -303,3 +303,25 @@ These local source/SDK fixtures establish deterministic behavior only. Selected
 installation authority, authenticated native operation, the actual remote first
 flow, two-project acceptance, complete D/L/O and resource closure remain open.
 Required-queue adapter support, post-merge repair and requirement acceptance retain their maintained contracts and later verification. The direct delivery source increment does not complete those obligations.
+
+## Integration with verified connections and draft sources
+
+Protected main `f431912` passes its actual merge-revision CI. Its tree equals
+the draft/connection baseline used by this integration run. All original
+delivery runtime files, delivery regression assertions and fourteen native
+delivery oracles remain byte-identical to the preceding reviewed candidate.
+
+The focused combined connection, draft, GitHub and verification-contract run
+passes 202 methods with zero failures, errors or skips under Python 3.14.2.
+An earlier run retains one CI-shell failure caused by the private runner
+selecting Python 3.12. Correcting only the runner PATH makes the unchanged
+202-method suite pass; product code and test expectations are unchanged.
+
+A broader local run was stopped after 73 observed passes when byte comparison
+showed its previously qualified delivery code and tests were unchanged. It
+is retained as partial evidence and is not a complete passing run. Fresh
+final-head CI still runs the complete suite and independent code/security
+reviews still apply before protected delivery. Actual merge verification,
+repair integration, installed operation and full P14/v1 acceptance remain
+separate obligations. The two refreshed requirement hashes preserve all
+existing selectors, cases and evaluation criteria.
