@@ -502,17 +502,23 @@ class Runner:
                      record.get("pending_action") in {"close_issue", "merge"} or phase == "executing" else None)
         return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
 
+    def _delivery_wait(self, repo, number, record, reason, **values):
+        # Changed source evidence is an observation, not a new delivery intent
+        # or permission to erase a previously confirmed completion.
+        if record.get("phase") == "completed" and record.get("pending_action") is None:
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+        return self._wait(repo, number, record, reason, **values)
+
     def _post_merge_wait(self, repo, number, record, check_state):
         reason, action = {
             "pending": ("post_merge_checks", "observe_post_merge_checks"),
             "failed": ("post_merge_failed", "diagnose_post_merge"),
         }.get(check_state, ("post_merge_evidence_unknown", "reconcile_post_merge_evidence"))
-        if check_state is None or (record.get("phase") == "completed" and record.get("pending_action") is None):
-            # Current check evidence cannot erase confirmed delivery history.
+        if check_state is None:
             # An unavailable read also avoids another provider write.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
         try:
-            return self._wait(repo, number, record, reason, phase="observing", next_action=action)
+            return self._delivery_wait(repo, number, record, reason, phase="observing", next_action=action)
         except OperationDenied:
             raise
         except (RuntimeError, OSError, ValueError):
@@ -1627,16 +1633,16 @@ class Runner:
         """Shared merged-result validation and close; narrow callers retain cleanup responsibility."""
         pr = observation["pr"]
         if pr["head"]["sha"] != record.get("head"):
-            return self._wait(repo, number, record, "unexpected_merged_head")
+            return self._delivery_wait(repo, number, record, "unexpected_merged_head")
         if record.get("pending_action") == "merge":
             recovered = self._recover_squash(repo, number, config, record, observation)
             if recovered is None:
-                return self._wait(repo, number, record,
+                return self._delivery_wait(repo, number, record,
                                   "squash_method_unknown", phase="uncertain", next_action="diagnose_merge")
             record = recovered
         if gate_completed_delivery(config, observation, record["head"], self._paths(observation),
                                    expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint")):
-            return self._wait(repo, number, record, "completion_evidence_missing", phase="observing")
+            return self._delivery_wait(repo, number, record, "completion_evidence_missing", phase="observing")
         merge_sha = pr.get("merge_commit_sha")
         check_state = self._observe_post_merge(repo, config, merge_sha)
         if check_state != "success":

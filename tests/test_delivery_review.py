@@ -144,6 +144,49 @@ class DeliveryReviewTests(unittest.IsolatedAsyncioTestCase):
         self.unchanged_candidate(candidate)
 
 
+    async def test_reopened_completion_preserves_history_across_review_thread_wait(self):
+        candidate = await self.published()
+        command = self.delivery_command(candidate)
+        self.assertEqual((await self.deliver(command))['request']['outcome'], 'applied')
+        completed, start = copy.deepcopy(self.gh.note), len(self.gh.writes)
+        original = self.gh.transform_observation
+        self.gh.work['state'] = 'open'
+        self.gh.transform_observation = lambda value: {**original(value), 'threads': [{'isResolved': False}]}
+        waiting = await self.deliver(command)
+        self.assertEqual(waiting['request']['outcome'], 'waiting', waiting)
+        self.assertEqual(waiting['request']['reason'], 'completion_evidence_missing')
+        self.assertEqual(self.gh.note, completed)
+        self.assertEqual(self.gh.writes[start:], [])
+        self.gh.transform_observation = original
+        replay = await self.deliver(command)
+        self.assertEqual(replay['request']['outcome'], 'waiting', replay)
+        self.assertEqual(replay['request']['reason'], 'completion_reopened')
+        self.assertEqual(self.gh.work['state'], 'open')
+        self.assertEqual(self.gh.note, completed)
+        self.assertEqual(self.gh.writes[start:], [])
+        self.unchanged_candidate(candidate)
+
+    async def test_closed_completion_replays_after_candidate_review_evidence_returns(self):
+        candidate = await self.published()
+        command = self.delivery_command(candidate)
+        self.assertEqual((await self.deliver(command))['request']['outcome'], 'applied')
+        completed, start = copy.deepcopy(self.gh.note), len(self.gh.writes)
+        original = self.gh.transform_observation
+        self.gh.transform_observation = lambda value: {**original(value), 'provider_comments': []}
+        waiting = await self.deliver(command)
+        self.assertEqual(waiting['request']['outcome'], 'waiting', waiting)
+        self.assertEqual(waiting['request']['reason'], 'completion_evidence_missing')
+        self.assertEqual(self.gh.note, completed)
+        self.assertEqual(self.gh.writes[start:], [])
+        self.gh.transform_observation = original
+        replay = await self.deliver(command)
+        self.assertEqual(replay['request']['outcome'], 'applied', replay)
+        self.assertEqual(self.gh.work['state'], 'closed')
+        self.assertEqual(self.gh.note, completed)
+        self.assertEqual(self.gh.writes[start:], [])
+        self.unchanged_candidate(candidate)
+
+
 class LegacyCompletionReviewTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = legacy.SquashRunnerTests.asyncSetUp
     execute = legacy.SquashRunnerTests.execute
@@ -199,6 +242,25 @@ class LegacyCompletionReviewTests(unittest.IsolatedAsyncioTestCase):
         restored = await self.step()
         self.assertEqual(restored['action'], 'waiting', restored)
         self.assertEqual(restored['reason'], 'completion_reopened')
+        self.assertEqual(self.github.work['state'], 'open')
+        self.assertEqual(self.github.note, completed)
+        self.assertEqual(self.github.writes[start:], [])
+        self.assertEqual(len(self.calls), calls)
+
+    async def test_shared_completed_history_survives_candidate_evidence_wait(self):
+        await self.merged_with_empty_association()
+        self.assertEqual((await self.step())['action'], 'completed')
+        completed, start, calls = copy.deepcopy(self.github.note), len(self.github.writes), len(self.calls)
+        original = self.github.transform_observation
+        self.github.work['state'] = 'open'
+        self.github.transform_observation = lambda value: {**original(value), 'threads': [{'isResolved': False}]}
+        self.assertEqual((await self.step())['reason'], 'completion_evidence_missing')
+        self.assertEqual(self.github.note, completed)
+        self.assertEqual(self.github.writes[start:], [])
+        self.github.transform_observation = original
+        replay = await self.step()
+        self.assertEqual(replay['action'], 'waiting', replay)
+        self.assertEqual(replay['reason'], 'completion_reopened')
         self.assertEqual(self.github.work['state'], 'open')
         self.assertEqual(self.github.note, completed)
         self.assertEqual(self.github.writes[start:], [])

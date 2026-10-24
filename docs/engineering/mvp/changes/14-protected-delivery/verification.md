@@ -258,29 +258,36 @@ an installed authority grant or native remote operation.
 
 ## Review correction: delivery waits and completed replay
 
-The exact published candidate's independent code review identifies two recovery
-defects under P14-R3/R4/R7. Main checks can change after a close intent is saved;
-this owner's wait-only updates must preserve an already-known undispatched
-intent. They must never create that proof for an unknown request. Replaying
-completed work must report current check evidence without rewriting confirmed
-completion or silently closing a human-reopened Issue.
+Independent code reviews identify recovery defects under P14-R3/R4/R7.
+Main checks can change after a close intent is saved. This owner's wait-only
+updates preserve an already-known undispatched intent, without creating that
+proof for an unknown request.
 
-Six new methods reproduce six assertion failures before correction, with zero
-errors or skips. The final seven-method set passes, including a positive
-control for retrying owned active-label cleanup without another close or
-progress comment. All 37 selected squash/active-label/legacy methods pass.
-The final 288-method impact run has 287 passes, zero failures or errors and one
-unchanged Linux-only ownership case skipped on macOS. It includes delivery,
-post-merge, native ownership, completion and recovery. The skipped Linux case
-must run successfully in the final-head Linux CI before delivery; its test
-source and original skipped local result are preserved.
+Completed replay reports changed candidate, review, squash or main-check
+evidence without rewriting confirmed completion or silently closing a
+human-reopened Issue. The common delivery-wait boundary handles those fresh
+observations. Explicit owned cleanup retains its separate responsibility.
 
-The shared broad path now preserves terminal progress instead of fabricating a
-new closing intent during label-cleanup recovery. Two existing active-label
+Six new methods reproduce six assertion failures before the first correction.
+Three additional methods reproduce three failures for changed candidate-review
+evidence in both the narrow and shared broad paths. The earlier seven review
+methods are preserved unchanged. All ten review regression/control methods
+pass in the final 93-method completion/recovery run, with zero failures, errors
+or skips. That run also includes post-merge checks, squash evidence, active
+labels, policy completion and review recovery.
+
+The shared broad path preserves terminal progress instead of fabricating a new
+closing intent during label-cleanup recovery. Two existing active-label
 expectations require completed history and no pending close; their ownership,
-discovery, no-model, no-close and cleanup assertions remain. The cleanup
-positive control passes before this shared-path refinement. The original
-fourteen delivery contract methods remain unchanged.
+discovery, no-model, no-close and cleanup assertions remain. A cleanup positive
+control passes before this shared-path refinement. The original fourteen
+delivery contract methods remain unchanged.
+
+An earlier 288-method impact run on the preceding published candidate has
+287 passes, zero failures or errors and one unchanged Linux-only ownership
+case skipped on macOS. The final-head Linux CI must execute that case
+successfully. The original skipped result is retained; the later 93-method
+run is not presented as a single combined passing 288-method execution.
 
 These source checks require fresh exact-head CI and independent reviews before
 protected delivery, followed by the actual merge revision's checks. They do not
