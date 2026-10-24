@@ -1,9 +1,9 @@
-# P14 candidate publication: implementation and verification
+# P14 publication and protected delivery: implementation and verification
 
 Scope: [P14 revision 4](spec.md), the publication portions of R1/R3/R6/R7 and T03/T08/T10;
 [CP revision 9](../../contracts/control-plane.md), [EX revision 8](../../contracts/execution.md),
 and the maintained [implementation contract](../../../github-workflow/spec.md).
-This record does not complete the separate delivery command or the whole P14 change.
+The publication history is retained below. The bounded direct-delivery increment has its own source evidence below; full P14 and v1 operational acceptance remain open.
 
 ## Result boundary
 
@@ -197,6 +197,65 @@ methods pass with zero failures, errors or skips. Earlier test assertions and
 the original three new regression oracles are preserved. New final-head CI and
 independent code/security reviews remain required. No live operation is claimed.
 
+## Bounded direct-delivery increment
+
+This increment implements the direct delivery portions of P14 revision 4,
+R1–R4/R6/R7 and T01–T04/T08/T09/T11, using the maintained CP profile.
+An independently granted exact published candidate/PR/base proceeds through
+the existing merge engine, immutable squash reconciliation, exact-main check
+observation and conditional Issue close. The shared completion engine preserves
+the earlier broad path while the closed command retains cleanup responsibility.
+
+The delivery command has no publication, verification, model, assignment,
+repair-registration or resource-retirement effect. Queue-required and incomplete
+protection observations hold. Unknown merge and close effects stay unknown
+across repeated calls and restart; a matching late result can resume completion.
+A newly confirmed undispatched intent can continue after explicit Resume,
+without repinning or charging another request. Historical recovery uses the
+original integration base even when main advances.
+
+The original ten delivery test methods are preserved. An independent input
+probe found that the inherited fake provider used a different current main
+and integration base from the actual temporary Git fixture. The local fixture
+now models actual main, current/pinned policy revision, PR CI association base,
+changed paths and immutable squash parent separately. Its independent valid
+candidate control passes the real delivery gate before implementation.
+
+The fourteen final behavior oracles produce eleven intended assertion failures
+before implementation, with three passing controls, zero errors and zero skips.
+Those same fourteen methods pass after implementation. Additional source guards
+cover malformed pins and authority, required queue and incomplete observations,
+authority revocation, a newer failed main run at close, unknown close after
+restart, the cleanup ceiling and cancellation of an already sent writer.
+
+Final provider payload tests reproduce seven assertion failures across two
+methods before correction, while the valid squash control passes. The adapter
+then rejects current closing-intent PR text and sends a fixed safe squash title.
+Existing API payload assertions are strengthened to include that title.
+
+A separate admission-order oracle reproduces two assertion failures when
+publication/delivery hold admission during final reads. It uses event ordering,
+not a latency threshold. After moving preflight and progress read-back outside
+the lock and retaining the final guarded writer, all six admission/payload
+methods pass, with no errors or skips.
+
+The initial 501-method Python 3.14.2 impact run completes 500 methods without
+failure. One exact-payload assertion fails in eleven subtests because its
+expected request omits the new fixed squash title. Adding that specified field
+preserves every other assertion; all 27 squash regression methods then pass,
+with zero failures, errors or skips and no product-code changes. These runs
+cover 501 unique methods, without claiming a single passing 501-method run.
+Three additional methods
+then reproduce three assertion failures with zero errors or skips: bounded
+progress-source reads and lost merge/close-intent acknowledgments. Only the
+delivery profile changes afterward; all earlier Python source and assertions
+are preserved. The same three oracles pass in a final 32-method delivery-profile
+run, including all fourteen original contract methods and the admission/payload,
+unknown-effect, cleanup and cancellation guards. The runs cover 504 unique
+methods without claiming one 504-method passing execution. Exact-head CI,
+independent reviews, protected delivery and actual main checks remain required. Source fixtures do not qualify
+an installed authority grant or native remote operation.
+
 ## Remaining qualification
 
 The earlier main-CI preservation increment was delivered separately in
@@ -206,5 +265,4 @@ publication command, actual consecutive-push O05, or the rest of P14.
 These local source/SDK fixtures establish deterministic behavior only. Selected
 installation authority, authenticated native operation, the actual remote first
 flow, two-project acceptance, complete D/L/O and resource closure remain open.
-The separate `deliver` profile, queue-required routing, post-merge repair and
-requirement acceptance retain their maintained contracts and later verification.
+Required-queue adapter support, post-merge repair and requirement acceptance retain their maintained contracts and later verification. The direct delivery source increment does not complete those obligations.

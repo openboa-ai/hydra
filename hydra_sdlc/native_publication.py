@@ -11,12 +11,11 @@ from .github import GitHub
 from .native_verification import _candidate, _source
 from .operations import OperationDenied
 from .project import _provider
+from .public_payload import CLOSING_INTENT as _CLOSING
 
 
 _PENDING = frozenset({None, 'publish', 'upsert_pr', 'request_review'})
-_CLOSING = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?:\s*:\s*|\s+)'
-    r'(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*'
-    r'|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*)', re.I)
+
 
 
 def _unique(pairs):

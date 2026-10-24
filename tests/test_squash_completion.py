@@ -302,7 +302,7 @@ class SquashGitHubTests(unittest.TestCase):
                 with self.assertRaises(GitHubError) as caught:
                     GitHub(transport=transport).merge(REPO, 7, HEAD, commit_message=marker, issue_number=4)
                 self.assertTrue(caught.exception.uncertain)
-                self.assertEqual(writes, [{'sha': HEAD, 'merge_method': 'squash', 'commit_message': marker}])
+                self.assertEqual(writes, [{'sha': HEAD, 'merge_method': 'squash', 'commit_title': 'Deliver Issue 4 (#7)', 'commit_message': marker}])
 
 
 class SquashRunnerTests(unittest.IsolatedAsyncioTestCase):
