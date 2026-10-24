@@ -9,7 +9,7 @@ from .github import GitHub
 from .public_payload import CLOSING_INTENT as _CLOSING
 from .native_verification import _candidate, _source
 from .operations import OperationDenied
-from .project import gate_completed_delivery, gate_delivery
+from .project import gate_completed_delivery, gate_delivery, squash_recovery_checkpoint
 
 
 _PENDING = frozenset({None, 'merge', 'close_issue'})
@@ -95,16 +95,38 @@ class Delivery:
                 raise OperationDenied('premature_issue_closure')
             return value
 
-    def completed_gate(self, value):
+    def completed_gate(self, value, *, checkpoint=None):
         return gate_completed_delivery(self.config, value, self.pin['head'], self.runner._paths(value),
-            expected_base=self.expected.get('expected_base'), checkpoint=self.expected.get('checkpoint'))
+            expected_base=self.expected.get('expected_base'),
+            checkpoint=self.expected.get('checkpoint') if checkpoint is None else checkpoint)
+
+    def can_record_squash_recovery(self, value):
+        planned = self.state.get('record')
+        if (self.expected.get('pending_action') != 'merge' or type(planned) is not dict
+                or planned.get('pending_action') is not None or planned.get('phase') != 'observing'
+                or planned.get('wait_reason') is not None or planned.get('next_action') != 'post_merge'):
+            return False
+        current = self.runner._record_values(self.expected)
+        transition = {'checkpoint', 'pending_action', 'phase', 'wait_reason', 'next_action'}
+        if any(current.get(name) != planned.get(name)
+               for name in current.keys() | planned.keys() if name not in transition):
+            return False
+        # The prior source remains the write fence. Validate the destination
+        # receipt from immutable squash evidence before it has been persisted.
+        checkpoint = squash_recovery_checkpoint(self.config, self.number, self.expected, value)
+        return (checkpoint is not None and planned.get('checkpoint') == checkpoint
+                and not self.completed_gate(value, checkpoint=checkpoint))
 
     def before_progress(self):
         self.source(self.expected)
         self.bind()
         reason = self.runner._latest(self.repo, self.number, self.config)
-        if reason and not (reason == 'issue_closed' and not self.completed_gate(self.read_pr())):
-            raise OperationDenied(reason)
+        if reason:
+            if reason != 'issue_closed':
+                raise OperationDenied(reason)
+            value = self.read_pr()
+            if self.completed_gate(value) and not self.can_record_squash_recovery(value):
+                raise OperationDenied(reason)
         self.guard()
 
     def action_key(self, record):

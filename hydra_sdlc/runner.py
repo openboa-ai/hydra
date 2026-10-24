@@ -19,7 +19,7 @@ from .progress import with_progress_hint
 
 from .project import (_provider, gate_completed_delivery, gate_delivery, gate_squash_result,
                       legacy_work_source, load_project, matches, parse_intake, squash_message,
-                      squash_message_matches, terminal_required_checks, post_merge_check_state)
+                      squash_recovery_checkpoint, terminal_required_checks, post_merge_check_state)
 
 
 def issue_url(value):
@@ -1716,16 +1716,10 @@ class Runner:
 
     def _recover_squash(self, repo, number, config, record, observation):
         """Correlate an uncertain trusted request; never infer method from topology."""
-        pr = observation["pr"]
-        base = record.get("expected_base")
-        if (record.get("pending_action") != "merge" or record.get("expected_head") != record.get("head")
-                or gate_squash_result(observation, record.get("head"), base)):
+        checkpoint = squash_recovery_checkpoint(config, number, record, observation)
+        if checkpoint is None:
             return None
-        message = squash_message(config["repository_id"], number, pr["number"],
-                                 record["head"], base, record["intake_digest"])
-        if not squash_message_matches(observation.get("merge_commit", {}).get("message"), message):
-            return None
-        return self._record(repo, number, record, checkpoint="squash_" + pr["merge_commit_sha"],
+        return self._record(repo, number, record, checkpoint=checkpoint,
                             pending_action=None, phase="observing", wait_reason=None, next_action="post_merge")
 
     def _merge(self, repo, number, config, record, pr_number, head, paths):

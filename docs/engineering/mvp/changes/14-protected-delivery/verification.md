@@ -337,3 +337,11 @@ Fresh final-head CI and independent code/security reviews are required before pr
 Two review regressions fail on the unchanged published candidate with two assertion failures and zero errors/skips. The same methods pass after correction. Full PR observations use a separate bounded allowance while progress reads retain their smaller budget; request/time exhaustion and foreign ownership remain holds. Verified external closure is reconciled without another close, preserving unknown-open requests and completed history.
 
 The related 183-method regression bundle and seven focused methods pass under Python 3.14.2 with zero failures, errors or skips. The final focused control also covers external closure during the close-intent recheck. Existing test bytes and accepted requirement/spec revisions are unchanged. Fresh final-head CI and independent reviews, protected delivery and actual-main qualification remain required. Full P14/v1 and installed native acceptance remain open.
+
+## Authenticated squash receipt before completion
+
+Three unchanged purpose regressions fail on the published parent with three assertion failures and zero errors/skips. Late merge success plus external Issue closure now records the authenticated squash receipt in the same owner and after controller restart. Failed main checks retain that receipt while completion remains held. The prior progress stays the write fence until the exact transition is written and read back.
+
+Recovery and its final write guard share one immutable-result/correlation validator. Six focused cases and 109 related methods pass on Python 3.14.2 with zero failures, errors or skips. Controls reject correlation changes during the recovery write and unrelated transition fields; an acknowledged merge followed by external closure also completes without another close. The three original purpose methods and all earlier delivery test bytes are preserved. A separate capacity assertion reproduces the insufficient outer CI allowance; three CI contract methods pass after the documented bounded capacity adjustment. All behavior cases and their deadlines remain.
+
+The previous source CI cancellation is not a pass. Final-head CI and independent code/security reviews, protected merge, actual-main verification and retirement remain required. Full P14/v1 and installed native acceptance remain open.
