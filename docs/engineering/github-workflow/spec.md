@@ -1024,3 +1024,57 @@ effect/source spies and matching response-loss/restart controls. Keep prior
 checkpoint/verify-only and legacy delivery behavior under their existing bounds.
 The separate deliver profile, queue routing, repair completion and actual native
 operating qualification retain their own P14 and v1 acceptance obligations.
+
+## Bounded protected delivery — 2026-10-24
+
+Implement the direct-delivery portion of P14 revision 4 through the existing
+versioned command dispatcher. An explicit workflow_step.deliver grant accepts
+one published CandidatePin, owned PR number and original integration base.
+Schema availability and the optional admission installation profile grant no
+workflow authority. Current caller, runtime, provider, repository, policy,
+intake, accepted specification, ownership and admission remain mandatory.
+
+The fixed effect ceiling permits only progress, protected squash and conditional
+Issue close. Reuse the existing merge engine and merged-result completion engine;
+do not call broad continuation, publish, create a PR, run another verifier/model,
+assign work, create a repair or retire resources. Observe current exact-head
+checks, code/security reviews, native approvals and thread resolution. Missing
+protection or required queue support holds before any merge request; queue
+requirements cannot fall back to direct merge. Reject changed PR/base pins
+instead of adopting current values.
+
+The final provider adapter rechecks actual owned PR text for premature closing
+intent and sends a fixed public squash title with the existing correlated squash
+message. A mutable PR title cannot supply the squash title. Candidate commits and
+PR title/body retain publication and delivery preflight checks. Source reads and
+remote writes are not one transaction; provider exact-head checks and enforced
+branch protection remain required.
+
+Record the original merge intent before dispatch. Recover an observed squash
+from its authenticated intent, immutable parent/tree and correlation marker,
+including after restart and later main commits. An absent unmerged result is
+not proof that an unknown request was never sent. Retain the original intent
+and reconcile; do not retransmit an unknown merge or close. A bounded private
+witness may retain only a newly recorded intent positively known not to have
+entered its writer. Wait-record updates cannot create that witness. Restart or
+eviction loses the witness and keeps uncertainty.
+
+Observe required push checks on the exact actual merge commit, preserving
+success, pending, failed and unknown. Recheck merged ownership, current delegation
+and latest merge checks after the close intent and before close. Only successful
+required checks plus actual close read-back permit an applied delivery receipt.
+Post-merge failure retains the original result and repair responsibility without
+automatically creating a repair. A repeated confirmed completion has no further
+writes, and a reopened completed Issue is not silently closed again. Cleanup
+remains a separate responsibility.
+
+Publication and delivery preflight reads and progress read-back run outside the
+admission lock. Refresh authority and acquire the exact admission guard after
+preflight, immediately before the bounded writer. This allows Pause to apply
+while a final remote read is still pending and prevents a subsequent dispatch.
+An already sent writer drains under its ownership even if the caller cancels;
+cancellation prevents later effects and does not invent rollback.
+
+These source tests do not activate an installed grant or establish native/remote
+operation. Exact-head CI, independent code/security reviews, protected delivery,
+main verification, later repair integration and full v1 acceptance remain required.

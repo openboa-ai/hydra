@@ -579,6 +579,20 @@ def gate_squash_result(observation, head, base):
     return blockers
 
 
+def squash_recovery_checkpoint(config, number, record, observation):
+    """Derive a receipt from a pending intent and its correlated immutable result."""
+    pr = observation["pr"]
+    base = record.get("expected_base")
+    if (record.get("pending_action") != "merge" or record.get("expected_head") != record.get("head")
+            or gate_squash_result(observation, record.get("head"), base)):
+        return None
+    message = squash_message(config["repository_id"], number, pr["number"],
+                             record["head"], base, record["intake_digest"])
+    if not squash_message_matches(observation.get("merge_commit", {}).get("message"), message):
+        return None
+    return "squash_" + pr["merge_commit_sha"]
+
+
 def gate_completed_delivery(config, observation, head, paths, *, expected_base=None, checkpoint=None):
     """Actual merged facts plus candidate evidence; this never authorizes an effect."""
     pr = observation.get("pr", {})
