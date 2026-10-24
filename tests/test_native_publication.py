@@ -59,6 +59,15 @@ class NativePublicationTests(unittest.IsolatedAsyncioTestCase):
             return result
         self.gh.ensure_pr = actual_pr
         self.gh._identity = lambda: {'id': 11, 'login': 'openboa'}
+        def original_progress(repo, number):
+            # This service fixture stores plain progress and manual decisions;
+            # expose those same original facts through the composite reader.
+            source = self.gh.progress_source(repo, number)
+            link = self.gh.decision_context_link
+            context = ({'source_attempt': link[0], 'resume_attempt': link[1]}
+                       if link is not None else None)
+            return {**source, 'decision_context': context, 'native_root': None}
+        self.gh.decision_progress_source = original_progress
         return candidate
 
     def publication_command(self, candidate):

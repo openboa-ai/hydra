@@ -111,7 +111,7 @@ class NullableProgressWireTests(unittest.TestCase):
                           'contract_revision': 'b' * 40, 'spec_revision': None})
 
     def test_shared_receipt_shapes_and_original_progress_correlation(self):
-        cases = json.loads((Path(__file__).parent / 'fixtures/control-v3/continuation-heads.json').read_text())
+        cases = json.loads((Path(__file__).parent / 'fixtures/control-v3/continuation-heads.json').read_text())['cases']
         for case in cases:
             reply = case['reply']
             with self.subTest(case=case['name']):

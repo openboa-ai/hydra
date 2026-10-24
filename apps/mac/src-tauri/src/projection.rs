@@ -593,7 +593,8 @@ mod continuation_head_tests {
     fn pre_workspace_receipts_keep_strict_heads_and_unqualified_consumer_boundary() {
         let path=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../../tests/fixtures/control-v3/continuation-heads.json");
-        let rows:Value=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let fixture:Value=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let rows=&fixture["cases"];
         assert_eq!(rows.as_array().unwrap().len(),8);
         for row in rows.as_array().unwrap() {
             let reply=&row["reply"];

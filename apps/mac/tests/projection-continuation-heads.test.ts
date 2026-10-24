@@ -4,7 +4,7 @@ import test from "node:test";
 import {parseStandardReply, ProjectionError} from "../src/projection.ts";
 import {projectionState, reduceProjection} from "../src/projection-state.ts";
 
-const rows=JSON.parse(readFileSync(new URL("../../../tests/fixtures/control-v3/continuation-heads.json",import.meta.url),"utf8"));
+const rows=JSON.parse(readFileSync(new URL("../../../tests/fixtures/control-v3/continuation-heads.json",import.meta.url),"utf8")).cases;
 const matrix=JSON.parse(readFileSync(new URL("../../../tests/fixtures/control-v3/receipt-states.json",import.meta.url),"utf8"));
 for (const row of rows) test("CP11 continuation head: "+row.name,()=>{
   assert.throws(()=>parseStandardReply(row.reply),(error:unknown)=>
