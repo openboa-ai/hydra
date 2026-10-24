@@ -132,6 +132,16 @@ async def execute_command_v1(config_path, command, *, context_provider, github, 
     """Thin transport-independent dispatch to existing guarded command cores."""
     parsed = parse_command_v1(command)
     if (parsed['action'] == 'workflow_step' and parsed['parameters']
+            and parsed['parameters'].get('operation') == 'continue'):
+        from .continuation_commands import execute_continue_command
+        return await execute_continue_command(config_path, parsed,
+            context_provider=context_provider, github=github, controller=controller)
+    if (parsed['action'] == 'workflow_step' and parsed['parameters']
+            and parsed['parameters'].get('operation') == 'decision_apply'):
+        from .decision_commands import execute_decision_apply_command
+        return await execute_decision_apply_command(config_path, parsed,
+            context_provider=context_provider, github=github, controller=controller)
+    if (parsed['action'] == 'workflow_step' and parsed['parameters']
             and parsed['parameters'].get('operation') == 'verify_only'):
         from .verification_commands import execute_verification_command
         return await execute_verification_command(config_path, parsed,
@@ -196,7 +206,31 @@ def command_input_schema():
         'parameters': obj({'operation': {'const': 'publish_candidate'}, 'candidate': candidate,
             'branch': {'type': 'string', 'pattern': '^hydra/issue-[1-9][0-9]*$'},
             'expected_remote_head': nullable(sha)})})
-    return {'oneOf': [admission, checkpoint, run, review, publication]}
+    resource = obj({'source': {'const': 'codex'},
+        'kind': {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{0,63}$'},
+        'id': {'type': 'string', 'minLength': 1, 'maxLength': 256}})
+    opaque = {'type': 'string', 'minLength': 1, 'maxLength': 256}
+    revision = {'oneOf': [obj({'kind': {'const': 'opaque'}, 'value': opaque}),
+        obj({'kind': {'const': 'monotonic'}, 'value': {**opaque, 'pattern': '^(0|[1-9][0-9]*)$'}})]}
+    check = obj({'resource': resource, 'revision': nullable(revision),
+                 'actionable_digest': nullable({'type': 'string', 'pattern': '^[0-9a-f]{64}$'})})
+    check['anyOf'] = [{'properties': {'revision': {'type': 'object'}}},
+                      {'properties': {'actionable_digest': {'type': 'string'}}}]
+    decision = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': checkpoint['properties']['target'],
+        'expected': obj({**expected, 'assignment': {'type': 'null'},
+            'source_checks': {'type': 'array', 'minItems': 1, 'maxItems': 1, 'items': check}}),
+        'effect_key': {'type': 'string', 'pattern': '^decision:[0-9a-f-]{36}:[1-9][0-9]*$'},
+        'parameters': obj({'operation': {'const': 'decision_apply'}, 'proposal_ref': resource,
+            'source_attempt': uid, 'round': positive})})
+    progress = obj({'attempt_id': uid, 'head': sha, 'contract_revision': sha,
+        'phase': {'type': 'string', 'pattern': '^[a-z0-9][a-z0-9_-]{0,119}$'}})
+    continuation = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': checkpoint['properties']['target'],
+        'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
+        'parameters': obj({'operation': {'const': 'continue'}, 'progress': nullable(progress),
+            'reply_profile': {'enum': ['standard_v1', 'native_handoff_v1']}})})
+    return {'oneOf': [admission, checkpoint, run, review, publication, decision, continuation]}
 
 
 def _uuid(value):
@@ -242,7 +276,8 @@ def _parse(command, *, checkpoint=False):
         if (type(parameters) is not dict or type(parameters.get('operation')) is not str
                 or not parameters['operation']):
             raise InvalidAdmissionCommand()
-        if parameters['operation'] not in {'checkpoint_only', 'verify_only', 'publish_candidate'}:
+        if parameters['operation'] not in {'checkpoint_only', 'verify_only', 'publish_candidate',
+                                            'decision_apply', 'continue'}:
             # An unknown operation's expected/effect/body are also opaque.
             return {key: (dict(target) if key == 'target' else None if key in
                           {'expected', 'parameters', 'effect_key'} else value)
@@ -258,9 +293,15 @@ def _parse(command, *, checkpoint=False):
                             or any(ord(c) < 32 or ord(c) >= 127 for c in key)):
         raise InvalidAdmissionCommand()
     if ((expected['admission_revision'] is not None and not _integer(expected['admission_revision']))
-            or type(expected['source_checks']) is not list or expected['source_checks'] != []):
+            or type(expected['source_checks']) is not list
+            or (not (checkpoint and parameters['operation'] == 'decision_apply')
+                and expected['source_checks'] != [])):
         raise InvalidAdmissionCommand()
     if checkpoint:
+        if parameters['operation'] in {'decision_apply', 'continue'}:
+            from .decision_commands import validate_parameters
+            validate_parameters(command)
+            return copy.deepcopy(command)
         if parameters['operation'] == 'publish_candidate':
             from .publication_commands import validate_parameters
             validate_parameters(command)
@@ -320,7 +361,7 @@ def _context(provider, command):
     if (type(context.operations) is not frozenset or not context.operations <=
             {'admission_set', 'workflow_step.checkpoint_only', 'workflow_step.verify_only.run',
              'workflow_step.verify_only.review_checkpoint', 'command_reply.native_handoff_v1',
-             'workflow_step.publish_candidate'}):
+             'workflow_step.publish_candidate', 'workflow_step.decision_apply', 'workflow_step.continue'}):
         return None, 'authority_unavailable'
     if context.config_digest is not None and (type(context.config_digest) is not str
                                               or not _DIGEST.fullmatch(context.config_digest)):
@@ -370,12 +411,17 @@ def _reply(command, runtime, epoch, outcome, reason, *, observation=None, requir
     observations = ([] if observation is None else [observation]) + ([] if progress_observation is None else [progress_observation])
     refs = [{'observation_key': o['key'], 'revision': copy.deepcopy(o['revision'])} for o in observations]
     applied = outcome == 'applied'
+    effects = []
+    if applied:
+        effects = ([dict(receipt['context_ref']), dict(receipt['resolved_ref'])]
+                   if receipt and receipt.get('kind') == 'decision' else
+                   [dict(receipt['progress_ref'] if receipt else observation['resource'])])
     return {
         'command_schema': 1, 'runtime': runtime, 'binding_epoch': epoch,
         'request': {
             'request_id': command['request_id'], 'action': command['action'],
             'target': dict(command['target']), 'outcome': outcome, 'reason': reason,
-            'effect_refs': [dict(receipt['progress_ref'] if receipt else observation['resource'])] if applied else [],
+            'effect_refs': effects,
             'observed_refs': refs,
             'receipt': (receipt or {'kind': 'admission', 'readback': refs[0]}) if applied else None,
             'required_next': 'none' if applied else required_next,

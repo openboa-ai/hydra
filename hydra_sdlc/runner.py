@@ -210,6 +210,7 @@ class Runner:
             raise OperationDenied("project_contract_unavailable")
         compare = Runner._observed_policy_reason
         verification_guard = self._verification_scope.get()
+        decision_check = self._decision_preflight(repo)
 
         def read(deadline):
             try:
@@ -225,8 +226,12 @@ class Runner:
                 raise OperationDenied(reason)
             if verification_guard is not None:
                 verification_guard.before_dispatch()
+            decision_check()
 
         return DispatchPreflight(read, owner=self)
+
+    def _decision_preflight(self, repo):
+        return lambda: None
 
     def _workspace_effect(self, repo, method, *args, **kwargs):
         current = self._cleanup_scope.get()
@@ -275,16 +280,18 @@ class Runner:
         return config
 
     def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True,
-                include_admission=True):
+                include_admission=True, github=None):
+        github = self.github if github is None else github
         reason = self._operation_reason(repo) if include_admission else None
         if reason:
             return reason
         if include_stop and self.stop_requested():
             return "stop_requested"
-        policy = self._policy_reason(repo, config)
+        policy = (self._policy_reason(repo, config) if github is self.github else
+                  self._observed_policy_reason(github, repo, config))
         if policy:
             return policy
-        issue = self.github.issue(repo, number)
+        issue = github.issue(repo, number)
         if config.get("intake_digest") and intake_digest(issue) != config["intake_digest"]:
             return "intake_changed"
         names = [item.get("name") if isinstance(item, dict) else item for item in issue.get("labels", [])]
@@ -308,7 +315,7 @@ class Runner:
             intake = parse_intake({**issue, "state": "open"}, config)
             for dependency in intake.get("dependencies", []):
                 dep_repo, dep_number = issue_url(dependency)
-                if self.github.issue(dep_repo, dep_number).get("state") != "closed":
+                if github.issue(dep_repo, dep_number).get("state") != "closed":
                     return "dependency_open"
         if issue.get("state") != "open":
             return "issue_closed"
@@ -336,7 +343,8 @@ class Runner:
         ceiling = self._checkpoint_ceiling.get()
         if ceiling is not None:
             ceiling[3]['record'] = dict(record)
-        self._effect(repo, writer, repo, number, record, cleanup=cleanup, _checkpoint_effect="progress")
+        self._effect(repo, writer, repo, number, record, cleanup=cleanup, _checkpoint_effect="progress",
+                     **self._record_options())
         if cleanup and self.operations is not None:
             observed = self.github.progress(repo, number)
             if not observed or any(observed.get(key) != value for key, value in record.items()):
@@ -345,6 +353,12 @@ class Runner:
                 and ended[3].get("attempt_id") == record.get("attempt_id")
                 and record.get("phase") != "executing" and record.get("pending_action") is None):
             self._forget_ended(ended)
+        return record
+
+    def _record_options(self):
+        return {}
+
+    def _prepare_decision(self, repo, number, record):
         return record
 
     def _completion_callback(self):
@@ -537,7 +551,8 @@ class Runner:
             body = prior.get("body", "").strip()
             remainder = body[len(prefix):] if body.startswith(prefix) else ""
             if ((prior.get("user") or {}).get("login") in config["authorized_actors"]
-                    and remainder and remainder[0].isspace() and remainder.strip()):
+                    and remainder and remainder[0].isspace() and remainder.strip()
+                    and "<!-- hydra-decision-" not in body):
                 return body
         return None
 
@@ -1173,6 +1188,7 @@ class Runner:
         # attempt, so a later policy transition can reconcile one exact record.
         if self._policy_changed(repo, config, record):
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
+        record = self._prepare_decision(repo, number, record)
         intake = parse_intake({**issue, "state": "open"} if closing_recovery else issue, config)
         config = {**config, "_scoped_spec": intake["spec"]}
         boundary, _, _ = self._branch_boundary(repo, number, record, previously_owned=previously_owned)

@@ -601,7 +601,9 @@ class GitHub:
             elif not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,119}", value):
                 raise GitHubError("Progress requires public codes, not raw text")
 
-    def record(self, repo, n, record, *, cleanup=False):
+    def record(self, repo, n, record, *, cleanup=False, preserve_decision_context=False):
+        if type(preserve_decision_context) is not bool:
+            raise GitHubError('Invalid decision context preservation')
         self._validate_record(record)
         metadata = {**record, "version": 1, "repository_id": self.repository(repo)["id"], "issue_number": _number(n)}
         if metadata.get("branch") not in {None, f"hydra/issue-{n}"}:
@@ -620,7 +622,9 @@ class GitHub:
             _decision_context_marker("<!-- hydra-decision-context:v1 "
                                      + json.dumps(context, separators=(",", ":")) + " -->")
         elif context:
-            if not metadata.get("resume_phase"):
+            if preserve_decision_context and context['resume_attempt'] != metadata.get('attempt_id'):
+                raise GitHubError('Decision context ownership changed')
+            if not metadata.get("resume_phase") and not preserve_decision_context:
                 context = None
             elif context["resume_attempt"] != metadata.get("attempt_id"):
                 context = {"source_attempt": context["source_attempt"],
@@ -649,12 +653,13 @@ class GitHub:
             self._active(repo, n, False)
         return result
 
-    def record_checkpoint(self, repo, n, record):
+    def record_checkpoint(self, repo, n, record, *, preserve_decision_context=False):
         """Record a confirmed finished/stopped checkpoint without discovery effects.
 
         Callers still enforce their own admission and exact assignment authority.
         """
-        return self.record(repo, n, record, cleanup=True)
+        return self.record(repo, n, record, cleanup=True,
+                           preserve_decision_context=preserve_decision_context)
 
     def ref(self, repo, branch):
         try:
