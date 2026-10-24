@@ -73,3 +73,15 @@ creation contract and handler, ambiguous-result recovery, binding and anchor
 read-back, applicable app consumers, relationship preparation, and actual
 creation and model-quality acceptance. This increment does not complete
 P10 or Hydra v1.0.0.
+
+## Integration with verified project connections
+
+The source increment is integrated with protected main `46e8c03`, whose actual
+merge revision passes kernel, Mac and trusted hygiene checks. The original
+four draft-source implementation and test files remain byte-identical.
+The combined draft, work-record, GitHub and connection regression run passes
+198 methods with zero failures, errors or skips.
+
+This is source integration evidence. Fresh final-head CI and independent
+code/security reviews remain necessary before protected delivery. Work
+creation, adoption, native operation and full P10/v1 acceptance remain open.
