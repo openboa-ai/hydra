@@ -223,6 +223,7 @@ class Runner:
             raise OperationDenied("project_contract_unavailable")
         compare = Runner._observed_policy_reason
         verification_guard = self._verification_scope.get()
+        decision_check = self._decision_preflight(repo)
 
         def read(deadline):
             try:
@@ -238,8 +239,12 @@ class Runner:
                 raise OperationDenied(reason)
             if verification_guard is not None:
                 verification_guard.before_dispatch()
+            decision_check()
 
         return DispatchPreflight(read, owner=self)
+
+    def _decision_preflight(self, repo):
+        return lambda: None
 
     def _workspace_effect(self, repo, method, *args, **kwargs):
         current = self._cleanup_scope.get()
@@ -288,16 +293,18 @@ class Runner:
         return config
 
     def _latest(self, repo, number, config, *, include_stop=True, include_dependencies=True,
-                include_admission=True):
+                include_admission=True, github=None):
+        github = self.github if github is None else github
         reason = self._operation_reason(repo) if include_admission else None
         if reason:
             return reason
         if include_stop and self.stop_requested():
             return "stop_requested"
-        policy = self._policy_reason(repo, config)
+        policy = (self._policy_reason(repo, config) if github is self.github else
+                  self._observed_policy_reason(github, repo, config))
         if policy:
             return policy
-        issue = self.github.issue(repo, number)
+        issue = github.issue(repo, number)
         if config.get("intake_digest") and intake_digest(issue) != config["intake_digest"]:
             return "intake_changed"
         names = [item.get("name") if isinstance(item, dict) else item for item in issue.get("labels", [])]
@@ -321,7 +328,7 @@ class Runner:
             intake = parse_intake({**issue, "state": "open"}, config)
             for dependency in intake.get("dependencies", []):
                 dep_repo, dep_number = issue_url(dependency)
-                if self.github.issue(dep_repo, dep_number).get("state") != "closed":
+                if github.issue(dep_repo, dep_number).get("state") != "closed":
                     return "dependency_open"
         if issue.get("state") != "open":
             return "issue_closed"
@@ -349,7 +356,8 @@ class Runner:
         ceiling = self._checkpoint_ceiling.get()
         if ceiling is not None:
             ceiling[3]['record'] = dict(record)
-        self._effect(repo, writer, repo, number, record, cleanup=cleanup, _checkpoint_effect="progress")
+        self._effect(repo, writer, repo, number, record, cleanup=cleanup, _checkpoint_effect="progress",
+                     **self._record_options())
         if cleanup and self.operations is not None:
             observed = self.github.progress(repo, number)
             if not observed or any(observed.get(key) != value for key, value in record.items()):
@@ -358,6 +366,15 @@ class Runner:
                 and ended[3].get("attempt_id") == record.get("attempt_id")
                 and record.get("phase") != "executing" and record.get("pending_action") is None):
             self._forget_ended(ended)
+        return record
+
+    def _record_options(self):
+        return {}
+
+    def _replan_record(self, repo, number, record, **values):
+        return self._record(repo, number, record, attempt_id=str(uuid.uuid4()), **values)
+
+    def _prepare_decision(self, repo, number, record):
         return record
 
     def _completion_callback(self):
@@ -564,7 +581,8 @@ class Runner:
             body = prior.get("body", "").strip()
             remainder = body[len(prefix):] if body.startswith(prefix) else ""
             if ((prior.get("user") or {}).get("login") in config["authorized_actors"]
-                    and remainder and remainder[0].isspace() and remainder.strip()):
+                    and remainder and remainder[0].isspace() and remainder.strip()
+                    and "<!-- hydra-decision-" not in body):
                 return body
         return None
 
@@ -1196,6 +1214,7 @@ class Runner:
         # attempt, so a later policy transition can reconcile one exact record.
         if self._policy_changed(repo, config, record):
             return {"repository": repo, "issue": number, "action": "waiting", "reason": "policy_changed"}
+        record = self._prepare_decision(repo, number, record)
         intake = parse_intake({**issue, "state": "open"} if closing_recovery else issue, config)
         config = {**config, "_scoped_spec": intake["spec"]}
         boundary, _, _ = self._branch_boundary(repo, number, record, previously_owned=previously_owned)
@@ -1227,7 +1246,6 @@ class Runner:
         if record.get("wait_reason") == "replan_required":
             if self._resolution_marker(repo, number, config, record) != "replan_ready":
                 return {"repository": repo, "issue": number, "action": "waiting", "reason": "replan_required"}
-            self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
             # A prior replan resets the retry counter, never the uncertain effect.
             # Its pending action remains authoritative even before a fresh request.
             service_retry = record.get("pending_action") in {"publish", "upsert_pr", "merge", "close_issue", "resolve_threads", "request_review"}
@@ -1240,7 +1258,7 @@ class Runner:
             review_reconcile = (record.get("next_action") in {"diagnose_review", "diagnose_review_request"}
                                 and record.get("phase") != "executing")
             receipt = record.get("checkpoint")
-            record = self._record(repo, number, record, attempt_id=str(uuid.uuid4()),
+            record = self._replan_record(repo, number, record,
                                   host_alias=self.host if handover else record.get("host_alias"),
                                   checkpoint=receipt if re.fullmatch(r"squash_[0-9a-f]{40}", receipt or "") else None,
                                   pending_action=record.get("pending_action") if service_retry else None,
@@ -1250,6 +1268,7 @@ class Runner:
                                   correction_attempt=None, wait_reason=None,
                                   phase="uncertain" if service_retry else "review_wait" if review_reconcile else "ready",
                                   resume_phase=None if service_retry or review_reconcile else origin if origin in {"design", "correction"} else "implementation")
+            self.failures = {key: value for key, value in self.failures.items() if key[:2] != (repo, number)}
         unresolved_model = record.get("phase") == "executing" or record.get("wait_reason") in {
             "execution_unknown", "execution_failed", "invalid_model_result"}
         if record.get("host_alias") != self.host or unresolved_model:

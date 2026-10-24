@@ -1,0 +1,752 @@
+{
+  "contract": {
+    "path": "docs/engineering/mvp/contracts/control-plane.md",
+    "revision": 11,
+    "sha256": "889a1617ad78b270c7a4079dba1bf0dde14f19b2906fddae4ba5134bc45e15fe"
+  },
+  "cases": [
+    {
+      "name": "pre-workspace-progress-recorded",
+      "schema_accepted": true,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "ready",
+              "native_step": null,
+              "head": null,
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": null,
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "progress_recorded"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "real-head-assignment-returned",
+      "schema_accepted": true,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "executing",
+              "native_step": "00000000-0000-4000-8000-000000000321",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "native_assignment_pending",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "assignment_returned"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "null-head-assignment-returned",
+      "schema_accepted": false,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "ready",
+              "native_step": null,
+              "head": null,
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": null,
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "assignment_returned"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "null-head-existing-result",
+      "schema_accepted": false,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "ready",
+              "native_step": null,
+              "head": null,
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": null,
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "existing_result_reconciled"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "missing-head",
+      "schema_accepted": false,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "ready",
+              "native_step": null,
+              "head": null,
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "progress_recorded"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "null-receipt-head-disagrees-with-source",
+      "schema_accepted": false,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "ready",
+              "native_step": null,
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": null,
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "progress_recorded"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "attempt-disagrees-with-source",
+      "schema_accepted": false,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "complete",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": 1,
+              "next_cursor": null,
+              "reason": null
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000999",
+              "phase": "ready",
+              "native_step": null,
+              "head": null,
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": null,
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "progress_recorded"
+          },
+          "required_next": "none"
+        }
+      }
+    },
+    {
+      "name": "incomplete-progress-source",
+      "schema_accepted": false,
+      "reply": {
+        "command_schema": 1,
+        "runtime": {
+          "identity_schema": 1,
+          "package": "openboa-hydra-sdlc",
+          "version": "0.2.1",
+          "code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code_digest_scope": "package_sources_at_startup",
+          "config_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "control_binding_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "identity_reason": null
+        },
+        "binding_epoch": "00000000-0000-4000-8000-000000000001",
+        "observations": [
+          {
+            "key": "fixture:continuation:readback",
+            "resource": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "revision": null,
+            "observed_at": "2026-10-19T00:00:00Z",
+            "last_attempt_at": "2026-10-19T00:00:00Z",
+            "availability": "current",
+            "coverage": {
+              "state": "partial",
+              "scope": "fixture:continuation:readback",
+              "returned_count": 1,
+              "total_count": null,
+              "next_cursor": null,
+              "reason": "fixture_partial"
+            },
+            "reason": null,
+            "value": {
+              "issue_ref": {
+                "source": "github",
+                "kind": "issue",
+                "id": "101:7"
+              },
+              "attempt_id": "00000000-0000-4000-8000-000000000320",
+              "phase": "ready",
+              "native_step": null,
+              "head": null,
+              "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "branch": "hydra/issue-7",
+              "expected_head": null,
+              "expected_base": null,
+              "published_head": null,
+              "wait_reason": "dependency_open",
+              "next_action": "reconcile",
+              "pending_action": null,
+              "pr_ref": null,
+              "completion_refs": null,
+              "cleanup_state": null
+            }
+          }
+        ],
+        "request": {
+          "request_id": "00000000-0000-4000-8000-000000000352",
+          "action": "workflow_step",
+          "target": {
+            "repository_id": 101,
+            "issue_number": 7
+          },
+          "outcome": "applied",
+          "reason": null,
+          "effect_refs": [],
+          "observed_refs": [
+            {
+              "observation_key": "fixture:continuation:readback",
+              "revision": null
+            }
+          ],
+          "receipt": {
+            "kind": "continuation",
+            "progress_ref": {
+              "source": "github",
+              "kind": "progress",
+              "id": "101:7"
+            },
+            "attempt_id": "00000000-0000-4000-8000-000000000320",
+            "head": null,
+            "contract_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary": "progress_recorded"
+          },
+          "required_next": "none"
+        }
+      }
+    }
+  ]
+}

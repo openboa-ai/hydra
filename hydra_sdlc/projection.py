@@ -697,7 +697,7 @@ def command_result(value, observations):
             require(progress['id'] == expected)
         else:
             require(progress['kind'] == 'issue_comment')
-        if progress['kind'] == 'issue_comment' or value['receipt']['kind'] == 'checkpoint':
+        if progress['kind'] == 'issue_comment' or value['receipt']['kind'] in {'checkpoint', 'continuation'}:
             proofs = [observations[e['observation_key']] for e in value['observed_refs']
                 if observations[e['observation_key']]['resource'] ==
                    {'source': 'github', 'kind': 'progress', 'id': progress['id']}]
@@ -712,6 +712,9 @@ def command_result(value, observations):
                         and proof['value']['attempt_id'] == checkpoint['assignment']['attempt_id']
                         and proof['value']['contract_revision'] == checkpoint['assignment']['contract_revision']
                         and proof['value']['native_step'] is None)
+            if value['receipt']['kind'] == 'continuation':
+                require(all(proof['value'][key] == value['receipt'][key]
+                            for key in ('attempt_id', 'head', 'contract_revision')))
 
 
 def receipt(value, observations):
@@ -751,9 +754,10 @@ def receipt(value, observations):
             ref(value[key])
     if kind == 'continuation':
         uid(value['attempt_id'])
-        sha(value['head'])
+        nullable(value['head'], sha)
         sha(value['contract_revision'])
         one(value['boundary'], {'progress_recorded', 'assignment_returned', 'existing_result_reconciled'})
+        require(value['head'] is not None or value['boundary'] == 'progress_recorded')
     if kind in {'verification', 'verification_review', 'publication', 'delivery'}:
         candidate(value['candidate'])
     if kind == 'verification':
