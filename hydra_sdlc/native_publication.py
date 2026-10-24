@@ -254,12 +254,12 @@ class Publication:
         self.runner._record(self.repo, self.number, self.expected, **values)
         return self.expected
 
-    def check_pr(self, pr, *, github=None):
+    def check_pr(self, pr, *, github=None, expected_head=None):
         reader = self.runner.github if github is None else github
         if (type(pr) is not dict or type(pr.get('number')) is not int or pr['number'] < 1
                 or not reader.owns_pr(self.repo, self.number, pr)):
             raise OperationDenied('foreign_pr')
-        if pr.get('head', {}).get('sha') != self.pin['head']:
+        if pr.get('head', {}).get('sha') != (self.pin['head'] if expected_head is None else expected_head):
             raise OperationDenied('stale_publication')
         if (type(pr.get('title')) is not str or type(pr.get('body')) is not str
                 or _CLOSING.search(pr['title']) or _CLOSING.search(pr['body'])):
@@ -279,9 +279,14 @@ class Publication:
                 'stage': ('publication_ready' if pr and observed == {'code', 'security'}
                           else 'pr_ready' if pr else 'branch_published')}
 
-    def read_publication(self):
+    def read_publication(self, *, allow_expected_head=False):
         with self._read_scope() as reader:
             remote = reader.ref(self.repo, self.params['branch'])
+            observed_head = self.pin['head']
+            if (allow_expected_head and remote is not None
+                    and remote == self.params.get('expected_remote_head') == self.expected.get('expected_head')
+                    and self.expected.get('published_head') != self.pin['head']):
+                observed_head = remote
             pulls = reader.pulls(self.repo, self.params['branch'])
             if len(pulls) > 1:
                 raise OperationDenied('multiple_prs')
@@ -289,19 +294,20 @@ class Publication:
             refs = []
             if pulls:
                 pr = pulls[0]
-                self.check_pr(pr, github=reader)
+                self.check_pr(pr, github=reader, expected_head=observed_head)
                 self.remember_receipt(remote, pr)
                 if isinstance(reader, GitHub):
                     observation = reader._publication_observation(self.repo, pr['number'])
                 else:
                     method = getattr(reader, 'observe_publication', None)
                     observation = (method if callable(method) else reader.observe)(self.repo, pr['number'])
-                if (observation.get('head_sha') != self.pin['head']
+                if (observation.get('head_sha') != observed_head
                         or observation.get('pr', {}).get('number') != pr['number']
                         or not reader.owns_pr(self.repo, self.number, observation['pr'])):
                     raise RuntimeError('Publication source changed')
-                self.check_pr(observation['pr'], github=reader)
-                observed, refs = _review_requests(reader, self.repo, self.config, observation, self.pin['head'])
+                self.check_pr(observation['pr'], github=reader, expected_head=observed_head)
+                if observed_head == self.pin['head']:
+                    observed, refs = _review_requests(reader, self.repo, self.config, observation, self.pin['head'])
             self.remember_receipt(remote, pr, observed, refs)
             return remote, pr, observation, observed
 
@@ -398,7 +404,7 @@ class Publication:
         if self.params['expected_remote_head'] != self.expected.get('expected_head'):
             raise OperationDenied('stale_publication')
         self.config = {**self.config, 'intake_digest': self.expected['intake_digest']}
-        remote, pr, observation, observed = self.read_publication()
+        remote, pr, observation, observed = self.read_publication(allow_expected_head=True)
         if remote != self.params['expected_remote_head'] and not (
                 remote == self.pin['head'] and self.receipt is not None
                 and self.params['expected_remote_head'] == self.expected.get('expected_head')):

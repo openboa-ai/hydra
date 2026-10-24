@@ -176,6 +176,27 @@ methods pass with zero failures, errors or skips. This is integration
 regression evidence; it does not replace final-head CI, independent
 code/security reviews, protected delivery or actual operational acceptance.
 
+## Candidate-update and preflight review corrections
+
+A newly reviewed correction can update its existing owned PR from the exact
+prior head authenticated in progress. This allowance applies only before the
+current candidate is confirmed published. Later PR observations and review
+requests still require the exact candidate head; earlier reviews cannot approve
+the correction. A lagging PR read is held and reconciled after restart without
+another push. An externally rewound confirmed candidate is held.
+
+Initial repository resolution runs in an awaited worker. Current caller/runtime
+binding and admission are validated again after that read and before effects.
+The MCP event loop can serve another callback during the provider lookup.
+
+Three new regression methods produce three assertion failures before correction,
+with zero errors or skips; the existing valid publication control passes. All
+four focused methods pass after correction. A fourth new method retains the
+external-rewind guard. All 115 selected publication, GitHub and planning impact
+methods pass with zero failures, errors or skips. Earlier test assertions and
+the original three new regression oracles are preserved. New final-head CI and
+independent code/security reviews remain required. No live operation is claimed.
+
 ## Remaining qualification
 
 The earlier main-CI preservation increment was delivered separately in

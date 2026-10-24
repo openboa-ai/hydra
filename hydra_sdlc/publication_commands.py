@@ -1,4 +1,5 @@
 """Closed publication command profile; installed authority remains separate."""
+import asyncio
 import re
 
 from . import control_commands as c
@@ -39,7 +40,8 @@ async def execute_publication_command(config_path, command, *, context_provider,
 
     try:
         cfg, _, _ = binding.validate()
-        repository, reason = c._repository(github, cfg['repos'], command['target']['repository_id'])
+        repository, reason = await asyncio.to_thread(c._repository, github, cfg['repos'],
+            command['target']['repository_id'])
         _, control, _ = binding.validate()
         if reason:
             return reply('unknown' if reason == 'repository_unavailable' else 'rejected', reason)
