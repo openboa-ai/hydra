@@ -815,6 +815,18 @@ class Workspace:
         untracked = self._git(path, "ls-files", "--others", "--exclude-standard", "-z").stdout
         return sorted(set(os.fsdecode(item) for item in (tracked + untracked).split(b"\0") if item))
 
+    def commit_messages(self, path, base_sha):
+        """Read the complete candidate messages through the existing bounded Git runner."""
+        path, _, _ = self._identity(path)
+        _sha(base_sha)
+        self._git(path, 'cat-file', '-e', base_sha + '^{commit}')
+        raw = self._git(path, 'log', '--no-show-signature', '--format=%B%x00',
+                        base_sha + '..HEAD', '--').stdout
+        try:
+            return [message for message in raw.decode('utf-8').split('\0') if message.strip()]
+        except UnicodeError as exc:
+            raise WorkspaceWait('candidate_messages_unavailable') from exc
+
     def checkpoint(self, path, message):
         path, _, _ = self._identity(path)
         if not isinstance(message, str) or not message.strip() or len(message) > 1024 or "\0" in message:

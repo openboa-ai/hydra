@@ -2,14 +2,13 @@
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import re
 
 from . import control_commands as c
-from .control import control_from_config, load_host_config
 from .coordinator import HostBusy
 from .operations import OperationDenied
 from .runtime_identity import capture_runtime_identity
+from .workflow_binding import WorkflowBinding
 
 
 def validate_parameters(command):
@@ -76,6 +75,8 @@ async def execute_verification_command(config_path, command, *, context_provider
     native_profile = params['reply_profile'] == 'native_handoff_v1'
     runtime, epoch = capture_runtime_identity(), None
     observed = None
+    binding = WorkflowBinding(config_path, command, context_provider, github, controller,
+        operation, native_profile=native_profile)
 
     def reply(outcome, reason, receipt=None, assignment=None, required_next='reconcile'):
         if assignment is not None:
@@ -96,47 +97,10 @@ async def execute_verification_command(config_path, command, *, context_provider
 
     def validate():
         nonlocal runtime, epoch
-        unavailable = False
         try:
-            cfg = load_host_config(config_path)
-            control = control_from_config(cfg)
-            runtime = capture_runtime_identity(cfg, control)
-        except (OSError, ValueError, TypeError, OperationDenied):
-            unavailable = True
-            runtime = capture_runtime_identity()
-        current, reason = c._context(context_provider, command)
-        epoch = current.binding_epoch if current else None
-        if unavailable:
-            raise OperationDenied('host_config_unavailable')
-        if reason:
-            raise OperationDenied(reason)
-        if native_profile and current.surface != 'native':
-            raise OperationDenied('unsupported_reply_profile')
-        if operation not in current.operations or target['repository_id'] not in current.repository_ids:
-            raise OperationDenied('authority_denied')
-        if expected['runtime_key'] is None or expected['admission_revision'] is None:
-            raise OperationDenied('precondition_required')
-        key = c._runtime_key(runtime)
-        if (key is None or key != expected['runtime_key'] or current.config_digest is not None
-                and current.config_digest != runtime['config_digest']):
-            raise OperationDenied('runtime_unavailable' if key is None else 'stale_runtime')
-        runner = controller.runner
-        loaded = getattr(controller, 'runtime_identity', None)
-        providers = ('storage_provider', 'lifecycle_provider')
-        if (loaded is not None and (type(loaded) is not dict
-                or loaded.get('config_digest') != runtime['config_digest'])
-                or loaded is None and any(cfg.get(name) is not None
-                    or getattr(runner.workspace, name, None) is not None for name in providers)):
-            raise OperationDenied('verification_binding_mismatch')
-        if (runner.github is not github or runner.host != cfg['host_alias']
-                or tuple(controller.repos) != tuple(cfg['repos'])
-                or Path(controller.lock_path).absolute() != Path(cfg['lock_path'])
-                or runner.operations is None
-                or runner.operations.control_lock_path != control.control_lock_path
-                or runner.operations.repos != control.repos
-                or Path(runner.workspace.root).absolute() != Path(cfg['workspace_root'])):
-            raise OperationDenied('verification_binding_mismatch')
-        return cfg, control, current
+            return binding.validate()
+        finally:
+            runtime, epoch = binding.runtime, binding.epoch
 
     try:
         cfg, control, _ = validate()

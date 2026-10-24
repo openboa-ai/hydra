@@ -946,3 +946,68 @@ version boundaries import successfully; metadata and the CI floor agree; the
 full supported-version suite and unchanged delivery checks pass. Protected
 workflow edits still require the existing CODEOWNER approval. Source acceptance
 does not establish installed-runtime migration or native operational acceptance.
+
+## Bounded candidate publication — 2026-10-23
+
+Implement the publication half of [P14 revision 4](../mvp/changes/14-protected-delivery/spec.md)
+through the existing `hydra_command_v1` dispatcher and the
+[CP revision 9 publication profile](../mvp/contracts/control-plane.md).
+The command receives an exact candidate, owned branch and expected remote head.
+It can publish that committed candidate, establish its owned PR and obtain the
+required remote-review request observations. Its receipt describes the actual
+branch, PR and request stage. Publication does not establish review approval,
+merge, main checks, deployment or complete v1 acceptance.
+
+The same current caller/configuration/provider binding checks serve verification
+and publication. A publication grant is a separate exact operation; the optional
+installation admission profile still supplies only project admission authority.
+Tool schema availability, request metadata and a candidate pin supply no grant.
+Loaded providers, repository identity, current policy/intake/specification,
+coordinator ownership and the exact admission revision remain required.
+
+New publication effects require the existing private marker from actual registered
+verification and independent candidate review, a completed lifecycle boundary,
+unchanged clean HEAD and accepted specification, allowed paths and the current
+base. An unfinished implementation/correction cannot reuse an older acceptance
+marker. The command does not start another verifier, model, review assignment or
+commit. Its fixed effect ceiling permits only publication progress, the owned
+push/PR and required review requests. It cannot advance into delivery or cleanup.
+
+Each progress writer checks its exact original source at the actual writer and
+refreshes current authority after that read. Each provider effect additionally
+rechecks its current candidate, accepted evidence and public payload. Inspect
+candidate commit messages and existing PR text for early Issue-closing intent;
+inspect the actual proposed PR title/body before invoking its writer. Preserve
+the existing explicit Issue-close obligation after actual main qualification.
+
+Reuse existing publication/PR/review intents, expected refs and bounded retry
+accounting. A positive matching external result is reconciled before another
+effect. Keep partial branch/PR facts when a later read or guard fails. A new
+request ID is not an idempotency record, and complete absence in one read does
+not prove that an uncertain request was never applied.
+
+A bounded private cache can retain an exact intent known not to have reached its
+provider callback. Its scope is the original candidate and exact progress, not
+the request ID. Current authority/source checks still precede reuse; it does not
+reset attempts or authorize a different effect. Eviction or restart loses that
+positive witness and leaves uncertainty. This cache is not persisted or used to
+replace GitHub's effect record. Already confirmed complete publication can be
+rediscovered from its original progress and actual owned GitHub results after
+restart without repeating its push or PR.
+
+Publication I/O runs in an awaited owned worker so the MCP event loop remains
+available for admission commands during provider reads. Cancellation prevents
+further dispatch and drains the current worker before ownership is released.
+Pause does not revoke an already sent effect; its actual result may be observed,
+while subsequent progress/PR/request effects require a fresh eligible admission.
+
+Current authenticated review-request/producer observations establish request
+readiness only. Reject malformed or contradictory identity, revision and legacy
+summary bindings as unknown. Do not infer approval or completed independent
+review from a request marker, a pending row, or the publication receipt.
+
+Acceptance uses actual temporary Git publication, the pinned MCP SDK, independent
+effect/source spies and matching response-loss/restart controls. Keep prior
+checkpoint/verify-only and legacy delivery behavior under their existing bounds.
+The separate deliver profile, queue routing, repair completion and actual native
+operating qualification retain their own P14 and v1 acceptance obligations.
