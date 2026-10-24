@@ -227,7 +227,14 @@ def _repository_source(client, cfg, request):
         if expected is not None and expected != rid:
             raise _Failure('connection_repository_mismatch')
         for previous in cfg['repos']:
-            observed = client.repository(previous)
+            if previous == request['repository'] and request['replacement_name'] is not None:
+                # Only the explicit rename witness may follow its old address.
+                # Ordinary repository reads keep their canonical-name fence.
+                observed = client.api('GET', '/repos/' + previous)
+                p.require(type(observed) is dict and type(observed.get('full_name')) is str
+                          and observed['full_name'].lower() in {previous, name})
+            else:
+                observed = client.repository(previous)
             p.integer(observed.get('id'), 1)
             if previous == request['repository']:
                 if observed['id'] != rid:
@@ -399,6 +406,11 @@ def execute_connection(config_path, action, raw=None, *, github=None, quiescence
             if snapshot['projects'].get(repository) != 'stopped':
                 raise _Failure('connection_requires_stopped_project', 'waiting')
             _resource_clear(quiescence, cfg, repository, operation, snapshot['revision'])
+        destination = request['replacement_name']
+        if destination is not None and destination in snapshot['projects']:
+            if snapshot['projects'][destination] != 'stopped':
+                raise _Failure('connection_rename_destination_not_stopped', 'waiting')
+            _resource_clear(quiescence, cfg, destination, operation, snapshot['revision'])
         if time.monotonic() >= deadline:
             raise _Failure('connection_observation_expired', 'waiting')
         reply['_target'] = request['replacement_name'] or repository

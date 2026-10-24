@@ -69,6 +69,9 @@ class Source:
         if method != 'GET' or payload is not None:
             raise AssertionError('Connection observation must never write GitHub')
         self.record('api', path)
+        parts = path.split('/')
+        if len(parts) == 4 and parts[1] == 'repos':
+            return self.repository('/'.join(parts[2:]))
         return {'user': {'login': path.split('/')[-2]}, 'permission': 'write'}
 
 

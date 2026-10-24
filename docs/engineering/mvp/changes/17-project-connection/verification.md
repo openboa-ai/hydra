@@ -222,6 +222,31 @@ no qualified resource/native inventory integration, so migration, update,
 finalization and supplied native locators remain held without those sources.
 Fixture callbacks prove source behavior, not installed provider qualification.
 
+## Review correction: rename identity and retained destination
+
+Independent code review identifies two gaps under PC-R2/R6. An explicit rename
+now checks a retained destination's stopped admission and separate current
+closure before any store write, including migration. A proof for the old name
+cannot satisfy the destination. A clean stopped destination still progresses.
+
+The old-address witness uses a narrowly scoped authenticated GET only for the
+explicit rename. Its canonical name must be the old or selected replacement
+address, and its numeric ID must match the independently checked canonical
+replacement and protected policy. Ordinary GitHub repository lookups retain
+their strict canonical-name check.
+
+Nine methods reproduce six failures with zero errors/skips before correction.
+The positive redirect case uses the actual GitHub client with an injected
+transport, including ref, file and permission parsing. Negative controls retain
+ordinary redirect rejection and reject foreign IDs or canonical addresses.
+The same nine methods pass in the final 199-method related run, with zero
+failures, errors or skips on Python 3.14.2.
+
+All 38 preceding connection test method bodies are unchanged. The older fixture
+transport gains only the repository-GET response shape needed by the new exact
+endpoint; its no-write assertion and behavioral oracles remain. These source
+checks do not establish actual provider or installed native qualification.
+
 ## Remaining operational responsibilities
 
 No installed configuration, admission state or service has been changed.
