@@ -520,18 +520,33 @@ class GitHub:
         No raw document, persistent copy, model call or provider write is returned.
         """
         from .work_inputs import MAX_REFERENCE_BYTES, input_conditions, input_reference
-        from .work_records import WorkRecordError, _hex, _require
+        from .work_records import WorkRecordError
 
         ref = input_reference(binding, spec_directory=spec_directory)
         if ref is None:
             return input_conditions(binding, spec_directory=spec_directory)
         try:
-            with self.read_budget(seconds=15, requests=32):
+            source = self.immutable_file_source(repo, ref['path'], ref['revision'],
+                repository_id=ref['repository_id'], max_bytes=MAX_REFERENCE_BYTES)
+            return input_conditions(binding, spec_directory=spec_directory, content=source['content'])
+        except GitHubError as exc:
+            raise WorkRecordError('unknown') from exc
+
+    def immutable_file_source(self, repo, path, revision, *, repository_id, max_bytes=1_048_576):
+        """Read one exact regular Git blob; existence is not design acceptance.
+
+        Complete trees prove all path components without following Contents
+        symlinks. The returned content is transient data, never authority.
+        """
+        from .work_records import WorkRecordError, _hex, _integer, _path, _require
+        _require(_integer(repository_id) and _path(path) and _hex(revision, 40)
+                 and type(max_bytes) is int and 1 <= max_bytes <= 1_048_576, 'invalid_reference')
+        with self.read_budget(seconds=15, requests=32):
                 repository = self.repository(repo)
-                _require(repository['id'] == ref['repository_id'], 'identity_mismatch')
+                _require(repository['id'] == repository_id, 'identity_mismatch')
                 root = f"/repos/{_repo(repository['full_name'])}/git"
-                commit = self.api('GET', root + '/commits/' + ref['revision'])
-                _require(type(commit) is dict and commit.get('sha') == ref['revision']
+                commit = self.api('GET', root + '/commits/' + revision)
+                _require(type(commit) is dict and commit.get('sha') == revision
                          and type(commit.get('tree')) is dict
                          and _hex(commit['tree'].get('sha'), 40), 'unknown')
                 tree_sha = commit['tree']['sha']
@@ -546,11 +561,11 @@ class GitHub:
                 for row in tree['tree']:
                     _require(row['path'] not in entries, 'conflict')
                     entries[row['path']] = row
-                parts = ref['path'].split('/')
+                parts = path.split('/')
                 for index, part in enumerate(parts):
-                    path = '/'.join(parts[:index + 1])
-                    _require(path in entries, 'accepted_meaning_unavailable')
-                    entry = entries[path]
+                    component = '/'.join(parts[:index + 1])
+                    _require(component in entries, 'accepted_meaning_unavailable')
+                    entry = entries[component]
                     leaf = index == len(parts) - 1
                     _require((type(entry.get('mode')) is str and entry['mode'] in {'100644', '100755'}
                               and entry.get('type') == 'blob')
@@ -560,13 +575,13 @@ class GitHub:
                     tree_sha = entry['sha']
                 declared = entry.get('size')
                 _require(type(declared) is int and declared >= 0, 'unknown')
-                _require(declared <= MAX_REFERENCE_BYTES, 'reference_limit')
+                _require(declared <= max_bytes, 'reference_limit')
                 blob = self.api('GET', root + '/blobs/' + tree_sha)
                 _require(type(blob) is dict and blob.get('sha') == tree_sha
                          and type(blob.get('size')) is int and blob['size'] == declared
                          and blob.get('encoding') == 'base64' and type(blob.get('content')) is str,
                          'invalid_reference')
-                _require(len(blob['content']) <= 2 * MAX_REFERENCE_BYTES, 'reference_limit')
+                _require(len(blob['content']) <= 2 * max_bytes, 'reference_limit')
                 try:
                     encoded = blob['content'].replace('\r\n', '\n').replace('\n', '')
                     data = base64.b64decode(encoded, validate=True)
@@ -576,9 +591,8 @@ class GitHub:
                 _require(len(data) == declared and hashlib.sha1(
                     b'blob ' + str(len(data)).encode('ascii') + b'\0' + data,
                     usedforsecurity=False).hexdigest() == tree_sha, 'invalid_reference')
-                return input_conditions(binding, spec_directory=spec_directory, content=content)
-        except GitHubError as exc:
-            raise WorkRecordError('unknown') from exc
+                return {'repository_id': repository_id, 'path': path, 'revision': revision,
+                        'sha': tree_sha, 'content': content}
 
     def _progress_value(self, repo, n, comment):
         value = _marker(comment.get("body"), "hydra-progress")

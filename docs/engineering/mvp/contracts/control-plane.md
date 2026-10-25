@@ -1,6 +1,6 @@
 # Control plane: projection과 안전한 명령
 
-Status: Design contract, revision 11, 2026-10-25. P06 pre-workspace continuation compatibility.
+Status: Design contract, revision 12, 2026-10-25. P10 fixed work-creation profile; P06 compatibility retained.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 W3/W7의
 wire contract, 관측·화면·명령·호환·TC를 소유한다. native 연동 qualification 이전의
@@ -610,7 +610,7 @@ CommandReceipt =
     intent_ref: ResourceRef, context_ref: ResourceRef, resolved_ref: ResourceRef,
     resume_attempt: UUID } |
   ContinueReceipt | VerificationReceipt | VerificationReviewReceipt |
-  PublicationReceipt | DeliveryReceipt | CleanupReceipt
+  PublicationReceipt | DeliveryReceipt | CleanupReceipt | WorkCreateReceipt
 ```
 
 Action/Target/Parameters는 아래의 tagged union이다. 누락된 target을 host 전체로 바꾸지 않는다.
@@ -650,6 +650,75 @@ backend는 해당 qualified source reader로 draft를 읽어 digest, `target_rep
 본문이나 모델이 다시 생성한 본문으로 대체하지 않는다. 같은 create_key에 다른 draft payload는
 `rejected/creation_payload_conflict`이며 조회·dispatch 모두 원래 의도에 귀속된다. 생성 후에는
 실제 GitHub Issue가 작업 정본이고 draft는 그 최초 명령의 근거다. 별도 draft DB를 두지 않는다.
+
+### P10 work_create profile
+
+The closed action uses target `{repository_id}`, parameters `{draft_ref,
+draft_digest}`, effect_key equal to the exact draft create_key, nonnull current
+runtime_key/admission_revision and assignment=null. The initial supported source
+is WR's authenticated GitHub draft plus fixed proposal. Native preparation stays
+unsupported until separately qualified. No request field supplies authority.
+
+Require exactly one source_check for the actual draft comment:
+
+```text
+{
+  resource: {source: "github", kind: "issue_comment",
+             id: "OWNER/REPO/comments/COMMENT_ID"},
+  revision: null,
+  actionable_digest: original_comment_body_sha256
+}
+```
+
+Resolve the repository and compare actual comment identity with draft_ref. The
+full-body actionable digest pins both metadata markers; parameters.draft_digest
+separately pins the canonical payload. A computed digest is not a provider
+Revision. Recheck underlying source, goal, delegation, policy, disclosure,
+duplicates, current caller authority and admission before new effects.
+
+The only new effects are one dispatch-fence comment, one exact Issue POST and one
+minimal binding comment. WR section 8 requires separately qualified original-
+outcome history and actual current physical-execution ownership before even the
+fence POST. No command field supplies that witness. Complete-zero discovery and
+a newly acknowledged fence do not establish first use. A consumed live sequence
+retains its own stage flags; repeated/recovered calls cannot reconstruct them.
+Exact existing registration may be reconciled without a new claim. Missing or
+uncertain history preserves unknown/wait rather than enabling a default source.
+Production history qualification remains open. No assignment, attempt, anchor,
+ticket, relation, delegation publication, PR, merge, cleanup or implicit legacy
+continuation is permitted.
+
+```text
+WorkCreateReceipt = {
+  kind: "work_create", stage: "registered",
+  repository_id: positive_integer, issue_number: positive_integer,
+  create_key: UUID_v4, draft_digest: sha256, proposal_digest: sha256,
+  issue_ref: {source: "github", kind: "issue", id: "REPO_ID:ISSUE_NUMBER"},
+  binding_ref: {source: "github", kind: "issue_comment",
+                id: "OWNER/REPO/comments/COMMENT_ID"},
+  binding_digest: sha256
+}
+```
+
+Every field is required and unknown keys are rejected. An applied receipt needs
+the actual Issue GET and exact authenticated binding GET. It establishes neither
+execution readiness nor goal acceptance. Before binding confirmation, return
+unknown/waiting, receipt=null and required_next=reconcile; preserve observed
+positive effects. Same-key payload/proposal conflicts are rejected without a new
+POST. Recovered/uncertain fences and incomplete discovery remain unknown.
+
+A created-but-unregistered Issue may use the existing issue SourceValue with its
+actual title, number, state and URL; work_kind, parent_refs, requirement_refs,
+description_excerpt and description_truncated are null. Its resource ID is
+REPO_ID:ISSUE_NUMBER, revision=null and coverage describes only that one GET.
+Do not invent a provider revision from a computed payload hash. effect_refs
+contain only actually observed fence/Issue/binding references. The draft and
+private authority text are absent from the reply.
+
+Keep unsupported profiles closed. MCP/core qualification, an actual authorized
+source/creation observation and installed authority are separate evidence.
+Rust/TypeScript consumers remain disabled for this profile until their actual
+strict receipt/round-trip verification; core support does not activate the app.
 
 `actionable_digest`는 adapter가 명시한 정규화 field 집합의 SHA-256이다. Issue는 bound intake,
 PR은 head/base/state, native는 exact task/assignment/control state를 사용한다. timestamp,

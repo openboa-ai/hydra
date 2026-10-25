@@ -427,7 +427,7 @@ class NativeRunner(Runner):
 
 class NativeController:
     def __init__(self, github, workspace, *, repos, host_alias, lock_path, knowledge_revision=lambda: None,
-                 operations=None, decision_source=None):
+                 operations=None, decision_source=None, creation_source=None):
         if isinstance(repos, (str, bytes)):
             raise ValueError("A host repository allowlist is required")
         try:
@@ -441,6 +441,10 @@ class NativeController:
         self.runner = NativeRunner(github, workspace, host_alias=host_alias, knowledge_revision=knowledge_revision,
                                    operations=operations)
         self.decision_source = decision_source
+        # Explicit installed dependencies only. Constructors and command JSON
+        # cannot qualify a production history source or grant current ownership.
+        self.creation_source = creation_source
+        self.creation_observations = {}
 
     @property
     def decision_source(self):
