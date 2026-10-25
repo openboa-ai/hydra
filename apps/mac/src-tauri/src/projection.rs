@@ -460,6 +460,7 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
     let kind=string(&v["kind"])?;
     object(v,match kind {
         "admission"=>"kind readback",
+        "work_create"=>"kind stage repository_id issue_number create_key draft_digest proposal_digest issue_ref binding_ref binding_digest",
         "checkpoint"=>"kind assignment outcome checkpoint_head progress_ref step_retired ticket_released",
         "decision"=>"kind source_attempt round intent_ref context_ref resolved_ref resume_attempt",
         "continuation"=>"kind progress_ref attempt_id head contract_revision boundary",
@@ -469,6 +470,22 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
         "delivery"=>"kind candidate pr_ref integration_base merge_commit post_merge issue_closed progress_ref",
         "cleanup"=>"kind resource operation result evidence_refs", _=>return Err(INVALID),
     })?;
+    if kind=="work_create" {
+        need(v["stage"]=="registered")?; positive(&v["repository_id"])?; positive(&v["issue_number"])?;
+        uuid(&v["create_key"])?; let key=string(&v["create_key"])?.as_bytes();
+        need(key[14]==b'4' && matches!(key[19],b'8'|b'9'|b'a'|b'b'))?;
+        for field in ["draft_digest","proposal_digest","binding_digest"] {digest(&v[field])?;}
+        reference(&v["issue_ref"])?; reference(&v["binding_ref"])?;
+        need(v["issue_ref"]==serde_json::json!({"source":"github","kind":"issue",
+            "id":format!("{}:{}",v["repository_id"],v["issue_number"])}))?;
+        let binding=&v["binding_ref"];
+        need(binding["source"]=="github" && binding["kind"]=="issue_comment")?;
+        let parts:Vec<_>=string(&binding["id"])?.split('/').collect();
+        need(parts.len()==4 && parts[..2].iter().all(|part|!part.is_empty() &&
+            part.bytes().all(|c|c.is_ascii_alphanumeric() || b"_.-".contains(&c))) &&
+            parts[2]=="comments" && !parts[3].is_empty() && parts[3].as_bytes()[0]!=b'0' &&
+            parts[3].bytes().all(|c|c.is_ascii_digit()))?;
+    }
     if kind=="admission" {
         let o=evidence_in(&v["readback"],index)?;
         need(o["availability"]=="current" && o["coverage"]["state"]=="complete" && o["resource"]["kind"]=="admission")?;
@@ -518,6 +535,16 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
     list(&v["observed_refs"],|e| evidence_in(e,index).map(|_|()),4096)?;
     one(&v["required_next"],"none refresh reconcile open_source")?; optional(&v["receipt"],|r| receipt(r,index))?;
     let kind=v["receipt"].get("kind").and_then(Value::as_str);
+    if v["action"]=="work_create" {
+        need((!v["receipt"].is_null())==(v["outcome"]=="applied"))?;
+        if !v["receipt"].is_null() {
+            let created=&v["receipt"];
+            need(kind==Some("work_create") && created["repository_id"]==v["target"]["repository_id"])?;
+            for field in ["issue_ref","binding_ref"] {
+                need(v["effect_refs"].as_array().ok_or(INVALID)?.contains(&created[field]))?;
+            }
+        }
+    }
     if v["action"]=="workflow_step" && matches!(kind,Some("publication"|"delivery")) {
         let pr=&v["receipt"]["pr_ref"];
         if !pr.is_null() {
@@ -545,6 +572,7 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
     }
     if let Some(k)=kind {
         need((v["action"]=="admission_set" && k=="admission") ||
+          (v["action"]=="work_create" && k=="work_create") ||
           (v["action"]=="workflow_step" && ["checkpoint","decision","continuation","verification","verification_review","publication","delivery"].contains(&k)) ||
           (v["action"]=="cleanup" && k=="cleanup"))?;
     }
@@ -1037,5 +1065,49 @@ mod connection_guard_regressions {
             assert_eq!(Projection::parse(row["wire"].as_str().unwrap().as_bytes()).is_ok(),
                 row["accepted"].as_bool().unwrap(), "{}", row["name"]);
         }
+    }
+}
+
+#[cfg(test)]
+mod creation_receipt_tests {
+    use super::*;
+    use std::{io::Write, path::PathBuf, process::{Command, Stdio}};
+
+    #[test]
+    fn actual_registration_vectors_cross_data_and_source_boundaries_in_rust_and_typescript() {
+        let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let emitted=Command::new("python3").arg("-I")
+            .arg(root.join("tests/fixtures/control-v3/emit_creation.py")).output().unwrap();
+        assert!(emitted.status.success(),"Actual Registration emitter failed");
+        assert!(emitted.stdout.len()<=4_194_304);
+        let vectors:Value=serde_json::from_slice(&emitted.stdout).unwrap();
+        let vectors=vectors.as_array().unwrap();assert!(!vectors.is_empty() && vectors.len()<=256);
+        let mut forwarded=Vec::new();
+        for row in vectors {
+            let wire=row["wire"].as_str().unwrap().as_bytes();
+            let decoded=read_json(wire).and_then(|value| {
+                command_result(&value["request"],&observations(&value["observations"])?)?;
+                Ok(value)
+            });
+            assert_eq!(decoded.is_ok(),row["schema_accepted"].as_bool().unwrap(),"{}",row["name"]);
+            let reason=StandardReply::parse(wire).err().map(Value::from).unwrap_or(Value::Null);
+            assert_eq!(reason,row["standard_reason"],"{}",row["name"]);
+            // This test-only channel retains invalid/unsupported vectors, unlike
+            // runtime forwarding, so TS must validate every actual wire itself.
+            let forwarded_wire=match decoded {
+                Ok(value)=>serde_json::to_string(&value).unwrap(),
+                Err(_)=>row["wire"].as_str().unwrap().to_owned(),
+            };
+            forwarded.push(serde_json::json!({"name":row["name"],"wire":forwarded_wire,
+                "standard_reason":row["standard_reason"]}));
+        }
+        let mut child=Command::new("node").arg("--experimental-strip-types")
+            .arg(root.join("apps/mac/tests/creation-receipts-consume.mjs"))
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(&serde_json::to_vec(&forwarded).unwrap()).unwrap();
+        let result=child.wait_with_output().unwrap();
+        assert!(result.status.success(),"Actual TS parser rejected Rust-serialized creation vectors");
+        let summary:Value=serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(summary["checked"].as_u64(),Some(vectors.len() as u64));
     }
 }
