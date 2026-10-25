@@ -345,3 +345,71 @@ Three unchanged purpose regressions fail on the published parent with three asse
 Recovery and its final write guard share one immutable-result/correlation validator. Six focused cases and 109 related methods pass on Python 3.14.2 with zero failures, errors or skips. Controls reject correlation changes during the recovery write and unrelated transition fields; an acknowledged merge followed by external closure also completes without another close. The three original purpose methods and all earlier delivery test bytes are preserved. A separate capacity assertion reproduces the insufficient outer CI allowance; three CI contract methods pass after the documented bounded capacity adjustment. All behavior cases and their deadlines remain.
 
 The previous source CI cancellation is not a pass. Final-head CI and independent code/security reviews, protected merge, actual-main verification and retirement remain required. Full P14/v1 and installed native acceptance remain open.
+
+## Authenticated post-merge investigation context
+
+Scope: [P14 revision 5](spec.md), the source-context handoff for R4/R5 and
+T14–T22; EX revision 10, GI revision 2, CP revision 12 and WR revision 6.
+The baseline is protected main `a4fca55` from [PR #44](https://github.com/openboa-ai/hydra/pull/44),
+whose [actual-main CI](https://github.com/openboa-ai/hydra/actions/runs/40181630170)
+passes. That baseline result is not verification of this new increment.
+
+The actual GitHub reader feeds existing Runner status, NativeController status
+and `hydra_status`. An eligible authenticated row gains bounded origin, required
+current-check references and separately observed historical failure references.
+Current snapshots settle before optional history. No new MCP tool, projection
+fact, durable state, model, assignment or provider mutation is added. Existing
+delivery acceptance and protected write gates retain their prior behavior.
+
+The pass owns a fresh read client. Typed collection pagination verifies actual
+declared totals, stable counts, unique safe IDs and complete bounded pages.
+These checks apply only to enrichment; legacy readers are unchanged. Required
+failure evidence survives uncertainty in another required source. Optional
+history failure cannot erase current CI, and bounded output leaves room for
+both axes' coverage and times.
+
+Credential/account or observed same-repository disclosure changes invalidate
+all affected siblings, including previously finalized snapshots. Authenticated
+nested Actions metadata participates in this guard; omitted nested fields and
+ordinary foreign metadata do not manufacture a disclosure transition. Runtime
+provider errors become fixed source states before reaching SDK exception logs.
+
+Permanent cases use real GitHub parsing/authentication, Runner/NativeController
+and the pinned in-memory MCP SDK with a synthetic CLI/provider boundary. They
+reject non-GET and workspace/model effects. They exercise current and historical
+source qualification, nullable spec/cross-host origins, pending merge correlation,
+latest reruns, incomplete collections, historical caps, bounded output, shared
+and local transitions, Pause, retained closed discovery and restart. The real
+MCP error case verifies both the structured reply and SDK logger.
+
+The original 24-method oracle reproduces 39 assertion/subtest failures before
+implementation, with zero errors/skips, then passes. Six boundary methods
+reproduce six failures and pass unchanged after correction. Seven independent
+review methods reproduce ten failures and pass unchanged after the collection,
+disclosure and error-boundary corrections. The provider fixture now supplies
+actual `total_count` envelopes; all original behavioral/protocol method ASTs and
+the six boundary methods remain unchanged.
+
+Before review corrections, 296 related delivery/recovery/status methods pass
+under Python 3.14.2 with zero failures, errors or skips. Before the exact-ID follow-up,
+212 focused/compatibility methods complete with 211 passes and one CI-shell
+failure: the private runner's child PATH selects Python 3.12. Fixing only that
+runner PATH makes the same unchanged shell method pass, including its required
+skip rejection. Product code, workflow, collector and test criteria do not
+change for that correction. These runs cover 212 unique methods; they are not
+represented as one passing 212-method execution or a full-suite/remote-CI pass.
+
+Four follow-up identity methods reproduce six failures for malformed nested
+repository, PR author/endpoint and fallback repository IDs. Enrichment-only
+exact-safe-integer checks prevent false shared invalidation, unqualified origin
+and fabricated complete-zero history. The same four methods pass afterward;
+all preceding 37 methods remain unchanged. The final source passes 113 related
+methods, including all 41 context methods, post-merge source gates, producer
+delivery readers and projection/fixture compatibility, with zero failures,
+errors or skips on Python 3.14.2. Legacy ownership/read predicates are unchanged.
+
+Exact final-source code/security review, final-head CI, protected delivery,
+actual-main checks and branch retirement remain required. Actual-source/native
+operation, diagnosis, one repair outcome, repaired fulfillment, initial dispatch
+anchoring and full P14/v1 acceptance remain open. No installation or business
+operation is activated by this increment.

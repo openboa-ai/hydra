@@ -2059,7 +2059,11 @@ class Runner:
                 if hint:
                     item["resume_hint"] = hint
                 result.append(item)
-        return [with_progress_hint(item) for item in result]
+        result = [with_progress_hint(item) for item in result]
+        if hasattr(type(self.github), 'read_client'):
+            from .post_merge_context import enrich_status
+            return enrich_status(self.github, result)
+        return result
 
     async def cycle(self, repos):
         results = await self.drain_completed()
