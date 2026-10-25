@@ -468,6 +468,7 @@ function target(value: unknown, action: string): void {
 function receipt(value: unknown, index: Index): void {
   const fields: Record<string, string> = {
     admission: "kind readback",
+    work_create: "kind stage repository_id issue_number create_key draft_digest proposal_digest issue_ref binding_ref binding_digest",
     checkpoint: "kind assignment outcome checkpoint_head progress_ref step_retired ticket_released",
     decision: "kind source_attempt round intent_ref context_ref resolved_ref resume_attempt",
     continuation: "kind progress_ref attempt_id head contract_revision boundary",
@@ -479,6 +480,18 @@ function receipt(value: unknown, index: Index): void {
   };
   const v = plain(value); requireValue(typeof v.kind === "string" && Object.hasOwn(fields, v.kind));
   object(v, fields[v.kind]!);
+  if (v.kind === "work_create") {
+    requireValue(v.stage === "registered"); integer(v.repository_id, 1); integer(v.issue_number, 1);
+    requireValue(typeof v.create_key === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v.create_key));
+    for (const key of ["draft_digest", "proposal_digest", "binding_digest"]) digest(v[key]);
+    ref(v.issue_ref); ref(v.binding_ref);
+    const issue = plain(v.issue_ref), binding = plain(v.binding_ref);
+    requireValue(issue.source === "github" && issue.kind === "issue" &&
+      issue.id === String(v.repository_id) + ":" + String(v.issue_number));
+    requireValue(binding.source === "github" && binding.kind === "issue_comment" &&
+      typeof binding.id === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/comments\/[1-9][0-9]*$/.test(binding.id));
+  }
   if (v.kind === "admission") {
     const o = evidenceIn(v.readback, index);
     requireValue(o.availability === "current" && o.coverage.state === "complete" && o.resource.kind === "admission");
@@ -529,6 +542,15 @@ function commandResult(value: unknown, index: Index): void {
   refs(v.effect_refs); list(v.observed_refs, e => { evidenceIn(e, index); });
   one(v.required_next, "none refresh reconcile open_source"); nullable(v.receipt, r => receipt(r, index));
   const kind = v.receipt === null ? null : plain(v.receipt).kind;
+  if (v.action === "work_create") {
+    requireValue((v.receipt !== null) === (v.outcome === "applied"));
+    if (v.receipt !== null) {
+      const created = plain(v.receipt);
+      requireValue(kind === "work_create" && created.repository_id === plain(v.target).repository_id);
+      for (const key of ["issue_ref", "binding_ref"])
+        requireValue((v.effect_refs as unknown[]).some(ref => canonical(ref) === canonical(created[key])));
+    }
+  }
   if (v.action === "workflow_step" && ["publication", "delivery"].includes(String(kind))) {
     const pr = plain(v.receipt).pr_ref;
     if (pr !== null) {
@@ -553,6 +575,7 @@ function commandResult(value: unknown, index: Index): void {
     requireValue((v.receipt !== null) === (v.outcome === "applied"));
   if (kind !== null) requireValue(
     (v.action === "admission_set" && kind === "admission") ||
+    (v.action === "work_create" && kind === "work_create") ||
     (v.action === "workflow_step" && ["checkpoint", "decision", "continuation", "verification", "verification_review", "publication", "delivery"].includes(String(kind))) ||
     (v.action === "cleanup" && kind === "cleanup"));
   if (v.action === "workflow_step" && kind !== null && Object.hasOwn(plain(v.receipt), "progress_ref")) {

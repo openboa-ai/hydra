@@ -1,0 +1,1033 @@
+{
+  "fixture_version": 1,
+  "contract": {
+    "path": "docs/engineering/mvp/contracts/control-plane.md",
+    "revision": 12,
+    "sha256": "a5d802142621fd827a766200653aeff88cb637c4b3d0c1b1441fa2669acf67c3"
+  },
+  "cases": [
+    {
+      "name": "registered",
+      "base": "registered",
+      "schema_accepted": true,
+      "standard_reason": "unsupported_command_source",
+      "changes": [],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "registered_replay",
+      "base": "registered_replay",
+      "schema_accepted": true,
+      "standard_reason": "unsupported_command_source",
+      "changes": [],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "history_unavailable",
+      "base": "history_unavailable",
+      "schema_accepted": true,
+      "standard_reason": null,
+      "changes": [],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "partial_issue",
+      "base": "partial_issue",
+      "schema_accepted": true,
+      "standard_reason": null,
+      "changes": [],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "applied_missing_receipt",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt"
+          ],
+          "value": null
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_kind",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "kind"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_stage",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "stage"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_repository_id",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "repository_id"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_issue_number",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "issue_number"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_create_key",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "create_key"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_draft_digest",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "draft_digest"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_proposal_digest",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "proposal_digest"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_issue_ref",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "issue_ref"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_binding_ref",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "binding_ref"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_binding_digest",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [
+        [
+          "request",
+          "receipt",
+          "binding_digest"
+        ]
+      ],
+      "omit_effect": null
+    },
+    {
+      "name": "unknown_receipt_field",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "unexpected"
+          ],
+          "value": "SYNTHETIC_UNTRUSTED_FIELD"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "wrong_stage",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "stage"
+          ],
+          "value": "prepared"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "repository_id_boolean",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "repository_id"
+          ],
+          "value": true
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "repository_id_zero",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "repository_id"
+          ],
+          "value": 0
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "repository_id_fraction",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "repository_id"
+          ],
+          "value": 1.5
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "repository_id_unsafe",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "repository_id"
+          ],
+          "value": 9007199254740992
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_number_boolean",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_number"
+          ],
+          "value": true
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_number_zero",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_number"
+          ],
+          "value": 0
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_number_fraction",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_number"
+          ],
+          "value": 1.5
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_number_unsafe",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_number"
+          ],
+          "value": 9007199254740992
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "key_version",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "create_key"
+          ],
+          "value": "33333333-3333-1333-8333-333333333333"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "key_variant",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "create_key"
+          ],
+          "value": "33333333-3333-4333-7333-333333333333"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "key_uppercase",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "create_key"
+          ],
+          "value": "AAAAAAAA-3333-4333-8333-333333333333"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "key_malformed",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "create_key"
+          ],
+          "value": "not-a-key"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "draft_digest_null",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "draft_digest"
+          ],
+          "value": null
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "draft_digest_nonhex",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "draft_digest"
+          ],
+          "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "draft_digest_short",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "draft_digest"
+          ],
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "proposal_digest_null",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "proposal_digest"
+          ],
+          "value": null
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "proposal_digest_nonhex",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "proposal_digest"
+          ],
+          "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "proposal_digest_short",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "proposal_digest"
+          ],
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_digest_null",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_digest"
+          ],
+          "value": null
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_digest_nonhex",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_digest"
+          ],
+          "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_digest_short",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_digest"
+          ],
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_ref_38",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_ref",
+            "source"
+          ],
+          "value": "hydra"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_ref_39",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_ref",
+            "kind"
+          ],
+          "value": "issue_comment"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_ref_40",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_ref",
+            "id"
+          ],
+          "value": "999:11"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_ref_41",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_ref",
+            "id"
+          ],
+          "value": "123:12"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "issue_ref_42",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "issue_ref",
+            "id"
+          ],
+          "value": "0123:11"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_43",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "source"
+          ],
+          "value": "codex"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_44",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "kind"
+          ],
+          "value": "issue"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_45",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "example/product/comments/0"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_46",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "example/product/comments/01"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_47",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "example/product/comments/"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_48",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "example/product/comment/201"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_49",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "example/product/comments/201/extra"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_50",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "/product/comments/201"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "binding_ref_51",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "receipt",
+            "binding_ref",
+            "id"
+          ],
+          "value": "example product/product/comments/201"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "wrong_action_workflow_step",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "action"
+          ],
+          "value": "workflow_step"
+        },
+        {
+          "path": [
+            "request",
+            "target"
+          ],
+          "value": {
+            "repository_id": 123,
+            "issue_number": 11
+          }
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "wrong_action_admission_set",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "action"
+          ],
+          "value": "admission_set"
+        },
+        {
+          "path": [
+            "request",
+            "target"
+          ],
+          "value": {
+            "kind": "host"
+          }
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "wrong_target",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "target",
+            "repository_id"
+          ],
+          "value": 999
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "receipt_with_unknown",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "outcome"
+          ],
+          "value": "unknown"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "receipt_with_waiting",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "outcome"
+          ],
+          "value": "waiting"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "receipt_with_rejected",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [
+        {
+          "path": [
+            "request",
+            "outcome"
+          ],
+          "value": "rejected"
+        }
+      ],
+      "delete": [],
+      "omit_effect": null
+    },
+    {
+      "name": "missing_effect_issue_ref",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [],
+      "omit_effect": "issue_ref"
+    },
+    {
+      "name": "missing_effect_binding_ref",
+      "base": "registered",
+      "schema_accepted": false,
+      "standard_reason": "invalid_response",
+      "changes": [],
+      "delete": [],
+      "omit_effect": "binding_ref"
+    }
+  ]
+}
