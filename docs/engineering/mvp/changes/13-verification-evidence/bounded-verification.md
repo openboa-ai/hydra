@@ -319,3 +319,9 @@ remote operating flow, two-project acceptance or the complete v1 product. Actual
 RequirementRef acceptance and artifact-source mapping remain separate from this
 command's private invocation proof. Renderer activation and other command
 capabilities retain their existing qualification boundaries.
+
+## Delivery-regression CI capacity
+
+The earlier twenty-minute capacity estimate is retained above as historical evidence. Full source CI [40091368817](https://github.com/openboa-ai/hydra/actions/runs/40091368817) completed 1,958 methods in 1,094.861 seconds, with eight explicit skips. Later [40101747779](https://github.com/openboa-ai/hydra/actions/runs/40101747779) was cancelled after reaching the twenty-minute outer allowance, with no complete suite verdict or export; it is not passing evidence.
+
+The bounded thirty-minute kernel allowance covers the observed full-suite duration plus 44.321 seconds for seven added observation/closure cases, 129.165 seconds for six squash-recovery cases, and 120 seconds for setup and evidence export. The 1,388.347-second estimate combines capacity observations across environments, not passing results. Remaining time allows hosted-run variation. All cases, per-case/product deadlines, required checks, independent reviews, permissions, trusted tooling and main-run preservation remain unchanged. The new head must complete its own CI and export.

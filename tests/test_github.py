@@ -17,7 +17,7 @@ REPOSITORY = {'id': 123, 'full_name': REPO, 'default_branch': 'main'}
 
 
 def owned_pr():
-    return {'number': 7, 'state': 'open', 'user': IDENTITY,
+    return {'number': 7, 'state': 'open', 'user': IDENTITY, 'title': 'Implement the accepted outcome',
             'body': '<!-- hydra-pr:v1 {"repository_id":123,"issue_number":4} -->',
             'head': {'sha': HEAD, 'ref': 'hydra/issue-4', 'repo': {'id': 123}},
             'base': {'sha': BASE, 'ref': 'main', 'repo': {'id': 123}},
@@ -250,7 +250,7 @@ class GitHubTests(unittest.TestCase):
             if path == '/user': return IDENTITY
             if path == f'/repos/{REPO}': return REPOSITORY
             if method == 'PUT':
-                self.assertEqual(payload, {'sha': HEAD, 'merge_method': 'squash', 'commit_message': message}); merged = True
+                self.assertEqual(payload, {'sha': HEAD, 'merge_method': 'squash', 'commit_title': 'Deliver Issue 4 (#7)', 'commit_message': message}); merged = True
                 return {'merged': True, 'sha': MERGE}
             return {**owned_pr(), 'state': 'closed' if merged else 'open', 'merged': merged, 'merge_commit_sha': MERGE if merged else None}
         gh = GitHub(transport=transport)
@@ -410,7 +410,7 @@ class GitHubTests(unittest.TestCase):
                     self.assertEqual(caught.exception.uncertain, after_write)
                     self.assertEqual(len(writes), int(after_write))
                     if writes:
-                        self.assertEqual(writes, [{'sha': HEAD, 'merge_method': 'squash', 'commit_message': message}])
+                        self.assertEqual(writes, [{'sha': HEAD, 'merge_method': 'squash', 'commit_title': 'Deliver Issue 4 (#7)', 'commit_message': message}])
 
     def test_mutation_issue_identity_requires_exact_positive_integer_before_observation(self):
         provider = {'login': 'chatgpt-codex-connector[bot]', 'user_id': 199175422, 'app_id': 1144995}

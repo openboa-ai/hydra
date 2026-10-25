@@ -19,7 +19,7 @@ from .progress import with_progress_hint
 
 from .project import (_provider, gate_completed_delivery, gate_delivery, gate_squash_result,
                       legacy_work_source, load_project, matches, parse_intake, squash_message,
-                      squash_message_matches, terminal_required_checks, post_merge_check_state)
+                      squash_recovery_checkpoint, terminal_required_checks, post_merge_check_state)
 
 
 def issue_url(value):
@@ -132,10 +132,11 @@ class Runner:
     def _effect(self, repo, callback, *args, cleanup=False, _checkpoint_effect=None, **kwargs):
         ceiling = self._checkpoint_ceiling.get()
         if ceiling is not None:
-            publishing = ceiling[3].get('profile') == 'publish_candidate'
+            profile = ceiling[3].get('profile')
             review_registration = (self._verification_scope.get() is not None
                 and _checkpoint_effect == "review_assignment")
-            allowed = ({'progress', 'publish', 'pr', 'review_request'} if publishing
+            allowed = ({'progress', 'publish', 'pr', 'review_request'} if profile == 'publish_candidate'
+                       else {'progress', 'merge', 'close'} if profile == 'deliver'
                        else {'progress', 'checkpoint'})
             if ceiling[0] != repo or (_checkpoint_effect not in allowed and not review_registration):
                 raise OperationDenied("checkpoint_effect_unsupported")
@@ -145,6 +146,16 @@ class Runner:
                 raise OperationDenied("checkpoint_effect_unsupported")
         if not cleanup:
             self._require_policy(repo)
+        closed_profile = ceiling is not None and ceiling[3].get('profile') in {'publish_candidate', 'deliver'}
+        if closed_profile:
+            # Remote preflight reads must not hold admission against Pause.
+            if _checkpoint_effect == 'progress':
+                observer = ceiling[3].get('before_progress')
+                if observer is not None:
+                    observer()
+            else:
+                name = 'before_publication' if ceiling[3]['profile'] == 'publish_candidate' else 'before_delivery'
+                ceiling[3][name](_checkpoint_effect, args, kwargs)
         if ceiling is not None:
             # Policy observation can be remote. Refresh authority after it,
             # immediately before acquiring the bounded admission guard.
@@ -152,20 +163,22 @@ class Runner:
             if review_registration:
                 self._verification_scope.get().before_handoff()
         with self._guard(repo, cleanup=cleanup):
-            if ceiling is not None and _checkpoint_effect == "progress":
+            if ceiling is not None and not closed_profile and _checkpoint_effect == "progress":
                 observer = ceiling[3].get('before_progress')
                 if observer is not None:
                     observer()
-            if ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
-                if _checkpoint_effect != 'progress':
-                    ceiling[3]['before_publication'](_checkpoint_effect, args, kwargs)
+            if closed_profile:
                 ceiling[3]['before_callback'](_checkpoint_effect)
             result = callback(*args, **kwargs)
-            if ceiling is not None and _checkpoint_effect == 'progress':
+            if ceiling is not None and not closed_profile and _checkpoint_effect == 'progress':
                 observer = ceiling[3].get('after_progress')
                 if observer is not None:
                     observer()
-            return result
+        if closed_profile and _checkpoint_effect == 'progress':
+            observer = ceiling[3].get('after_progress')
+            if observer is not None:
+                observer()
+        return result
 
     def _policy_reason(self, repo, config):
         return self._observed_policy_reason(self.github, repo, config)
@@ -432,14 +445,17 @@ class Runner:
         if self._verification_scope.get() is not None and action not in {None, "verification"}:
             raise OperationDenied("effect_not_allowed")
         ceiling = self._checkpoint_ceiling.get()
-        if ceiling is not None and ceiling[3].get('profile') == 'publish_candidate':
-            if action not in {'publish', 'upsert_pr', 'request_review'}:
+        if ceiling is not None and ceiling[3].get('profile') in {'publish_candidate', 'deliver'}:
+            publishing = ceiling[3]['profile'] == 'publish_candidate'
+            allowed = {'publish', 'upsert_pr', 'request_review'} if publishing else {'merge', 'close_issue'}
+            if action not in allowed:
                 raise OperationDenied('effect_not_allowed')
             original = ceiling[3].pop('reuse_intent', None)
             if original is not None:
                 if (self._record_values(record) != original or record.get('pending_action') != action
-                        or any(record.get(key) != value for key, value in values.items())):
-                    raise OperationDenied('publication_unconfirmed')
+                        or any(record.get(key) != value for key, value in values.items()
+                               if publishing or key != 'phase')):
+                    raise OperationDenied('publication_unconfirmed' if publishing else 'delivery_unconfirmed')
                 reason = self._latest(repo, number, config)
                 if reason:
                     raise OperationDenied(reason)
@@ -503,17 +519,23 @@ class Runner:
                      record.get("pending_action") in {"close_issue", "merge"} or phase == "executing" else None)
         return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
 
+    def _delivery_wait(self, repo, number, record, reason, **values):
+        # Changed source evidence is an observation, not a new delivery intent
+        # or permission to erase a previously confirmed completion.
+        if record.get("phase") == "completed" and record.get("pending_action") is None:
+            return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
+        return self._wait(repo, number, record, reason, **values)
+
     def _post_merge_wait(self, repo, number, record, check_state):
         reason, action = {
             "pending": ("post_merge_checks", "observe_post_merge_checks"),
             "failed": ("post_merge_failed", "diagnose_post_merge"),
         }.get(check_state, ("post_merge_evidence_unknown", "reconcile_post_merge_evidence"))
         if check_state is None:
-            # A failed read can coincide with a complete provider outage. Report
-            # the unknown observation without attempting another provider call.
+            # An unavailable read also avoids another provider write.
             return {"repository": repo, "issue": number, "action": "waiting", "reason": reason}
         try:
-            return self._wait(repo, number, record, reason, phase="observing", next_action=action)
+            return self._delivery_wait(repo, number, record, reason, phase="observing", next_action=action)
         except OperationDenied:
             raise
         except (RuntimeError, OSError, ValueError):
@@ -532,8 +554,13 @@ class Runner:
         except (RuntimeError, OSError, ValueError):
             # Includes GitHubError. A failed read proves neither pending CI nor
             # terminal failure, and its raw diagnostic is not public progress.
-            return None
-        return post_merge_check_state(config, observation, merge_sha)
+            state = None
+        else:
+            state = post_merge_check_state(config, observation, merge_sha)
+        ceiling = self._checkpoint_ceiling.get()
+        if ceiling is not None and ceiling[3].get('profile') == 'deliver':
+            ceiling[3]['post_merge'] = state or 'unknown'
+        return state
 
     def _intent_wait(self, repo, number):
         progress = self.github.progress(repo, number) or {}
@@ -1172,10 +1199,6 @@ class Runner:
         reason = self._latest(repo, number, config, include_dependencies=False)
         closing_recovery = reason == "issue_closed" and (record.get("pending_action") == "close_issue"
                                                        or record.get("phase") == "completed")
-        if closing_recovery and record.get("phase") == "completed":
-            # Keep failed completion-label cleanup discoverable while current
-            # delivery evidence is rechecked; never dispatch another close.
-            record = {**record, "phase": "closing", "pending_action": "close_issue"}
         if reason and not closing_recovery:
             if reason == "intake_changed":
                 return self._wait(repo, number, record, reason, phase="uncertain")
@@ -1302,53 +1325,8 @@ class Runner:
             if not self.github.owns_pr(repo, number, pr):
                 return self._wait(repo, number, record, "foreign_pr")
             if pr.get("merged"):
-                if pr["head"]["sha"] != record.get("head"):
-                    return self._wait(repo, number, record, "unexpected_merged_head")
-                if record.get("pending_action") == "merge":
-                    recovered = self._recover_squash(repo, number, config, record, observation)
-                    if recovered is None:
-                        return self._wait(repo, number, record,
-                                          "squash_method_unknown", phase="uncertain", next_action="diagnose_merge")
-                    record = recovered
-                if gate_completed_delivery(config, observation, record["head"], self._paths(observation),
-                                           expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint")):
-                    return self._wait(repo, number, record, "completion_evidence_missing", phase="observing")
-                merge_sha = pr.get("merge_commit_sha")
-                check_state = self._observe_post_merge(repo, config, merge_sha)
-                if check_state != "success":
-                    return self._post_merge_wait(repo, number, record, check_state)
-                boundary = self._latest(repo, number, config)
-                if boundary and not (closing_recovery and boundary == "issue_closed"):
-                    return self._wait(repo, number, record, "delivery_boundary_changed")
-                record = self._intent(repo, number, config, record, "close_issue", phase="closing") if not closing_recovery else record
-                if record is None:
-                    return self._intent_wait(repo, number)
-                current = self.github.observe(repo, pr["number"])
-                if (not self.github.owns_pr(repo, number, current["pr"])
-                        or current["pr"].get("merge_commit_sha") != merge_sha
-                        or gate_completed_delivery(config, current, record["head"], self._paths(current),
-                                                   expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint"))):
-                    return self._wait(repo, number, record, "completion_evidence_missing", phase="uncertain")
-                # A push rerun can start while publishing the close intent.
-                # Candidate evidence does not substitute for current merge CI.
-                check_state = self._observe_post_merge(repo, config, merge_sha)
-                if check_state != "success":
-                    return self._post_merge_wait(repo, number, record, check_state)
-                boundary = self._latest(repo, number, config)
-                if boundary and not (closing_recovery and boundary == "issue_closed"):
-                    return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
-                if not closing_recovery:
-                    try:
-                        self._effect(repo, self.github.close_issue, repo, number)
-                    except Exception:
-                        if self.github.issue(repo, number).get("state") != "closed":
-                            return self._wait(repo, number, record, "close_unknown", phase="uncertain")
-                if self.github.issue(repo, number).get("state") != "closed":
-                    return self._wait(repo, number, record, "close_unknown", phase="uncertain")
-                record = self._record(repo, number, record, phase="completed", pending_action=None,
-                                      checkpoint=record["checkpoint"], wait_reason=None,
-                                      next_action="resource_cleanup" if self._completion_callback() is not None else "completed")
-                return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
+                return self._complete_delivery(repo, number, config, record, observation,
+                    closing_recovery=closing_recovery)
             if closing_recovery or config.get("_completion_only"):
                 return self._wait(repo, number, record, "completion_merge_unconfirmed", phase="uncertain")
             if pr.get("state") == "closed":
@@ -1670,18 +1648,97 @@ class Runner:
                 result.append(t)
         return result
 
+    def _complete_delivery(self, repo, number, config, record, observation, *, closing_recovery=False, retire=True):
+        """Shared merged-result validation and close; narrow callers retain cleanup responsibility."""
+        pr = observation["pr"]
+        if pr["head"]["sha"] != record.get("head"):
+            return self._delivery_wait(repo, number, record, "unexpected_merged_head")
+        if record.get("pending_action") == "merge":
+            recovered = self._recover_squash(repo, number, config, record, observation)
+            if recovered is None:
+                return self._delivery_wait(repo, number, record,
+                                  "squash_method_unknown", phase="uncertain", next_action="diagnose_merge")
+            record = recovered
+        if gate_completed_delivery(config, observation, record["head"], self._paths(observation),
+                                   expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint")):
+            return self._delivery_wait(repo, number, record, "completion_evidence_missing", phase="observing")
+        merge_sha = pr.get("merge_commit_sha")
+        check_state = self._observe_post_merge(repo, config, merge_sha)
+        if check_state != "success":
+            return self._post_merge_wait(repo, number, record, check_state)
+        if record.get("phase") == "completed" and record.get("pending_action") is None:
+            reason = self._latest(repo, number, config)
+            if reason != "issue_closed":
+                return {"repository": repo, "issue": number, "action": "waiting",
+                        "reason": reason or "completion_reopened"}
+            if retire:
+                # Preserve the broad path's final current-check observation
+                # before it considers its separate resource responsibility.
+                check_state = self._observe_post_merge(repo, config, merge_sha)
+                if check_state != "success":
+                    return self._post_merge_wait(repo, number, record, check_state)
+                issue = self.github.issue(repo, number)
+                active = any((item.get("name") if isinstance(item, dict) else item) == "hydra:active"
+                             for item in issue.get("labels", []))
+                if record.get("wait_reason") is not None:
+                    cleanup = (record.get("next_action") == "resource_cleanup"
+                               or self._completion_callback() is not None)
+                    record = self._record(repo, number, record, wait_reason=None,
+                                          next_action="resource_cleanup" if cleanup else "completed")
+                elif active and record.get("next_action") != "resource_cleanup":
+                    # An equal completed record retries only its owned active-label
+                    # cleanup; it does not invent another close intent or comment.
+                    record = self._record(repo, number, record)
+                return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
+            return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
+        boundary = self._latest(repo, number, config)
+        # Verified external closure needs reconciliation even when this owner
+        # knows its own close request was never sent. Keep unknown-open intents
+        # in recovery so an observation cannot authorize another close.
+        closing_recovery = closing_recovery or boundary == "issue_closed"
+        if boundary and not (closing_recovery and boundary == "issue_closed"):
+            return self._wait(repo, number, record, "delivery_boundary_changed")
+        record = self._intent(repo, number, config, record, "close_issue", phase="closing") if not closing_recovery else record
+        if record is None:
+            return self._intent_wait(repo, number)
+        current = self.github.observe(repo, pr["number"])
+        if (not self.github.owns_pr(repo, number, current["pr"])
+                or current["pr"].get("merge_commit_sha") != merge_sha
+                or gate_completed_delivery(config, current, record["head"], self._paths(current),
+                                           expected_base=record.get("expected_base"), checkpoint=record.get("checkpoint"))):
+            return self._wait(repo, number, record, "completion_evidence_missing", phase="uncertain")
+        # A push rerun can start while publishing the close intent.
+        # Candidate evidence does not substitute for current merge CI.
+        check_state = self._observe_post_merge(repo, config, merge_sha)
+        if check_state != "success":
+            return self._post_merge_wait(repo, number, record, check_state)
+        boundary = self._latest(repo, number, config)
+        closing_recovery = closing_recovery or boundary == "issue_closed"
+        if boundary and not (closing_recovery and boundary == "issue_closed"):
+            return self._wait(repo, number, record, "delivery_boundary_changed", phase="uncertain")
+        if not closing_recovery:
+            try:
+                self._effect(repo, self.github.close_issue, repo, number, _checkpoint_effect="close")
+            except OperationDenied:
+                raise
+            except Exception:
+                if self.github.issue(repo, number).get("state") != "closed":
+                    return self._wait(repo, number, record, "close_unknown", phase="uncertain")
+        if self.github.issue(repo, number).get("state") != "closed":
+            return self._wait(repo, number, record, "close_unknown", phase="uncertain")
+        record = self._record(repo, number, record, phase="completed", pending_action=None,
+                              checkpoint=record["checkpoint"], wait_reason=None,
+                              next_action="resource_cleanup" if self._completion_callback() is not None else "completed")
+        if retire:
+            return self._resource_completion(repo, number, config, record, pr["number"], merge_sha)
+        return {"repository": repo, "issue": number, "action": "completed", "pr": pr["number"]}
+
     def _recover_squash(self, repo, number, config, record, observation):
         """Correlate an uncertain trusted request; never infer method from topology."""
-        pr = observation["pr"]
-        base = record.get("expected_base")
-        if (record.get("pending_action") != "merge" or record.get("expected_head") != record.get("head")
-                or gate_squash_result(observation, record.get("head"), base)):
+        checkpoint = squash_recovery_checkpoint(config, number, record, observation)
+        if checkpoint is None:
             return None
-        message = squash_message(config["repository_id"], number, pr["number"],
-                                 record["head"], base, record["intake_digest"])
-        if not squash_message_matches(observation.get("merge_commit", {}).get("message"), message):
-            return None
-        return self._record(repo, number, record, checkpoint="squash_" + pr["merge_commit_sha"],
+        return self._record(repo, number, record, checkpoint=checkpoint,
                             pending_action=None, phase="observing", wait_reason=None, next_action="post_merge")
 
     def _merge(self, repo, number, config, record, pr_number, head, paths):
@@ -1702,7 +1759,7 @@ class Runner:
         message = squash_message(config["repository_id"], number, pr_number, head,
                                  record["expected_base"], record["intake_digest"])
         try:
-            receipt = self._effect(repo, self.github.merge, repo, pr_number, head, commit_message=message, issue_number=number)
+            receipt = self._effect(repo, self.github.merge, repo, pr_number, head, commit_message=message, issue_number=number, _checkpoint_effect="merge")
         except Exception:
             observed = self.github.observe(repo, pr_number)
             if not self.github.owns_pr(repo, number, observed["pr"]):

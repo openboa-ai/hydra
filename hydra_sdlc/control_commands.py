@@ -151,6 +151,11 @@ async def execute_command_v1(config_path, command, *, context_provider, github, 
         from .publication_commands import execute_publication_command
         return await execute_publication_command(config_path, parsed,
             context_provider=context_provider, github=github, controller=controller)
+    if (parsed['action'] == 'workflow_step' and parsed['parameters']
+            and parsed['parameters'].get('operation') == 'deliver'):
+        from .delivery_commands import execute_delivery_command
+        return await execute_delivery_command(config_path, parsed,
+            context_provider=context_provider, github=github, controller=controller)
     if config_path is None:
         context, reason = _context(context_provider, parsed)
         return _reply(parsed, unavailable_runtime or capture_runtime_identity(),
@@ -206,6 +211,11 @@ def command_input_schema():
         'parameters': obj({'operation': {'const': 'publish_candidate'}, 'candidate': candidate,
             'branch': {'type': 'string', 'pattern': '^hydra/issue-[1-9][0-9]*$'},
             'expected_remote_head': nullable(sha)})})
+    delivery = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': checkpoint['properties']['target'],
+        'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
+        'parameters': obj({'operation': {'const': 'deliver'}, 'candidate': candidate,
+            'pr_number': positive, 'integration_base': sha})})
     resource = obj({'source': {'const': 'codex'},
         'kind': {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{0,63}$'},
         'id': {'type': 'string', 'minLength': 1, 'maxLength': 256}})
@@ -230,7 +240,7 @@ def command_input_schema():
         'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
         'parameters': obj({'operation': {'const': 'continue'}, 'progress': nullable(progress),
             'reply_profile': {'enum': ['standard_v1', 'native_handoff_v1']}})})
-    return {'oneOf': [admission, checkpoint, run, review, publication, decision, continuation]}
+    return {'oneOf': [admission, checkpoint, run, review, publication, delivery, decision, continuation]}
 
 
 def _uuid(value):
@@ -277,7 +287,7 @@ def _parse(command, *, checkpoint=False):
                 or not parameters['operation']):
             raise InvalidAdmissionCommand()
         if parameters['operation'] not in {'checkpoint_only', 'verify_only', 'publish_candidate',
-                                            'decision_apply', 'continue'}:
+                                            'deliver', 'decision_apply', 'continue'}:
             # An unknown operation's expected/effect/body are also opaque.
             return {key: (dict(target) if key == 'target' else None if key in
                           {'expected', 'parameters', 'effect_key'} else value)
@@ -298,6 +308,10 @@ def _parse(command, *, checkpoint=False):
                 and expected['source_checks'] != [])):
         raise InvalidAdmissionCommand()
     if checkpoint:
+        if parameters['operation'] == 'deliver':
+            from .delivery_commands import validate_parameters
+            validate_parameters(command)
+            return copy.deepcopy(command)
         if parameters['operation'] in {'decision_apply', 'continue'}:
             from .decision_commands import validate_parameters
             validate_parameters(command)
@@ -361,7 +375,8 @@ def _context(provider, command):
     if (type(context.operations) is not frozenset or not context.operations <=
             {'admission_set', 'workflow_step.checkpoint_only', 'workflow_step.verify_only.run',
              'workflow_step.verify_only.review_checkpoint', 'command_reply.native_handoff_v1',
-             'workflow_step.publish_candidate', 'workflow_step.decision_apply', 'workflow_step.continue'}):
+             'workflow_step.publish_candidate', 'workflow_step.deliver',
+             'workflow_step.decision_apply', 'workflow_step.continue'}):
         return None, 'authority_unavailable'
     if context.config_digest is not None and (type(context.config_digest) is not str
                                               or not _DIGEST.fullmatch(context.config_digest)):

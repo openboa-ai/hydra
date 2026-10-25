@@ -15,6 +15,8 @@ import uuid
 from types import MethodType
 from urllib.parse import quote, unquote, urlencode
 
+from .public_payload import CLOSING_INTENT
+
 ACTIVE_LABEL = "hydra:active"
 MAX_COLLECTION_BYTES = 8_000_000
 
@@ -1128,8 +1130,13 @@ class GitHub:
             raise GitHubError("Merged PR requires squash receipt reconciliation", uncertain=True)
         if raw.get("state") != "open" or raw.get("draft") is not False or raw.get("mergeable") is not True or raw.get("mergeable_state") != "clean":
             raise GitHubError("Native merge requirements are not satisfied")
+        if (not isinstance(raw.get("title"), str) or not isinstance(raw.get("body"), str)
+                or CLOSING_INTENT.search(raw["title"]) or CLOSING_INTENT.search(raw["body"])):
+            raise GitHubError("PR payload can prematurely close an Issue")
         result = self.api("PUT", f"/repos/{repo}/pulls/{pr}/merge", {
-            "sha": head, "merge_method": "squash", "commit_message": commit_message})
+            "sha": head, "merge_method": "squash",
+            "commit_title": f"Deliver Issue {issue_number} (#{pr})",
+            "commit_message": commit_message})
         if (not isinstance(result, dict) or result.get("merged") is not True
                 or not isinstance(result.get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", result["sha"])):
             raise GitHubError("Squash response requires reconciliation", uncertain=True)

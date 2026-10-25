@@ -180,8 +180,8 @@ class CompletionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.runner().step(REPO, 4))['reason'], 'foreign_pr')
         self.assertEqual(len(self.calls), before)
         progress = client.progress(REPO, 4)
-        self.assertEqual(progress['phase'], 'closing')
-        self.assertEqual(progress['pending_action'], 'close_issue')
+        self.assertEqual(progress['phase'], 'completed')
+        self.assertIsNone(progress['pending_action'])
         self.assertEqual(client.issues(REPO), [transport.issue])
         self.assertFalse(any(m == 'DELETE' for m, _, _ in transport.calls))
 
@@ -202,7 +202,8 @@ class CompletionCleanupTests(unittest.IsolatedAsyncioTestCase):
 
         self.github.observe_commit = pending
         self.assertEqual((await self.runner().cycle(['example/product']))[0]['reason'], 'post_merge_checks')
-        self.assertEqual(self.github.note['pending_action'], 'close_issue')
+        self.assertEqual(self.github.note['phase'], 'completed')
+        self.assertIsNone(self.github.note['pending_action'])
         self.github.observe_commit = actual
         self.assertEqual((await self.runner().cycle(['example/product']))[0]['action'], 'completed')
         self.assertEqual(len(self.calls), before[0])
