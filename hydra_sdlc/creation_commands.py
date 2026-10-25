@@ -3,6 +3,7 @@ import asyncio
 from contextlib import contextmanager
 import copy
 import re
+from threading import Event
 
 from . import control_commands as c
 from . import projection as p
@@ -39,6 +40,7 @@ async def execute_creation_command(config_path, command, *, context_provider, gi
     binding = WorkflowBinding(config_path, command, context_provider, github, controller,
         'work_create', native_profile=True, reason='creation_binding_mismatch')
     registration = None
+    cancel = Event()
 
     def reply(outcome, reason, receipt=None):
         observed = registration.observation() if registration is not None else None
@@ -57,20 +59,43 @@ async def execute_creation_command(config_path, command, *, context_provider, gi
             return reply('unknown' if reason == 'repository_unavailable' else 'rejected', reason)
 
         def validate_current():
-            binding.validate()
+            if cancel.is_set():
+                raise OperationDenied('creation_cancelled')
+            return binding.validate()
 
         @contextmanager
         def effect_guard():
-            _, control, _ = binding.validate()
+            _, control, _ = validate_current()
             with control.guard(repository, expected_revision=command['expected']['admission_revision']):
                 # Revalidate caller/runtime on this side of the barrier. Remote
                 # source observations have already completed outside this lock.
-                binding.validate()
+                validate_current()
+                if cancel.is_set():
+                    raise OperationDenied('creation_cancelled')
                 yield
 
         registration = Registration(github, cfg['repos'], command, controller.lock_path,
             validate_current=validate_current, effect_guard=effect_guard, controller=controller)
-        receipt = await asyncio.to_thread(registration.run)
+        worker = asyncio.create_task(asyncio.to_thread(registration.run))
+        cancellation = None
+        while not worker.done():
+            try:
+                # wait preserves the owned worker without shield's canceled-
+                # outer callback logging an already-handled provider error.
+                await asyncio.wait((worker,))
+            except asyncio.CancelledError as exc:
+                cancel.set()
+                if cancellation is None:
+                    cancellation = exc
+        if cancellation is not None:
+            try:
+                worker.result()
+            except (Exception, asyncio.CancelledError):
+                pass
+            # An admitted provider request drains before the caller and the
+            # coordinator can be released. Preserve original effects/history.
+            raise cancellation from None
+        receipt = worker.result()
         return reply('applied', None, receipt) if receipt is not None else reply('unknown', 'creation_effect_unconfirmed')
     except OperationDenied as exc:
         rejected = {'creation_payload_conflict', 'stale_runtime', 'stale_binding', 'authority_denied',
