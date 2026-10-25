@@ -1,6 +1,7 @@
 # P14 — 보호 전달과 병합 후 책임
 
-Revision: 4 · 상태: 설계 후보 · 2026-10-19 · 구현/시험/실운영: NOT RUN
+Revision: 5 · Updated: 2026-10-25. The source-context profile below is the current
+increment; implementation and operational evidence remain in `verification.md`.
 
 이 명세는 검증된 후보를 보호된 경로로 전달하고, 병합 뒤 성공·실패·미확인을 구분하여 다음
 책임까지 연결한다. 대응 범위는 [계획의 W6a](../../plan.md), 상위 요구 R10/R11/R12/R13이다.
@@ -171,3 +172,171 @@ final head의 필수 remote CI·code/security review·보호 승인을 확인한
 visually meaningful 변경 시 원래 screen gate를 적용한다.
 완료는 P14 요구별 D/L/O와 실제 전달·main 증거가 연결되고 미해결 효과/관측 책임이 정확히 남은 상태다.
 후속 cleanup은 별도 인계한다. 실패는 같은 Issue/intent에서 대사하고 구현·oracle을 수정하며 CI/승인/기준·실패 기록을 보존한다.
+
+## Post-merge source-context profile
+
+This profile implements the authenticated investigation handoff for P14-R4/R5.
+It adds bounded source context to existing `hydra_status` rows so Codex can locate
+the exact required CI failure. Diagnosis, the single repair outcome, repaired
+requirement fulfillment and actual native acceptance remain separate obligations.
+It grants no repair, rerun, dispatch, merge, close or cleanup authority.
+
+### Origin and observation lifecycle
+
+Only already-discovered registered work with authenticated progress in
+`observing`, `closing` or `completed`, or a pending merge whose exact squash can
+be proven, is eligible. Preserve pending intents. Cross-host read-only work is
+eligible without implying current-host ownership. Existing retained-workspace
+closed-work discovery remains bounded; this profile adds no global discovery.
+
+One fresh GitHub read client belongs to each synchronous status enrichment pass.
+Authenticate the actual account ID/login and credential fingerprint, canonical
+repository name/ID, progress comment and parsed value, and original/current
+protected project-policy semantics. Request fields or normalized objects are
+not provenance. Use only GET reads. Read the owned PR and immutable commits,
+reuse `gate_squash_result` and the authenticated squash checkpoint, and require
+the original head/base/tree/sole-parent identity. For a pending merge, reuse
+`squash_recovery_checkpoint` correlation without writing a checkpoint or clearing
+the intent. Do not call the GraphQL-using `GitHub.observe()` or weaken/reuse final
+delivery acceptance to claim this diagnostic origin. `read_delivery` and
+`gate_completed_delivery` retain their existing behavior. A legitimate nullable
+spec revision remains null.
+
+Phase A qualifies origin and current required checks for all selected rows before
+any optional history. Complete eligible-run discovery precedes current selection;
+reuse the existing latest run-number/run-attempt and protected workflow, app,
+event, repository, SHA, job, check and suite predicates. Foreign-only evidence or
+a queued run without required job/check evidence is unknown. Unrelated foreign
+noise does not erase qualified required evidence. Reobserve progress, current
+policy, credential and the selected latest run/attempt before closing each
+current snapshot. Reserve these reads before spending a history budget.
+
+Phase B reads history against each snapshot's immutable merge and captured run
+set, including earlier eligible runs and earlier attempts of its current run.
+Order ascending by run number, run ID, then attempt number. Read at most eight
+runs and eight historical attempts per run; these caps never affect current
+selection. Authenticate historical failures using actual run-attempt metadata,
+attempt jobs and individual check-run GETs with the same required-source
+predicates. Progress wait prose never proves a past CI failure.
+
+Each axis records its own observation time; top-level time is assembly time.
+This is not an atomic provider snapshot. Changes after a current snapshot closes
+are outside that snapshot; effects always require fresh source observation.
+Historical through-scopes do not expand to a later observed attempt.
+
+One pass-wide sticky binding guard spans both phases. Any observed credential,
+account or same-binding disclosure change invalidates every context using that
+binding, including previously finalized siblings. Remove their origin and detail
+references, stop optional history, and do not reset the guard even if credentials
+return. Compare each repository's disclosure basis with itself; ordinary distinct
+visibility across repositories is not a change. A local progress/policy change
+invalidates only its row when the shared binding remains valid. Ordinary history
+denial, truncation, timeout or incomplete data cannot erase qualified current CI.
+
+### Additive status data
+
+An eligible row adds `post_merge_context`, through the actual GitHub reader →
+`Runner.status` → `NativeController.status` → existing `hydra_status` reply. It is
+not a new CP fact or command. Existing progress, waits, hints, admission and app
+projection/reducer behavior remain unchanged. Pause permits these observations.
+
+All keys below are required; reject extra keys. IDs are safe positive integers,
+hashes and UUIDs canonical, and timestamps UTC. Fixed bounded codes replace raw
+provider errors. A valid locator shape alone does not authenticate a source.
+
+```text
+PostMergeContext = {
+  schema_version: 1, state: failed|pending|success|unknown|changed,
+  reason: code|null, source: Origin|null,
+  current: {state: failed|pending|success|unknown, checks: [CheckRef],
+            coverage: Coverage, observed_at: UTC|null},
+  history: {failed_checks: [CheckRef], through: [AttemptScope],
+            coverage: Coverage, observed_at: UTC|null}, observed_at: UTC
+}
+Origin = {repository_id, issue_number, progress_comment_id, attempt_id,
+          contract_revision, spec_revision: git_sha|null, source_digest,
+          head, pr_number, merge_sha}
+CheckRef = {workflow_id, run_id, run_attempt, job_id, check_run_id,
+            job_name, state: failed|pending|success|unknown,
+            run_url, attempt_url, job_url, check_url}
+AttemptScope = {workflow_id, run_id, through_attempt}
+Coverage = {state: complete|partial|unavailable, scope, returned_count,
+            total_count: nonnegative_integer|null, next_cursor: null,
+            reason: code|null}
+```
+
+Require `job_id == check_run_id` and the actual matching check URL, SHA, app,
+suite and run identities. `job_name` comes from the protected binding. Construct
+URLs from the validated canonical repository and source IDs:
+
+- `https://github.com/OWNER/REPO/actions/runs/RUN_ID`
+- `https://api.github.com/repos/OWNER/REPO/actions/runs/RUN_ID/attempts/N`
+- `https://api.github.com/repos/OWNER/REPO/actions/jobs/JOB_ID`
+- `https://api.github.com/repos/OWNER/REPO/check-runs/CHECK_ID`
+
+Current coverage counts configured required-binding slots, uniquely qualified
+returned slots and the authenticated declared total when known. Do not create
+successful references for unknown or ambiguous slots. History coverage counts
+qualified failed required-job/check observations in explicit through-scopes.
+It is complete only after every applicable bounded attempt/check is fully
+observed and terminal; the total then equals the failed-reference count.
+Truncation, access failure, nonterminal or ambiguous evidence makes history
+partial/unavailable with a null total. Source-proven empty history can be
+complete with zero; unavailable history cannot. Return at most 32 CheckRefs
+across both axes. Truncation marks the affected axis incomplete and preserves
+already-confirmed failure references.
+
+After stable source qualification, outer state equals current state. Reasons are
+`post_merge_failed`, `post_merge_checks`, null and
+`post_merge_evidence_unknown` for failed, pending, success and unknown.
+Shared binding or local source change yields `changed` with
+`post_merge_source_changed`; source unavailability yields `unknown` with
+`post_merge_source_unavailable`. Both invalid-source shapes have null source,
+unknown current state, empty references/through-scopes, unavailable coverage
+and null per-axis times. History failures never downgrade qualified current CI.
+No context establishes requirement acceptance, completed delivery or goal success.
+
+### Bounds, effects and permanent verification
+
+One pass has 45 seconds, 128 GETs and four enriched contexts. Before Phase B,
+finish Phase A or return an explicit source-unavailable result for each selected
+row. Context-cap and budget omissions are explicit unknown/unavailable contexts;
+preserve other status data and do not imply global completeness. Keep the
+existing 8 MB raw observation cap and limit each normalized context to 32 KiB.
+If history cannot fit, omit it with incomplete coverage rather than consuming
+current-source checks. No network I/O holds an admission/coordinator lock.
+
+No raw logs, steps, annotations, title/body, provider diagnostic, credential,
+private native ID or local path enters the context. Persist no derived provider
+state. Add no tool, credential, model, scheduler, tracker or installed activation.
+All tests reject non-GET, model, assignment, workspace, rerun, repair, merge,
+close and cleanup effects.
+
+- P14-T14 / R4–5: actual observing/closing/completed/pending-merge source plus
+  exact squash and trusted failed push job reaches the real in-memory MCP reply;
+  include null spec and cross-host sources, with zero writes/new resources.
+- P14-T15 / R4: success/pending preserve identity; absent required jobs is unknown.
+- P14-T16 / R4: older failed runs/attempts survive newer current pending/success;
+  wait prose cannot create historical failures.
+- P14-T17 / R4: history denial/partial/budget preserves current failure, Phase A
+  precedes sibling history, and timestamps/through-scopes remain exact.
+- P14-T18 / R4: foreign IDs/app/workflow/event/SHA, duplicate jobs/checks, partial
+  current pages and unproven squash are unknown; unrelated noise is harmless.
+- P14-T19 / R4: mutable progress/policy/credential/latest attempt is changed or
+  unknown at its owning observation boundary.
+- P14-T20 / R4: finalize sibling A, then observe shared credential rotation and
+  restoration during B history: remove all A/B detail, remain changed and stop
+  history. Cover shared account/disclosure and local-only source changes.
+- P14-T21 / R4: unrelated phases do not enrich; retained closed discovery keeps
+  its unknown limits; restart reuses actual source references.
+- P14-T22 / R4–5: private extra-field/error canaries never escape; enforce time,
+  request, context, raw-byte and reference caps, sibling isolation and Pause.
+
+Freeze requirement-derived oracles before code, demonstrate meaningful purpose
+RED and unchanged GREEN, then run affected source/delivery/status/MCP/project
+regressions and existing app compatibility checks. Exact independent code/security
+review, final-head CI, protected merge, actual-main checks and branch retirement
+remain required. Fixture output never substitutes for actual-source/native O.
+The missing initial progress → `bind_work` → attempt-anchor writer and original
+first-dispatch provenance remain explicit, separate work; this handoff cannot
+conceal that missing v1 capability.
