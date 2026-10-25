@@ -1,6 +1,6 @@
 # 목표·Issue·작업 연결 계약
 
-Revision: 5 · 상태: 설계 후보 · 2026-10-19 · 상위 작업: Issue #3
+Revision: 6 · Design contract · 2026-10-25 · Refs #3. Fixed proposals and bounded registration.
 
 이 문서는 [통합 설계](../../../architecture/sdlc.md)의 W2 상세 계약이다.
 현재 구현은 [GitHub workflow](../../github-workflow/spec.md)를 따른다. 아래의 자유 형식
@@ -9,8 +9,10 @@ Revision: 5 · 상태: 설계 후보 · 2026-10-19 · 상위 작업: Issue #3
 이번 개정은 [플랫폼 책임 경계안](../../../architecture/platform-boundaries.md)의 관계·계획 선택을
 상세화한다. 새 native 경로의 parent/blocked-by는 GitHub 원본, 수용된 위임·입력조건은 고정 실행 계약이다.
 아래 project v2와 `hydra-work:v2`는 구현할 후보이며 accepted 현행 v1을 소급 변경하지 않는다.
-현행 `github.py`에는 native 관계/Projects adapter가 없고, `project.py`는 version=1만 허용하며
-`runner.py`의 의존 판정은 legacy URL의 close 여부다. 실제 대상의 관계 접근·변경·복구는 **NOT RUN**이다.
+The original 2026-10-19 baseline had no native relation/Projects reader and used
+legacy dependency checks. Current reader increments have their own verification
+records; their delivery does not establish work creation, execution or complete
+native operation. Actual target access, mutation and recovery require observation.
 공식 기능 존재, adapter 구현, 실제 credential/target의 접근, 실행 수용을 서로 다른 증거로 남긴다.
 
 ## 1. 목적·책임·동작·복구·완료·범위
@@ -496,6 +498,146 @@ Issue가 정본이고 draft를 최신 상태로 역동기화하지 않는다. Gi
    conflict, 미확인/partial이면 unknown이다. complete 조회의 0건도 늦게 처리될 POST의 부재 증거가
    아니다. 미전송·명확한 무효과 거절 또는 실제 provider의 안전한 재요청 조건이 입증된 경우만 같은
    key로 재요청한다. Pause 뒤 늦게 보이는 양성 결과도 같은 요청의 결과로 대사하고 새 생성하지 않는다.
+
+### 8.1. Fixed proposal and effect-dispatch evidence
+
+The effect-capable GitHub source adds exactly one `hydra-work-proposal:v1` marker
+to the same immutable, authenticated draft comment. Its closed object contains
+only `{kind, outcome, requirements, spec, input_contract, delegation_ref}` with
+the existing WorkBinding field rules. Keep WorkCreateDraft's eight fields and
+canonical payload digest unchanged. The original comment-body digest covers both
+markers. Parse proposal metadata outside the JSON-framed draft span: a marker
+inside the quoted Issue body remains payload data. Missing, duplicate, edited or
+malformed proposals do not authorize creation.
+
+Derive repository, Issue number and source digest from the actual created Issue;
+derive create_key and delegated_goal from the exact draft. These are not a second
+caller-supplied binding. The proposal is the agent's adoption judgment; actual
+delegation, accepted scope and independent judgment remain separate.
+
+Close the existing outcome identity as the SHA256 of this sorted compact UTF-8
+JSON object. Sort RequirementRefs by their canonical JSON and reject duplicates:
+
+```text
+{
+  repository_id: target_repository_id,
+  delegated_goal: draft.goal,
+  source: draft.goal != null ? null :
+    {kind: "github_issue", repository_id, issue_number, source_digest},
+  requirements: sorted(proposal.requirements),
+  outcome: proposal.outcome
+}
+```
+
+The source fields come from draft.source_ref and draft.source_digest. Recompute
+draft.outcome_key; the supplied hash is not semantic review or duplicate evidence.
+Title, current parent/state/priority, new Issue identity and create_key are absent.
+Native preparation retains its separate qualification and is not enabled here.
+
+The draft remains the sole payload and creation intent. A separate append-only
+`hydra-create-dispatch:v1` comment on its original container records only possible
+dispatch. Its closed fields are `{create_key, target_repository_id, draft_ref,
+draft_digest, proposal_digest, outcome_key, operation_nonce}`. proposal_digest is
+the canonical proposal SHA256; operation_nonce is a server-generated UUID v4,
+not request_id or provider idempotency. Authenticate actual author, location and
+comment identity. Store no title/body, transcript, native ID, local path or
+runtime grant in this fence. Do not edit the fixed draft or store a local journal.
+
+The fence cannot establish first use: both it and an uncertain Issue may be
+omitted from later collections. Before any new fence, require a separately
+qualified original-outcome history source and actual current physical-execution
+ownership. Its scope is `(target_repository_id, outcome_key)`, including every
+create key and draft container for that outcome. A constructor, current grant,
+request_id, SDK session ID, process identity or empty collection is not that source.
+
+The internal intent pins scope, create_key, canonical draft_ref, draft_digest,
+proposal_digest, actionable comment digest, validated source signature and current
+runtime_key. These comparison digests are not provider revisions. The private
+history observation pins that intent and the actual invocation/execution/caller
+binding, complete scope coverage and prior call records. Each prior record has
+invocation and physical-execution identities, an exact intent digest when known,
+dispatch count 0..3 or unknown, and state not_dispatched, unconfirmed, not_applied
+or applied. not_dispatched requires count=0; known terminal effect states require
+a positive count. Unknown physical counts remain unknown.
+
+Prior records exclude only the exact currently owned physical execution. They
+include earlier deliveries of the same logical invocation and every other call
+or alias for the outcome. current_first_execution is a qualified ownership fact,
+not a statement that every inner POST count is still zero. Ordinary native tool
+history does not establish internal POST counts. After restart the old physical
+execution is prior history; no constructor or recovered fence recreates ownership.
+
+The same live serialized owner consumes one sequence claim before the fence POST.
+Retain its identity and attempted-count floor even if dispatch throws. Only after
+positive acknowledgment and read-back of the exact new fence may this consumed
+live sequence use its distinct one-use Issue and binding flags. Pin the fence,
+draft/proposal, runtime, selected actor and original invocation/execution/caller.
+Later source checks verify that same ownership; they never mint another claim or
+treat the live sequence's own fence as a prior execution. Consume every stage flag
+before dispatch and recheck current authority, source and admission. After actual
+Issue read-back the same live owner may publish the still-undispatched binding.
+
+A bounded in-memory controller observation retains every known prior call,
+count floor and uncertainty before an incomplete-history hold. Rewound counts,
+omitted known calls, conflicting consumed intents or unknown/positive prior
+dispatch cannot reauthorize creation. This observation can reject a false fresh
+claim but is not restart evidence; there is no eviction that forgets pending work.
+Source reads remain outside the admission mutation lock. Exact registered-result
+read-back needs no new sequence claim. Missing history is
+creation_history_unsupported; unavailable, incomplete or contradictory history
+is explicit unknown/wait, without private invocation identities in diagnostics.
+
+The production producer remains unsupported until actual supported transport,
+current caller attribution, complete outcome coverage and restart/dispatch facts
+are separately qualified. This guarded-core contract, a synthetic fixture or an
+AdmissionCallContext cannot certify that capability or activate a default source.
+
+On restart or response loss, reconcile the original results. One exact Issue and
+one exact authenticated binding establish registration. An Issue without confirmed
+binding remains preserved and uncertain; absent binding does not prove its POST
+was never sent. Complete-zero Issue discovery does not authorize another create.
+Duplicate fences/results/bindings are conflict; partial or unavailable discovery
+is unknown. A crash after fence acknowledgment but before Issue dispatch may
+remain held until qualified history resolves it. This is not exactly-once delivery
+or universal automatic recovery. Independent delegated outcomes remain eligible.
+
+Discover creation markers from complete all-state Issue collections and outcome
+identities from complete repository Issue-comment collections. The existing
+open/active-only work list and search results are not absence proofs. Authenticate
+owned bindings and detect incomplete, overlapping, malformed or over-budget reads.
+Recheck before effects without claiming an atomic GitHub snapshot.
+
+### 8.2. Current authority and disclosure for the initial source route
+
+Require both the trusted adapter's current, per-command work_create grant and an
+explicit public delegation comment referenced by proposal.delegation_ref. The
+comment must belong to the fixed goal, or original source Issue when goal=null,
+in the installed read-repository mapping. Issue-only, native or missing authority
+references are unsupported for this route, without fallback.
+
+Read the actual owning Issue and unchanged delegation comment. Require the exact
+four-field hydra-delegation:v1 object, a human-readable summary, authenticated
+numeric author identity and authorized login. Reject the selected service account
+and Bot/app-authored self-delegation. Validate goal digest, create_work action and
+the pinned accepted policy against current validated policy semantics; advancing
+the default branch alone does not invalidate an unchanged accepted policy.
+
+The public comment never replaces current caller/scope/withdrawal qualification.
+If the trusted adapter cannot establish current authority, it returns no grant.
+An edited/deleted delegation, changed goal/policy or missing current grant holds
+new effects while preserving positive results. The command enables no default
+grant, new withdrawal mechanism or installed/native authority.
+
+Same-repository draft/source/goal/target may use public or private visibility.
+Cross-repository creation is supported only when every source, proposal,
+delegation and referenced-scope repository is actually observed public and
+allowlisted. Private cross-repository disclosure remains unavailable; two private
+visibility labels do not prove equal membership. Do not echo raw sources in
+diagnostics or receipts.
+
+Registration confirms Issue and binding only. Initial progress, bind_work,
+attempt-anchor read-back, readiness and execution authority remain separate
+obligations before any assignment or ticket.
 
 v1.0.0은 한 host의 명령 직렬화와 현행 ownership 제한을 사용한다. GitHub에 임의 CAS/분산 lock이
 있다고 가정하지 않는다. 다른 host/사람의 경합을 탐지하면 수동 조정 대상으로 보존한다. marker나

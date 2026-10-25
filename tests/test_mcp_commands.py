@@ -145,7 +145,7 @@ class AdmissionProtocolTests(unittest.IsolatedAsyncioTestCase):
         for key, value in [('runtime_key', 'wrong'), ('admission_revision', 0)]:
             item = copy.deepcopy(command); item['expected'][key] = value; variants.append(item)
         item = copy.deepcopy(command); item['binding_epoch'] = test_control_commands.EPOCH; variants.append(item)
-        item = copy.deepcopy(command); item['action'] = 'work_create'; variants.append(item)
+        item = copy.deepcopy(command); item['action'] = 'native_control'; variants.append(item)
         async with Client(self.server()) as client:
             for item in variants:
                 reply = await self.call(client, item)

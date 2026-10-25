@@ -2,8 +2,8 @@
   "fixture_version": 1,
   "contract": {
     "path": "docs/engineering/mvp/contracts/control-plane.md",
-    "revision": 11,
-    "sha256": "889a1617ad78b270c7a4079dba1bf0dde14f19b2906fddae4ba5134bc45e15fe"
+    "revision": 12,
+    "sha256": "a5d802142621fd827a766200653aeff88cb637c4b3d0c1b1441fa2669acf67c3"
   },
   "cases": [
     {

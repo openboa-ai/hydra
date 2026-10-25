@@ -670,6 +670,13 @@ def command_result(value, observations):
     if value['action'] == 'admission_set' or (
             value['receipt'] is not None and value['receipt']['kind'] in {'checkpoint', 'decision'}):
         require((value['receipt'] is not None) == (value['outcome'] == 'applied'))
+    if value['action'] == 'work_create':
+        require((value['receipt'] is not None) == (value['outcome'] == 'applied'))
+        if value['receipt'] is not None:
+            created = value['receipt']
+            require(created['kind'] == 'work_create'
+                    and created['repository_id'] == value['target']['repository_id'])
+            require(all(created[key] in value['effect_refs'] for key in ('issue_ref', 'binding_ref')))
     if value['receipt'] is not None:
         kind = value['receipt']['kind']
         if value['action'] == 'workflow_step' and kind in {'publication', 'delivery'}:
@@ -685,6 +692,7 @@ def command_result(value, observations):
         if value['action'] == 'cleanup':
             require(value['receipt']['resource'] == value['target']['resource'])
         require((value['action'] == 'admission_set' and kind == 'admission') or
+                (value['action'] == 'work_create' and kind == 'work_create') or
                 (value['action'] == 'workflow_step' and kind in {'checkpoint', 'decision', 'continuation',
                  'verification', 'verification_review', 'publication', 'delivery'}) or
                 (value['action'] == 'cleanup' and kind == 'cleanup'))
@@ -722,6 +730,8 @@ def receipt(value, observations):
     kind = value.get('kind')
     fields = {
         'admission': 'kind readback',
+        'work_create': ('kind stage repository_id issue_number create_key draft_digest '
+                        'proposal_digest issue_ref binding_ref binding_digest'),
         'checkpoint': 'kind assignment outcome checkpoint_head progress_ref step_retired ticket_released',
         'decision': 'kind source_attempt round intent_ref context_ref resolved_ref resume_attempt',
         'continuation': 'kind progress_ref attempt_id head contract_revision boundary',
@@ -733,6 +743,22 @@ def receipt(value, observations):
     }
     require(kind in fields)
     obj(value, fields[kind])
+    if kind == 'work_create':
+        require(value['stage'] == 'registered')
+        integer(value['repository_id'], 1)
+        integer(value['issue_number'], 1)
+        uid(value['create_key'])
+        require(uuid.UUID(value['create_key']).version == 4)
+        for key in ('draft_digest', 'proposal_digest', 'binding_digest'):
+            digest(value[key])
+        ref(value['issue_ref'])
+        ref(value['binding_ref'])
+        require(value['issue_ref'] == {'source': 'github', 'kind': 'issue',
+            'id': str(value['repository_id']) + ':' + str(value['issue_number'])})
+        require(value['binding_ref']['source'] == 'github'
+                and value['binding_ref']['kind'] == 'issue_comment'
+                and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/comments/[1-9][0-9]*',
+                                 value['binding_ref']['id']) is not None)
     if kind == 'admission':
         e = value['readback']
         evidence(e)

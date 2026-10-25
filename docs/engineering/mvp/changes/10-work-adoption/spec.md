@@ -1,6 +1,6 @@
 # P10 — 유용한 요구의 해석·채택·멱등 등록
 
-Revision: 4 · 상태: 설계 후보 · 2026-10-19 · 작업: Issue #3
+Revision: 5 · Design contract · 2026-10-25 · Refs #3. Fixed GitHub work registration.
 
 공통 규칙은 [변경 계약](../README.md), 원문·위임·draft·binding·anchor의 정본은
 [WR](../../contracts/work-records.md)다. 이 명세는 그 타입을 호출 흐름에 연결하며 별도 tracker를 만들지 않는다.
@@ -78,6 +78,63 @@ MCP 등록의 선행이 아니다. 원본 계약·생성 handler는 하나이며
 | `tests/test_control_commands.py`, Rust protocol tests, `apps/mac/tests/model.test.ts` | core 명령과 적용 앱 consumer의 정상·unknown·불일치. 실제 Python 결과를 Rust→TS에 전달하며 별도 손작성 fixture 세 개로 왕복을 대신하지 않음 |
 
 coordinator.py는 host lock/ticket 책임을 유지한다. 원문 의미 엔진을 host 소유권 모듈 안에 넣지 않는다.
+
+### 3.1. First effect-capable registration increment
+
+P10-R03–R07 consume WR revision 6 section 8 and CP revision 12's exact work_create
+profile. Preserve the eight-field draft reader; add the fixed proposal in its
+original immutable comment, qualified public delegation/disclosure reads,
+complete duplicate discovery and one live fenced Issue/binding sequence. Before
+any new fence, WR requires separately qualified original-outcome history and the
+actual current invocation/physical-execution/caller binding. Prior executions
+include other keys/containers and earlier deliveries of the same invocation.
+The consumed live owner tracks its own internal stage counts; ordinary native
+tool history cannot invent those counts or reconstruct a permit after restart.
+
+Implement through the existing MCP/core parser and WorkflowBinding, using the
+existing host coordinator for serialization. Remote reads do not hold admission;
+each bounded POST gets a fresh current guard. Return actual registered receipts
+or partial observations. No default authority, installed activation, native
+preparation, new tracker, payload journal or separate execution service is added.
+
+The PR boundary is an actual Issue plus authenticated binding, including normal
+progress and response-loss reconciliation. Do not count a supplied comparator
+value, a fixture-only validator or Issue creation without binding as registration.
+Later initial progress/bind_work/anchor, relation preparation, app consumers,
+adoption-quality evaluation and full P10/v1 acceptance retain their own evidence.
+
+Write independent effect-count and original-state oracles before implementation:
+
+| Case | Required result |
+| --- | --- |
+| Valid current delegation and fixed draft/proposal | One exact Issue and binding POST, actual read-backs, registered receipt, no assignment |
+| Repeat after confirmed registration | Same references, zero new POSTs |
+| Fence response lost or recovered with zero Issues | No creation permit; preserve original source and unknown |
+| Issue/binding response lost, then late positive result | Reconcile the original result; no duplicate POST or key change |
+| Process loss with Issue but missing binding | Preserve Issue and uncertainty; absent binding is not no-dispatch proof |
+| Same-key different payload/proposal, duplicate results or partial discovery | Conflict/unknown, no arbitrary latest selection or new create |
+| Pause during preflight or after Issue dispatch | No new dispatch after the barrier; prior results remain recoverable |
+| Changed source/policy/delegation/runtime, forged actor or private cross-repository source | No prohibited effects; preserve prior positive results |
+| Proposal-looking marker inside the quoted Issue body | Remains payload, never metadata or authority |
+| Known-undispatched live-owner positive control | Qualified original history and fresh guards permit the exact sequence; recovered owners obtain no witness |
+| Acknowledged fence and uncertain Issue both omitted | No second fence/Issue, including after a new controller and an alternate key/container |
+| Missing/incomplete/wrong-scope history or replayed current execution | No sequence claim or new effect; no request-supplied/default witness |
+| Rewound counts, omitted known calls or changed consumed intent | Preserve known floors/uncertainty; never infer first use from zero discovery |
+
+Cover the actual MCP -> common parser -> handler -> source/creation transport ->
+reply, preserving admission, source, native and legacy regressions. Final-head
+CI, independent code/security review, protected merge and actual-main checks
+remain required. Observe a separately authorized public-safe fixture through the
+actual supported GitHub route before claiming live source/creation capability.
+Fixture authority is not qualified installed/native authority. The production
+history producer remains unsupported until actual transport, caller, full outcome
+coverage and restart/dispatch observations qualify it. Core fixture success does
+not close that required source or enable live registration.
+
+The unavoidable crash-between-fence-and-dispatch uncertainty is explicit. This
+increment neither promises exactly-once creation nor claims universal automatic
+recovery. P14 may consume confirmed registration, while repair execution and
+P11 repaired-output fulfillment remain subsequent obligations.
 
 ## 4. 구현 순서
 

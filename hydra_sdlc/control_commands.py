@@ -124,13 +124,18 @@ def bounded_command(value):
 def parse_command_v1(command):
     """Validate the closed supported profiles, retaining unsupported identities."""
     bounded_command(command)
-    return _parse(command, checkpoint=type(command) is dict and command.get('action') == 'workflow_step')
+    return _parse(command, checkpoint=type(command) is dict and command.get('action') == 'workflow_step',
+                  creation=type(command) is dict and command.get('action') == 'work_create')
 
 
 async def execute_command_v1(config_path, command, *, context_provider, github, controller,
                              ended_provider=None, unavailable_runtime=None):
     """Thin transport-independent dispatch to existing guarded command cores."""
     parsed = parse_command_v1(command)
+    if parsed['action'] == 'work_create' and parsed['parameters'] is not None:
+        from .creation_commands import execute_creation_command
+        return await execute_creation_command(config_path, parsed,
+            context_provider=context_provider, github=github, controller=controller)
     if (parsed['action'] == 'workflow_step' and parsed['parameters']
             and parsed['parameters'].get('operation') == 'continue'):
         from .continuation_commands import execute_continue_command
@@ -240,7 +245,22 @@ def command_input_schema():
         'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
         'parameters': obj({'operation': {'const': 'continue'}, 'progress': nullable(progress),
             'reply_profile': {'enum': ['standard_v1', 'native_handoff_v1']}})})
-    return {'oneOf': [admission, checkpoint, run, review, publication, delivery, decision, continuation]}
+    digest = {'type': 'string', 'pattern': '^[0-9a-f]{64}$'}
+    draft_ref = {'oneOf': [obj({'kind': {'const': 'github_comment'},
+        'repository_id': positive, 'issue_number': positive, 'comment_id': positive, 'revision': digest}),
+        obj({'kind': {'const': 'native_preparation'},
+             'handle': {'type': 'string', 'minLength': 1, 'maxLength': 512},
+             'revision': {'type': 'string', 'minLength': 1, 'maxLength': 512}})]}
+    source_check = obj({'resource': obj({'source': {'const': 'github'},
+        'kind': {'const': 'issue_comment'}, 'id': {'type': 'string', 'maxLength': 256,
+            'pattern': '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/comments/[1-9][0-9]*$'}}),
+        'revision': {'type': 'null'}, 'actionable_digest': digest})
+    creation = obj({**common, 'action': {'const': 'work_create'},
+        'target': obj({'repository_id': positive}),
+        'expected': obj({**expected, 'assignment': {'type': 'null'},
+            'source_checks': {'type': 'array', 'minItems': 1, 'maxItems': 1, 'items': source_check}}),
+        'effect_key': uid, 'parameters': obj({'draft_ref': draft_ref, 'draft_digest': digest})})
+    return {'oneOf': [admission, checkpoint, run, review, publication, delivery, decision, continuation, creation]}
 
 
 def _uuid(value):
@@ -256,7 +276,7 @@ def _integer(value, minimum=0):
     return type(value) is int and minimum <= value <= MAX_REVISION
 
 
-def _parse(command, *, checkpoint=False):
+def _parse(command, *, checkpoint=False, creation=False):
     """Read safe common identities before interpreting the supported action body."""
     if (type(command) is not dict or set(command) != _COMMAND_KEYS
             or not _integer(command['command_schema'], 1)
@@ -275,7 +295,7 @@ def _parse(command, *, checkpoint=False):
         and ('issue_number' not in target or _integer(target['issue_number'], 1)))
     if not admission_target and not repository_target:
         raise InvalidAdmissionCommand()
-    supported = 'workflow_step' if checkpoint else 'admission_set'
+    supported = 'work_create' if creation else 'workflow_step' if checkpoint else 'admission_set'
     if command['command_schema'] != 1 or command['action'] != supported:
         # A recognizable common header can receive an exact unsupported reply.
         # Future action bodies are neither interpreted, traversed nor echoed.
@@ -294,7 +314,8 @@ def _parse(command, *, checkpoint=False):
                     for key, value in command.items()}
     if type(expected) is not dict or type(parameters) is not dict:
         raise InvalidAdmissionCommand()
-    supported_target = (repository_target and set(target) == {'repository_id', 'issue_number'}
+    supported_target = (repository_target and set(target) == {'repository_id'} if creation else
+                        repository_target and set(target) == {'repository_id', 'issue_number'}
                         if checkpoint else admission_target)
     if not supported_target or set(expected) != _EXPECTED_KEYS:
         raise InvalidAdmissionCommand()
@@ -304,9 +325,13 @@ def _parse(command, *, checkpoint=False):
         raise InvalidAdmissionCommand()
     if ((expected['admission_revision'] is not None and not _integer(expected['admission_revision']))
             or type(expected['source_checks']) is not list
-            or (not (checkpoint and parameters['operation'] == 'decision_apply')
+            or (not creation and not (checkpoint and parameters['operation'] == 'decision_apply')
                 and expected['source_checks'] != [])):
         raise InvalidAdmissionCommand()
+    if creation:
+        from .creation_commands import validate_parameters
+        validate_parameters(command)
+        return copy.deepcopy(command)
     if checkpoint:
         if parameters['operation'] == 'deliver':
             from .delivery_commands import validate_parameters
@@ -376,7 +401,7 @@ def _context(provider, command):
             {'admission_set', 'workflow_step.checkpoint_only', 'workflow_step.verify_only.run',
              'workflow_step.verify_only.review_checkpoint', 'command_reply.native_handoff_v1',
              'workflow_step.publish_candidate', 'workflow_step.deliver',
-             'workflow_step.decision_apply', 'workflow_step.continue'}):
+             'workflow_step.decision_apply', 'workflow_step.continue', 'work_create'}):
         return None, 'authority_unavailable'
     if context.config_digest is not None and (type(context.config_digest) is not str
                                               or not _DIGEST.fullmatch(context.config_digest)):
@@ -428,7 +453,9 @@ def _reply(command, runtime, epoch, outcome, reason, *, observation=None, requir
     applied = outcome == 'applied'
     effects = []
     if applied:
-        effects = ([dict(receipt['context_ref']), dict(receipt['resolved_ref'])]
+        effects = ([dict(receipt['issue_ref']), dict(receipt['binding_ref'])]
+                   if receipt and receipt.get('kind') == 'work_create' else
+                   [dict(receipt['context_ref']), dict(receipt['resolved_ref'])]
                    if receipt and receipt.get('kind') == 'decision' else
                    [dict(receipt['progress_ref'] if receipt else observation['resource'])])
     return {
