@@ -12,7 +12,7 @@ separate qualified-native-source profile.
 
 The actual controller/configuration/MCP SDK entrypoint is tested with external
 GitHub transport fixtures, without injecting a decision-source provider. All
-64 delegated feature methods pass on Python 3.14.2, with zero failures, errors
+71 delegated feature methods pass on Python 3.14.2, with zero failures, errors
 or skips. The ordinary path restores all five supported origin phases and
 reaches real local Git assignments/checkpoints. An implementation case commits
 an actual fixture change, runs its registered verifier and enters change review.
@@ -47,6 +47,17 @@ the final recovery guard, and missing directory synchronization before an
 external publication. Identical expectations pass after their corrections.
 These were found while implementing the new profile; they are not claims that
 the previously published source already exposed this new command.
+
+The first published candidate's full CI exposed a legacy publication-adapter
+regression missed by the earlier selected checks: actor/progress support alone
+does not supply the delegated reader's owned credential/deadline transport.
+Capability selection now preserves the original guarded reader path for that
+adapter. Its unparseable service-owned decision-family records remain holds;
+they are not evidence that no native decision exists. Strict v1 key filtering,
+outsider exclusion and the full authenticated v2 reader remain separate.
+Seven additional actual publication/continuation cases reproduce the regression
+and malformed-heading gap, then pass with unchanged expectations. Whole-suite
+verification and fresh final-head CI remain required for this correction.
 
 Final-revision CI, independent code/security reviews, protected merge and main
 checks remain delivery gates. Installation, live native clarification/answer,

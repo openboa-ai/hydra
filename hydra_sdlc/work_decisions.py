@@ -44,6 +44,8 @@ class WorkDecisionGuard:
         # evidence. Their existing explicit human-resolution path is separate.
         if not callable(identity):
             return False
+        from .delegated_decisions import _has_delegated_read_transport
+        unsupported_transport = not _has_delegated_read_transport(reader)
         with reader.read_budget(seconds=timeout, requests=64):
             actor = identity()
             if (type(actor) is not dict or type(actor.get('id')) is not int or actor['id'] < 1
@@ -81,7 +83,8 @@ class WorkDecisionGuard:
                     try:
                         key, _ = parse_receipt(body)
                     except ValueError:
-                        if any(body.startswith('hydra: decision ' + attempt + ' ') for attempt in attempts):
+                        if unsupported_transport or any(
+                                body.startswith('hydra: decision ' + attempt + ' ') for attempt in attempts):
                             found = True
                     else:
                         if (key[0] == repository['id'] and key[1] == self.number

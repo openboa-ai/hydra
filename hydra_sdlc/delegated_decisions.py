@@ -65,10 +65,22 @@ def _consumed(source, context):
                                           'resume_attempt': basis['resume_attempt']})
 
 
+def _has_delegated_read_transport(reader):
+    """Select the v2 reader's owned transport hooks, without granting trust."""
+    return all(callable(getattr(reader, name, None)) for name in
+               ('_credential_selected', '_request_timeout'))
+
+
 def observe_work(runner, repository, number, record, *, timeout=15):
-    """Return v2 facts or explicit absence; malformed claims never fall back."""
+    """Select verified v2 facts, or retain the original guarded reader path.
+
+    None does not prove that public claims are absent. Legacy read facades keep
+    their existing native-claim and qualified-v1 guards; they cannot acquire v2
+    support by supplying only an actor or a progress record.
+    """
     reader = runner.github.read_client()
-    if not callable(getattr(reader, '_identity', None)) or record is None:
+    if (not callable(getattr(reader, '_identity', None)) or record is None
+            or not _has_delegated_read_transport(reader)):
         return None
     with reader.read_budget(seconds=timeout, requests=64):
         source = reader.decision_progress_source(repository, number)

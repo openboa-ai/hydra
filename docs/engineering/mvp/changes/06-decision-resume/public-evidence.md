@@ -31,7 +31,7 @@ record and comment identity inside the final current-policy/admission guard
 before retiring ownership. Identical content at a different comment ID remains
 held. An unknown result cannot allocate another attempt or assignment.
 
-All 64 delegated feature methods pass, including actual local SDK production,
+All 71 delegated feature methods pass, including actual local SDK production,
 five-phase continuation, expiry/scope separation, Pause, durable retry bounds,
 lost acknowledgments, original-ID replacement, shared deadline, private-error
 exclusion and v1 compatibility. File/directory synchronization and reboot
