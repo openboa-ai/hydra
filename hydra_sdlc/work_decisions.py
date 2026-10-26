@@ -30,6 +30,7 @@ class WorkDecisionGuard:
         self.provider = getattr(runner, 'decision_source', None)
         self.coordinator, self.mode, self.consumed = None, None, False
         self.technical_guard = None
+        self.delegated_context = None
 
     def _current(self, *, timeout=15):
         reader = self.runner.github.read_client()
@@ -107,6 +108,11 @@ class WorkDecisionGuard:
         if getattr(self.runner, 'decision_source', None) is not self.provider:
             raise OperationDenied('decision_source_changed')
         record = self._current(timeout=remaining())
+        from .delegated_decisions import observe_work
+        delegated = observe_work(self.runner, self.repository, self.number, record, timeout=remaining())
+        remaining()
+        if delegated is not None:
+            return delegated, record
         if self.provider is None:
             if self._native_claim(record, timeout=remaining()):
                 raise OperationDenied('decision_source_unsupported')
@@ -185,6 +191,22 @@ class WorkDecisionGuard:
     def reconcile(self, *, allow_resume=False, record=None):
         try:
             observed, current = self._work()
+            if type(observed) is tuple:
+                from .delegated_decisions import reconcile
+                if self.mode not in {None, 'delegated'}:
+                    raise OperationDenied('decision_source_changed')
+                context = observed[0]
+                if self.delegated_context is not None and context != self.delegated_context:
+                    raise OperationDenied('decision_source_changed')
+                self.mode, self.delegated_context = 'delegated', context
+                source = reconcile(self, observed, allow_resume=allow_resume)
+                self.consumed = True
+                continuation = self.runner._continuation_scope.get()
+                if continuation is not None:
+                    # Retain the actual validated consumer for the final reply
+                    # guard, including a continuation that needs no new write.
+                    continuation.frame = self
+                return source['record']
             mode = observed.status
             if self.mode is not None and mode != self.mode:
                 raise OperationDenied('decision_source_changed')
@@ -216,11 +238,31 @@ class WorkDecisionGuard:
             self.technical_guard()
         return record
 
+    def check_readonly(self):
+        """Validate a captured consumed decision in an isolated preflight read.
+
+        This is not ownership evidence. The dispatching parent must retain its
+        own coordinator and admission guards; the read thread cannot retire or
+        recreate a permit from its deliberately empty Context.
+        """
+        if self.delegated_context is None:
+            return self.check()
+        from .delegated_decisions import _consumed
+        observed, record = self._work()
+        if (not self.consumed or self.mode != 'delegated' or type(observed) is not tuple
+                or observed[0] != self.delegated_context or not _consumed(observed[1], observed[0])):
+            raise OperationDenied('decision_source_changed')
+        return record
+
     def replan(self, record, values):
+        if self.delegated_context is not None:
+            raise OperationDenied('delegated_replan_unsupported')
         from .native_replan import technical_replan
         return technical_replan(self, record, values)
 
     def public_context(self):
+        if self.consumed and self.delegated_context is not None:
+            return self.delegated_context.body.decode('utf-8')
         if not self.consumed or self.coordinator is None:
             return None
         return self.coordinator.selection.context.body.decode('utf-8')

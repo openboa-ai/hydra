@@ -456,9 +456,19 @@ fn target(v:&Value,action:&str)->R {
         _ => reference(v),
     }
 }
+fn comment_repository(value:&Value)->Result<&str,&'static str> {
+    let locator=string(value)?;
+    let (repository,identifier)=locator.split_once("/comments/").ok_or(INVALID)?;
+    let (owner,name)=repository.split_once('/').ok_or(INVALID)?;
+    need([owner,name].iter().all(|part|!part.is_empty() &&
+        part.bytes().all(|c|c.is_ascii_alphanumeric() || b"_.-".contains(&c))))?;
+    let id=identifier.parse::<u64>().map_err(|_|INVALID)?;
+    need(id>0 && id<=MAX_INTEGER && id.to_string()==identifier)?;
+    Ok(repository)
+}
 fn receipt(v:&Value,index:&Index<'_>)->R {
     let kind=string(&v["kind"])?;
-    object(v,match kind {
+    let fields=match kind {
         "admission"=>"kind readback",
         "work_create"=>"kind stage repository_id issue_number create_key draft_digest proposal_digest issue_ref binding_ref binding_digest",
         "checkpoint"=>"kind assignment outcome checkpoint_head progress_ref step_retired ticket_released",
@@ -469,7 +479,11 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
         "publication"=>"kind candidate branch observed_remote_head pr_ref review_request_refs progress_ref stage",
         "delivery"=>"kind candidate pr_ref integration_base merge_commit post_merge issue_closed progress_ref",
         "cleanup"=>"kind resource operation result evidence_refs", _=>return Err(INVALID),
-    })?;
+    };
+    if v.get("profile").is_some() {
+        need(matches!(kind,"decision"|"continuation") && v["profile"]=="codex_delegated_v1")?;
+        object(v,&format!("{fields} profile"))?;
+    } else {object(v,fields)?;}
     if kind=="work_create" {
         need(v["stage"]=="registered")?; positive(&v["repository_id"])?; positive(&v["issue_number"])?;
         uuid(&v["create_key"])?; let key=string(&v["create_key"])?.as_bytes();
@@ -495,6 +509,15 @@ fn receipt(v:&Value,index:&Index<'_>)->R {
     if kind=="decision" {
         uuid(&v["source_attempt"])?; positive(&v["round"])?; uuid(&v["resume_attempt"])?;
         for k in ["intent_ref","context_ref","resolved_ref"] {reference(&v[k])?;}
+        if v["profile"]=="codex_delegated_v1" {
+            need(v["round"]==1 && v["source_attempt"]!=v["resume_attempt"] &&
+                v["intent_ref"]==v["context_ref"] && v["context_ref"]!=v["resolved_ref"])?;
+            for key in ["context_ref","resolved_ref"] {
+                need(v[key]["source"]=="github" && v[key]["kind"]=="issue_comment")?;
+            }
+            need(comment_repository(&v["context_ref"]["id"])?==
+                comment_repository(&v["resolved_ref"]["id"])?)?;
+        }
     }
     if kind=="continuation" {
         uuid(&v["attempt_id"])?; optional(&v["head"],sha)?; sha(&v["contract_revision"])?;
@@ -576,6 +599,23 @@ fn command_result(v:&Value,index:&Index<'_>)->R {
           (v["action"]=="workflow_step" && ["checkpoint","decision","continuation","verification","verification_review","publication","delivery"].contains(&k)) ||
           (v["action"]=="cleanup" && k=="cleanup"))?;
     }
+    if kind==Some("decision") && v["receipt"]["profile"]=="codex_delegated_v1" {
+        let decision=&v["receipt"];
+        let expected=serde_json::json!({"source":"github","kind":"issue",
+            "id":format!("{}:{}",v["target"]["repository_id"],v["target"]["issue_number"])});
+        let proofs:Vec<_>=v["observed_refs"].as_array().ok_or(INVALID)?.iter()
+            .filter_map(|e|index.get(e["observation_key"].as_str()?))
+            .filter(|o|o["resource"]["source"]=="github" && o["resource"]["kind"]=="progress" &&
+                !o["value"].is_null() && o["value"]["issue_ref"]==expected).collect();
+        need(proofs.len()==1)?;let proof=proofs[0];
+        need(proof["availability"]=="current" && proof["coverage"]["state"]=="complete" &&
+            proof["value"]["attempt_id"]==decision["source_attempt"])?;
+        need(comment_repository(&proof["resource"]["id"])?==
+            comment_repository(&decision["context_ref"]["id"])?)?;
+        for key in ["context_ref","resolved_ref"] {
+            need(v["effect_refs"].as_array().ok_or(INVALID)?.contains(&decision[key]))?;
+        }
+    }
     if v["action"]=="workflow_step" && v["receipt"].get("progress_ref").is_some() {
         let progress=&v["receipt"]["progress_ref"];
         let expected=format!("{}:{}",v["target"]["repository_id"],v["target"]["issue_number"]);
@@ -644,7 +684,9 @@ fn bound_command_result(v:&Value,index:&Index<'_>,binding:&Value)->R {
         return Err("unsupported_command_source");
     }
     // Each future operation must qualify its paired producer and consumers first.
-    if !receipt.is_null() && !matches!(receipt["kind"].as_str(),Some("admission"|"checkpoint")) {
+    if !receipt.is_null() && !matches!(receipt["kind"].as_str(),Some("admission"|"checkpoint")) &&
+        !(matches!(receipt["kind"].as_str(),Some("decision"|"continuation")) &&
+          receipt["profile"]=="codex_delegated_v1") {
         return Err("unsupported_receipt_source");
     }
     if receipt["kind"]=="admission" {
@@ -1064,6 +1106,42 @@ mod connection_guard_regressions {
         for row in rows {
             assert_eq!(Projection::parse(row["wire"].as_str().unwrap().as_bytes()).is_ok(),
                 row["accepted"].as_bool().unwrap(), "{}", row["name"]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod delegated_receipt_tests {
+    use super::*;
+
+    #[test]
+    fn actual_delegated_receipts_share_the_frozen_source_and_schema_oracles() {
+        let path=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/control-v3/delegated-source-receipts.json");
+        let fixture:Value=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let cases=fixture["cases"].as_array().unwrap();
+        let descriptors=fixture["vectors"].as_array().unwrap();
+        assert_eq!(cases.len(),41);
+        assert_eq!(cases.len(),descriptors.len());
+        for (row,descriptor) in cases.iter().zip(descriptors) {
+            for field in ["name","schema_accepted","standard_reason"] {
+                assert_eq!(row[field],descriptor[field],"Frozen delegated receipt descriptor changed");
+            }
+            let wire=string(&row["wire"]).unwrap().as_bytes();
+            let parsed=read_json(wire);
+            let private=row["standard_reason"]=="unsupported_reply_profile";
+            if private {
+                assert_eq!(parsed.as_ref().unwrap_err(),&"unsupported_reply_profile");
+            }
+            // Only the test inspects the inner request of a rejected private
+            // envelope. The production reader must reject before traversing it.
+            let structural=if private {serde_json::from_slice(wire).map_err(|_|INVALID)} else {parsed};
+            let accepted=structural.and_then(|value| {
+                command_result(&value["request"],&observations(&value["observations"])?)
+            }).is_ok();
+            assert_eq!(accepted,row["schema_accepted"].as_bool().unwrap(),"{}",row["name"]);
+            let reason=StandardReply::parse(wire).err().map(Value::from).unwrap_or(Value::Null);
+            assert_eq!(reason,row["standard_reason"],"{}",row["name"]);
         }
     }
 }

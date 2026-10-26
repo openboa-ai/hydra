@@ -1,10 +1,102 @@
 # Control plane: projection과 안전한 명령
 
-Status: Design contract, revision 12, 2026-10-25. P10 fixed work-creation profile; P06 compatibility retained.
+Status: Design contract, revision 14, 2026-10-26. Revision 12 compatibility remains the baseline.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 W3/W7의
 wire contract, 관측·화면·명령·호환·TC를 소유한다. native 연동 qualification 이전의
 설계이며 API의 존재, 구현 수용, 테스트 실행 또는 설치 환경에서의 성공을 선언하지 않는다.
+
+### Delegated dialogue command profile
+
+P04's accepted dialogue responsibility boundary is implemented by the proposed
+`codex_delegated_v1` profile. This exact mechanism still requires independent technical
+review. Implementation and deterministic/operating evidence are **NOT RUN**.
+The existing qualified-source `decision_apply` keeps its source-check requirements.
+Those requirements are not synthesized from model input for the new profile.
+
+Use native-only `workflow_step.decision_submit` in the existing CommandV1 entrypoint:
+
+```text
+parameters = {
+  operation: decision_submit,
+  source_attempt: canonical UUID,
+  round: 1,
+  basis: {origin_phase, head, contract_revision, spec_revision, intake_digest},
+  public_text: nonempty public-safe text
+}
+expected.assignment = null
+expected.source_checks = []
+effect_key = decision:<source_attempt>:1
+```
+
+Require current non-null runtime/admission expectations and the normal repository/issue
+target. Match every basis field against authenticated current GitHub progress and
+accepted policy; input pins are not authority. Retain bounded JSON/depth/byte validation
+and the 16-KiB final public-context limit. Unknown fields, approval booleans, native
+identity claims, caller-selected resume UUIDs and unsupported rounds are invalid.
+
+Resume identity is fixed as UUIDv5 in namespace
+`6ba7b811-9dad-11d1-80b4-00c04fd430c8` (`uuid.NAMESPACE_URL`). Its name is
+`hydra:codex-delegated-v1:` followed by the lowercase SHA-256 hex digest of the
+canonical object `{profile,key,basis,public_text}`. `profile` is
+`codex_delegated_v1`; `key` is the exact four-field decision key; `basis` contains
+only origin_phase, head, contract_revision, spec_revision and intake_digest.
+Normalize public_text by replacing CRLF and CR with LF and stripping trailing LF
+characters only. Preserve all other whitespace and Unicode code points. Serialize
+with sorted keys, compact separators, ensure_ascii=True and allow_nan=False, then
+encode as UTF-8. The derivation excludes resume_attempt and supersedes. Reject an
+identity equal to source_attempt; never substitute a random UUID.
+
+An optional protected `native_workflow_control` table has `schema_version=1`, `enabled`,
+`repository_ids`, `operations` and required canonical UTC `expires_at`. It defaults to
+absent/disabled. Its allowed operations are explicitly selected from
+`workflow_step.decision_submit`, `workflow_step.continue` and
+`command_reply.native_handoff_v1`; one never grants another. Every field affects the
+semantic configuration digest. The actual principal is the authorized shared installation,
+including its agents, not an individually authenticated human or task.
+
+The server selects the applicable protected profile for the validated operation/target
+before producing its trusted AdmissionCallContext. Existing admission-only authority
+is unchanged. Never union differently scoped profiles into repository-by-operation
+Cartesian authority or borrow another profile's expiry. Per-call SDK Context, current
+grant/expiry, runtime and WorkflowBinding checks remain mandatory. No runtime setting
+is activated by adding this schema or by receiving a proposal.
+
+The submission ceiling permits context/receipt publication only; typed continuation
+and native handoff each require their own authority. P06/EX own exact publication
+identity, durable lifetime counters and the one-shot mutable resume fence. A decision
+reply means exact public pair read-back, not human authentication or project Resume.
+Keep CommandReplyV1 as the envelope. The closed delegated decision and continuation
+receipt variants add `profile: codex_delegated_v1`; all original fields keep their
+meaning. Untagged v1 variants remain unchanged and unqualified at bound consumers.
+Unknown profiles and extra fields are invalid. The discriminator identifies the
+qualified producer, not a human, signature or grant. It is emitted only after a
+positive authenticated v2 pair/root observation for the actual result.
+
+A tagged decision receipt requires round=1 and distinct source/resume attempts;
+intent_ref=context_ref; distinct context/resolved GitHub issue-comment refs; and
+exactly one referenced current complete progress observation bound to the numeric
+target Issue/repository and source_attempt. That progress comment and both decision
+refs share the same canonical repository. Both context/resolved refs must occur in
+effect_refs. Tagged continuation keeps existing exact target/progress/attempt/head/
+contract proof checks. Python, Rust and TypeScript enforce these same closed variants.
+TS pending-command correlation requires this tag for decision_submit, forbids it for
+decision_apply and preserves continuation's input/post-state distinction. Standard
+consumers still reject any private handoff envelope before traversal or copying.
+
+Shared fixtures originate from actual Python factory/SDK responses with external
+transport fixtures only. Normalize only volatile runtime digests and observation
+timestamps to documented synthetic values. Python regenerates the semantic corpus;
+Rust/TS consume its identical saved bytes. Source tags, effects, refs and proofs are
+never invented to make a fixture succeed. Malformed variants and original unqualified
+families retain their expectations; deterministic corpus success is not native O.
+
+The internal decision owner projects through existing unavailable/unknown ownership
+with fixed `decision_effect_pending`; it is not a new public ownership enum, native
+execution ticket or free capacity. Preserve Quit hold and conservative project scope.
+Decision views may report confirmed public intent/application facts while independently
+verified human-answer facts remain unverified. No public DTO gains raw dialogue,
+private paths, native locators, ownership nonces or an agent approval field.
 
 ### P17 admission source compatibility
 

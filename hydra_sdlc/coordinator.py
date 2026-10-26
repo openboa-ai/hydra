@@ -20,6 +20,8 @@ class HostBusy(RuntimeError):
 
 _OWNER_PREFIX = b"hydra-owner-v1\n"
 _NATIVE_PREFIX = b"hydra-native-v2\n"
+_DECISION_PREFIX = b"hydra-decision-v1\n"
+_DECISION_LIMIT = 256
 _OWNER_LIMIT = len(_OWNER_PREFIX) + 74
 _current_owner = ContextVar("hydra_host_owner", default=None)
 
@@ -86,6 +88,8 @@ def _clear_owner(fd, previous):
 class _HostOwner:
     def __init__(self, fd, boot):
         self.fd, self.boot, self.ticket = fd, boot, None
+        self.path, self.inode = None, None
+        self.decision_scopes, self.decision_handle = frozenset(), None
 
     def register(self, *, native_step=None, native_scope=None):
         if self.fd is None or self.ticket is not None or _read_owner(self.fd) is not None:
@@ -158,10 +162,270 @@ def confirm_native_assignment(step_id):
     owner.confirm(owner.ticket)
 
 
+def _decision_scope(phase, scope):
+    if (type(phase) is not str or phase not in {'publication', 'resume'}
+            or type(scope) is not str or re.fullmatch('[0-9a-f]{64}', scope) is None):
+        raise HostBusy('Invalid decision ownership scope')
+    return phase, scope
+
+
+def _decision_uuid(value):
+    try:
+        if type(value) is not str or str(uuid.UUID(value)) != value:
+            raise ValueError()
+    except (ValueError, AttributeError, TypeError):
+        raise HostBusy('Invalid decision ownership identity') from None
+    return value
+
+
+def _decision_record(raw):
+    """Decode one bounded owner; unknown and torn bytes never mean absence."""
+    if not raw or len(raw) > _DECISION_LIMIT or not raw.startswith(_DECISION_PREFIX):
+        raise HostBusy('Unrecognized decision ownership')
+    try:
+        boot, request, phase, scope, contexts, receipts, end = raw[len(_DECISION_PREFIX):].decode('ascii').split('\n')
+        if end or contexts not in {'0', '1', '2', '3'} or receipts not in {'0', '1', '2', '3'}:
+            raise ValueError()
+        _decision_uuid(boot)
+        _decision_uuid(request)
+        _decision_scope(phase, scope)
+        if phase == 'resume' and (contexts != '0' or receipts != '0'):
+            raise ValueError()
+    except (ValueError, UnicodeError):
+        raise HostBusy('Unrecognized decision ownership') from None
+    return boot, request, phase, scope, int(contexts), int(receipts)
+
+
+def _decision_bytes(record):
+    raw = _DECISION_PREFIX + ('\n'.join(map(str, record)) + '\n').encode('ascii')
+    _decision_record(raw)
+    return raw
+
+
+def _decision_inode(owner):
+    if owner is None or owner is not _current_owner.get() or owner.fd is None or owner.path is None:
+        raise HostBusy('Decision ownership requires the active host lock')
+    opened, named = os.fstat(owner.fd), owner.path.lstat()
+    if (owner.path != owner.path.resolve() or not stat.S_ISREG(named.st_mode)
+            or not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid()
+            or opened.st_nlink != 1 or opened.st_mode & 0o077
+            or (opened.st_dev, opened.st_ino) != owner.inode
+            or (named.st_dev, named.st_ino) != owner.inode):
+        raise HostBusy('Decision ownership inode changed')
+
+
+def _decision_read(owner):
+    _decision_inode(owner)
+    return os.pread(owner.fd, _DECISION_LIMIT + 1, 0)
+
+
+def _decision_sync_parent(owner):
+    """Persist the existing directory entry before a decision permit escapes."""
+    _decision_inode(owner)
+    parent = owner.path.parent
+    before = parent.lstat()
+    if not stat.S_ISDIR(before.st_mode):
+        raise HostBusy('Decision ownership directory changed')
+    fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        opened = os.fstat(fd)
+        identity = opened.st_dev, opened.st_ino
+        if identity != (before.st_dev, before.st_ino):
+            raise HostBusy('Decision ownership directory changed')
+
+        def check():
+            named = parent.lstat()
+            child = os.stat(owner.path.name, dir_fd=fd, follow_symlinks=False)
+            if (not stat.S_ISDIR(named.st_mode) or (named.st_dev, named.st_ino) != identity
+                    or not stat.S_ISREG(child.st_mode)
+                    or (child.st_dev, child.st_ino) != owner.inode):
+                raise HostBusy('Decision ownership directory changed')
+            _decision_inode(owner)
+
+        check()
+        os.fsync(fd)
+        check()
+    finally:
+        os.close(fd)
+
+
+def _decision_write(owner, expected, replacement):
+    if _decision_read(owner) != expected:
+        raise HostBusy('Decision ownership no longer matches')
+    offset = 0
+    while offset < len(replacement):
+        written = os.pwrite(owner.fd, replacement[offset:], offset)
+        if type(written) is not int or not 0 < written <= len(replacement) - offset:
+            raise HostBusy('Decision ownership write was incomplete')
+        offset += written
+    os.ftruncate(owner.fd, len(replacement))
+    os.fsync(owner.fd)
+    _decision_sync_parent(owner)
+    if _decision_read(owner) != replacement:
+        raise HostBusy('Decision ownership read-back changed')
+
+
+class DecisionHandle:
+    """Live scoped ownership, never a grant or an external-result witness."""
+    __slots__ = ('_owner', '_raw', '_created_here', '_spent', '_invalid')
+
+    def __init__(self, owner, raw, created_here):
+        self._owner, self._raw, self._created_here = owner, raw, created_here
+        self._spent, self._invalid = set(), False
+
+    @property
+    def phase(self):
+        return _decision_record(self._raw)[2]
+
+    @property
+    def scope(self):
+        return _decision_record(self._raw)[3]
+
+    @property
+    def created_here(self):
+        return self._created_here
+
+    @property
+    def context_posts(self):
+        return _decision_record(self._raw)[4]
+
+    @property
+    def receipt_posts(self):
+        return _decision_record(self._raw)[5]
+
+    def _check(self):
+        if (self._invalid or self._owner.decision_handle is not self
+                or _decision_read(self._owner) != self._raw):
+            raise HostBusy('Decision ownership handle no longer matches')
+
+
+def current_decision_owner():
+    """Return only phase/scope from the current locked inode; None is not free."""
+    owner = _current_owner.get()
+    raw = _decision_read(owner)
+    if raw.startswith(_DECISION_PREFIX):
+        record = _decision_record(raw)
+        return record[2], record[3]
+    if raw:
+        _read_owner(owner.fd)  # Reject malformed ordinary ownership as well.
+    return None
+
+
+def claim_decision_owner(phase, scope_digest, request_id):
+    """Create or recover one exact owner; recovery never restores a PATCH permit."""
+    scope = _decision_scope(phase, scope_digest)
+    _decision_uuid(request_id)
+    owner = _current_owner.get()
+    raw = _decision_read(owner)
+    if scope not in owner.decision_scopes or owner.ticket is not None:
+        raise HostBusy('Decision ownership scope was not selected')
+    if owner.decision_handle is not None:
+        handle = owner.decision_handle
+        handle._check()
+        if (handle.phase, handle.scope) != scope:
+            raise HostBusy('Another decision remains unresolved')
+        return handle
+    created = not raw
+    if raw:
+        record = _decision_record(raw)
+        if (record[2], record[3]) != scope:
+            raise HostBusy('Another decision remains unresolved')
+    else:
+        raw = _decision_bytes((owner.boot, request_id, phase, scope_digest, 0, 0))
+        _decision_write(owner, b'', raw)
+    handle = DecisionHandle(owner, raw, created)
+    owner.decision_handle = handle
+    return handle
+
+
+def spend_publication(handle, kind):
+    """Durably reserve one POST before transport; return its lifetime count."""
+    if (type(handle) is not DecisionHandle or type(kind) is not str
+            or kind not in {'context', 'receipt'}):
+        raise HostBusy('Invalid decision publication permit')
+    handle._check()
+    if handle.phase != 'publication' or kind in handle._spent:
+        raise HostBusy('Decision publication permit already spent')
+    index = 4 if kind == 'context' else 5
+    record = list(_decision_record(handle._raw))
+    if record[index] >= 3:
+        raise HostBusy('Decision publication retry bound exhausted')
+    record[index] += 1
+    replacement = _decision_bytes(record)
+    handle._spent.add(kind)
+    try:
+        _decision_write(handle._owner, handle._raw, replacement)
+    except BaseException:
+        handle._invalid = True
+        raise
+    handle._raw = replacement
+    return record[index]
+
+
+def resume_new(handle):
+    """Consume the sole PATCH permit of the live invocation that created it."""
+    if type(handle) is not DecisionHandle:
+        raise HostBusy('Invalid decision resume permit')
+    handle._check()
+    if handle.phase != 'resume' or not handle.created_here or handle._spent:
+        raise HostBusy('Decision resume permits read reconciliation only')
+    handle._spent.add('resume')
+    return True
+
+
+def retire_decision_owner(handle):
+    """Retire after the caller verifies exact terminal external evidence."""
+    if type(handle) is not DecisionHandle:
+        raise HostBusy('Invalid decision retirement')
+    handle._check()
+    try:
+        _decision_write(handle._owner, handle._raw, b'')
+    except BaseException:
+        # Restore only this exact serialized record on the same locked inode.
+        # A failed restoration remains uncertain and never permits dispatch.
+        try:
+            current = _decision_read(handle._owner)
+            if not current:
+                _decision_write(handle._owner, b'', handle._raw)
+        except (OSError, HostBusy):
+            pass
+        handle._invalid = True
+        raise
+    handle._invalid = True
+    handle._owner.decision_handle = None
+
+
+def retire_undispatched_decision(handle):
+    """Only the creating live publication can prove no transport was reserved."""
+    if (type(handle) is not DecisionHandle or not handle.created_here
+            or handle.phase != 'publication' or handle.context_posts or handle.receipt_posts
+            or handle._spent):
+        raise HostBusy('Decision non-dispatch is not established')
+    retire_decision_owner(handle)
+
+
 @contextmanager
-def coordinator_lock(path: Path, *, native_step=None, native_scope=None):
+def coordinator_lock(path: Path, *, native_step=None, native_scope=None, decision_scopes=frozenset()):
+    if type(decision_scopes) is not frozenset or len(decision_scopes) > 3:
+        raise HostBusy('Invalid decision ownership scopes')
+    for scope in decision_scopes:
+        if type(scope) is not tuple or len(scope) != 2:
+            raise HostBusy('Invalid decision ownership scopes')
+        _decision_scope(*scope)
+    if decision_scopes and (native_step is not None or native_scope is not None):
+        raise HostBusy('Conflicting host ownership scopes')
     path = path.expanduser().absolute()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if decision_scopes:
+        # Installed admission prepares this same directory durably. A scoped
+        # decision cannot silently create an unsynced chain of new ancestors.
+        try:
+            parent = path.parent.lstat()
+            if not stat.S_ISDIR(parent.st_mode) or path != path.resolve():
+                raise HostBusy('Decision ownership directory unavailable')
+        except OSError as exc:
+            raise HostBusy('Decision ownership directory unavailable') from exc
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.is_symlink():
         raise HostBusy("Lock path must not be a symlink")
     fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK, 0o600)
@@ -175,7 +439,11 @@ def coordinator_lock(path: Path, *, native_step=None, native_scope=None):
         except BlockingIOError as exc:
             raise HostBusy("Another Hydra process owns this host lock") from exc
         boot = _boot_identity()
-        previous = _read_owner(fd)
+        decision_raw = os.pread(fd, _DECISION_LIMIT + 1, 0)
+        decision = _decision_record(decision_raw) if decision_raw.startswith(_DECISION_PREFIX) else None
+        if decision is not None and (decision[2], decision[3]) not in decision_scopes:
+            raise HostBusy('An earlier decision effect remains unresolved')
+        previous = None if decision is not None else _read_owner(fd)
         native = os.pread(fd, len(_NATIVE_PREFIX), 0) == _NATIVE_PREFIX
         if previous is not None:
             if native:
@@ -190,11 +458,15 @@ def coordinator_lock(path: Path, *, native_step=None, native_scope=None):
         elif native_step is not None:
             raise HostBusy("Native assignment ownership is missing")
         owner = _HostOwner(fd, boot)
+        owner.path, owner.inode = path, (observed.st_dev, observed.st_ino)
+        owner.decision_scopes = decision_scopes
         if native:
             # Preserve the old boot until explicit completion/reconciliation.
             owner.boot = previous[0]
             owner.ticket = (owner, previous[1])
         token = _current_owner.set(owner)
+        if decision_scopes:
+            _decision_inode(owner)
         yield
     finally:
         if token is not None:
@@ -268,12 +540,15 @@ def observe_coordinator(path):
             held = True
         except BlockingIOError:
             pass
-        value = os.pread(fd, len(_NATIVE_PREFIX) + 140, 0)
-        owner = _read_owner(fd)
+        value = os.pread(fd, _DECISION_LIMIT + 1, 0)
+        decision = _decision_record(value) if value.startswith(_DECISION_PREFIX) else None
+        owner = None if decision is not None else _read_owner(fd)
         after = path.lstat()
         if ((after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
-                or os.pread(fd, len(_NATIVE_PREFIX) + 140, 0) != value):
+                or os.pread(fd, _DECISION_LIMIT + 1, 0) != value):
             return {"state": "unknown", "reason": "ownership_changed_during_observation"}
+        if decision is not None:
+            return {"state": "unknown", "reason": "decision_effect_pending"}
         if owner is None:
             return {"state": "free" if held else "busy", "ticket": None}
         result = {"state": "native" if value.startswith(_NATIVE_PREFIX) else "owned",

@@ -465,6 +465,13 @@ function target(value: unknown, action: string): void {
     uuid(v.source_attempt); ref(v.resource);
   } else ref(value);
 }
+function commentRepository(value: unknown): string {
+  text(value, 512);
+  const locator = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/comments\/([1-9][0-9]*)$/.exec(value);
+  requireValue(locator !== null && locator[0] === value);
+  integer(Number(locator[2]), 1);
+  return locator[1]!;
+}
 function receipt(value: unknown, index: Index): void {
   const fields: Record<string, string> = {
     admission: "kind readback",
@@ -479,7 +486,10 @@ function receipt(value: unknown, index: Index): void {
     cleanup: "kind resource operation result evidence_refs",
   };
   const v = plain(value); requireValue(typeof v.kind === "string" && Object.hasOwn(fields, v.kind));
-  object(v, fields[v.kind]!);
+  if (Object.hasOwn(v, "profile")) {
+    requireValue(["decision", "continuation"].includes(v.kind) && v.profile === "codex_delegated_v1");
+    object(v, fields[v.kind]! + " profile");
+  } else object(v, fields[v.kind]!);
   if (v.kind === "work_create") {
     requireValue(v.stage === "registered"); integer(v.repository_id, 1); integer(v.issue_number, 1);
     requireValue(typeof v.create_key === "string" &&
@@ -504,6 +514,15 @@ function receipt(value: unknown, index: Index): void {
   if (v.kind === "decision") {
     uuid(v.source_attempt); integer(v.round, 1); uuid(v.resume_attempt);
     for (const key of ["intent_ref", "context_ref", "resolved_ref"]) ref(v[key]);
+    if (v.profile === "codex_delegated_v1") {
+      requireValue(v.round === 1 && v.source_attempt !== v.resume_attempt &&
+        canonical(v.intent_ref) === canonical(v.context_ref) &&
+        canonical(v.context_ref) !== canonical(v.resolved_ref));
+      const context = plain(v.context_ref), resolved = plain(v.resolved_ref);
+      requireValue(context.source === "github" && context.kind === "issue_comment" &&
+        resolved.source === "github" && resolved.kind === "issue_comment");
+      requireValue(commentRepository(context.id) === commentRepository(resolved.id));
+    }
   }
   if (v.kind === "continuation") {
     uuid(v.attempt_id); nullable(v.head, sha); sha(v.contract_revision);
@@ -578,6 +597,20 @@ function commandResult(value: unknown, index: Index): void {
     (v.action === "work_create" && kind === "work_create") ||
     (v.action === "workflow_step" && ["checkpoint", "decision", "continuation", "verification", "verification_review", "publication", "delivery"].includes(String(kind))) ||
     (v.action === "cleanup" && kind === "cleanup"));
+  if (kind === "decision" && plain(v.receipt).profile === "codex_delegated_v1") {
+    const result = plain(v.receipt), target = plain(v.target);
+    const expected = canonical({source:"github",kind:"issue",id:String(target.repository_id)+":"+String(target.issue_number)});
+    const proofs = (v.observed_refs as unknown[]).map(e => index.get(String(plain(e).observation_key))!)
+      .filter(o => o.resource.source === "github" && o.resource.kind === "progress" &&
+        o.value !== null && canonical(o.value.issue_ref) === expected);
+    requireValue(proofs.length === 1);
+    const proof = proofs[0]!;
+    requireValue(proof.availability === "current" && proof.coverage.state === "complete" &&
+      proof.value!.attempt_id === result.source_attempt);
+    requireValue(commentRepository(proof.resource.id) === commentRepository(plain(result.context_ref).id));
+    for (const key of ["context_ref", "resolved_ref"])
+      requireValue((v.effect_refs as unknown[]).some(ref => canonical(ref) === canonical(result[key])));
+  }
   if (v.action === "workflow_step" && kind !== null && Object.hasOwn(plain(v.receipt), "progress_ref")) {
     const progress = plain(plain(v.receipt).progress_ref), target = plain(v.target);
     const expected = String(target.repository_id) + ":" + String(target.issue_number);
@@ -679,7 +712,9 @@ function boundCommandResult(value:unknown,index:Index,binding:unknown):void {
   if(result.receipt===null)return;
   const receipt=plain(result.receipt);
   // Each future operation must qualify its paired producer and consumers first.
-  if(!["admission","checkpoint"].includes(String(receipt.kind)))throw new ProjectionError("unsupported_receipt_source");
+  if(!["admission","checkpoint"].includes(String(receipt.kind)) &&
+    !(["decision","continuation"].includes(String(receipt.kind)) && receipt.profile==="codex_delegated_v1"))
+    throw new ProjectionError("unsupported_receipt_source");
   if(receipt.kind!=="admission")return;
   const source=evidenceIn(receipt.readback,index);
   requireValue(typeof binding==="string" && canonical(source.resource)===canonical({source:"hydra",kind:"admission",id:binding}));

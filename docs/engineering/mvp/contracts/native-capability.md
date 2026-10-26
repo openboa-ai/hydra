@@ -1,7 +1,16 @@
 # Native 연결: 실행 가능한 경계와 qualification
 
-Revision: 9; design contract, 2026-10-22. Native operating qualification remains separate.
+Revision: 10; candidate profile amendment, 2026-10-26. Technical acceptance, implementation and operating qualification remain separate; new-profile implementation and actual O are NOT RUN.
+Previous baseline: revision 9, design contract, 2026-10-22. Its original-profile requirements and recorded acceptance/evidence history are preserved.
 상위: [v1.0.0 spec](../spec.md), [실행 계약](execution.md), [통합 설계](../../../architecture/sdlc.md)
+
+Profile scope: the independent human-answer authentication, six-role native-source
+evidence and native unsent-intent recovery requirements in the existing question
+sections describe the original qualified-native-source profile. They are not
+prerequisites for `codex_delegated_v1`, defined in the candidate amendment below.
+This distinction does not relax task ownership, actual execution observation,
+admission, privacy or the full P07/P08 and v1 requirements. Historical evidence
+does not transfer between profiles.
 
 ## 목적·책임·범위
 
@@ -565,3 +574,84 @@ Qualification must identify the actual installation/config/control binding, sele
 numeric targets, expiry or until-revoked lifetime and revocation owner. Observe actual
 remote Pause/read-back and separate fresh-expectation Resume plus revoked/foreign
 scope refusal. A local SDK fixture cannot satisfy this row's native operating evidence.
+
+## Candidate profile amendment: codex_delegated_v1
+
+The selected product boundary delegates native clarification and answer
+interpretation to Codex. The following technical mechanism is a candidate for
+independent review; it is not implementation, an installed grant or operating
+qualification. Native choice/free-text dialogue remains a required observation.
+It is not replaced by a Hydra form, transcript mirror or human-account database.
+
+### Responsibility and authenticated principal
+
+Codex owns the conversation, question meaning, choices, free-text qualifications
+and uncertainty. It submits a reviewable public-safe interpretation of ordinary
+implementation judgments inside the existing delegation. Hydra authenticates the
+explicitly configured shared installation command principal, including the agents
+using that connection. It does not thereby authenticate an individual task or the
+person who answered. SDK request routing is not human provenance.
+
+The new native-only `workflow_step.decision_submit` uses a separately enabled,
+protected workflow profile and the existing CommandV1 runtime/admission guards.
+The profile is disabled by default. Repository scope, allowed operations and
+expiry are explicit; no operation implies another and independently scoped
+profiles are not combined into a wider grant. Each effect revalidates the current
+grant, authenticated GitHub repository/service identity, accepted work and policy,
+exact waiting attempt, head/spec/intake pins, ownership and admission. The closed
+command and actual provider wiring are specified in [CP](control-plane.md).
+
+Agent-authored JSON, approval text, native metadata and the phrase "the user
+approved" are input, never a grant. They cannot authorize scope expansion,
+credentials, cost, protected approval, destructive effects, project Resume or a
+new native task. Ambiguous scope remains held. Native dialogue can inform a
+proposal without becoming an independently authenticated answer observation.
+
+### Source, publication and continuation
+
+GitHub is authoritative for accepted requirements, exact public intent, publication
+results and progress. The new profile uses explicitly versioned public records;
+it does not reinterpret existing qualified-source records. Native dialogue remains
+in Codex. The producer does not fabricate `DecisionSelection`, `DecisionSnapshot`,
+six-role evidence or `DecisionCallCoverage` from a model proposal.
+
+`decision_submit` has a publication-only ceiling: exact public context and its
+matching receipt, each followed by authenticated read-back. It cannot change
+admission, write resumed progress, allocate an assignment or start native work.
+An independently authorized typed `continue` consumes the exact pair and stored
+root under current work/policy/admission guards. Native handoff has its own grant.
+Project Pause remains effective until a separate authorized explicit Resume.
+
+The selected recovery mechanism is specified in
+[EX's delegated profile amendment](execution.md#75-candidate-profile-amendment-codex_delegated_v1).
+It uses bounded ownership on the existing coordinator inode, with immutable
+effect identity and lifetime publication counters. It does not add a decision
+journal. A restarted invocation may finish the original exact publication only
+under fresh guards and the remaining durable budget. Mutable resume recovery is
+read-only; the owner binds the full intended resumed record, not only its public
+basis. A lost interpretation before confirmed publication remains unresolved;
+the owner cannot reconstruct dialogue or authorize a different proposal.
+
+### Qualification and unchanged obligations
+
+The original qualified-native-source profile retains §2.1's original Q/A,
+adoption/authority, work mapping and unsent-intent evidence requirements. Its
+readers, `decision_apply` behavior and historical source-only evidence remain
+distinct. `codex_delegated_v1` instead qualifies the command principal, bounded
+effects and exact GitHub recovery without certifying who answered in Codex.
+
+Required deterministic evidence includes the real production entrypoint with no
+injected decision-source fixture; forged approval and stale work refusal; revoked
+grants; Pause between effects; no implicit Resume; restart with lost interpretation;
+durable retry limits; exact pair/root recovery; and private-data exclusion.
+Actual O must separately observe native choice/free-text clarification, the remote
+response, explicit project Resume and controlled progress of the same work.
+Deterministic or declared capability evidence cannot satisfy that observation.
+
+This increment supports round 1 and ordinary continuation. Recorded-choice
+amendments and delegated technical successors remain explicit holds until their
+own accepted implementation boundary. Native creation/reuse, interrupt, wake,
+scheduling, inventory, cleanup and cross-project operation retain their complete
+P07/P08 and v1 acceptance requirements. A successful first flow does not complete
+those requirements or the full product. New-profile implementation and actual O:
+NOT RUN.

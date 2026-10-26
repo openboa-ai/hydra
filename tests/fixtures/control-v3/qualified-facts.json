@@ -1,5 +1,5 @@
 {
-  "contract": {"path": "docs/engineering/mvp/contracts/control-plane.md", "revision": 12, "sha256": "a5d802142621fd827a766200653aeff88cb637c4b3d0c1b1441fa2669acf67c3"},
+  "contract": {"path": "docs/engineering/mvp/contracts/control-plane.md", "revision": 14, "sha256": "97077adc32a9758c157be9309039c1e4514329d04c1688b689b53558810f58ac"},
   "cases": [
     {"family": "unmapped","source_kind": "repository","axis": "stage","value": "prepare","accepted_projection": false,"accepted_standard": true},
     {"family": "unmapped","source_kind": "repository","axis": "stage","value": "design","accepted_projection": false,"accepted_standard": true},

@@ -1,6 +1,41 @@
 # Hydra v1.0.0 검증 계약
 
-상태: 설계 후보 · Revision: 11 · 2026-10-19 · 작업 기록: Issue #3
+Status: Design amendment candidate, revision 12, 2026-10-26. Work record: Issue #3.
+
+### Delegated-dialogue acceptance profile
+
+For the first `codex_delegated_v1` increment, P04/P06's delegated-command and exact
+GitHub intent/result oracles replace mandatory independent human-origin authentication,
+six-role native selection evidence and native unsent-intent restoration. Historical
+source-reader/provider fixtures keep their original qualified-native-source scope.
+They neither enable nor prove the new profile. Implementation and all new D/L/O are
+**NOT RUN** until actual evidence is recorded; the mechanism requires independent review.
+
+| Independent case | Required oracle |
+| --- | --- |
+| Actual production entrypoint | Real controller/server factories, external transport fixtures only, no decision_source fixture; valid scoped command publishes literal expected v2 context/pair |
+| Current authority | Forged approval, expired/revoked grants, wrong surface/operation/repository and cross-profile Cartesian scope do not authorize effects; every grant field changes semantic config identity |
+| Exact accepted work | Wrong attempt/head/spec/intake/phase or changed policy stops dispatch; proposal text never accepts a new design |
+| Pause and separate continuation | Pause before/between effects preserves holds; publication does not Resume or assign; typed continuation and native handoff each require their own current authority |
+| Canonical public source | Literal independent fixtures cover choice/free-text interpretation, bytes/limits, deterministic resume identity, profile separation, edits and conflicting bodies |
+| Durable publication budget | Counter consumption is fsynced before each POST; zero dispatch on persistence failure; each lifetime counter remains within 0..3 across process loss/reboot |
+| Lost POST acknowledgement | Empty/partial/late source reads never reset counts or replace identity; fresh valid recovery may only POST the exact original intent within remaining budget |
+| Partial publication | Context-only recovery can complete the same receipt under current guards; different proposal/key and exhausted budget hold; exact duplicates are one semantic intent |
+| Mutable resume uncertainty | One PATCH only; owner binds canonical full intended progress plus exact context/root; changed carried fields, old or missing read-back cannot retire ownership or assign |
+| Complete ordinary consumer | New controller without native-history provider consumes exact pair/root and reaches one same-work original-phase assignment/checkpoint; legacy begin cannot bypass typed initial consumption |
+| Unsupported follow-ups | Delegated technical successor/recorded-choice amendment explicitly holds without fabricated zero-effect coverage; legacy qualified-source behavior remains separate |
+| Privacy and consumers | No transcript/native-ID/credential/path canary in public records/logs; existing reply/unknown-ownership projections agree across Python/Rust/TS and retain Quit hold |
+
+Count physical requests in an independent fixture transport and compare literal expected
+bytes/records. Do not derive expected output by calling the implementation under test.
+Loss before a confirmed public intent with no retained interpretation is unresolved,
+not an automatically reproduced choice. Durable ownership is not native human provenance.
+
+Independent L evaluation still checks question usefulness, choice/free-text meaning,
+uncertainty, scope and unnecessary reapproval. Actual O must observe the real native
+question and remote answer, Pause retained, explicit Resume, same-work progress and
+controller recovery under a separately authorized operational scope. CI fixtures do not
+replace this flow, other required v1 scenarios or both-project acceptance/retirement.
 
 이 문서는 [SDLC 통합 설계](../../architecture/sdlc.md)의 S01–S30을 실제로 검증하는 기준이다.
 [구현 방법](implementation-method.md), [작업 기록 계약](contracts/work-records.md),

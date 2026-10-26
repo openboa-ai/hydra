@@ -1,6 +1,28 @@
 # Hydra v1.0.0 상세 설계 진입점
 
-Revision: 8 · 상태: 설계 후보 · 2026-10-19 · 기존 작업 기록: Issue #3
+Revision: 9. Design amendment candidate, 2026-10-26. Existing work record: Issue #3.
+
+### Native dialogue responsibility amendment
+
+The first-flow profile is `codex_delegated_v1`: Codex owns native clarification and
+answer interpretation; Hydra validates a bounded proposed effect under independently
+trusted delegation and current accepted GitHub work. GitHub owns exact public decision
+intent/results. Private dialogue remains in Codex. Hydra does not independently certify
+the human respondent, and agent approval claims never expand authority.
+
+P04/P06 and NC/EX/CP define this profile. Prior mandatory native six-role provenance and
+native unsent-intent reconstruction apply to the original qualified-native-source
+profile, not as hidden prerequisites for delegated decisions. Lost interpretation before
+a confirmed public intent remains unresolved. Uncertain dispatched effects retain their
+original identity and bounded ownership; empty reads do not authorize a replacement.
+
+The responsibility boundary is accepted; its exact mechanism is a technical candidate.
+Implementation, deterministic qualification and actual native operation are **NOT RUN**.
+The complete v1 requirements remain: real remote native choice/free-text clarification,
+Pause retained, explicit Resume, controlled same-work progress, restart recovery, other
+required lifecycle/wake scenarios, both-project acceptance and resource retirement.
+The first normal decision/continuation increment is not full v1 completion and grants
+no installation, runtime authority, task message, business execution or scope expansion.
 
 이 묶음은 [SDLC 통합 설계](../../architecture/sdlc.md)를 구현 단위까지 내린다.
 여기서의 MUST는 수용 후 목표 동작이며 현재 구현 지원을 선언하지 않는다. 구현을 시작할 때
@@ -98,10 +120,10 @@ sequenceDiagram
     H-->>C: admission 적용 결과 · 실제 종료는 별도
     C-->>U: 확인한 제어 결과
     U->>C: 원래 질문에 답변
-    C-->>H: 자격 확인된 원본 연결로 선택 전달
-    H-->>C: 답변 관측 · 적용 대기 · paused
+    C-->>H: Delegated public-safe proposal; no human-authentication claim
+    H-->>C: Current admission held; no publication or implicit Resume
     C-->>U: 답변 반영과 남은 대기
-    Note over C,H: 재시작하면 각 원본에서 같은 선택과 책임 재발견
+    Note over C,H: Restart from confirmed public intent/result; lost unrecorded interpretation stays unresolved
     U->>C: 같은 project Resume 요청
     C->>H: MCP Resume · 현재 revision
     H->>H: 위임·source·owner·admission 재검증

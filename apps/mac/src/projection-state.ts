@@ -66,7 +66,7 @@ function admissionReceipt(pending:Command,result:CommandResult,observations:Obse
 function workflowReceipt(pending:Command,result:CommandResult) {
   const p=pending.parameters,r=result.receipt as Record<string,unknown>;
   valid(p && typeof p.operation==="string");
-  const kinds:Record<string,string>={checkpoint_only:"checkpoint",decision_apply:"decision",
+  const kinds:Record<string,string>={checkpoint_only:"checkpoint",decision_apply:"decision",decision_submit:"decision",
     continue:"continuation",publish_candidate:"publication",deliver:"delivery"};
   const kind=p.operation==="verify_only" ? (p.stage==="run"?"verification":
     p.stage==="review_checkpoint"?"verification_review":undefined) :
@@ -81,7 +81,11 @@ function workflowReceipt(pending:Command,result:CommandResult) {
     valid(typeof p.outcome==="string" && Object.hasOwn(outcomes,p.outcome) && r.review===outcomes[p.outcome]);
   }
   if (Object.hasOwn(r,"candidate")) valid(json(r.candidate)===json(p.candidate));
-  if (kind==="decision") valid(r.source_attempt===p.source_attempt && r.round===p.round);
+  if (kind==="decision") {
+    valid(r.source_attempt===p.source_attempt && r.round===p.round);
+    if (p.operation==="decision_submit") valid(r.profile==="codex_delegated_v1");
+    else valid(!Object.hasOwn(r,"profile"));
+  }
   if (kind==="continuation") {
     valid(Object.hasOwn(p,"progress"));
     const progress=p.progress;

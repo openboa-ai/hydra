@@ -1,6 +1,15 @@
 # 실행·검증·전달·복구 계약
 
-Revision: 10; design contract, 2026-10-25. Original technical-effect coverage across restart.
+Revision: 12; candidate profile amendment, 2026-10-26. Technical acceptance, implementation and operating qualification remain separate; new-profile implementation and actual O are NOT RUN.
+Previous baseline: revision 10, design contract, 2026-10-25, original technical-effect coverage across restart. Its requirements and recorded acceptance/evidence history are preserved for the original profile.
+
+Profile scope: the independent human/native-answer proof, six-role source selection,
+native unsent-intent reconstruction and qualified-source retry/technical-effect
+coverage in §7.1–§7.3 and the later native technical-replan sections belong to the
+original qualified-native-source profile. The candidate `codex_delegated_v1`
+profile follows [§7.5](#75-candidate-profile-amendment-codex_delegated_v1).
+Common work, policy, ownership, privacy, explicit Resume and actual-operation
+requirements remain in force. No historical result is upgraded by this amendment.
 
 상위 계약은 [SDLC 통합 설계](../../../architecture/sdlc.md)다. 이 문서는 구현할 동작과
 검증 기준을 정의한다. 현재 코드가 모두 충족한다는 선언이 아니며 코드·설치·예약 실행을 재개하지 않는다.
@@ -496,6 +505,138 @@ native 예약 자체가 model turn과 비용을 발생시키는 경우와 Hydra�
 질문 reader/decision guard와 CP의 CAS를 연결하고 checkpoint 이후 자동 전달로 넘어가지
 않는 제한도 검증한다. 필요한 좁은 `checkpoint_only` 경로가 없으면 legacy checkpoint를
 같은 이름으로 사용하지 않는다. 실제 native 지원은 NC에서 확인한다.
+
+### 7.5. Candidate profile amendment: codex_delegated_v1
+
+The selected product boundary makes Codex responsible for native clarification and
+answer interpretation. This section specifies a technical candidate for independent
+review; implementation and actual O are NOT RUN. It does not grant installation,
+workflow execution, task messaging, restart or admission changes.
+
+#### Inputs, authority and public intent
+
+The owning Codex task asks native choice/free-text questions as needed and proposes
+public-safe implementation context within the existing delegation. Hydra accepts
+that proposal as input through native-only `workflow_step.decision_submit`; it
+does not turn it into human proof or qualified native-source facts. The separately
+protected installation workflow grant, current accepted GitHub work/policy,
+exact attempt/head/spec/intake and current admission determine allowed effects.
+Payload assertions cannot extend that scope or accept a changed design.
+
+The initial increment supports round 1. The server validates every proposed basis
+field against its authenticated source, fixes the public key and resume identity,
+and constructs canonical version-2 context/receipt records with the fixed profile
+`codex_delegated_v1`. The version distinguishes these records from the original
+qualified-source version-1 records; neither parser silently adopts the other
+profile. Exact bytes, public-body digest, service identity, unedited-record checks,
+bounded complete collection and direct original-reference read-back apply.
+The precise closed input and wire profile remain owned by P04/P06 and CP.
+
+The first confirmed exact context is public intent; its exact matching receipt
+confirms publication. GitHub owns these facts and subsequent progress. No raw
+dialogue, native locator, private answer hash or human-approval claim is published.
+Before a confirmed public intent, a lost conversational interpretation stays
+unresolved. Hydra cannot reconstruct it from a digest, assume no earlier dispatch
+or manufacture a replacement. An arbitrary comment or agent-authored approval
+flag is not an accepted policy revision or a grant.
+
+#### Publication ownership and bounded restart retry
+
+Use one bounded decision owner on the existing coordinator inode. Persist and
+fsync it before any possible external dispatch. Its effect kind and scope bind the
+profile, numeric repository/Issue, source attempt, exact context digest and fixed
+resume UUID. This identity is immutable. A publication owner additionally holds
+two lifetime counters, `context_POST` and `receipt_POST`, each an integer from 0
+through 3. They are bounded unresolved-effect ownership, not a transcript,
+payload store, effect history or decision journal.
+
+Under the existing inode lock, increment and fsync the applicable counter before
+each actual POST. A dispatch reservation counts even if transport entry or its
+result is later uncertain. Counters never decrease or reset because of empty
+read-back, timeout, cancellation, a new command ID, process loss or reboot. A
+failed or incomplete owner/counter write prevents dispatch; corrupt, foreign or
+changed ownership holds. Do not replace the inode. Old binaries must fail closed
+on the new owner, and boot change alone cannot clear it.
+
+A fresh invocation may finish only the same exact proposal: revalidate its owner
+scope, current grant and lifetime, runtime/admission expectations, accepted work,
+policy and conflict-aware authenticated source results. It may spend only the
+remaining persisted budget. The owner stores no proposal text; if the exact
+interpretation is unavailable, recovery does not invent it. Publish a receipt
+only after the exact context is confirmed. Attempt at most one context POST and
+one receipt POST per invocation, each with read-back. Exact duplicates fold into
+one semantic result; conflicting payloads, mixed profiles, edited/deleted pinned
+records or incomplete coverage hold. Missing results do not erase a reservation
+or imply non-dispatch. Exhaustion leaves the unresolved responsibility visible.
+
+An exact terminal context/receipt pair can retire the publication owner. Retirement
+compares the current serialized owner, including both counters, with the exact
+record reconciled under the lock; a stale reader cannot clear a newer reservation.
+Only the still-live creating owner may retire a never-dispatched publication
+without terminal read-back, and only when both counters are zero and it proves
+that transport was never entered. Restart cannot recreate that live proof.
+
+#### Mutable resume and actual continuation
+
+Publication cannot invoke continuation, write progress, allocate a ticket or
+assignment, change admission or operate a native task. A separate typed `continue`
+requires its current trusted grant, exact progress pin, accepted policy and running
+admission; a private native handoff requires its own grant. Answer reception,
+publication, wake and retry never issue an implicit project Resume.
+
+Before claiming a resume owner, build the full intended resumed progress record
+from the exact current source. Bind the owner's immutable scope to a SHA-256 of
+that canonical full record, the authenticated original progress ResourceRef and the
+exact context/root, in addition to the public effect identity. Include all carried fields, including checkpoint, published head,
+PR and retry fields; the public intent basis alone is insufficient. Store only
+the digest and bounded ownership identity, never a second progress payload.
+
+Only the creating live resume invocation may dispatch its single mutable PATCH.
+Persist/fsync ownership before that possibility. After loss or restart, this owner
+permits bounded read reconciliation only, never another PATCH or a new resume UUID.
+Hash the authenticated actual resumed record and verify the exact pair/root against
+the owner's scope. Do not reconstruct missing prior fields from current policy or
+accept a partial-field match. Retire only the exact reconciled owner. A mismatched
+carried field, old/partial progress, missing pair or uncertain late result retains
+the hold and permits no assignment. A later exact result can be reconciled without
+redispatch.
+
+Before consumption, the GitHub reader must identify one exact version-2 intent for
+the waiting work/attempt through complete relevant collection and direct read-back.
+After consumption it resolves the exact stored `native_root` key, context digest
+and original resume UUID. Never select the latest comment or use the legacy
+root-null fallback. A legacy begin/advance entry cannot consume an unconsumed
+delegated pair outside the typed continuation scope. Every later effect preserves
+the accepted scope and revalidates the exact pair/root and current guards. Assignment
+text labels this as delegated public context and untrusted data, not human approval.
+
+The normal positive path must reach the original phase's real assignment and
+checkpoint without a native-history decision provider. Recorded-choice amendments
+and delegated technical successors are explicit holds in this increment; the
+original qualified-source replan path remains separate. Bypassing that old reader
+for this profile must not fabricate complete or zero technical-effect coverage.
+Unknown ownership still blocks conflicting effects across every entrypoint.
+
+#### Independent acceptance and retained v1 scope
+
+| Case | Required independent oracle |
+| --- | --- |
+| Production entry and normal restart | Real config/controller/server entry with external transport fakes only, no injected decision-source facts; literal version-2 pair, fresh authorized continuation, exact original-phase assignment and checkpoint |
+| Forged approval, wrong work or changed grant | Zero scope expansion, protected approval, implicit Resume or unauthorized dispatch; each effect checks current authority and accepted pins |
+| Pause before/between effects | Zero new effects while paused; retain confirmed partial references and ownership; subsequent work needs current explicit Resume and separate continuation authority |
+| Publication restart and late results | Independent physical-call log; each kind stays within its lifetime limit of 3; no reset on empty reads/restart; original exact pair is reused; conflicting proposals never spend the old owner's budget |
+| Owner persistence and retirement | Short write/fsync failure prevents transport; stale serialized counter record cannot retire a newer owner; both zero counters plus live creating-owner proof are required for no-transport cleanup |
+| Resume uncertainty and carried fields | One PATCH maximum; exact full-record digest and pair/root required after restart; changed checkpoint/published-head/PR/retry fields cause no retirement or assignment |
+| Lost interpretation and compatibility | No manufactured pre-publication decision, version coercion, latest-comment selection or root-null fallback; original-profile tests retain their meaning |
+| Privacy and independent evaluation | No dialogue canaries/private IDs in public output or logs; evaluation preserves choices, free-text meaning, uncertainty and accepted scope |
+
+Deterministic success does not establish native remote observation. Actual O must
+separately demonstrate clarification, response, Pause, explicit Resume and controlled
+same-work progress/recovery. The full P07/P08 native lifecycle, wake, scheduling,
+discovery, inventory and cleanup requirements remain required for v1; this first
+increment neither removes them nor claims their completion. Technical review must
+accept the exact mechanism before dependent code. Implementation and actual O:
+NOT RUN.
 
 ## 8. 검증·리뷰·전달의 연결
 

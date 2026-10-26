@@ -41,8 +41,8 @@ def create_server(controller, *, command_config_path=None, command_context_provi
                   command_ended_provider=None, subscriptions=None):
     """Create the SDK server; command providers are trusted internal dependencies.
 
-    Embedded callers have no grant by default. Standalone main supplies only the
-    optional protected installation profile; request metadata never grants scope.
+    Embedded callers have no grant by default. Standalone main supplies optional
+    operation-specific protected profiles; request metadata never grants scope.
     """
     from mcp.server import MCPServer
     from mcp.server.mcpserver.tools import Tool
@@ -60,11 +60,16 @@ def create_server(controller, *, command_config_path=None, command_context_provi
         # Both providers receive the actual SDK Context, never model-supplied
         # context/authority fields. The core re-reads the provider at each gate.
         def grant():
-            value = command_context_provider(ctx) if ctx is not None and command_context_provider else None
+            if ctx is None or command_context_provider is None:
+                return None
+            selected = getattr(command_context_provider, 'for_command', None)
+            value = (selected(ctx, command) if callable(selected)
+                     else command_context_provider(ctx))
             # MCP is the native surface; a bridge grant cannot cross into it.
             return value if type(value) is AdmissionCallContext and value.surface == 'native' else None
         ended = (lambda: command_ended_provider(ctx)) if ctx is not None and command_ended_provider else None
         try:
+            command = parse_command_v1(command)
             return await execute_command_v1(command_config_path, command,
                 context_provider=grant, github=getattr(getattr(controller, 'runner', None), 'github', None),
                 controller=controller, ended_provider=ended, unavailable_runtime=runtime)

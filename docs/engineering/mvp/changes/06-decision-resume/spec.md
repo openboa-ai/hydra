@@ -1,8 +1,74 @@
 # P06 — 같은 질문의 결정을 적용하고 원 단계 재개
 
-Status: Design candidate, revision 5, 2026-10-25. P06 is a plan ID, not a pull-request number.
+Status: Design candidate, revision 7, 2026-10-26. P06 is a plan ID, not a pull-request number.
 수용 판본·구현 head·D/L/O 결과는 [공통 변경 절차](../README.md)에 연결한다. 현재 모든 실행은 NOT RUN이다.
-Review baseline: CP revision 11, EX revision 10, NC revision 9. Pin the accepted immutable revisions before dependent implementation.
+Prior review baseline: CP revision 12, EX revision 10, NC revision 9. The coordinated
+delegated-profile amendments require independent technical acceptance before dependent code.
+
+## Delegated public decision and ordinary continuation
+
+`codex_delegated_v1` implements P04's accepted dialogue responsibility boundary.
+Its technical mechanism is a candidate; implementation and D/L/O evidence are **NOT RUN**.
+The existing `decision_apply` and six-role qualified-native-source path retain their
+original meaning. Agent proposal JSON must never be converted into qualified
+`DecisionSelection`, `DecisionSnapshot` or `DecisionCallCoverage` facts.
+
+The new native-only `workflow_step.decision_submit` accepts public text and exact
+current work/basis pins through CommandV1 and trusted WorkflowBinding. CP owns the
+closed schema and grant. The server independently verifies accepted project/spec/intake,
+service actor, repository identity, the waiting source attempt and current admission.
+Round 1 is supported; a conflicting proposal or later amendment is held, not overwritten.
+
+The server constructs the canonical version-2 public context with
+`profile: codex_delegated_v1`, the existing key/basis fields and a deterministic resume
+UUID derived from the canonical proposal and accepted basis. The exact version-2 receipt
+pins the context digest. Version 1 keeps its original profile. Reuse strict byte/actor/
+unedited-record/read-back validation; a mixed profile or conflicting payload is not a match.
+No private dialogue, answer hash, native locator or claimed human identity is published.
+
+`decision_submit` may POST one context and one receipt per invocation, each followed by
+read-back. Across recovery invocations, persisted lifetime limits are three context
+POSTs and three receipt POSTs for the original exact intent. Before each POST, increment
+and fsync its counter on the same existing ownership inode. Failed persistence means no
+dispatch. Counters never decrease or reset after unknown responses, empty reads or reboot.
+An exact append-only duplicate may be folded into one semantic intent; a different body
+cannot replace the owned intent. Every recovery invocation needs fresh current guards.
+
+Publication cannot write progress, create a ticket/assignment, invoke native work or
+change admission. Its terminal result is the existing decision receipt after exact pair
+read-back; partial confirmed references and ownership remain visible on uncertainty.
+The delegated decision and continuation receipt variants carry only the additional
+closed `profile: codex_delegated_v1` discriminator. CP owns its target/progress/ref
+proof requirements and paired Python/Rust/TS qualification; original v1 variants
+remain unqualified. A tag is not a grant or independently authenticated human answer.
+
+Only a separately authorized typed `continue` can consume the pair. Re-read the exact
+GitHub pair, current work/policy and admission, compute the full intended resumed progress
+record, and durably bind its canonical digest plus exact context/root before the one
+mutable resume PATCH. Recovery hashes the authenticated actual full progress record;
+it does not reconstruct overwritten carried fields from current policy. No second PATCH,
+new resume UUID or assignment is permitted while the original result remains unknown.
+Exact confirmed root/progress can retire the matching owner and reuse the result.
+
+The actual `WorkDecisionGuard` consumer resolves a v2 decision directly from authenticated
+GitHub evidence. Before consumption require one exact intent for the waiting attempt and
+complete bounded relevant collection; afterward require the exact stored native root.
+Do not select the newest comment, accept the legacy root-null fallback or call the old
+provider's six-role/technical-history methods for a normal v2 continuation. Legacy
+begin/advance cannot initially consume an unconsumed v2 pair to bypass WorkflowBinding.
+Already consumed v2 work must revalidate its exact pair/root during ordinary effects.
+
+This increment cannot dispatch a delegated technical successor. Its replan path is
+explicitly unsupported; it must not fabricate zero-effect coverage to satisfy the old
+`native_replan` consumer. The old qualified-source profile remains intact. Positive
+acceptance must reach an actual same-work original-phase assignment and checkpoint on
+the ordinary path, rather than always waiting at a leftover provider requirement.
+
+Independent oracles cover forged approval/authority changes, exact pins and literal
+bytes, Pause between effects, every durable-counter crash boundary, exhaustion across
+restarts, late results, wrong carried progress fields, profile separation and private-data
+exclusion. Native remote clarification/answer and controlled real progress remain required
+operational evidence. No new grant, native message, installation or execution is implied.
 
 ## 1. 목적·요구·범위
 

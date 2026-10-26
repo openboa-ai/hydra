@@ -1,5 +1,52 @@
 # P06 public decision evidence
 
+## Revision 7: delegated publication and ordinary continuation
+
+The delegated increment has two separate effect ceilings. Native-only
+`workflow_step.decision_submit` can publish one exact context and one matching
+receipt per invocation. A separately authorized `workflow_step.continue`
+consumes the authenticated version-2 pair and resumes the original phase.
+Native handoff has its own explicit grant. The original `decision_apply`
+profile and its untagged receipts retain their previous source requirements.
+
+`native_workflow_control` is absent/disabled by default. Its closed protected
+configuration requires schema version 1, enabled, repository IDs, operations
+and a canonical UTC expiry. The real MCP dispatcher selects the parsed target
+and operation; it never unions admission/workflow grants. Runtime identity
+changes with every authority field. Proposal text and claimed approvals cannot
+grant Resume, policy changes or other effects.
+
+An exact `hydra-decision-v1` owner uses the existing coordinator inode. Context
+and receipt reservations each retain a lifetime ceiling of three. Before a
+physical POST, the incremented counter must survive complete file writes,
+file fsync and verified parent-directory fsync. Decision operations require an
+existing real parent; they do not create an unsynchronized ancestor chain.
+Failures retain conservative ownership and prevent dispatch. Partial positive
+writes may finish on the same inode; failed persistence never yields a permit.
+
+Mutable resume binds the entire intended record, exact public root and original
+progress ResourceRef. Its live creator can dispatch one PATCH. Reboot/retry does
+not reconstruct that permit. Exact late-result recovery rechecks the original
+record and comment identity inside the final current-policy/admission guard
+before retiring ownership. Identical content at a different comment ID remains
+held. An unknown result cannot allocate another attempt or assignment.
+
+All 64 delegated feature methods pass, including actual local SDK production,
+five-phase continuation, expiry/scope separation, Pause, durable retry bounds,
+lost acknowledgments, original-ID replacement, shared deadline, private-error
+exclusion and v1 compatibility. File/directory synchronization and reboot
+boundaries use deterministic fault injection; no physical power-loss trial or
+installed-runtime qualification is claimed. The shared wire corpus also passes
+the actual Python/Rust/TypeScript source boundaries; see
+[P04 verification](../04-native-answer-source/verification.md).
+
+The historical sections below describe the original public-decision component.
+Source implementation does not complete P06/v1 operation. Actual remote native
+questions/answers, explicit Resume, controlled business progress, installation,
+final-head delivery and two-project acceptance remain separate gates.
+
+## Original-profile component evidence
+
 This implementation covers step 3 of [P06 revision 2](spec.md), using the exact
 public intent and receipt contract in [EX revision 7, §7.3](../../contracts/execution.md#73-공개-결정과-유실재시작-복원).
 It is a source component for later integration. Full P06, native answer
