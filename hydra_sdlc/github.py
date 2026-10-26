@@ -358,6 +358,15 @@ class GitHub:
         from .github_relations import read_relation
         return read_relation(self, repo, source, relation)
 
+    def native_dependency_read(self, root, *, repositories):
+        """Collect two dependency graphs using an exclusively owned read client.
+
+        The caller supplies current registration and owns this synchronous client
+        until return. Matching topology grants no execution or output acceptance.
+        """
+        from .github_dependencies import read_dependencies
+        return read_dependencies(self, root, repositories=repositories)
+
     def file(self, repo, path, ref):
         _sha(ref)
         if not isinstance(path, str) or path.startswith("/") or any(x in {"", ".", ".."} for x in path.split("/")):
