@@ -193,9 +193,22 @@ async def execute_continue_command(config_path, command, *, context_provider, gi
         try:
             scope.initial()
             before = copy.deepcopy(scope.expected)
+            from .delegated_decisions import continuation_scopes
+            decision_scopes = continuation_scopes(runner, repository, scope.number, scope.expected)
             with operation_scope(runner.operations, repository,
-                    expected_revision=command['expected']['admission_revision']), coordinator_lock(controller.lock_path):
+                    expected_revision=command['expected']['admission_revision']), coordinator_lock(
+                        controller.lock_path, decision_scopes=decision_scopes):
                 scope.prepare()
+                from .delegated_decisions import recover_resume_owner
+                if recover_resume_owner(scope):
+                    record = scope.source['record']
+                    receipt = {'kind': 'continuation', 'progress_ref': copy.deepcopy(scope.source['resource']),
+                        'attempt_id': record['attempt_id'], 'head': record['head'],
+                        'contract_revision': record['contract_revision'], 'boundary': 'existing_result_reconciled'}
+                    # This path returned only after exact v2 pair/root and full
+                    # original mutable-result recovery, never a caller flag.
+                    receipt['profile'] = 'codex_delegated_v1'
+                    return reply('applied', 'decision_reconciled', receipt=receipt)
                 held = controller._prepare_begin(repository, scope.number, scope.expected)
                 if held is not None:
                     return reply('waiting', held['reason'])
@@ -227,6 +240,11 @@ async def execute_continue_command(config_path, command, *, context_provider, gi
                             'contract_revision': record['contract_revision'],
                             'boundary': 'assignment_returned' if assignment is not None else
                                 'progress_recorded' if changed else 'existing_result_reconciled'}
+                        if (scope.frame is not None and scope.frame.consumed
+                                and scope.frame.delegated_context is not None):
+                            # The enclosing guard just revalidated this consumed
+                            # v2 pair/root against the actual post-state.
+                            receipt['profile'] = 'codex_delegated_v1'
                     return reply('applied' if applied else 'waiting',
                         result.get('reason') or ('continuation_confirmed' if applied else 'continuation_waiting'),
                         receipt=receipt, assignment=assignment)

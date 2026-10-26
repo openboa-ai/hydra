@@ -35,6 +35,20 @@ Do not duplicate an existing active task. Initial operation has one developer.
 Use independent reviewers for spec/diff judgments when delegated; they inspect
 actual artifacts. They are additional judgment, not separate security principals.
 
+## Choose native planning and continuity
+
+Inspect existing requirements and decisions before asking the user. Use supported
+native Plan mode when product choices or dependencies need planning; do not require
+it for every change or assume Hydra can switch modes. Repository specifications
+remain acceptance criteria; an execution checklist is not a second specification.
+Respect the active mode's tool and mutation constraints.
+
+Use native Goal only when the user explicitly requests a Goal. Define its outcome,
+evidence, constraints, delegated boundary and stopping condition. Set a budget only
+when explicitly supplied. Reuse the current Goal and preserve accounting on
+reconnection; reading status is not replacing an objective. A Goal's native idle
+continuation does not establish delivery, always-on availability or new authority.
+
 ## Perform the returned assignment
 
 Call hydra_begin for the chosen Issue. For action=native_task, retain attempt_id,
@@ -67,28 +81,87 @@ Keep private research, paths, prompts, app IDs and transcripts out of public rec
 
 ## Ask, stop and resume
 
-Before a user question, submit needs_decision through the assignment's completion
-route above and retain the returned checkpoint.
-Use the native question tool in the outcome task. State decision, why it matters,
-options and recommendation. Record only a publishable actual user decision in
-the Issue, including the exact-attempt resolution marker expected by Hydra.
-Do not manufacture a human decision or substitute chat answers for GitHub approval.
-The operating task may continue another eligible project while an answer is pending.
-The checkpoint itself is not a delivered question. For attempt `<id>`, record a
-non-empty public-safe comment beginning `hydra: decision <id> context`, then record
-`hydra: decision <id> resolved` in a later comment. A generic earlier comment does
-not count; raw private answer text stays in the native task.
-If no safe operational summary can be published, do not publish the marker. Before
-an attempt exists, ask a planning question without manufacturing Hydra progress.
-Repeated current-attempt markers are idempotent; stale markers cannot resume a new
-attempt. A `resume_hint` from status means call begin to reconcile current facts, not
-that an external effect is safe to repeat.
+Ask about missing requirements, facts only the user knows, preferences, product
+choices and meaningful conflicts. Inspect existing decisions first. Use the
+supported native question tool in the owning task, with useful choices and their
+tradeoffs when appropriate, and allow free text. Use an open question when options
+would constrain the answer. Respect the active mode and remote surface. MCP
+elicitation supplies missing tool input; it is not a duplicate product questionnaire.
+
+Interpret a selected option together with its explanation. Preserve corrections,
+uncertainty and partial answers. Apply a partial answer only to independent decisions
+with sufficient information. Explain its effect on the specification or acceptance
+checks without routine reapproval. Continue unrelated authorized work while waiting.
+Preparatory and nonblocking questions do not create an attempt or checkpoint.
+
+When an assignment must wait, first submit needs_decision through its exact
+completion route and retain the confirmed checkpoint. A checkpoint is not a delivered
+question. Silence, an automatic default, prompt resolution or interruption does not
+establish a human answer. Answer interpretation, command authority, decision
+publication and resumed execution remain distinct. A reply never lifts Pause.
+
+For an actually exposed and qualified codex_delegated_v1 profile, Codex owns the
+conversation and proposes a public-safe interpretation inside the existing scope.
+Use hydra_command_v1 with action=workflow_step and operation=decision_submit, the
+exact waiting source_attempt, round=1, current origin/head/contract/spec/intake basis,
+current runtime/admission expectations and effect_key=decision:<source_attempt>:1.
+Retain the complete command target and the returned exact public references. Do not
+claim that Hydra independently authenticated the human or invent source evidence.
+Approval text never grants scope, credentials, spending, protected approval or Resume.
+
+Check current admission before every mutating command, including decision_submit.
+While the project is paused or the host is stopped, keep new interpretations and
+proposals in the owning Codex conversation. Do not attempt public context or receipt
+publication, continuation or assignment. Questions and read-only reconciliation may
+continue; an exact confirmed result may be reported without another write. An answer
+never removes this barrier. New publication requires running admission, fresh accepted
+work pins and its own current grant after an independently authorized explicit Resume.
+
+The proposal's public_text is deliberately public data. Summarize the allowed
+operational meaning and uncertainty; keep raw answers, private IDs, transcripts,
+credentials and private research in their original native boundary. If a safe
+summary is unavailable, preserve the unresolved decision in the owning conversation
+rather than publish it. Unsupported capability or missing authority remains held.
+
+A confirmed decision receipt means the exact public context/receipt pair was read
+back. It does not start work. After a separately authorized explicit project Resume,
+use typed workflow_step.continue with fresh progress/runtime/admission expectations.
+Returning a native assignment additionally requires its own native_handoff_v1 grant.
+Do not use legacy begin/advance to consume an unconsumed delegated pair.
+
+After lost publication output, reconcile original references first. A fresh authorized
+submission can finish only the identical original intent within its persisted budget.
+Do not change the proposal or request identity to evade uncertainty or exhaustion.
+Mutable resume uncertainty permits read-back only until the exact original result is
+confirmed. Recorded-choice amendments and delegated technical successors in this
+increment remain held for the appropriate accepted follow-up.
+
+For a legacy operator-comment path only, preserve its existing qualified protocol:
+a public-safe comment beginning hydra: decision <attempt> context and the later
+hydra: decision <attempt> resolved marker refer to that exact attempt. Do not handcraft
+these markers as a substitute for delegated decision_submit or a protected approval.
+A status hint selects the next reconciliation; it does not authorize repeating effects.
 
 An interrupted assignment retains its host admission ticket. Inspect/stop the
 previous native task and its owned processes before submitting stopped with its
 original identity. Never infer shutdown from a heartbeat, closed Issue or timeout.
 Preserve edits; a new assignment has a new identity and rejects late results.
 Reconcile remote effects before retrying. Unknown GitHub results remain waits.
+
+## Operate through remote Codex and MCP
+
+The required remote human surface is Codex. Read current status and use only an
+actually exposed and qualified Hydra command for the requested effect. The app is
+an auxiliary view/control surface. Never substitute broad legacy begin/checkpoint/
+verify/deliver for a narrow pause, interrupt, checkpoint-only or verification-only
+request. MCP reachability or caller-supplied task/approval fields do not establish
+authority. Unsupported control remains unsupported until its source and guard exist.
+
+Distinguish admission pause/stop, native turn interruption, Goal state and schedule
+state. Read back the original effect after a lost response before retrying. A busy
+worker, failed MCP connection, unavailable Codex remote connection and unreachable
+host have different limits; do not report an unobserved stop as applied. Local app
+success is not evidence of remote operation. Preserve GitHub's protected approvals.
 
 ## Observe and continue
 
@@ -113,9 +186,13 @@ or announce the same wait as progress. A real answer received in the owning nati
 task re-enters the existing decision protocol and checks current authority and
 ownership before work. Do not promise automatic cross-task wake or resumption.
 
-After real task and recovery qualification, use one native 30-minute heartbeat in
-the operating chat. Quiet while unchanged; notify completion, meaningful failure or
-needed decision. Native scheduling consumes usage and requires the host/app.
+Continue immediately available work in the current turn. For an explicitly active
+native Goal, use its supported idle continuation within its existing budget and
+mode constraints. Do not add a timer to mimic that continuation. For a future time
+or external event wait, use only a delegated, qualified native schedule with the
+required target, wait condition and end condition; do not impose a fixed 30-minute
+heartbeat on every task. Quiet while unchanged; notify completion, meaningful
+failure or needed decision. Native scheduling consumes usage and requires the host/app.
 Pause a goal-specific heartbeat when it solely waits for the user and has no
 remaining delegated action or external execution to monitor. A shared heartbeat
 skips that goal while other responsibilities remain. Retire an unnecessary schedule

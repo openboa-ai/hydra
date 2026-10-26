@@ -663,7 +663,7 @@ class GitHub:
                 raise GitHubError("Progress requires public codes, not raw text")
 
     def record(self, repo, n, record, *, cleanup=False, preserve_decision_context=False,
-               native_decision_root=None, decision_successor=None):
+               native_decision_root=None, decision_successor=None, expected_progress_source=None):
         if type(preserve_decision_context) is not bool:
             raise GitHubError('Invalid decision context preservation')
         self._validate_record(record)
@@ -680,6 +680,19 @@ class GitHub:
             context = _decision_context_marker(previous.get("body"))
             root = _native_decision_root_marker(previous.get('body'))
             old_context, old_root = context, root
+        if expected_progress_source is not None:
+            # A bounded mutable effect must patch the original authenticated
+            # comment. Missing progress cannot authorize creation, and a fresh
+            # service record cannot silently replace the caller's full fence.
+            expected = expected_progress_source
+            if (type(expected) is not dict or set(expected) !=
+                    {'record', 'resource', 'decision_context', 'native_root'}
+                    or previous is None
+                    or expected['resource'] != {'source': 'github', 'kind': 'issue_comment',
+                        'id': f"{_repo(repo)}/comments/{_number(previous['id'])}"}
+                    or old != expected['record'] or context != expected['decision_context']
+                    or root != expected['native_root']):
+                raise GitHubError('Original progress source changed')
         if native_decision_root is not None:
             _native_decision_root(native_decision_root)
         # Native rotation is checked before next_action can create a generic
@@ -753,7 +766,7 @@ class GitHub:
         return result
 
     def record_checkpoint(self, repo, n, record, *, preserve_decision_context=False,
-                          native_decision_root=None, decision_successor=None):
+                          native_decision_root=None, decision_successor=None, expected_progress_source=None):
         """Record a confirmed finished/stopped checkpoint without discovery effects.
 
         Callers still enforce their own admission and exact assignment authority.
@@ -763,6 +776,8 @@ class GitHub:
             options['native_decision_root'] = native_decision_root
         if decision_successor is not None:
             options['decision_successor'] = decision_successor
+        if expected_progress_source is not None:
+            options['expected_progress_source'] = expected_progress_source
         return self.record(repo, n, record, cleanup=True, **options)
 
     def ref(self, repo, branch):

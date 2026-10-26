@@ -1,9 +1,59 @@
-# P04 — 실제 질문·답변·선택 근거를 재발견하는 source
+# P04 — Native dialogue and decision source profiles
 
-Revision: 4 · 상태: 내부 reader 범위 수용 · 2026-10-21 · 번호는 계획 ID이며 실제 PR 번호가 아니다.
+Revision: 5. Delegated-dialogue amendment candidate, 2026-10-26. P04 is a plan ID, not a PR number.
+Revision 4's accepted internal-reader scope and historical evidence remain unchanged.
 공통 시작·리뷰·전달 기준은 [PR 규약](../README.md)을 따른다. P04 전체 source qualification: NOT RUN.
 이 개정은 기존 질문의 내부 읽기 단계를 구체화하며, 구현·설치·기능 활성화를 의미하지 않는다.
 이 명세를 유지·개정하며 아래 구현 단계를 여러 PR로 전달할 수 있다. PR마다 해당 단계·요구와 정확한 명세 판본을 고정한다.
+
+## Delegated dialogue profile
+
+The accepted responsibility boundary for `codex_delegated_v1` is: Codex owns native
+clarification and answer interpretation; Hydra validates proposed effects against an
+independently trusted installation grant and current accepted GitHub work. The mechanism
+below is a technical candidate pending independent review. Implementation, deterministic
+qualification and actual native operation for this new profile are **NOT RUN**.
+
+For this profile, independent authentication of the human answer, six-role native
+selection evidence and native unsent-intent reconstruction are not prerequisites.
+The original qualified-native-source profile retains those requirements and all
+historical reader/source evidence. The following original-source sections apply to
+that profile where they require those facts; they must not silently constrain or
+certify the delegated profile. Shared authority, privacy and effect guards apply to both.
+
+| Responsibility | Delegated profile |
+| --- | --- |
+| Human | Purpose, taste, scope and independently trusted delegation |
+| Codex | Meaningful native choice/free-text questions, interpretation and a reviewable public-safe proposal |
+| GitHub | Current accepted work/policy, exact public intent, publication receipt and progress |
+| Hydra | Current principal/scope/admission checks, bounded publication, exact recovery and projection |
+
+An agent's approval claim is data, not new authority. No proposal grants project Resume,
+scope expansion, credentials, spending, protected approval or destructive effects.
+Dialogue and private answers stay in Codex. Before a confirmed public intent exists,
+a lost interpretation stays unresolved; Hydra does not reconstruct it from summaries,
+invent a native answer record or maintain a transcript/decision journal.
+
+The complete increment is the existing owning task's clarification, a bounded
+`workflow_step.decision_submit` command, exact public intent/receipt read-back and a
+separately authorized ordinary continuation of the same work. It uses P06/CP rather
+than installing a fixture `DecisionSnapshot` or a generic model-JSON approval endpoint.
+The first round and ordinary continuation are included. Recorded-choice amendments,
+delegated technical successors, new native tasks and scheduled wake remain separate
+v1 obligations; unsupported paths stay held rather than fall back to legacy behavior.
+
+Publication ownership binds the original exact proposal and retains bounded lifetime
+dispatch counts on the existing coordinator inode. Recovery may finish only that exact
+publication under fresh authority/work/admission and remaining budget; empty reads never
+prove non-dispatch. Mutable resume has a separate one-shot owner and read-only recovery.
+P06 and EX define these effects; no new storage service or native-history source is implied.
+
+Acceptance requires a real production-entrypoint positive test without an injected
+decision-source fixture, negative authority/pin/Pause tests, restart and uncertain-write
+oracles, and independent evaluation of choice/free-text meaning and uncertainty.
+Actual remote qualification must still observe the native question, remote answer,
+Pause retained while waiting, explicit Resume and the original work's real progress.
+Source/CI success is not that observation. This amendment authorizes no live operation.
 
 ## 1. 목적과 범위
 

@@ -1,4 +1,4 @@
-"""Explicit shared-installation authority for STDIO project admission only."""
+"""Installed command routing with an admission-only legacy callable API."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -42,10 +42,21 @@ def _now():
 
 
 class InstallationAdmissionProvider:
-    """Re-read one protected config; Context checks routing, not human identity."""
+    """Select one protected profile; Context does not authenticate a human."""
 
     def __init__(self, config_path):
         self._config_path = Path(config_path).expanduser().absolute()
+
+    def for_command(self, context, command):
+        """Keep independent operation scopes and expiry rules separate."""
+        if type(command) is not dict:
+            return None
+        if command.get('action') == 'admission_set':
+            return self(context)
+        if command.get('action') == 'workflow_step':
+            from .native_workflow import installation_workflow_provider
+            return installation_workflow_provider(self._config_path).for_command(context, command)
+        return None
 
     def __call__(self, context):
         if context is None:

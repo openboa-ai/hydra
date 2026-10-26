@@ -21,12 +21,13 @@ from .coordinator import observe_coordinator, residual_workers
 from .operations import MAX_PROJECTS, MAX_REVISION, OperatingControl, OperationDenied
 from .runtime_identity import capture_runtime_identity
 from .native_admission import parse_admission_profile
+from .native_workflow import parse_workflow_profile
 from .connection_profile import declarations
 
 
 _CONFIG_KEYS = {"repos", "host_alias", "workspace_root", "lock_path", "lifecycle_provider",
                 "storage_provider", "knowledge_repo", "runtime_python", "project_threads",
-                "native_admission_control", "connection_schema", "project_connections"}
+                "native_admission_control", "native_workflow_control", "connection_schema", "project_connections"}
 _REPOSITORY = re.compile(r"[a-z0-9][a-z0-9-]{0,38}/[a-z0-9_.-]{1,100}\Z")
 _CODE = re.compile(r"[a-z0-9][a-z0-9_-]{0,119}\Z")
 _PROVIDER = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z", re.ASCII)
@@ -166,6 +167,8 @@ def load_host_config(path):
         cfg["project_threads"] = threads
         if "native_admission_control" in cfg:
             cfg["native_admission_control"] = parse_admission_profile(cfg["native_admission_control"])
+        if "native_workflow_control" in cfg:
+            cfg["native_workflow_control"] = parse_workflow_profile(cfg["native_workflow_control"])
         loaded = _HostConfig(cfg)
         loaded._source_path = str(path)
         return loaded
@@ -269,7 +272,9 @@ def _execution(mode, ownership, workers, unresolved, *, coverage, remote_complet
     the positive-zero branch without adding an installed qualification flag.
     """
     state = ownership.get("state")
-    if state == "native":
+    if state == "unknown" and ownership.get("reason") == "decision_effect_pending":
+        reason = "decision_effect_pending"
+    elif state == "native":
         reason = "native_turn_control_unsupported"
     elif state in {"owned", "busy"}:
         reason = "owned_execution_unresolved"

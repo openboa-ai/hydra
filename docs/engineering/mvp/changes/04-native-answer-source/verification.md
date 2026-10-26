@@ -1,5 +1,91 @@
 # P04 verification evidence
 
+## Revision 5: delegated dialogue source increment
+
+The `codex_delegated_v1` source path implements the responsibility boundary in
+[P04 revision 5](spec.md) and the publication/continuation mechanism in
+[P06 revision 7](../06-decision-resume/spec.md). Codex interprets the native
+dialogue; Hydra validates the shared installation's explicit current grant and
+accepted work. This profile does not construct independently authenticated
+human-answer facts. The historical revision-4 sections below describe the
+separate qualified-native-source profile.
+
+The actual controller/configuration/MCP SDK entrypoint is tested with external
+GitHub transport fixtures, without injecting a decision-source provider. All
+88 delegated feature methods pass on Python 3.14.2, with zero failures, errors
+or skips. The ordinary path restores all five supported origin phases and
+reaches real local Git assignments/checkpoints. An implementation case commits
+an actual fixture change, runs its registered verifier and enters change review.
+These are local source tests, not business-project execution.
+
+The independent work-pin cases change the source attempt and each basis field
+separately while retaining syntactically valid commands. Every mismatch holds
+without publication or progress/control changes. Version-2 codec/source cases
+also cover literal normalization and Unicode/whitespace preservation, exact
+16 KiB framing and UTF-8 overflow, noncanonical bytes, edited contexts, orphan
+receipts and competing authenticated payloads. Healthy preexisting pairs remain
+usable. These exercise the v2 path directly rather than transferring v1 results.
+
+The same actual SDK producer emits the shared 41-case decision/continuation
+corpus. Only three runtime digests and observation timestamps are normalized;
+success, profile, references, effects and progress proofs are not manufactured.
+Python regenerates the semantic corpus; Rust and TypeScript consume its saved
+bytes. The frontend's 528 tests and the Rust bridge's 74 tests pass without
+skips. Separate reducer-correlation tests identify their synthetic UI epoch;
+the source-parser tests consume the unchanged producer bytes.
+
+Independent source-instruction evaluation retains ten fixed synthetic cases
+and one rubric. Its first run failed the Pause/publication boundary; the skill
+was clarified and a fresh blind run passed all ten cases with no critical
+failures. This measures instruction judgment only. It is not native question
+delivery, an actual remote answer, or full L07 operating qualification.
+
+The new feature's purpose RED and later fault controls are retained separately
+from successful checks. Fixed tests detected reserved-control-marker injection,
+an enclosing-deadline escape, replacement of the original progress comment at
+the final recovery guard, and missing directory synchronization before an
+external publication. Identical expectations pass after their corrections.
+These were found while implementing the new profile; they are not claims that
+the previously published source already exposed this new command.
+
+The first published candidate's full CI exposed a legacy publication-adapter
+regression missed by the earlier selected checks: actor/progress support alone
+does not supply the delegated reader's owned credential/deadline transport.
+Capability selection now preserves the original guarded reader path for that
+adapter. Its unparseable service-owned decision-family records remain holds;
+they are not evidence that no native decision exists. Strict v1 key filtering,
+outsider exclusion and the full authenticated v2 reader remain separate.
+Seven additional actual publication/continuation cases reproduce the regression
+and malformed-heading gap, then pass with unchanged expectations.
+
+Seventeen further compatibility methods exercise the actual full reader and
+ordinary legacy facade. Authorized marker-free service decisions progress with
+the delegated profile disabled; service identity alone cannot resolve a decision.
+A separately granted MCP continuation refuses an unreadable claim and progresses
+with the same grant when only that bad source is removed. Unknown, nonnumeric,
+truncated and mixed decision namespaces hold, while outsiders and valid unrelated
+full keys remain irrelevant. Previously pinned roots and exact references cannot
+accept marker-stripped source records.
+
+The established progress-context link is validated with its existing strict
+parser. It remains distinct from intent/receipt evidence; recognizing it never
+skips other markers in the same comment. Valid links through all five v2 origins,
+legacy begin/advance and the unsupported facade remain usable. Malformed or
+duplicate links and link-plus-unknown-claim combinations remain held.
+
+All 331 relevant Python methods pass with zero failures, errors or skips, using
+the unchanged independent purpose oracles. The earlier published baseline also
+passed its full 2,267-method CI suite with eight existing skips. The corrected
+final head still requires its own full CI, hosted reviews and protected delivery.
+
+Final-revision CI, independent code/security reviews, protected merge and main
+checks remain delivery gates. Installation, live native clarification/answer,
+Pause retention across an actual controller restart, explicit Resume, same-work
+business progress and two-project acceptance remain **NOT RUN** for this profile.
+No operating grant, installed configuration or project mode changes in this
+increment. Recorded-choice amendments and delegated technical successors remain
+held follow-ups within the full v1 scope.
+
 ## P04 Rev4 internal exact-question reader
 
 Implements sections 3.1–3.3 and QREAD-D01–D12 as an inactive internal source reader.

@@ -132,6 +132,11 @@ async def execute_command_v1(config_path, command, *, context_provider, github, 
                              ended_provider=None, unavailable_runtime=None):
     """Thin transport-independent dispatch to existing guarded command cores."""
     parsed = parse_command_v1(command)
+    if (parsed['action'] == 'workflow_step' and parsed['parameters']
+            and parsed['parameters'].get('operation') == 'decision_submit'):
+        from .delegated_decision_commands import execute_decision_submit_command
+        return await execute_decision_submit_command(config_path, parsed,
+            context_provider=context_provider, github=github, controller=controller)
     if parsed['action'] == 'work_create' and parsed['parameters'] is not None:
         from .creation_commands import execute_creation_command
         return await execute_creation_command(config_path, parsed,
@@ -240,6 +245,16 @@ def command_input_schema():
             'source_attempt': uid, 'round': positive})})
     progress = obj({'attempt_id': uid, 'head': nullable(sha), 'contract_revision': sha,
         'phase': {'type': 'string', 'pattern': '^[a-z0-9][a-z0-9_-]{0,119}$'}})
+    submitted = obj({**common, 'action': {'const': 'workflow_step'},
+        'target': checkpoint['properties']['target'],
+        'expected': obj({**expected, 'assignment': {'type': 'null'}}),
+        'effect_key': {'type': 'string', 'pattern': '^decision:[0-9a-f-]{36}:1$'},
+        'parameters': obj({'operation': {'const': 'decision_submit'}, 'source_attempt': uid,
+            'round': {'const': 1}, 'public_text': {'type': 'string', 'minLength': 1, 'maxLength': 16384},
+            'basis': obj({'origin_phase': {'enum': ['design', 'implementation', 'correction',
+                'spec_review', 'change_review']}, 'head': sha, 'contract_revision': sha,
+                'spec_revision': nullable(sha),
+                'intake_digest': {'type': 'string', 'pattern': '^[0-9a-f]{64}$'}})})})
     continuation = obj({**common, 'action': {'const': 'workflow_step'},
         'target': checkpoint['properties']['target'],
         'expected': obj({**expected, 'assignment': {'type': 'null'}}), 'effect_key': {'type': 'null'},
@@ -260,7 +275,7 @@ def command_input_schema():
         'expected': obj({**expected, 'assignment': {'type': 'null'},
             'source_checks': {'type': 'array', 'minItems': 1, 'maxItems': 1, 'items': source_check}}),
         'effect_key': uid, 'parameters': obj({'draft_ref': draft_ref, 'draft_digest': digest})})
-    return {'oneOf': [admission, checkpoint, run, review, publication, delivery, decision, continuation, creation]}
+    return {'oneOf': [admission, checkpoint, run, review, publication, delivery, decision, submitted, continuation, creation]}
 
 
 def _uuid(value):
@@ -307,7 +322,7 @@ def _parse(command, *, checkpoint=False, creation=False):
                 or not parameters['operation']):
             raise InvalidAdmissionCommand()
         if parameters['operation'] not in {'checkpoint_only', 'verify_only', 'publish_candidate',
-                                            'deliver', 'decision_apply', 'continue'}:
+                                            'deliver', 'decision_apply', 'decision_submit', 'continue'}:
             # An unknown operation's expected/effect/body are also opaque.
             return {key: (dict(target) if key == 'target' else None if key in
                           {'expected', 'parameters', 'effect_key'} else value)
@@ -333,6 +348,10 @@ def _parse(command, *, checkpoint=False, creation=False):
         validate_parameters(command)
         return copy.deepcopy(command)
     if checkpoint:
+        if parameters['operation'] == 'decision_submit':
+            from .delegated_decision_commands import validate_parameters
+            validate_parameters(command)
+            return copy.deepcopy(command)
         if parameters['operation'] == 'deliver':
             from .delivery_commands import validate_parameters
             validate_parameters(command)
@@ -401,7 +420,8 @@ def _context(provider, command):
             {'admission_set', 'workflow_step.checkpoint_only', 'workflow_step.verify_only.run',
              'workflow_step.verify_only.review_checkpoint', 'command_reply.native_handoff_v1',
              'workflow_step.publish_candidate', 'workflow_step.deliver',
-             'workflow_step.decision_apply', 'workflow_step.continue', 'work_create'}):
+             'workflow_step.decision_apply', 'workflow_step.decision_submit',
+             'workflow_step.continue', 'work_create'}):
         return None, 'authority_unavailable'
     if context.config_digest is not None and (type(context.config_digest) is not str
                                               or not _DIGEST.fullmatch(context.config_digest)):

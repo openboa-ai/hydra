@@ -646,6 +646,13 @@ def target(value, action):
         ref(value)
 
 
+def _comment_repository(locator):
+    match = re.fullmatch(r'([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/comments/([1-9][0-9]*)', locator)
+    require(match is not None)
+    integer(int(match[2]), 1)
+    return match[1]
+
+
 def command_result(value, observations):
     obj(value, 'request_id action target outcome reason effect_refs observed_refs receipt required_next')
     uid(value['request_id'])
@@ -697,6 +704,24 @@ def command_result(value, observations):
                  'verification', 'verification_review', 'publication', 'delivery'}) or
                 (value['action'] == 'cleanup' and kind == 'cleanup'))
 
+    if value['receipt'] is not None and value['receipt']['kind'] == 'decision' and \
+            value['receipt'].get('profile') == 'codex_delegated_v1':
+        decision = value['receipt']
+        expected = {'source': 'github', 'kind': 'issue', 'id':
+                    str(value['target']['repository_id']) + ':' + str(value['target']['issue_number'])}
+        proofs = [observations[e['observation_key']] for e in value['observed_refs']
+                  if observations[e['observation_key']]['resource']['source'] == 'github'
+                  and observations[e['observation_key']]['resource']['kind'] == 'progress'
+                  and observations[e['observation_key']]['value'] is not None
+                  and observations[e['observation_key']]['value']['issue_ref'] == expected]
+        require(len(proofs) == 1)
+        proof = proofs[0]
+        require(proof['availability'] == 'current' and proof['coverage']['state'] == 'complete'
+                and proof['value']['attempt_id'] == decision['source_attempt'])
+        require(_comment_repository(proof['resource']['id']) ==
+                _comment_repository(decision['context_ref']['id']))
+        require(all(decision[key] in value['effect_refs'] for key in ('context_ref', 'resolved_ref')))
+
     if value['action'] == 'workflow_step' and value['receipt'] is not None and 'progress_ref' in value['receipt']:
         progress = value['receipt']['progress_ref']
         expected = str(value['target']['repository_id']) + ':' + str(value['target']['issue_number'])
@@ -742,7 +767,11 @@ def receipt(value, observations):
         'cleanup': 'kind resource operation result evidence_refs',
     }
     require(kind in fields)
-    obj(value, fields[kind])
+    if 'profile' in value:
+        require(kind in {'decision', 'continuation'} and value['profile'] == 'codex_delegated_v1')
+        obj(value, fields[kind] + ' profile')
+    else:
+        obj(value, fields[kind])
     if kind == 'work_create':
         require(value['stage'] == 'registered')
         integer(value['repository_id'], 1)
@@ -778,6 +807,14 @@ def receipt(value, observations):
         uid(value['resume_attempt'])
         for key in ('intent_ref', 'context_ref', 'resolved_ref'):
             ref(value[key])
+        if value.get('profile') == 'codex_delegated_v1':
+            require(value['round'] == 1 and value['source_attempt'] != value['resume_attempt']
+                    and value['intent_ref'] == value['context_ref']
+                    and value['context_ref'] != value['resolved_ref'])
+            for key in ('context_ref', 'resolved_ref'):
+                require(value[key]['source'] == 'github' and value[key]['kind'] == 'issue_comment')
+            require(_comment_repository(value['context_ref']['id']) ==
+                    _comment_repository(value['resolved_ref']['id']))
     if kind == 'continuation':
         uid(value['attempt_id'])
         nullable(value['head'], sha)
@@ -832,7 +869,9 @@ def bound_command_result(value, observations, binding):
     if value['outcome'] == 'applied' and value['action'] not in {'admission_set', 'workflow_step'}:
         raise ProjectionError('unsupported_command_source')
     # Each future operation must qualify its paired producer and consumers first.
-    if receipt is not None and receipt['kind'] not in {'admission', 'checkpoint'}:
+    if receipt is not None and receipt['kind'] not in {'admission', 'checkpoint'} and not (
+            receipt['kind'] in {'decision', 'continuation'}
+            and receipt.get('profile') == 'codex_delegated_v1'):
         raise ProjectionError('unsupported_receipt_source')
     if receipt is not None and receipt['kind'] == 'admission':
         source = observations[receipt['readback']['observation_key']]
