@@ -31,7 +31,7 @@ record and comment identity inside the final current-policy/admission guard
 before retiring ownership. Identical content at a different comment ID remains
 held. An unknown result cannot allocate another attempt or assignment.
 
-All 71 delegated feature methods pass, including actual local SDK production,
+All 88 delegated feature methods pass, including actual local SDK production,
 five-phase continuation, expiry/scope separation, Pause, durable retry bounds,
 lost acknowledgments, original-ID replacement, shared deadline, private-error
 exclusion and v1 compatibility. File/directory synchronization and reboot
@@ -39,6 +39,11 @@ boundaries use deterministic fault injection; no physical power-loss trial or
 installed-runtime qualification is claimed. The shared wire corpus also passes
 the actual Python/Rust/TypeScript source boundaries; see
 [P04 verification](../04-native-answer-source/verification.md).
+Seventeen additional compatibility methods preserve authorized marker-free
+legacy decisions and existing progress links through both supported readers and
+legacy facades. They also refuse malformed/mixed namespaces, duplicate links and
+stripped pinned sources. The current 331-method impact suite passes without
+failures, errors or skips; full final-head CI and hosted reviews remain required.
 
 The historical sections below describe the original public-decision component.
 Source implementation does not complete P06/v1 operation. Actual remote native

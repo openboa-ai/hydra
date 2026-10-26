@@ -12,7 +12,7 @@ separate qualified-native-source profile.
 
 The actual controller/configuration/MCP SDK entrypoint is tested with external
 GitHub transport fixtures, without injecting a decision-source provider. All
-71 delegated feature methods pass on Python 3.14.2, with zero failures, errors
+88 delegated feature methods pass on Python 3.14.2, with zero failures, errors
 or skips. The ordinary path restores all five supported origin phases and
 reaches real local Git assignments/checkpoints. An implementation case commits
 an actual fixture change, runs its registered verifier and enters change review.
@@ -56,8 +56,27 @@ adapter. Its unparseable service-owned decision-family records remain holds;
 they are not evidence that no native decision exists. Strict v1 key filtering,
 outsider exclusion and the full authenticated v2 reader remain separate.
 Seven additional actual publication/continuation cases reproduce the regression
-and malformed-heading gap, then pass with unchanged expectations. Whole-suite
-verification and fresh final-head CI remain required for this correction.
+and malformed-heading gap, then pass with unchanged expectations.
+
+Seventeen further compatibility methods exercise the actual full reader and
+ordinary legacy facade. Authorized marker-free service decisions progress with
+the delegated profile disabled; service identity alone cannot resolve a decision.
+A separately granted MCP continuation refuses an unreadable claim and progresses
+with the same grant when only that bad source is removed. Unknown, nonnumeric,
+truncated and mixed decision namespaces hold, while outsiders and valid unrelated
+full keys remain irrelevant. Previously pinned roots and exact references cannot
+accept marker-stripped source records.
+
+The established progress-context link is validated with its existing strict
+parser. It remains distinct from intent/receipt evidence; recognizing it never
+skips other markers in the same comment. Valid links through all five v2 origins,
+legacy begin/advance and the unsupported facade remain usable. Malformed or
+duplicate links and link-plus-unknown-claim combinations remain held.
+
+All 331 relevant Python methods pass with zero failures, errors or skips, using
+the unchanged independent purpose oracles. The earlier published baseline also
+passed its full 2,267-method CI suite with eight existing skips. The corrected
+final head still requires its own full CI, hosted reviews and protected delivery.
 
 Final-revision CI, independent code/security reviews, protected merge and main
 checks remain delivery gates. Installation, live native clarification/answer,

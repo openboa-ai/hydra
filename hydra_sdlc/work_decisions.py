@@ -45,6 +45,7 @@ class WorkDecisionGuard:
         if not callable(identity):
             return False
         from .delegated_decisions import _has_delegated_read_transport
+        from .public_delegated_decisions import _progress_context_link
         unsupported_transport = not _has_delegated_read_transport(reader)
         with reader.read_budget(seconds=timeout, requests=64):
             actor = identity()
@@ -83,8 +84,11 @@ class WorkDecisionGuard:
                     try:
                         key, _ = parse_receipt(body)
                     except ValueError:
-                        if unsupported_transport or any(
-                                body.startswith('hydra: decision ' + attempt + ' ') for attempt in attempts):
+                        only_progress_link = (unsupported_transport
+                            and body.count('<!-- hydra-decision-') == 1
+                            and _progress_context_link(body, body.find('<!-- hydra-decision-')))
+                        if (unsupported_transport and not only_progress_link or any(
+                                body.startswith('hydra: decision ' + attempt + ' ') for attempt in attempts)):
                             found = True
                     else:
                         if (key[0] == repository['id'] and key[1] == self.number

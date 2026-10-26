@@ -10,12 +10,13 @@ import hashlib
 import re
 import uuid
 
-from .github import GitHubError, _number, _repo
+from .github import GitHubError, _decision_context_marker, _number, _repo
 from . import public_decisions as public
 
 PROFILE = 'codex_delegated_v1'
 _INTENT = '<!-- hydra-decision-intent:v2 '
 _RECEIPT = '<!-- hydra-decision-receipt:v2 '
+_CONTEXT_LINK = '<!-- hydra-decision-context:v1 '
 _FAMILY = re.compile(r'<!-- hydra-decision-(intent|receipt):v([0-9]+) ')
 _INPUT_FIELDS = {'key', 'origin_phase', 'head', 'contract_revision', 'spec_revision', 'intake_digest'}
 _FIELDS = _INPUT_FIELDS | {'profile', 'resume_attempt', 'supersedes'}
@@ -139,11 +140,33 @@ def parse_delegated_receipt(body):
     return key, digest
 
 
+def _progress_context_link(body, position):
+    """Recognize the existing progress annotation, never a decision claim."""
+    if not body.startswith(_CONTEXT_LINK, position):
+        return False
+    end = body.find(' -->', position + len(_CONTEXT_LINK))
+    if end < 0 or end - position - len(_CONTEXT_LINK) > public.MAX_CONTEXT_BYTES:
+        return False
+    try:
+        return _decision_context_marker(body) is not None
+    except GitHubError:
+        return False
+
+
 def _claim(body, key):
     """Inspect family keys without trusting the human-readable heading."""
     found = False
-    for match in _FAMILY.finditer(body):
+    position = body.find('<!-- hydra-decision-')
+    while position >= 0:
+        if _progress_context_link(body, position):
+            # A progress link is not an intent or receipt. Continue scanning
+            # every raw namespace, including ones inside the current payload.
+            position = body.find('<!-- hydra-decision-', position + 1)
+            continue
         found = True
+        match = _FAMILY.match(body, position)
+        if match is None:
+            return True
         end = body.find(' -->', match.end())
         if end < 0 or end - match.end() > public.MAX_CONTEXT_BYTES:
             return True
@@ -153,6 +176,7 @@ def _claim(body, key):
                 return True
         except (ValueError, TypeError, UnicodeError):
             return True
+        position = body.find('<!-- hydra-decision-', position + 1)
     return not found and body.startswith(f'hydra: decision {key[2]} ')
 
 
@@ -338,6 +362,8 @@ def find_delegated_public_decision(client, repository, issue_number, source_atte
             for row in _owned(rows, actor, key, issue_url=issue_url,
                               check_deadline=lambda: client._request_timeout(30)):
                 body = row['body']
+                if expected_root is None and '<!-- hydra-decision-' not in body:
+                    continue
                 if _INTENT not in body and _RECEIPT not in body:
                     # Only strict original-profile bytes can select its reader.
                     if body.startswith(f'hydra: decision {source_attempt} context\n'):
