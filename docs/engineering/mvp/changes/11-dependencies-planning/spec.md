@@ -1,6 +1,6 @@
 # P11 — Native 관계·선행 산출물·선택적 계획
 
-Revision: 2 · 상태: 설계 후보 · 2026-10-19 · 작업: Issue #3
+Revision: 3 · 상태: 설계 후보 · 2026-10-19 · 작업: Issue #3
 
 공통 규칙은 [변경 계약](../README.md), 타입/상태 정본은 [WR §9–10](../../contracts/work-records.md#9-관계-원본입력조건계획을-따로-읽는다)다.
 API 권한/도구/현재 한계는 [GitHub 연결 계약](../../contracts/github-integration.md)을 따른다.
@@ -104,3 +104,78 @@ O는 WR-O02의 actual native page/권한/변경/rename과 optional Project mappi
 v1 및 v2+legacy 의미는 유지한다. native source의 원본 지원 부족에 legacy dependencies로 fallback하지 않는다.
 새 계약 수용은 원래 pending/owner 대사 뒤 새 binding/attempt로 진행하며 old evidence를 덮지 않는다.
 Projects/관계 조회 장애 중 기존 effect reconciliation·보존을 잃지 않는다. 실제 운영 지원은 O 증거 범위로만 선언한다.
+
+## 8. Authenticated graph collection profile
+
+This source-adapter increment implements P11-R02/R04 and P11-D01/D04/D05.
+The original functional requirements remain unchanged.
+
+### Interface, source and boundaries
+
+GitHub.native_dependency_read(root, *, repositories) returns DependencyTopology.
+The caller supplies a snapshot of current protected registration mapping from safe
+positive numeric repository ID to canonical owner/name. Validate before I/O; reject
+aliases and malformed/unbounded maps. External graph nodes cannot add registration.
+Only reachable blocked_by nodes are queried. Unregistered targets retain unknown
+coverage and are never queried. The caller owns the GitHub client exclusively for this synchronous collection;
+no concurrent use of its mutable budget stack or credential hook is supported.
+The collector composes and restores the prior credential hook in finally,
+observing every credential selection including failed and restored transitions.
+The reader owns no persistence or external effects.
+The existing single-Issue reader retains its API and behavior for other callers.
+
+Two independent breadth-first collections call the existing fixed GraphQL query
+reader, with actual API requests per collection. No pool or successful row is
+reused. Compare using the existing dependency_topology contract; matching means
+membership only. No provider-atomic snapshot or readiness/authority is claimed. This is a real
+source adapter, not a new status/continue consumer. Effect-time and user-visible
+integration remain separate because their acceptance/authority sources are open.
+
+One aggregate deadline of 45 seconds and 128 HTTP reservations covers both passes,
+including nested auth requests, validation and final normalization. Nested 15s /
+4-request / 3-page per-Issue bounds remain. Per pass: 256 nodes, 1024 edges, depth32.
+Transient provenance retains at most 1024 Issue identities and 1024 repository
+identities across both passes; exceeding these caps remains unknown.
+Stop before expanding overflow; retain bounded partial prefixes. Comparator also
+checks longest acyclic path so shortcut edges cannot evade depth bounds.
+
+A transient provenance observer sees validated source and target repository
+ID/name/visibility/role and Issue node-ID to numeric identity mappings for every
+accepted page across both passes. Compare known registered names and reject all
+cross-node and cross-pass aliases. Pin authenticated credential fingerprint at
+first qualified response; missing fingerprint does not qualify this collector.
+Actual credential or source identity drift is sticky, overrides cycle precedence,
+and invalidates the whole call: unknown
+with empty unavailable graphs, never mixed-credential refs. Fingerprints and raw
+source metadata never appear in output or logs. Ordinary denial, missing nodes,
+partial pages or timeout retain only already-qualified bounded prefixes.
+
+Ordinary failures remain unknown/partial, including a missing entire second pass;
+there is no silent empty success. Malformed provider values produce fixed safe
+errors or unknown. No raw error, title/body, extra field, native ID or local path
+is returned. Finite loops and deadline checks cover graph assembly as well as I/O.
+Pause does not prohibit these read-only observations; no coordinator lock, command
+route, model call, issue write, assignment, grant, workspace or installation occurs.
+
+## Permanent behavior oracles
+
+Real fixture transport, not supplied precomputed graph DTOs:
+- A -> B -> C and empty root: matched complete from two independent collections.
+- A changing edge: changed; first and second retain their respective membership.
+- Failed later page, hidden node, unregistered producer: never complete-empty.
+- Cycles, longest paths, node/edge/depth caps: bounded and distinct outcomes.
+- Credential, repository/name/visibility/role and Issue node-ID drift across nodes
+  or passes: no matched mixed-scope output.
+- Outer request/deadline expiry, normalization overrun and late response: unknown.
+- No read of unreachable inaccessible branch; independent root remains usable.
+- Public canaries and mutation traps prove sanitized output and zero writes.
+
+Freeze independent expectations before implementation. Purpose fault control must
+fail behavior assertions (not imports); preserve original failed evidence. Run
+focused tests, per-Issue reader/graph/GitHub regressions; independent immutable
+code/security review and required hosted CI before protected delivery. Actual
+multi-page/cross-repo operation remains unqualified until separately observed.
+
+
+Source implementation and tests do not establish installed/native capability,
+requirement acceptance, dispatch authority or completion of P11 or Hydra v1.

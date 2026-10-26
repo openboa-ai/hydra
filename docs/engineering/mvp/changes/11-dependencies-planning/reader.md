@@ -83,3 +83,30 @@ No Issue close, topology match or observed role becomes an output/authority proo
 
 Fresh PR CI and independent code/security review, protected delivery and actual-
 main checks remain required. Earlier projection CI does not qualify this reader.
+
+## Authenticated whole-graph collection
+
+The revision 3 profile adds `GitHub.native_dependency_read(root, repositories=...)`.
+It collects the root's reachable blocked-by graph twice through the existing
+authenticated relation transport, then compares their membership. Each collection
+has its own traversal and source rows. A changed edge is distinct from a coherent
+cycle, an unavailable source or a resource limit. Caller-supplied registration is
+snapshotted before I/O; an unregistered target never expands query scope.
+
+The caller exclusively owns this synchronous GitHub client until return. A shared
+transient provenance observer pins repository names, visibility/role, Issue node
+identities and all credential selections, including a changed credential selected
+for a failed request. Drift discards mixed-scope graphs. The previous credential
+hook is restored on every exit. No graph, credential, raw page or source text is
+persisted. Future asynchronous consumers must use an owned worker/client so read
+I/O cannot block control input.
+
+Both passes share 45 seconds and 128 HTTP reservations, including authentication.
+Per-pass limits remain 256 nodes, 1024 edges and depth 32; nested relation limits
+remain effective. Therefore some graphs below the node cap are still incomplete
+when the aggregate request budget expires. Final comparison also checks the
+deadline. Matching topology does not prove input fulfillment or grant execution.
+
+This is a source adapter. Status/continue integration, accepted requirement
+sources and actual multi-page/cross-repository operational qualification remain
+separate. No public command, dispatch, relationship write or admission changes.

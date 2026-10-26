@@ -122,7 +122,7 @@ def _page(issue, relation, limit, after, cursors):
     return nodes, total, summary_count, more, cursor
 
 
-def read_relation(client, repository, source, relation):
+def read_relation(client, repository, source, relation, *, _observer=None):
     """Observe one relation; matching reads are not a provider snapshot or CAS."""
     try:
         _repo(repository)
@@ -161,10 +161,14 @@ def read_relation(client, repository, source, relation):
             except (GitHubError, OSError):
                 return incomplete()
             current_credential = client._authenticated_fingerprint
+            if _observer is not None:
+                _observer.credential(current_credential)
             if identity is not None and current_credential != credential:
                 return incomplete()
             try:
                 issue, current_identity = _source(raw, repository, source)
+                if _observer is not None:
+                    _observer.observe(source, current_identity[1], current_identity[0], current_credential)
                 if identity is not None and current_identity != identity:
                     return incomplete()
                 if identity is None:
@@ -185,6 +189,8 @@ def read_relation(client, repository, source, relation):
                 page_items = []
                 for raw_node in nodes:
                     item, node_id, repo_identity = _node(raw_node)
+                    if _observer is not None:
+                        _observer.observe(item, node_id, repo_identity, current_credential)
                     key = item['repository_id'], item['issue_number']
                     _require(key not in seen and (node_id not in node_ids or node_ids[node_id] == key))
                     _require(repo_identity[0] not in repositories or repositories[repo_identity[0]] == repo_identity)

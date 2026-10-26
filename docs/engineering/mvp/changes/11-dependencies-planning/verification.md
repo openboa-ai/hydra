@@ -47,3 +47,35 @@ delivery, followed by the actual merge revision's checks. Qualified acceptance
 and observation sources, consumer wiring, repaired-output evidence, goal
 aggregation and the applicable L/O acceptance remain open. This comparison does
 not enable native dispatch or establish full P11 or Hydra v1 completion.
+
+## Revision 3 graph-source verification
+
+The graph-source increment targets P11-R02/R04 and P11-D01/D04/D05. Thirty
+feature methods pass under Python 3.14.2 with no failures, errors or skips. The
+original always-unavailable fault control produced 20 assertion failures across
+18 methods, with no errors or skips. One pagination fixture was corrected before
+the first implementation check: 101 registered nodes exceeded the aggregate
+request budget, so it now uses a coherent self-cycle and unregistered leaves to
+isolate four root-page reads. Its expected cursor sequence and cycle result were
+preserved; the complete transport-call assertion was strengthened.
+
+Oracles cover two independent chains/empty graphs, changed membership, incomplete
+pages, unregistered targets, cycles, exact depth/edge boundaries, aggregate request
+exhaustion and deadline expiry after comparison. Built-in transport tests replace
+only subprocess responses to exercise actual credential selection, account
+validation, query execution and authentication reservation accounting. They are
+deterministic transport fixtures, not live provider observations.
+
+Cross-node and second-pass repository/Issue identity drift, failed credential
+selection, reverse node-ID collisions, missing authentication and hook restoration
+are checked without writes or dispatch. Final-head CI, independent code/security
+review, protected merge and actual-main checks remain delivery gates. This does
+not complete P11, native execution or Hydra v1 acceptance.
+
+The full selected regression set comprises 244 methods: 238 source/graph/GitHub/
+planning/delivery checks plus six existing relation identity/deadline checks.
+All pass with zero failures, errors or skips. A scoped actual read of the existing
+public Hydra work Issue returned two complete, matching empty dependency graphs
+through the built-in authenticated GitHub transport. This establishes that narrow
+read path only; live nonempty, multi-page, denied and concurrent graph scenarios
+remain unqualified. No relationship or project execution state changed.
